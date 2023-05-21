@@ -12,7 +12,7 @@ import (
 
 func GetPartitions(fhandle *os.File, size int64) ([]structs.PartitionFile, error) {
 	plist, err := parseMBR(fhandle)
-	if err == nil {
+	if err == nil && len(plist) > 0 {
 		return plist, nil
 	}
 	return parsEXFAT(fhandle, size)

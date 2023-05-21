@@ -2,10 +2,14 @@ package store
 
 import (
 	"bytes"
+	"fmt"
 	"indicer/lib/constant"
 	"indicer/lib/structs"
+	"indicer/lib/util"
 
 	"github.com/dgraph-io/badger/v3"
+	"github.com/edsrzf/mmap-go"
+	"github.com/schollz/progressbar/v3"
 	"golang.org/x/exp/slices"
 )
 
@@ -65,9 +69,103 @@ func storePartitionFile(infile structs.InputFile) error {
 	return setFile(infile.GetID(), partitionFile, infile.GetDB())
 }
 
-func storeEvidenceFile(infile structs.InputFile) error { return nil }
+func storeEvidenceFile(infile structs.InputFile) error {
+	evidenceFile, err := evidenceFilePreflight(infile)
+	if err != nil {
+		return err
+	}
+	if evidenceFile.Completed {
+		return nil
+	}
+	err = storeData(infile.GetMappedFile(), infile.GetStartIndex(), infile.GetSize(), infile.GetHash(), infile.GetDB())
+	if err != nil {
+		return err
+	}
+	evidenceFile.Completed = true
+	return setFile(infile.GetID(), evidenceFile, infile.GetDB())
+}
 
-func evidenceFilePreflight(ehash []byte, name string, db *badger.DB) (structs.EvidenceFile, error) {
-	var evidenceFile structs.EvidenceFile
-	return evidenceFile, nil
+func evidenceFilePreflight(infile structs.InputFile) (structs.EvidenceFile, error) {
+	evidenceFile, err := getEvidenceFile(infile.GetID(), infile.GetDB())
+	if err != nil && err == badger.ErrKeyNotFound {
+		evidenceFile := structs.NewEvidenceFile(
+			infile.GetName(),
+			infile.GetStartIndex(),
+			infile.GetSize(),
+			infile.GetInternalObjects(),
+		)
+		return evidenceFile, nil
+	}
+	if err != nil && err != badger.ErrKeyNotFound {
+		return evidenceFile, err
+	}
+
+	if !evidenceFile.Completed {
+		return evidenceFile, nil
+	}
+	if slices.Contains(evidenceFile.Names, infile.GetName()) {
+		return evidenceFile, nil
+	}
+
+	evidenceFile.Names = append(evidenceFile.Names, infile.GetName())
+	err = setFile(infile.GetID(), evidenceFile, infile.GetDB())
+	return evidenceFile, err
+}
+
+func storeData(mappedFile mmap.MMap, start, size int64, fhash []byte, db *badger.DB) error {
+	var buffSize int64
+	bar := progressbar.DefaultBytes(size)
+	fmt.Printf("\nSaving File\n")
+
+	for storeIndex := start; ; storeIndex += constant.ChonkSize {
+		if storeIndex > size {
+			break
+		}
+
+		if size-storeIndex <= constant.ChonkSize {
+			buffSize = size - storeIndex
+		} else {
+			buffSize = constant.ChonkSize
+		}
+
+		err := storeWorker(mappedFile, storeIndex, storeIndex+buffSize, fhash, db)
+		if err != nil {
+			return err
+		}
+
+		bar.Add64(buffSize)
+	}
+
+	bar.Add64(buffSize)
+	bar.Finish()
+	return nil
+}
+
+func storeWorker(mappedFile mmap.MMap, index, end int64, fhash []byte, db *badger.DB) error {
+	lostChonk := mappedFile[index:end]
+
+	chash, err := util.GetChonkHash(lostChonk)
+	if err != nil {
+		return err
+	}
+	ckey := append([]byte(constant.ChonkNamespace), chash...)
+	err = pingNode(ckey, db)
+	if err != nil && err == badger.ErrKeyNotFound {
+		return setNode(ckey, lostChonk, db)
+	}
+	if err != nil && err != badger.ErrKeyNotFound {
+		return err
+	}
+
+	relKeyString := fmt.Sprintf("%s%b%s%d", constant.RelationNapespace, fhash, constant.PipeSeperator, index)
+	relKey := []byte(relKeyString)
+	err = pingNode(relKey, db)
+	if err != nil && err == badger.ErrKeyNotFound {
+		return setNode(relKey, chash, db)
+	}
+	if err != nil && err != badger.ErrKeyNotFound {
+		return err
+	}
+
+	return nil
 }

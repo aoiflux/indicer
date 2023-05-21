@@ -131,7 +131,7 @@ func initEvidenceFile(db *badger.DB, evifilepath string) (structs.InputFile, err
 		constant.EvidenceFileNamespace,
 		eviFileHash,
 		eviSize,
-		constant.IgnoreVar,
+		0,
 	)
 
 	return eviFile, nil

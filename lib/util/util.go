@@ -87,7 +87,7 @@ func GetLogicalFileHash(fhandle *os.File, start, size int64) ([]byte, error) {
 	return hash, err
 }
 
-func Getchunkhash(data []byte) ([]byte, error) {
+func GetChonkHash(data []byte) ([]byte, error) {
 	hasher := blake3.New()
 	reader := bytes.NewReader(data)
 	_, err := io.Copy(hasher, reader)

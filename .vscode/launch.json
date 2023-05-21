@@ -1,0 +1,17 @@
+{
+    "version": "0.2.0",
+    "configurations": [
+        {
+            "name": "store",
+            "type": "go",
+            "request": "launch",
+            "mode": "auto",
+            "program": "N:\\research\\indicer\\main.go",
+            "args": [
+                "store",
+                "N:\\research\\indicer\\data",
+                "N:\\research\\testdata\\gb1.dd",
+            ],
+        }
+    ]
+}

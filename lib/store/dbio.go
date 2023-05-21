@@ -43,10 +43,10 @@ func getEvidenceFile(key []byte, db *badger.DB) (structs.EvidenceFile, error) {
 
 	data, err := getNode(key, db)
 	if err != nil {
-		return evidenceFile, nil
+		return evidenceFile, err
 	}
 
-	json.Unmarshal(data, &evidenceFile)
+	err = json.Unmarshal(data, &evidenceFile)
 	return evidenceFile, err
 }
 func getPartitionFile(key []byte, db *badger.DB) (structs.PartitionFile, error) {
@@ -54,10 +54,10 @@ func getPartitionFile(key []byte, db *badger.DB) (structs.PartitionFile, error) 
 
 	data, err := getNode(key, db)
 	if err != nil {
-		return partitionFile, nil
+		return partitionFile, err
 	}
 
-	json.Unmarshal(data, &partitionFile)
+	err = json.Unmarshal(data, &partitionFile)
 	return partitionFile, err
 }
 func getIndexedFile(key []byte, db *badger.DB) (structs.IndexedFile, error) {
@@ -65,7 +65,7 @@ func getIndexedFile(key []byte, db *badger.DB) (structs.IndexedFile, error) {
 
 	data, err := getNode(key, db)
 	if err != nil {
-		return indexedFile, nil
+		return indexedFile, err
 	}
 
 	err = json.Unmarshal(data, &indexedFile)
@@ -104,5 +104,5 @@ func getNode(key []byte, db *badger.DB) ([]byte, error) {
 		return nil, err
 	}
 
-	return s2.Decode(encoded, nil)
+	return s2.Decode(nil, encoded)
 }

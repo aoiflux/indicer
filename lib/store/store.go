@@ -94,7 +94,8 @@ func evidenceFilePreflight(infile structs.InputFile) (structs.EvidenceFile, erro
 			infile.GetSize(),
 			infile.GetInternalObjects(),
 		)
-		return evidenceFile, nil
+		err = setFile(infile.GetID(), evidenceFile, infile.GetDB())
+		return evidenceFile, err
 	}
 	if err != nil && err != badger.ErrKeyNotFound {
 		return evidenceFile, err

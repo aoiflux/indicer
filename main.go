@@ -33,7 +33,7 @@ func main() {
 	case constant.CmdStore:
 		err = storeData(db)
 	case constant.CmdList:
-		// err = listData(db)
+		err = listData(db)
 	case constant.CmdRestore:
 		// err = restoreData(db)
 	}
@@ -137,9 +137,9 @@ func initEvidenceFile(db *badger.DB, evifilepath string) (structs.InputFile, err
 	return eviFile, nil
 }
 
-// func listData(db *badger.DB) error {
-// 	return store.ListFiles(db)
-// }
+func listData(db *badger.DB) error {
+	return store.ListFiles(db)
+}
 
 // func restoreData(db *badger.DB) error {
 // 	start := time.Now()

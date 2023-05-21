@@ -12,6 +12,17 @@
                 "N:\\research\\indicer\\data",
                 "N:\\research\\testdata\\gb1.dd",
             ],
+        },
+        {
+            "name": "list",
+            "type": "go",
+            "request": "launch",
+            "mode": "auto",
+            "program": "N:\\research\\indicer\\main.go",
+            "args": [
+                "list",
+                "N:\\research\\indicer\\data"
+            ],
         }
     ]
 }

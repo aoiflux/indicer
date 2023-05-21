@@ -93,7 +93,7 @@ func storeData(db *badger.DB) error {
 	}
 
 	// errChannel := make(chan error)
-	// store.Store(eviFile)
+	store.Store(eviFile)
 	// if <-errChannel != nil {
 	// 	return <-errChannel
 	// }

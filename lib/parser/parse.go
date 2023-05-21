@@ -3,10 +3,11 @@ package parser
 import (
 	"indicer/lib/constant"
 	"indicer/lib/structs"
+	"indicer/lib/util"
 	"os"
 
 	"github.com/aoiflux/libxfat"
-	diskfs "github.com/diskfs/go-diskfs"
+	"github.com/diskfs/go-diskfs/partition/mbr"
 )
 
 func GetPartitions(fhandle *os.File, size int64) ([]structs.PartitionFile, error) {
@@ -18,24 +19,22 @@ func GetPartitions(fhandle *os.File, size int64) ([]structs.PartitionFile, error
 }
 
 func parseMBR(fhandle *os.File) ([]structs.PartitionFile, error) {
-	disk, err := diskfs.Open(fhandle.Name())
-	if err != nil {
-		return nil, err
-	}
-
-	ptable, err := disk.GetPartitionTable()
+	dimbr, err := mbr.Read(fhandle, 0, 0)
 	if err != nil {
 		return nil, err
 	}
 
 	plist := []structs.PartitionFile{}
-	partitions := ptable.GetPartitions()
+	partitions := dimbr.Partitions
 	for _, partition := range partitions {
+		if !util.IsSupported(partition.Type) {
+			continue
+		}
+
 		var pfile structs.PartitionFile
 		pfile.DBStart = constant.IgnoreVar
-		pfile.Start = partition.GetStart()
-		pfile.End = partition.GetStart() + partition.GetSize()
-		pfile.Size = partition.GetSize()
+		pfile.Start = partition.GetStart() * int64(libxfat.SECTOR_SIZE)
+		pfile.Size = partition.GetSize() * int64(libxfat.SECTOR_SIZE)
 		plist = append(plist, pfile)
 	}
 
@@ -45,7 +44,6 @@ func parseMBR(fhandle *os.File) ([]structs.PartitionFile, error) {
 func parsEXFAT(fhandle *os.File, size int64) ([]structs.PartitionFile, error) {
 	var partition structs.PartitionFile
 	partition.Start = 0
-	partition.End = size
 	partition.Size = size
 	partition.DBStart = constant.IgnoreVar
 	_, err := libxfat.New(fhandle, true)

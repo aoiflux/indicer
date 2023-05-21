@@ -24,9 +24,9 @@ func Store(infile structs.InputFile) error {
 func storeIndexedFile(infile structs.InputFile) error {
 	indexedFile, err := getIndexedFile(infile.GetID(), infile.GetDB())
 	if err != nil && err == badger.ErrKeyNotFound {
-		indexedFile = structs.NewIndexedFile(infile.GetName(),
+		indexedFile = structs.NewIndexedFile(
+			infile.GetName(),
 			infile.GetStartIndex(),
-			infile.GetEndIndex(),
 			infile.GetSize(),
 		)
 		return setFile(infile.GetID(), indexedFile, infile.GetDB())
@@ -45,9 +45,9 @@ func storeIndexedFile(infile structs.InputFile) error {
 func storePartitionFile(infile structs.InputFile) error {
 	partitionFile, err := getPartitionFile(infile.GetID(), infile.GetDB())
 	if err != nil && err == badger.ErrKeyNotFound {
-		partitionFile = structs.NewPartitionFile(infile.GetName(),
+		partitionFile = structs.NewPartitionFile(
+			infile.GetName(),
 			infile.GetStartIndex(),
-			infile.GetEndIndex(),
 			infile.GetSize(),
 			infile.GetInternalObjects(),
 		)
@@ -67,4 +67,7 @@ func storePartitionFile(infile structs.InputFile) error {
 
 func storeEvidenceFile(infile structs.InputFile) error { return nil }
 
-func evidenceFilePreflight(ehash []byte, name string, db *badger.DB) (structs.EvidenceFile, error) {}
+func evidenceFilePreflight(ehash []byte, name string, db *badger.DB) (structs.EvidenceFile, error) {
+	var evidenceFile structs.EvidenceFile
+	return evidenceFile, nil
+}

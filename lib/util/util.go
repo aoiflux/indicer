@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/cheggaaa/pb/v3"
+	"github.com/diskfs/go-diskfs/partition/mbr"
 	"github.com/zeebo/blake3"
 )
 
@@ -99,4 +100,10 @@ func Getchunkhash(data []byte) ([]byte, error) {
 func IsLogicalFile(inid []byte) bool {
 	return bytes.HasPrefix(inid, []byte(constant.PartitionFileNamespace)) ||
 		bytes.HasPrefix(inid, []byte(constant.IndexedFileNamespace))
+}
+
+// IsSupported checks if detected file system is supported or not
+// Both exFAT & NTFS same the share partition type number ie 0x07
+func IsSupported(ptype mbr.Type) bool {
+	return ptype == mbr.NTFS
 }

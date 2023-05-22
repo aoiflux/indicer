@@ -23,6 +23,20 @@
                 "list",
                 "N:\\research\\indicer\\data"
             ],
+        },
+        {
+            "name": "restore",
+            "type": "go",
+            "request": "launch",
+            "mode": "auto",
+            "program": "N:\\research\\indicer\\main.go",
+            "args": [
+                "restore",
+                "N:\\research\\indicer\\data",
+                "indexed",
+                "F22vztNaD3/SPtg2XM8HVPL02ZGGH79F+sswMECIW1U=",
+                "N:\\research\\indicer\\test"
+            ],
         }
     ]
 }

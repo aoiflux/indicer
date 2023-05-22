@@ -17,13 +17,10 @@ func Restore(db *badger.DB, dst *os.File, fid []byte) error {
 	if bytes.HasPrefix(fid, []byte(constant.IndexedFileNamespace)) {
 		return restoreIndexedFile(fid, dst, db)
 	}
-
 	if bytes.HasPrefix(fid, []byte(constant.PartitionFileNamespace)) {
 		return restorePartitionFile(fid, dst, db)
 	}
-
-	// todo add restore for evidence file
-	return nil
+	return restoreEvidenceFile(fid, dst, db)
 }
 
 func getDBStartOffset(startIndex int64) int64 {
@@ -109,7 +106,17 @@ func restorePartitionFile(fid []byte, dst *os.File, db *badger.DB) error {
 
 	return restoreData(ehash, partitionFile.Start, partitionFile.DBStart, partitionFile.Size, dst, db)
 }
-func restoreEvidenceFile() {}
+func restoreEvidenceFile(fid []byte, dst *os.File, db *badger.DB) error {
+	evidenceFile, err := getEvidenceFile(fid, db)
+	if err != nil {
+		return err
+	}
+	if !evidenceFile.Completed {
+		return constant.ErrIncompleteFile
+	}
+	ehash := bytes.Split(fid, []byte(constant.EvidenceFileNamespace))[1]
+	return restoreData(ehash, evidenceFile.Start, 0, evidenceFile.Size, dst, db)
+}
 
 func restoreData(ehash []byte, start, dbstart, size int64, dst *os.File, db *badger.DB) error {
 	end := start + size
@@ -149,6 +156,5 @@ func restoreData(ehash []byte, start, dbstart, size int64, dst *os.File, db *bad
 	}
 
 	fmt.Println("Restored file with size: ", size)
-
 	return nil
 }

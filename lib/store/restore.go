@@ -15,12 +15,14 @@ import (
 
 func Restore(db *badger.DB, dst *os.File, fid []byte) error {
 	if bytes.HasPrefix(fid, []byte(constant.IndexedFileNamespace)) {
-		return restoreIndexedFile(db, dst, fid)
+		return restoreIndexedFile(fid, dst, db)
 	}
 
 	if bytes.HasPrefix(fid, []byte(constant.PartitionFileNamespace)) {
+		return restorePartitionFile(fid, dst, db)
 	}
 
+	// todo add restore for evidence file
 	return nil
 }
 
@@ -47,7 +49,8 @@ func getEvidenceFileHash(fname string) ([]byte, error) {
 func getEvidenceFileID(eviFileHash []byte) []byte {
 	return append([]byte(constant.EvidenceFileNamespace), eviFileHash...)
 }
-func checkCompleted(eid []byte, db *badger.DB) error {
+func checkCompleted(ehash []byte, db *badger.DB) error {
+	eid := getEvidenceFileID(ehash)
 	eviFile, err := getEvidenceFile(eid, db)
 	if err != nil {
 		return err
@@ -58,7 +61,7 @@ func checkCompleted(eid []byte, db *badger.DB) error {
 	return nil
 }
 
-func restoreIndexedFile(db *badger.DB, dst *os.File, fid []byte) error {
+func restoreIndexedFile(fid []byte, dst *os.File, db *badger.DB) error {
 	indexedFile, err := getIndexedFile(fid, db)
 	if err != nil {
 		return err
@@ -67,8 +70,7 @@ func restoreIndexedFile(db *badger.DB, dst *os.File, fid []byte) error {
 	if err != nil {
 		return err
 	}
-	eid := getEvidenceFileID(ehash)
-	err = checkCompleted(eid, db)
+	err = checkCompleted(ehash, db)
 	if err != nil {
 		return err
 	}
@@ -83,8 +85,31 @@ func restoreIndexedFile(db *badger.DB, dst *os.File, fid []byte) error {
 
 	return restoreData(ehash, indexedFile.Start, indexedFile.DBStart, indexedFile.Size, dst, db)
 }
-func restorePartitionFile() {}
-func restoreEvidenceFile()  {}
+func restorePartitionFile(fid []byte, dst *os.File, db *badger.DB) error {
+	partitionFile, err := getPartitionFile(fid, db)
+	if err != nil {
+		return err
+	}
+	ehash, err := getEvidenceFileHash(partitionFile.Names[0])
+	if err != nil {
+		return err
+	}
+	err = checkCompleted(ehash, db)
+	if err != nil {
+		return err
+	}
+
+	if partitionFile.DBStart == constant.IgnoreVar {
+		partitionFile.DBStart = getDBStartOffset(partitionFile.Start)
+		err = setFile(fid, partitionFile, db)
+		if err != nil {
+			return err
+		}
+	}
+
+	return restoreData(ehash, partitionFile.Start, partitionFile.DBStart, partitionFile.Size, dst, db)
+}
+func restoreEvidenceFile() {}
 
 func restoreData(ehash []byte, start, dbstart, size int64, dst *os.File, db *badger.DB) error {
 	end := start + size

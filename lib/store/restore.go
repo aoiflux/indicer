@@ -3,8 +3,8 @@ package store
 import (
 	"bytes"
 	"encoding/base64"
-	"fmt"
 	"indicer/lib/constant"
+	"indicer/lib/util"
 	"math"
 	"os"
 	"strings"
@@ -23,7 +23,7 @@ func Restore(db *badger.DB, dst *os.File, fid []byte) error {
 	return nil
 }
 
-func getDBStartChonk(startIndex int64) int64 {
+func getDBStartOffset(startIndex int64) int64 {
 	if startIndex == 0 {
 		return 0
 	}
@@ -31,15 +31,20 @@ func getDBStartChonk(startIndex int64) int64 {
 	ans := float64(startIndex) / float64(constant.ChonkSize)
 	ans = math.Floor(ans)
 
-	return int64(ans)
+	offset := int64(ans) * constant.ChonkSize
+	return offset
 }
-func getEvidenceFileID(fname string) ([]byte, error) {
+
+func getEvidenceFileHash(fname string) ([]byte, error) {
 	eviFileHashString := strings.Split(fname, constant.FilePathSeperator)[0]
 	eviFileHash, err := base64.StdEncoding.DecodeString(eviFileHashString)
 	if err != nil {
 		return nil, err
 	}
-	return append([]byte(constant.EvidenceFileNamespace), eviFileHash...), nil
+	return eviFileHash, err
+}
+func getEvidenceFileID(eviFileHash []byte) []byte {
+	return append([]byte(constant.EvidenceFileNamespace), eviFileHash...)
 }
 func checkCompleted(eid []byte, db *badger.DB) error {
 	eviFile, err := getEvidenceFile(eid, db)
@@ -57,17 +62,18 @@ func restoreIndexedFile(db *badger.DB, dst *os.File, fid []byte) error {
 	if err != nil {
 		return err
 	}
-	eid, err := getEvidenceFileID(indexedFile.Names[0])
+	ehash, err := getEvidenceFileHash(indexedFile.Names[0])
 	if err != nil {
 		return err
 	}
+	eid := getEvidenceFileID(ehash)
 	err = checkCompleted(eid, db)
 	if err != nil {
 		return err
 	}
 
 	if indexedFile.DBStart == constant.IgnoreVar {
-		dbstart := getDBStartChonk(indexedFile.Start)
+		dbstart := getDBStartOffset(indexedFile.Start)
 		indexedFile.DBStart = dbstart
 		err = setFile(fid, indexedFile, db)
 		if err != nil {
@@ -75,12 +81,12 @@ func restoreIndexedFile(db *badger.DB, dst *os.File, fid []byte) error {
 		}
 	}
 
-	return restoreData(eid, indexedFile.Start, indexedFile.DBStart, indexedFile.Size, dst, db)
+	return restoreData(ehash, indexedFile.Start, indexedFile.DBStart, indexedFile.Size, dst, db)
 }
 func restorePartitionFile() {}
 func restoreEvidenceFile()  {}
 
-func restoreData(eid []byte, start, dbstart, size int64, dst *os.File, db *badger.DB) error {
+func restoreData(ehash []byte, start, dbstart, size int64, dst *os.File, db *badger.DB) error {
 	end := start + size
 
 	for restoreIndex := dbstart; ; restoreIndex += constant.ChonkSize {
@@ -88,8 +94,7 @@ func restoreData(eid []byte, start, dbstart, size int64, dst *os.File, db *badge
 			break
 		}
 
-		relKeyString := fmt.Sprintf("%b%s%d", eid, constant.PipeSeperator, restoreIndex)
-		relKey := []byte(relKeyString)
+		relKey := util.AppendToBytesSlice(constant.RelationNapespace, ehash, constant.PipeSeperator, restoreIndex)
 		chash, err := getNode(relKey, db)
 		if err != nil {
 			return err

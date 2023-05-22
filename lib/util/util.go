@@ -107,3 +107,22 @@ func IsLogicalFile(inid []byte) bool {
 func IsSupported(ptype mbr.Type) bool {
 	return ptype == mbr.NTFS
 }
+
+func AppendToBytesSlice(args ...interface{}) []byte {
+	var buffer bytes.Buffer
+
+	for _, arg := range args {
+		switch value := arg.(type) {
+		case []byte:
+			buffer.Write(value)
+		case string:
+			buffer.WriteString(value)
+		case int64:
+			buffer.WriteString(strconv.FormatInt(value, 10))
+		default:
+			buffer.WriteString("Unsupported Type")
+		}
+	}
+
+	return buffer.Bytes()
+}

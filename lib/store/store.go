@@ -158,8 +158,7 @@ func storeWorker(mappedFile mmap.MMap, index, end int64, fhash []byte, db *badge
 		return err
 	}
 
-	relKeyString := fmt.Sprintf("%s%b%s%d", constant.RelationNapespace, fhash, constant.PipeSeperator, index)
-	relKey := []byte(relKeyString)
+	relKey := util.AppendToBytesSlice(constant.RelationNapespace, fhash, constant.PipeSeperator, index)
 	err = pingNode(relKey, db)
 	if err != nil && err == badger.ErrKeyNotFound {
 		return setNode(relKey, chash, db)

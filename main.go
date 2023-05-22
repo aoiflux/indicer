@@ -1,6 +1,7 @@
 package main
 
 import (
+	"encoding/base64"
 	"errors"
 	"fmt"
 	"indicer/lib/constant"
@@ -35,7 +36,7 @@ func main() {
 	case constant.CmdList:
 		err = listData(db)
 	case constant.CmdRestore:
-		// err = restoreData(db)
+		err = restoreData(db)
 	}
 
 	handle(db, err)
@@ -138,39 +139,58 @@ func initEvidenceFile(db *badger.DB, evifilepath string) (structs.InputFile, err
 }
 
 func listData(db *badger.DB) error {
-	return store.ListFiles(db)
+	return store.List(db)
 }
 
-// func restoreData(db *badger.DB) error {
-// 	start := time.Now()
+func restoreData(db *badger.DB) error {
+	start := time.Now()
 
-// 	if len(os.Args) < 6 {
-// 		return errors.New("indicer restore [db_path] <evi|partition|indexed> <hash> <dstfilepath> [chonk_size_in_kb]")
-// 	}
+	if len(os.Args) < 6 {
+		return errors.New("indicer restore <db_path> <evidence|partition|indexed> <hash> <dstfilepath> [chonk_size_in_kb]")
+	}
 
-// 	fhandle, err := os.Create(os.Args[5])
-// 	if err != nil {
-// 		return err
-// 	}
+	fhandle, err := os.Create(os.Args[5])
+	if err != nil {
+		return err
+	}
 
-// 	if len(os.Args) > 6 {
-// 		util.SetChonkSize(os.Args[6])
-// 	}
+	fid, err := getRestoreFileID(os.Args[3], os.Args[4])
+	if err != nil {
+		return err
+	}
 
-// 	fhash, err := base64.StdEncoding.DecodeString(os.Args[4])
-// 	if err != nil {
-// 		return err
-// 	}
+	if len(os.Args) > 6 {
+		util.SetChonkSize(os.Args[6])
+	}
 
-// 	fmt.Println("Restoring file ...")
-// 	err = store.RestoreFile(db, fhandle, fhash, os.Args[3])
-// 	if err != nil {
-// 		return err
-// 	}
+	fmt.Println("Restoring file ...")
+	err = store.Restore(db, fhandle, fid)
+	if err != nil {
+		return err
+	}
 
-// 	fmt.Println("Restored in: ", time.Since(start))
-// 	return nil
-// }
+	fmt.Println("Restored in: ", time.Since(start))
+	return nil
+}
+
+func getRestoreFileID(ftype, fhashString string) ([]byte, error) {
+	fhash, err := base64.StdEncoding.DecodeString(fhashString)
+	if err != nil {
+		return nil, err
+	}
+
+	ftype = strings.ToLower(ftype)
+	switch ftype {
+	case constant.IndexedFileType:
+		return append([]byte(constant.IndexedFileNamespace), fhash...), nil
+	case constant.PartitionFileType:
+		return append([]byte(constant.PartitionFileNamespace), fhash...), nil
+	case constant.EvidenceFileType:
+		return append([]byte(constant.EvidenceFileNamespace), fhash...), nil
+	default:
+		return nil, constant.ErrUnknownFileType
+	}
+}
 
 func handle(db *badger.DB, err error) {
 	if err != nil {

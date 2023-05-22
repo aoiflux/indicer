@@ -12,7 +12,7 @@ import (
 	"github.com/klauspost/compress/s2"
 )
 
-func ListFiles(db *badger.DB) error {
+func List(db *badger.DB) error {
 	return db.View(func(txn *badger.Txn) error {
 		opts := badger.DefaultIteratorOptions
 		opts.PrefetchSize = 1000
@@ -45,8 +45,43 @@ func ListFiles(db *badger.DB) error {
 
 			evihash := bytes.Split(k, eviPrefix)[1]
 			fmt.Println(base64.StdEncoding.EncodeToString(evihash))
+			for _, phash := range evidata.InternalObjects {
+				err = listPartitions(phash, txn)
+				if err != nil {
+					return err
+				}
+			}
 		}
 
 		return nil
 	})
+}
+
+func listPartitions(phash []byte, txn *badger.Txn) error {
+	fmt.Println("Partition: ", base64.StdEncoding.EncodeToString(phash))
+	pid := append([]byte(constant.PartitionFileNamespace), phash...)
+	item, err := txn.Get(pid)
+	if err != nil {
+		return err
+	}
+	v, err := item.ValueCopy(nil)
+	if err != nil {
+		return err
+	}
+	decoded, err := s2.Decode(nil, v)
+	if err != nil {
+		return err
+	}
+	var pdata structs.PartitionFile
+	err = json.Unmarshal(decoded, &pdata)
+	if err != nil {
+		return err
+	}
+
+	for i, ihash := range pdata.InternalObjects {
+		ihashStr := base64.StdEncoding.EncodeToString(ihash)
+		fmt.Printf("\tIndexed %d ---> %s\n", i, ihashStr)
+	}
+
+	return nil
 }

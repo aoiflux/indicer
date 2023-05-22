@@ -35,6 +35,10 @@ const (
 	PipeSeperator          = "|"
 	FilePathSeperator      = "|||"
 	PartitionIndexPrefix   = "p"
+
+	EvidenceFileType  = "evidence"
+	PartitionFileType = "partition"
+	IndexedFileType   = "indexed"
 )
 
 var (
@@ -42,6 +46,7 @@ var (
 	ErrUnableToParseFile      = errors.New("unable to find partitions/parse image file")
 	ErrIncompatibleFile       = errors.New("unknown/incompatible file detected")
 	ErrIncompatibleFileSystem = errors.New("unknown file system")
+	ErrUnknownFileType        = errors.New("unknown file type. please try one of the following: evidence|partition|indexed")
 )
 
 const (

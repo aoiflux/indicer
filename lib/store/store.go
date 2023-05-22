@@ -84,7 +84,6 @@ func storeEvidenceFile(infile structs.InputFile) error {
 	evidenceFile.Completed = true
 	return setFile(infile.GetID(), evidenceFile, infile.GetDB())
 }
-
 func evidenceFilePreflight(infile structs.InputFile) (structs.EvidenceFile, error) {
 	evidenceFile, err := getEvidenceFile(infile.GetID(), infile.GetDB())
 	if err != nil && err == badger.ErrKeyNotFound {
@@ -112,7 +111,6 @@ func evidenceFilePreflight(infile structs.InputFile) (structs.EvidenceFile, erro
 	err = setFile(infile.GetID(), evidenceFile, infile.GetDB())
 	return evidenceFile, err
 }
-
 func storeData(mappedFile mmap.MMap, start, size int64, fhash []byte, db *badger.DB) error {
 	var buffSize int64
 	bar := progressbar.DefaultBytes(size)
@@ -141,7 +139,6 @@ func storeData(mappedFile mmap.MMap, start, size int64, fhash []byte, db *badger
 	bar.Finish()
 	return nil
 }
-
 func storeWorker(mappedFile mmap.MMap, index, end int64, fhash []byte, db *badger.DB) error {
 	lostChonk := mappedFile[index:end]
 

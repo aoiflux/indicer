@@ -3,6 +3,7 @@ package store
 import (
 	"bytes"
 	"encoding/base64"
+	"fmt"
 	"indicer/lib/constant"
 	"indicer/lib/util"
 	"math"
@@ -177,7 +178,9 @@ func restoreData(ehash []byte, start, dbstart, size int64, dst *os.File, db *bad
 			actualStart := start - restoreIndex
 			data = data[actualStart:]
 		}
-		if (restoreIndex + constant.ChonkSize) > end {
+		if size < int64(len(data)) {
+			data = data[:size]
+		} else if (restoreIndex + constant.ChonkSize) > end {
 			actualEnd := end - restoreIndex
 			remaining := actualEnd - int64(len(data))
 			data = data[:remaining]
@@ -188,6 +191,8 @@ func restoreData(ehash []byte, start, dbstart, size int64, dst *os.File, db *bad
 			return err
 		}
 	}
+
+	fmt.Println("Restored file with size: ", size)
 
 	return nil
 }

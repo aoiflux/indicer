@@ -152,7 +152,10 @@ func storeWorker(mappedFile mmap.MMap, index, end int64, fhash []byte, db *badge
 	ckey := append([]byte(constant.ChonkNamespace), chash...)
 	err = pingNode(ckey, db)
 	if err != nil && err == badger.ErrKeyNotFound {
-		return setNode(ckey, lostChonk, db)
+		err = setNode(ckey, lostChonk, db)
+		if err != nil {
+			return err
+		}
 	}
 	if err != nil && err != badger.ErrKeyNotFound {
 		return err

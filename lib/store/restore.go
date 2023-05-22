@@ -35,6 +35,74 @@ func getDBStartOffset(startIndex int64) int64 {
 	return offset
 }
 
+// func findDBStartOffset(startIndex int64, db *badger.DB) (int64, error) {
+// 	if startIndex == 0 {
+// 		return 0, nil
+// 	}
+
+// 	var offset int64
+
+// 	err := db.View(func(txn *badger.Txn) error {
+// 		opts := badger.DefaultIteratorOptions
+// 		opts.PrefetchSize = 1000
+// 		it := txn.NewIterator(opts)
+// 		defer it.Close()
+
+// 		relPrefix := []byte(constant.RelationNapespace)
+// 		for it.Seek(relPrefix); it.ValidForPrefix(relPrefix); it.Next() {
+// 			item := it.Item()
+// 			k := item.KeyCopy(nil)
+
+// 			kpart := bytes.Split(k, relPrefix)[1]
+// 			klist := bytes.Split(kpart, []byte(constant.PipeSeperator))
+// 			dbindexString := string(klist[len(klist)-1])
+// 			dbindex, err := strconv.ParseInt(dbindexString, 10, 64)
+// 			if err != nil {
+// 				return err
+// 			}
+
+// 			// if dbindex > startIndex {
+// 			// 	continue
+// 			// }
+
+// 			v, err := item.ValueCopy(nil)
+// 			if err != nil {
+// 				return err
+// 			}
+// 			decoded, err := s2.Decode(nil, v)
+// 			if err != nil {
+// 				return err
+// 			}
+
+// 			ckey := append([]byte(constant.ChonkNamespace), decoded...)
+// 			item, err = txn.Get(ckey)
+// 			if err != nil {
+// 				return err
+// 			}
+
+// 			v, err = item.ValueCopy(nil)
+// 			if err != nil {
+// 				return err
+// 			}
+// 			decoded, err = s2.Decode(nil, v)
+// 			if err != nil {
+// 				return err
+// 			}
+
+// 			datalen := int64(len(decoded))
+// 			diff := dbindex + datalen
+// 			if (startIndex >= dbindex) && (diff >= startIndex) {
+// 				offset = dbindex
+// 				break
+// 			}
+// 		}
+
+// 		return nil
+// 	})
+
+// 	return offset, err
+// }
+
 func getEvidenceFileHash(fname string) ([]byte, error) {
 	eviFileHashString := strings.Split(fname, constant.FilePathSeperator)[0]
 	eviFileHash, err := base64.StdEncoding.DecodeString(eviFileHashString)
@@ -73,8 +141,7 @@ func restoreIndexedFile(db *badger.DB, dst *os.File, fid []byte) error {
 	}
 
 	if indexedFile.DBStart == constant.IgnoreVar {
-		dbstart := getDBStartOffset(indexedFile.Start)
-		indexedFile.DBStart = dbstart
+		indexedFile.DBStart = getDBStartOffset(indexedFile.Start)
 		err = setFile(fid, indexedFile, db)
 		if err != nil {
 			return err
@@ -109,9 +176,11 @@ func restoreData(ehash []byte, start, dbstart, size int64, dst *os.File, db *bad
 		if restoreIndex == dbstart {
 			actualStart := start - restoreIndex
 			data = data[actualStart:]
-		} else if (restoreIndex + constant.ChonkSize) > size {
+		}
+		if (restoreIndex + constant.ChonkSize) > end {
 			actualEnd := end - restoreIndex
-			data = data[:actualEnd]
+			remaining := actualEnd - int64(len(data))
+			data = data[:remaining]
 		}
 
 		_, err = dst.Write(data)

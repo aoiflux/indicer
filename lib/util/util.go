@@ -122,6 +122,8 @@ func AppendToBytesSlice(args ...interface{}) []byte {
 			buffer.WriteString(value)
 		case int64:
 			buffer.WriteString(strconv.FormatInt(value, 10))
+		case int:
+			buffer.WriteString(strconv.FormatInt(int64(value), 10))
 		default:
 			buffer.WriteString("Unsupported Type")
 		}

@@ -39,7 +39,7 @@ func IndexEXFAT(db *badger.DB, pfile structs.InputFile) error {
 		if err != nil {
 			return err
 		}
-		iname := string(pfile.GetEviFileHash()) + constant.FilePathSeperator + string(encodedPfileHash) + constant.FilePathSeperator + entry.GetName()
+		iname := string(util.AppendToBytesSlice(pfile.GetEviFileHash(), constant.FilePathSeperator, encodedPfileHash, constant.FilePathSeperator, entry.GetName()))
 		istart := int64(exfatdata.GetClusterOffset(entry.GetEntryCluster()))
 		isize := int64(entry.GetSize())
 		ihash, err := util.GetLogicalFileHash(pfile.GetHandle(), istart, isize)

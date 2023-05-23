@@ -11,7 +11,6 @@ import (
 	"indicer/lib/util"
 	"os"
 	"path/filepath"
-	"strconv"
 	"strings"
 	"time"
 
@@ -73,8 +72,7 @@ func storeData(db *badger.DB) error {
 			return err
 		}
 
-		pname := string(ehash) + constant.FilePathSeperator
-		pname += constant.PartitionIndexPrefix + strconv.FormatInt(int64(index), 10)
+		pname := string(util.AppendToBytesSlice(ehash, constant.FilePathSeperator, constant.PartitionIndexPrefix, index))
 
 		pfile := structs.NewInputFile(
 			db,

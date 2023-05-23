@@ -24,6 +24,7 @@ func main() {
 		fmt.Println("indicer <store|list|restore> <db_path>")
 		os.Exit(1)
 	}
+
 	dbpath, err := util.GetDBPath()
 	handle(nil, nil, err)
 
@@ -39,8 +40,8 @@ func main() {
 	case constant.CmdRestore:
 		err = restoreData(db)
 	}
-
 	handle(nil, db, err)
+
 	err = db.Close()
 	handle(nil, db, err)
 }

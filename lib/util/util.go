@@ -1,7 +1,6 @@
 package util
 
 import (
-	"bufio"
 	"bytes"
 	"crypto/sha256"
 	"fmt"
@@ -10,11 +9,13 @@ import (
 	"os"
 	"path/filepath"
 	"strconv"
+	"syscall"
 	"time"
 
 	"github.com/cheggaaa/pb/v3"
 	"github.com/diskfs/go-diskfs/partition/mbr"
 	"github.com/zeebo/blake3"
+	"golang.org/x/crypto/ssh/terminal"
 )
 
 func GetDBPath() (string, error) {
@@ -130,9 +131,21 @@ func AppendToBytesSlice(args ...interface{}) []byte {
 }
 
 func GetPassword() []byte {
-	reader := bufio.NewReader(os.Stdin)
 	fmt.Print("Password: ")
-	text, _ := reader.ReadString('\n')
-	hash := sha256.Sum256([]byte(text))
+	password, err := readPassword()
+	if err != nil {
+		fmt.Println("error reading input. using empty password")
+		return []byte{}
+	}
+	hash := sha256.Sum256(password)
 	return hash[:]
+}
+
+func readPassword() ([]byte, error) {
+	password, err := terminal.ReadPassword(int(syscall.Stdin))
+	if err != nil {
+		return nil, err
+	}
+	fmt.Println()
+	return password, nil
 }

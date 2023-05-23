@@ -12,6 +12,7 @@ require (
 	github.com/schollz/progressbar/v3 v3.13.1
 	github.com/shirou/gopsutil v3.21.11+incompatible
 	github.com/zeebo/blake3 v0.2.3
+	golang.org/x/crypto v0.0.0-20200622213623-75b288015ac9
 	golang.org/x/exp v0.0.0-20230519143937-03e91628a987
 )
 

@@ -93,14 +93,11 @@ func storeData(db *badger.DB) error {
 		handle(eviFile.GetMappedFile(), db, err)
 	}
 
-	// errChannel := make(chan error)
-	err = store.Store(eviFile)
-	if err != nil {
-		return err
+	echan := make(chan error)
+	go store.Store(eviFile, echan)
+	if <-echan != nil {
+		return <-echan
 	}
-	// if <-errChannel != nil {
-	// 	return <-errChannel
-	// }
 
 	mapped := eviFile.GetMappedFile()
 	err = mapped.Unmap()

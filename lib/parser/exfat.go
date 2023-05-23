@@ -27,6 +27,9 @@ func IndexEXFAT(db *badger.DB, pfile structs.InputFile) error {
 		return err
 	}
 
+	var active int
+	echan := make(chan error)
+
 	for _, entry := range allEntries {
 		if entry.IsDeleted() || entry.IsDir() || entry.IsInvalid() || entry.HasFatChain() {
 			continue
@@ -56,13 +59,25 @@ func IndexEXFAT(db *badger.DB, pfile structs.InputFile) error {
 		)
 		pfile.UpdateInternalObjects(ihash)
 
-		err = store.Store(ifile)
-		if err != nil {
-			return err
+		go store.Store(ifile, echan)
+		active++
+
+		if active > constant.MaxThreadCount {
+			if <-echan != nil {
+				return <-echan
+			}
+			active--
 		}
 	}
+	for active > 0 {
+		if <-echan != nil {
+			return <-echan
+		}
+		active--
+	}
 
-	return store.Store(pfile)
+	go store.Store(pfile, echan)
+	return <-echan
 }
 
 func getStartOffset(pfileStart uint64) uint64 {

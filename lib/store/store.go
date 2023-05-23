@@ -6,23 +6,27 @@ import (
 	"indicer/lib/constant"
 	"indicer/lib/structs"
 	"indicer/lib/util"
+	"strings"
 
 	"github.com/dgraph-io/badger/v3"
-	"github.com/edsrzf/mmap-go"
 	"github.com/schollz/progressbar/v3"
 	"golang.org/x/exp/slices"
 )
 
-func Store(infile structs.InputFile) error {
+func Store(infile structs.InputFile, errchan chan error) {
+	names := strings.Split(infile.GetName(), constant.FilePathSeperator)
+	name := names[len(names)-1]
+
 	if bytes.HasPrefix(infile.GetID(), []byte(constant.IndexedFileNamespace)) {
-		return storeIndexedFile(infile)
+		fmt.Println("Saving indexed file: ", name)
+		errchan <- storeIndexedFile(infile)
+	} else if bytes.HasPrefix(infile.GetID(), []byte(constant.PartitionFileNamespace)) {
+		fmt.Println("Saving partition file: ", name)
+		errchan <- storePartitionFile(infile)
+	} else {
+		fmt.Println("Saving evidence file: ", name)
+		errchan <- storeEvidenceFile(infile)
 	}
-
-	if bytes.HasPrefix(infile.GetID(), []byte(constant.PartitionFileNamespace)) {
-		return storePartitionFile(infile)
-	}
-
-	return storeEvidenceFile(infile)
 }
 
 func storeIndexedFile(infile structs.InputFile) error {
@@ -77,10 +81,12 @@ func storeEvidenceFile(infile structs.InputFile) error {
 	if evidenceFile.Completed {
 		return nil
 	}
-	err = storeData(infile.GetMappedFile(), infile.GetStartIndex(), infile.GetSize(), infile.GetHash(), infile.GetDB())
+
+	err = storeEvidenceData(infile)
 	if err != nil {
 		return err
 	}
+
 	evidenceFile.Completed = true
 	return setFile(infile.GetID(), evidenceFile, infile.GetDB())
 }
@@ -111,30 +117,30 @@ func evidenceFilePreflight(infile structs.InputFile) (structs.EvidenceFile, erro
 	err = setFile(infile.GetID(), evidenceFile, infile.GetDB())
 	return evidenceFile, err
 }
-func storeData(mappedFile mmap.MMap, start, size int64, fhash []byte, db *badger.DB) error {
-	batch := db.NewWriteBatch()
+func storeEvidenceData(infile structs.InputFile) error {
+	batch := infile.GetDB().NewWriteBatch()
 	batch.SetMaxPendingTxns(constant.MaxBatchCount)
 	var buffSize int64
 	var active int
 
-	bar := progressbar.DefaultBytes(size)
-	fmt.Printf("\nSaving File\n")
+	bar := progressbar.DefaultBytes(infile.GetSize())
+	fmt.Printf("\nSaving Evidence File\n")
 
 	var tio structs.ThreadIO
-	tio.FHash = fhash
-	tio.DB = db
+	tio.FHash = infile.GetHash()
+	tio.DB = infile.GetDB()
 	tio.Batch = batch
 	tio.Err = make(chan error, constant.MaxThreadCount)
-	tio.MappedFile = mappedFile
+	tio.MappedFile = infile.GetMappedFile()
 
-	for storeIndex := start; ; storeIndex += constant.ChonkSize {
-		if storeIndex > size {
+	for storeIndex := infile.GetStartIndex(); ; storeIndex += constant.ChonkSize {
+		if storeIndex > infile.GetSize() {
 			break
 		}
 		tio.Index = storeIndex
 
-		if size-storeIndex <= constant.ChonkSize {
-			buffSize = size - storeIndex
+		if infile.GetSize()-storeIndex <= constant.ChonkSize {
+			buffSize = infile.GetSize() - storeIndex
 		} else {
 			buffSize = constant.ChonkSize
 		}

@@ -27,7 +27,8 @@ func main() {
 	dbpath, err := util.GetDBPath()
 	handle(nil, nil, err)
 
-	db, err := store.ConnectDB(dbpath)
+	key := util.GetPassword()
+	db, err := store.ConnectDB(dbpath, key)
 	handle(nil, db, err)
 
 	switch strings.ToLower(os.Args[1]) {

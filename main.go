@@ -25,10 +25,10 @@ func main() {
 		os.Exit(1)
 	}
 	dbpath, err := util.GetDBPath()
-	handle(nil, err)
+	handle(nil, nil, err)
 
 	db, err := store.ConnectDB(dbpath)
-	handle(db, err)
+	handle(nil, db, err)
 
 	switch strings.ToLower(os.Args[1]) {
 	case constant.CmdStore:
@@ -39,9 +39,9 @@ func main() {
 		err = restoreData(db)
 	}
 
-	handle(db, err)
+	handle(nil, db, err)
 	err = db.Close()
-	handle(db, err)
+	handle(nil, db, err)
 }
 
 func storeData(db *badger.DB) error {
@@ -56,14 +56,14 @@ func storeData(db *badger.DB) error {
 	}
 
 	eviFile, err := initEvidenceFile(db, os.Args[3])
-	handle(db, err)
+	handle(eviFile.GetMappedFile(), db, err)
 
 	partitions, err := parser.GetPartitions(eviFile.GetHandle(), eviFile.GetSize())
-	handle(db, err)
+	handle(eviFile.GetMappedFile(), db, err)
 
 	for index, partition := range partitions {
 		phash, err := util.GetLogicalFileHash(eviFile.GetHandle(), partition.Start, partition.Size)
-		handle(db, err)
+		handle(eviFile.GetMappedFile(), db, err)
 		eviFile.UpdateInternalObjects(phash)
 
 		ehash, err := eviFile.GetEncodedHash()
@@ -90,15 +90,23 @@ func storeData(db *badger.DB) error {
 			fmt.Println(err, "...continuing")
 			continue
 		}
-		handle(db, err)
+		handle(eviFile.GetMappedFile(), db, err)
 	}
 
 	// errChannel := make(chan error)
-	store.Store(eviFile)
+	err = store.Store(eviFile)
+	if err != nil {
+		return err
+	}
 	// if <-errChannel != nil {
 	// 	return <-errChannel
 	// }
 
+	mapped := eviFile.GetMappedFile()
+	err = mapped.Unmap()
+	if err != nil {
+		return err
+	}
 	fmt.Println("Evidence Store Time: ", time.Since(start))
 	return nil
 }
@@ -192,12 +200,16 @@ func getRestoreFileID(ftype, fhashString string) ([]byte, error) {
 	}
 }
 
-func handle(db *badger.DB, err error) {
+func handle(mappedFile mmap.MMap, db *badger.DB, err error) {
 	if err != nil {
 		fmt.Printf("\n\n%v\n\n", err)
 
 		if db != nil {
 			db.Close()
+		}
+
+		if mappedFile != nil {
+			mappedFile.Unmap()
 		}
 
 		os.Exit(1)

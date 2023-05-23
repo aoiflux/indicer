@@ -72,6 +72,10 @@ func getIndexedFile(key []byte, db *badger.DB) (structs.IndexedFile, error) {
 	return indexedFile, err
 }
 
+func setBatchNode(key, data []byte, batch *badger.WriteBatch) error {
+	encoded := s2.EncodeBest(nil, data)
+	return batch.Set(key, encoded)
+}
 func setNode(key, data []byte, db *badger.DB) error {
 	encoded := s2.EncodeBest(nil, data)
 	return db.Update(func(txn *badger.Txn) error {

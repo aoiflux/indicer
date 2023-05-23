@@ -112,14 +112,26 @@ func evidenceFilePreflight(infile structs.InputFile) (structs.EvidenceFile, erro
 	return evidenceFile, err
 }
 func storeData(mappedFile mmap.MMap, start, size int64, fhash []byte, db *badger.DB) error {
+	batch := db.NewWriteBatch()
+	batch.SetMaxPendingTxns(constant.MaxBatchCount)
 	var buffSize int64
+	var active int
+
 	bar := progressbar.DefaultBytes(size)
 	fmt.Printf("\nSaving File\n")
+
+	var tio structs.ThreadIO
+	tio.FHash = fhash
+	tio.DB = db
+	tio.Batch = batch
+	tio.Err = make(chan error, constant.MaxThreadCount)
+	tio.MappedFile = mappedFile
 
 	for storeIndex := start; ; storeIndex += constant.ChonkSize {
 		if storeIndex > size {
 			break
 		}
+		tio.Index = storeIndex
 
 		if size-storeIndex <= constant.ChonkSize {
 			buffSize = size - storeIndex
@@ -127,45 +139,69 @@ func storeData(mappedFile mmap.MMap, start, size int64, fhash []byte, db *badger
 			buffSize = constant.ChonkSize
 		}
 
-		err := storeWorker(mappedFile, storeIndex, storeIndex+buffSize, fhash, db)
+		tio.End = storeIndex + buffSize
+		go storeWorker(tio)
+		active++
+
+		if active > constant.MaxThreadCount {
+			err := <-tio.Err
+			if err != nil {
+				return err
+			}
+			active--
+			bar.Add64(buffSize)
+		}
+	}
+
+	for active > 0 {
+		err := <-tio.Err
 		if err != nil {
 			return err
 		}
-
-		bar.Add64(buffSize)
+		active--
+		bar.Add64(constant.ChonkSize)
 	}
 
-	bar.Add64(buffSize)
-	bar.Finish()
-	return nil
-}
-func storeWorker(mappedFile mmap.MMap, index, end int64, fhash []byte, db *badger.DB) error {
-	lostChonk := mappedFile[index:end]
-
-	chash, err := util.GetChonkHash(lostChonk)
+	err := tio.Batch.Flush()
 	if err != nil {
 		return err
 	}
-	ckey := append([]byte(constant.ChonkNamespace), chash...)
-	err = pingNode(ckey, db)
-	if err != nil && err == badger.ErrKeyNotFound {
-		err = setNode(ckey, lostChonk, db)
-		if err != nil {
-			return err
-		}
-	}
-	if err != nil && err != badger.ErrKeyNotFound {
-		return err
-	}
 
-	relKey := util.AppendToBytesSlice(constant.RelationNapespace, fhash, constant.PipeSeperator, index)
-	err = pingNode(relKey, db)
-	if err != nil && err == badger.ErrKeyNotFound {
-		return setNode(relKey, chash, db)
-	}
-	if err != nil && err != badger.ErrKeyNotFound {
-		return err
-	}
-
+	bar.Add64(constant.ChonkSize)
+	bar.Finish()
 	return nil
+}
+func storeWorker(tio structs.ThreadIO) {
+	lostChonk := tio.MappedFile[tio.Index:tio.End]
+
+	chash, err := util.GetChonkHash(lostChonk)
+	if err != nil {
+		tio.Err <- err
+	}
+	err = processChonk(lostChonk, chash, tio.DB, tio.Batch)
+	if err != nil {
+		tio.Err <- err
+	}
+
+	tio.Err <- processRel(tio.Index, tio.FHash, chash, tio.DB, tio.Batch)
+}
+func processChonk(cdata, chash []byte, db *badger.DB, batch *badger.WriteBatch) error {
+	ckey := append([]byte(constant.ChonkNamespace), chash...)
+
+	err := pingNode(ckey, db)
+	if err != nil && err == badger.ErrKeyNotFound {
+		return setBatchNode(ckey, cdata, batch)
+	}
+
+	return err
+}
+func processRel(index int64, fhash, chash []byte, db *badger.DB, batch *badger.WriteBatch) error {
+	relKey := util.AppendToBytesSlice(constant.RelationNapespace, fhash, constant.PipeSeperator, index)
+
+	err := pingNode(relKey, db)
+	if err != nil && err == badger.ErrKeyNotFound {
+		return setBatchNode(relKey, chash, batch)
+	}
+
+	return err
 }

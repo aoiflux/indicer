@@ -26,6 +26,8 @@ func ConnectDB(datadir string, key []byte) (*badger.DB, error) {
 	opts.ZSTDCompressionLevel = 15
 	opts.EncryptionKey = key
 	opts.EncryptionKeyRotationDuration = time.Hour * 12
+	opts.MetricsEnabled = false
+	opts.ChecksumVerificationMode = options.OnTableRead
 	return badger.Open(opts)
 }
 

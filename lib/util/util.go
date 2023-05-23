@@ -1,7 +1,9 @@
 package util
 
 import (
+	"bufio"
 	"bytes"
+	"crypto/sha256"
 	"fmt"
 	"indicer/lib/constant"
 	"io"
@@ -125,4 +127,12 @@ func AppendToBytesSlice(args ...interface{}) []byte {
 	}
 
 	return buffer.Bytes()
+}
+
+func GetPassword() []byte {
+	reader := bufio.NewReader(os.Stdin)
+	fmt.Print("Password: ")
+	text, _ := reader.ReadString('\n')
+	hash := sha256.Sum256([]byte(text))
+	return hash[:]
 }

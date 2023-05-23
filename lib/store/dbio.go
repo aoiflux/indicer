@@ -4,13 +4,14 @@ import (
 	"encoding/json"
 	"indicer/lib/constant"
 	"indicer/lib/structs"
+	"time"
 
 	"github.com/dgraph-io/badger/v3"
 	"github.com/dgraph-io/badger/v3/options"
 	"github.com/klauspost/compress/s2"
 )
 
-func ConnectDB(datadir string) (*badger.DB, error) {
+func ConnectDB(datadir string, key []byte) (*badger.DB, error) {
 	cacheLimit, err := constant.GetCacheLimit()
 	if err != nil {
 		return nil, err
@@ -23,6 +24,8 @@ func ConnectDB(datadir string) (*badger.DB, error) {
 	opts.BlockCacheSize = cacheLimit
 	opts.Compression = options.ZSTD
 	opts.ZSTDCompressionLevel = 15
+	opts.EncryptionKey = key
+	opts.EncryptionKeyRotationDuration = time.Hour * 12
 	return badger.Open(opts)
 }
 

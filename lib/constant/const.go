@@ -20,6 +20,7 @@ const (
 	SectorSize       uint64 = 512
 	MaxBatchCount           = 1024 * 10
 	DefaultChonkSize        = 256 * KB
+	KeySize                 = 32
 )
 
 var MaxThreadCount = runtime.NumCPU()

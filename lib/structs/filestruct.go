@@ -3,13 +3,13 @@ package structs
 import "indicer/lib/constant"
 
 type baseFile struct {
-	Names []string `json:"names"`
-	Size  int64    `json:"size"`
+	Names []string `msgpack:"names"`
+	Size  int64    `msgpack:"size"`
 }
 type IndexedFile struct {
 	baseFile
-	Start   int64 `json:"start"`
-	DBStart int64 `json:"dbstart"`
+	Start   int64 `msgpack:"start"`
+	DBStart int64 `msgpack:"dbstart"`
 }
 
 func NewIndexedFile(name string, start, size int64) IndexedFile {
@@ -19,7 +19,7 @@ func NewIndexedFile(name string, start, size int64) IndexedFile {
 
 type PartitionFile struct {
 	IndexedFile
-	InternalObjects [][]byte `json:"internal_objects"`
+	InternalObjects [][]byte `msgpack:"internal_objects"`
 }
 
 func NewPartitionFile(name string, start, size int64, indexedFiles [][]byte) PartitionFile {
@@ -29,7 +29,7 @@ func NewPartitionFile(name string, start, size int64, indexedFiles [][]byte) Par
 
 type EvidenceFile struct {
 	PartitionFile
-	Completed bool `json:"completed"`
+	Completed bool `msgpack:"completed"`
 }
 
 func NewEvidenceFile(name string, start, size int64, partitions [][]byte) EvidenceFile {

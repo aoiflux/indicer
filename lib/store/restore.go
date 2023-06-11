@@ -5,6 +5,7 @@ import (
 	"encoding/base64"
 	"fmt"
 	"indicer/lib/constant"
+	"indicer/lib/dbio"
 	"indicer/lib/util"
 	"math"
 	"os"
@@ -48,7 +49,7 @@ func getEvidenceFileID(eviFileHash []byte) []byte {
 }
 func checkCompleted(ehash []byte, db *badger.DB) error {
 	eid := getEvidenceFileID(ehash)
-	eviFile, err := getEvidenceFile(eid, db)
+	eviFile, err := dbio.GetEvidenceFile(eid, db)
 	if err != nil {
 		return err
 	}
@@ -59,7 +60,7 @@ func checkCompleted(ehash []byte, db *badger.DB) error {
 }
 
 func restoreIndexedFile(fid []byte, dst *os.File, db *badger.DB) error {
-	indexedFile, err := getIndexedFile(fid, db)
+	indexedFile, err := dbio.GetIndexedFile(fid, db)
 	if err != nil {
 		return err
 	}
@@ -74,7 +75,7 @@ func restoreIndexedFile(fid []byte, dst *os.File, db *badger.DB) error {
 
 	if indexedFile.DBStart == constant.IgnoreVar {
 		indexedFile.DBStart = getDBStartOffset(indexedFile.Start)
-		err = setFile(fid, indexedFile, db)
+		err = dbio.SetFile(fid, indexedFile, db)
 		if err != nil {
 			return err
 		}
@@ -83,7 +84,7 @@ func restoreIndexedFile(fid []byte, dst *os.File, db *badger.DB) error {
 	return restoreData(ehash, indexedFile.Start, indexedFile.DBStart, indexedFile.Size, dst, db)
 }
 func restorePartitionFile(fid []byte, dst *os.File, db *badger.DB) error {
-	partitionFile, err := getPartitionFile(fid, db)
+	partitionFile, err := dbio.GetPartitionFile(fid, db)
 	if err != nil {
 		return err
 	}
@@ -98,7 +99,7 @@ func restorePartitionFile(fid []byte, dst *os.File, db *badger.DB) error {
 
 	if partitionFile.DBStart == constant.IgnoreVar {
 		partitionFile.DBStart = getDBStartOffset(partitionFile.Start)
-		err = setFile(fid, partitionFile, db)
+		err = dbio.SetFile(fid, partitionFile, db)
 		if err != nil {
 			return err
 		}
@@ -107,7 +108,7 @@ func restorePartitionFile(fid []byte, dst *os.File, db *badger.DB) error {
 	return restoreData(ehash, partitionFile.Start, partitionFile.DBStart, partitionFile.Size, dst, db)
 }
 func restoreEvidenceFile(fid []byte, dst *os.File, db *badger.DB) error {
-	evidenceFile, err := getEvidenceFile(fid, db)
+	evidenceFile, err := dbio.GetEvidenceFile(fid, db)
 	if err != nil {
 		return err
 	}
@@ -127,13 +128,13 @@ func restoreData(ehash []byte, start, dbstart, size int64, dst *os.File, db *bad
 		}
 
 		relKey := util.AppendToBytesSlice(constant.RelationNapespace, ehash, constant.PipeSeperator, restoreIndex)
-		chash, err := getNode(relKey, db)
+		chash, err := dbio.GetNode(relKey, db)
 		if err != nil {
 			return err
 		}
 
 		ckey := append([]byte(constant.ChonkNamespace), chash...)
-		data, err := getNode(ckey, db)
+		data, err := dbio.GetNode(ckey, db)
 		if err != nil {
 			return err
 		}

@@ -9,7 +9,6 @@
             "program": "N:\\research\\indicer\\main.go",
             "args": [
                 "store",
-                "N:\\research\\indicer\\data",
                 "N:\\research\\testdata\\gb1.dd",
             ],
         },
@@ -20,8 +19,7 @@
             "mode": "auto",
             "program": "N:\\research\\indicer\\main.go",
             "args": [
-                "list",
-                "N:\\research\\indicer\\data"
+                "list"
             ],
         },
         {
@@ -32,7 +30,6 @@
             "program": "N:\\research\\indicer\\main.go",
             "args": [
                 "restore",
-                "N:\\research\\indicer\\data",
                 "indexed",
                 "F22vztNaD3/SPtg2XM8HVPL02ZGGH79F+sswMECIW1U=",
                 "N:\\research\\indicer\\test"

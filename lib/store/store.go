@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"fmt"
 	"indicer/lib/constant"
+	"indicer/lib/dbio"
 	"indicer/lib/structs"
 	"indicer/lib/util"
 	"strings"
@@ -30,14 +31,14 @@ func Store(infile structs.InputFile, errchan chan error) {
 }
 
 func storeIndexedFile(infile structs.InputFile) error {
-	indexedFile, err := getIndexedFile(infile.GetID(), infile.GetDB())
+	indexedFile, err := dbio.GetIndexedFile(infile.GetID(), infile.GetDB())
 	if err != nil && err == badger.ErrKeyNotFound {
 		indexedFile = structs.NewIndexedFile(
 			infile.GetName(),
 			infile.GetStartIndex(),
 			infile.GetSize(),
 		)
-		return setFile(infile.GetID(), indexedFile, infile.GetDB())
+		return dbio.SetFile(infile.GetID(), indexedFile, infile.GetDB())
 	}
 	if err != nil && err != badger.ErrKeyNotFound {
 		return err
@@ -48,10 +49,10 @@ func storeIndexedFile(infile structs.InputFile) error {
 	}
 
 	indexedFile.Names = append(indexedFile.Names, infile.GetName())
-	return setFile(infile.GetID(), indexedFile, infile.GetDB())
+	return dbio.SetFile(infile.GetID(), indexedFile, infile.GetDB())
 }
 func storePartitionFile(infile structs.InputFile) error {
-	partitionFile, err := getPartitionFile(infile.GetID(), infile.GetDB())
+	partitionFile, err := dbio.GetPartitionFile(infile.GetID(), infile.GetDB())
 	if err != nil && err == badger.ErrKeyNotFound {
 		partitionFile = structs.NewPartitionFile(
 			infile.GetName(),
@@ -59,7 +60,7 @@ func storePartitionFile(infile structs.InputFile) error {
 			infile.GetSize(),
 			infile.GetInternalObjects(),
 		)
-		return setFile(infile.GetID(), partitionFile, infile.GetDB())
+		return dbio.SetFile(infile.GetID(), partitionFile, infile.GetDB())
 	}
 	if err != nil && err != badger.ErrKeyNotFound {
 		return err
@@ -70,7 +71,7 @@ func storePartitionFile(infile structs.InputFile) error {
 	}
 
 	partitionFile.Names = append(partitionFile.Names, infile.GetName())
-	return setFile(infile.GetID(), partitionFile, infile.GetDB())
+	return dbio.SetFile(infile.GetID(), partitionFile, infile.GetDB())
 }
 
 func storeEvidenceFile(infile structs.InputFile) error {
@@ -88,10 +89,10 @@ func storeEvidenceFile(infile structs.InputFile) error {
 	}
 
 	evidenceFile.Completed = true
-	return setFile(infile.GetID(), evidenceFile, infile.GetDB())
+	return dbio.SetFile(infile.GetID(), evidenceFile, infile.GetDB())
 }
 func evidenceFilePreflight(infile structs.InputFile) (structs.EvidenceFile, error) {
-	evidenceFile, err := getEvidenceFile(infile.GetID(), infile.GetDB())
+	evidenceFile, err := dbio.GetEvidenceFile(infile.GetID(), infile.GetDB())
 	if err != nil && err == badger.ErrKeyNotFound {
 		evidenceFile := structs.NewEvidenceFile(
 			infile.GetName(),
@@ -99,7 +100,7 @@ func evidenceFilePreflight(infile structs.InputFile) (structs.EvidenceFile, erro
 			infile.GetSize(),
 			infile.GetInternalObjects(),
 		)
-		err = setFile(infile.GetID(), evidenceFile, infile.GetDB())
+		err = dbio.SetFile(infile.GetID(), evidenceFile, infile.GetDB())
 		return evidenceFile, err
 	}
 	if err != nil && err != badger.ErrKeyNotFound {
@@ -114,7 +115,7 @@ func evidenceFilePreflight(infile structs.InputFile) (structs.EvidenceFile, erro
 	}
 
 	evidenceFile.Names = append(evidenceFile.Names, infile.GetName())
-	err = setFile(infile.GetID(), evidenceFile, infile.GetDB())
+	err = dbio.SetFile(infile.GetID(), evidenceFile, infile.GetDB())
 	return evidenceFile, err
 }
 func storeEvidenceData(infile structs.InputFile) error {
@@ -188,15 +189,19 @@ func storeWorker(tio structs.ThreadIO) {
 	if err != nil {
 		tio.Err <- err
 	}
+	err = processRel(tio.Index, tio.FHash, chash, tio.DB, tio.Batch)
+	if err != nil {
+		tio.Err <- err
+	}
 
-	tio.Err <- processRel(tio.Index, tio.FHash, chash, tio.DB, tio.Batch)
+	tio.Err <- processRevRel(tio.Index, tio.FHash, chash, tio.DB)
 }
 func processChonk(cdata, chash []byte, db *badger.DB, batch *badger.WriteBatch) error {
 	ckey := append([]byte(constant.ChonkNamespace), chash...)
 
-	err := pingNode(ckey, db)
+	err := dbio.PingNode(ckey, db)
 	if err != nil && err == badger.ErrKeyNotFound {
-		return setBatchNode(ckey, cdata, batch)
+		return dbio.SetBatchNode(ckey, cdata, batch)
 	}
 
 	return err
@@ -204,10 +209,23 @@ func processChonk(cdata, chash []byte, db *badger.DB, batch *badger.WriteBatch) 
 func processRel(index int64, fhash, chash []byte, db *badger.DB, batch *badger.WriteBatch) error {
 	relKey := util.AppendToBytesSlice(constant.RelationNapespace, fhash, constant.PipeSeperator, index)
 
-	err := pingNode(relKey, db)
+	err := dbio.PingNode(relKey, db)
 	if err != nil && err == badger.ErrKeyNotFound {
-		return setBatchNode(relKey, chash, batch)
+		return dbio.SetBatchNode(relKey, chash, batch)
 	}
 
 	return err
+}
+func processRevRel(index int64, fhash, chash []byte, db *badger.DB) error {
+	relVal := util.AppendToBytesSlice(constant.RelationNapespace, fhash, constant.PipeSeperator, index)
+	revRelKey := util.AppendToBytesSlice(constant.ReverseRelationNamespace, chash)
+
+	revRelList, err := dbio.GetReverseRelationNode(revRelKey, db)
+	revRelNode := structs.ReverseRelation{Value: relVal}
+	if err != nil && err == badger.ErrKeyNotFound {
+		return dbio.SetReverseRelationNode(revRelKey, []structs.ReverseRelation{revRelNode}, db)
+	}
+
+	revRelList = append(revRelList, revRelNode)
+	return dbio.SetReverseRelationNode(revRelKey, revRelList, db)
 }

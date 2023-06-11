@@ -3,13 +3,13 @@ package store
 import (
 	"bytes"
 	"encoding/base64"
-	"encoding/json"
 	"fmt"
 	"indicer/lib/constant"
 	"indicer/lib/structs"
 
 	"github.com/dgraph-io/badger/v3"
 	"github.com/klauspost/compress/s2"
+	"github.com/vmihailenco/msgpack/v5"
 )
 
 func List(db *badger.DB) error {
@@ -34,7 +34,7 @@ func List(db *badger.DB) error {
 			}
 
 			var evidata structs.EvidenceFile
-			err = json.Unmarshal(decoded, &evidata)
+			err = msgpack.Unmarshal(decoded, &evidata)
 			if err != nil {
 				return err
 			}
@@ -73,7 +73,7 @@ func listPartitions(phash []byte, txn *badger.Txn) error {
 		return err
 	}
 	var pdata structs.PartitionFile
-	err = json.Unmarshal(decoded, &pdata)
+	err = msgpack.Unmarshal(decoded, &pdata)
 	if err != nil {
 		return err
 	}

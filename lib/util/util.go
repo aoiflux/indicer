@@ -9,34 +9,34 @@ import (
 	"os"
 	"path/filepath"
 	"strconv"
-	"syscall"
 	"time"
 
 	"github.com/cheggaaa/pb/v3"
 	"github.com/diskfs/go-diskfs/partition/mbr"
 	"github.com/zeebo/blake3"
-	"golang.org/x/crypto/ssh/terminal"
+	"golang.org/x/term"
 )
 
 func GetDBPath() (string, error) {
-	path := os.Args[2]
-	finfo, err := os.Stat(path)
+	const dbdir = ".indicer"
 
-	if os.IsNotExist(err) {
-		err = os.MkdirAll(path, os.ModeDir)
-		return path, err
+	path, err := os.UserHomeDir()
+	if err != nil {
+		path, err = os.Getwd()
+		if err != nil {
+			return "", err
+		}
 	}
 
-	if !finfo.IsDir() {
-		path = filepath.Dir(path)
-	}
-
-	abspath, err := filepath.Abs(path)
+	fullpath, err := filepath.Abs(path)
 	if err != nil {
 		return "", err
 	}
 
-	return abspath, err
+	dbpath := filepath.Join(fullpath, dbdir)
+	err = os.MkdirAll(dbpath, os.ModeDir)
+
+	return dbpath, err
 }
 
 func SetChonkSize(chonkSizeString string) {
@@ -144,7 +144,7 @@ func GetPassword() []byte {
 }
 
 func readPassword() ([]byte, error) {
-	password, err := terminal.ReadPassword(int(syscall.Stdin))
+	password, err := term.ReadPassword(int(os.Stdin.Fd()))
 	if err != nil {
 		return nil, err
 	}

@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"indicer/lib/constant"
+	"indicer/lib/dbio"
 	"indicer/lib/parser"
 	"indicer/lib/store"
 	"indicer/lib/structs"
@@ -16,47 +17,56 @@ import (
 
 	"github.com/dgraph-io/badger/v3"
 	"github.com/edsrzf/mmap-go"
+	"github.com/fatih/color"
 )
 
 func main() {
-	if len(os.Args) < 3 {
-		fmt.Println("indicer <store|list|restore> <db_path>")
+	if len(os.Args) < 2 {
+		fmt.Println("indicer <store|list|restore|near|reset>")
 		os.Exit(1)
 	}
 
 	dbpath, err := util.GetDBPath()
 	handle(nil, nil, err)
 
-	key := util.GetPassword()
-	db, err := store.ConnectDB(dbpath, key)
-	handle(nil, db, err)
+	command := strings.ToLower(os.Args[1])
 
-	switch strings.ToLower(os.Args[1]) {
+	var db *badger.DB
+	if command != constant.CmdReset {
+		key := util.GetPassword()
+		db, err = dbio.ConnectDB(dbpath, key)
+		handle(nil, db, err)
+		defer db.Close()
+	}
+
+	switch command {
 	case constant.CmdStore:
 		err = storeData(db)
 	case constant.CmdList:
 		err = listData(db)
 	case constant.CmdRestore:
 		err = restoreData(db)
+	case constant.CmdNear:
+		err = nearData(db)
+	case constant.CmdReset:
+		err = resetDatabase(dbpath)
 	}
-	handle(nil, db, err)
 
-	err = db.Close()
 	handle(nil, db, err)
 }
 
 func storeData(db *badger.DB) error {
 	start := time.Now()
 
-	if len(os.Args) < 4 {
-		return errors.New("indicer store [db_path] <src_file_path> [chonk_size_in_kb]")
+	if len(os.Args) < 3 {
+		return errors.New("indicer store <src_file_path> [chonk_size_in_kb]")
 	}
 
-	if len(os.Args) > 4 {
-		util.SetChonkSize(os.Args[4])
+	if len(os.Args) > 3 {
+		util.SetChonkSize(os.Args[3])
 	}
 
-	eviFile, err := initEvidenceFile(db, os.Args[3])
+	eviFile, err := initEvidenceFile(db, os.Args[2])
 	handle(eviFile.GetMappedFile(), db, err)
 
 	partitions, err := parser.GetPartitions(eviFile.GetHandle(), eviFile.GetSize())
@@ -150,22 +160,22 @@ func listData(db *badger.DB) error {
 func restoreData(db *badger.DB) error {
 	start := time.Now()
 
-	if len(os.Args) < 6 {
-		return errors.New("indicer restore <db_path> <evidence|partition|indexed> <hash> <dstfilepath> [chonk_size_in_kb]")
+	if len(os.Args) < 5 {
+		return errors.New("indicer restore <evidence|partition|indexed> <hash> <dstfilepath> [chonk_size_in_kb]")
 	}
 
-	fhandle, err := os.Create(os.Args[5])
+	fhandle, err := os.Create(os.Args[4])
 	if err != nil {
 		return err
 	}
 
-	fid, err := getRestoreFileID(os.Args[3], os.Args[4])
+	fid, err := getRestoreFileID(os.Args[2], os.Args[3])
 	if err != nil {
 		return err
 	}
 
-	if len(os.Args) > 6 {
-		util.SetChonkSize(os.Args[6])
+	if len(os.Args) > 5 {
+		util.SetChonkSize(os.Args[5])
 	}
 
 	fmt.Println("Restoring file ...")
@@ -176,6 +186,31 @@ func restoreData(db *badger.DB) error {
 
 	fmt.Println("Restored in: ", time.Since(start))
 	return nil
+}
+
+func nearData(db *badger.DB) error {
+	if len(os.Args) < 4 {
+		return errors.New("indicer near <in|out> <hash|file_path>\n\tUse option in to get NeAR of files inside the database, provide a hash string\n\tUse option out to get NeAR of files outside of the database, provide a path")
+	}
+
+	return nil
+}
+
+func resetDatabase(dbpath string) error {
+	color.Red("WARNING! This command will DELETE ALL the saved files.")
+	fmt.Printf("Are you sure about this? [y/N] ")
+
+	var in string
+	fmt.Scanln(&in)
+	in = strings.ToLower(in)
+
+	if in != "y" {
+		color.Blue("Your data is SAFE!")
+		return nil
+	}
+
+	color.Red("Deleting ALL data!")
+	return os.RemoveAll(dbpath)
 }
 
 func getRestoreFileID(ftype, fhashString string) ([]byte, error) {

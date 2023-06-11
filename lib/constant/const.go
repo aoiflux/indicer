@@ -27,15 +27,16 @@ var MaxThreadCount = runtime.NumCPU()
 var ChonkSize = DefaultChonkSize
 
 const (
-	EvidenceFileNamespace  = "E|||:"
-	PartitionFileNamespace = "P|||:"
-	IndexedFileNamespace   = "I|||:"
-	RelationNapespace      = "R|||:"
-	ChonkNamespace         = "C|||:"
-	NamespaceSeperator     = "|||:"
-	PipeSeperator          = "|"
-	FilePathSeperator      = "|||"
-	PartitionIndexPrefix   = "p"
+	EvidenceFileNamespace    = "E|||:"
+	PartitionFileNamespace   = "P|||:"
+	IndexedFileNamespace     = "I|||:"
+	RelationNapespace        = "R|||:"
+	ReverseRelationNamespace = "Я|||:"
+	ChonkNamespace           = "C|||:"
+	NamespaceSeperator       = "|||:"
+	PipeSeperator            = "|"
+	FilePathSeperator        = "|||"
+	PartitionIndexPrefix     = "p"
 
 	EvidenceFileType  = "evidence"
 	PartitionFileType = "partition"
@@ -58,6 +59,8 @@ const (
 	CmdStore   = "store"
 	CmdList    = "list"
 	CmdRestore = "restore"
+	CmdNear    = "near"
+	CmdReset   = "reset"
 
 	SubCmdEvi       = "evi"
 	SubCmdPartition = "partition"

@@ -27,10 +27,10 @@ var MaxThreadCount = runtime.NumCPU()
 var ChonkSize = DefaultChonkSize
 
 const (
-	EvidenceFileNamespace    = "E|||:"
-	PartitionFileNamespace   = "P|||:"
-	IndexedFileNamespace     = "I|||:"
-	RelationNapespace        = "R|||:"
+	EviFileNamespace         = "E|||:"
+	PartiFileNamespace       = "P|||:"
+	IdxFileNamespace         = "I|||:"
+	RelationNamespace        = "R|||:"
 	ReverseRelationNamespace = "Я|||:"
 	ChonkNamespace           = "C|||:"
 	NamespaceSeperator       = "|||:"

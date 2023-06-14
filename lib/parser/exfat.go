@@ -52,7 +52,7 @@ func IndexEXFAT(db *badger.DB, pfile structs.InputFile) error {
 			pfile.GetHandle(),
 			pfile.GetMappedFile(),
 			iname,
-			cnst.IndexedFileNamespace,
+			cnst.IdxFileNamespace,
 			ihash,
 			isize,
 			istart,

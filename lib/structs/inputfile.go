@@ -77,7 +77,7 @@ func (i InputFile) GetInternalObjects() [][]byte {
 	return i.internalObjects
 }
 func (i InputFile) GetEviFileHash() []byte {
-	if strings.HasPrefix(i.name, cnst.EvidenceFileNamespace) {
+	if strings.HasPrefix(i.name, cnst.EviFileNamespace) {
 		return i.GetHash()
 	}
 	ehashString := strings.Split(i.name, cnst.FilePathSeperator)[0]

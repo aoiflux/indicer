@@ -16,10 +16,10 @@ func Restore(fhash string, dst *os.File, db *badger.DB) error {
 	if err != nil {
 		return err
 	}
-	if bytes.HasPrefix(fid, []byte(cnst.IndexedFileNamespace)) {
+	if bytes.HasPrefix(fid, []byte(cnst.IdxFileNamespace)) {
 		return restoreIndexedFile(fid, dst, db)
 	}
-	if bytes.HasPrefix(fid, []byte(cnst.PartitionFileNamespace)) {
+	if bytes.HasPrefix(fid, []byte(cnst.PartiFileNamespace)) {
 		return restorePartitionFile(fid, dst, db)
 	}
 	return restoreEvidenceFile(fid, dst, db)
@@ -93,7 +93,7 @@ func restoreEvidenceFile(fid []byte, dst *os.File, db *badger.DB) error {
 	if !evidenceFile.Completed {
 		return cnst.ErrIncompleteFile
 	}
-	ehash := bytes.Split(fid, []byte(cnst.EvidenceFileNamespace))[1]
+	ehash := bytes.Split(fid, []byte(cnst.EviFileNamespace))[1]
 	return restoreData(evidenceFile.Start, 0, evidenceFile.Size, ehash, dst, db)
 }
 
@@ -101,7 +101,7 @@ func restoreData(start, dbstart, size int64, ehash []byte, dst *os.File, db *bad
 	end := start + size
 
 	for restoreIndex := dbstart; restoreIndex <= end; restoreIndex += cnst.ChonkSize {
-		relKey := util.AppendToBytesSlice(cnst.RelationNapespace, ehash, cnst.PipeSeperator, restoreIndex)
+		relKey := util.AppendToBytesSlice(cnst.RelationNamespace, ehash, cnst.PipeSeperator, restoreIndex)
 		chash, err := dbio.GetNode(relKey, db)
 		if err != nil {
 			return err

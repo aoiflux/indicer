@@ -70,7 +70,6 @@ func storeData(db *badger.DB) error {
 	handle(eviFile.GetMappedFile(), db, err)
 
 	partitions := parser.GetPartitions(eviFile.GetHandle(), eviFile.GetSize())
-
 	for index, partition := range partitions {
 		phash, err := util.GetLogicalFileHash(eviFile.GetHandle(), partition.Start, partition.Size)
 		handle(eviFile.GetMappedFile(), db, err)
@@ -88,7 +87,7 @@ func storeData(db *badger.DB) error {
 			eviFile.GetHandle(),
 			eviFile.GetMappedFile(),
 			pname,
-			cnst.PartitionFileNamespace,
+			cnst.PartiFileNamespace,
 			phash,
 			partition.Size,
 			partition.Start,
@@ -143,7 +142,7 @@ func initEvidenceFile(db *badger.DB, evifilepath string) (structs.InputFile, err
 		eviHandle,
 		mappedFile,
 		eviFileName,
-		cnst.EvidenceFileNamespace,
+		cnst.EviFileNamespace,
 		eviFileHash,
 		eviSize,
 		0,

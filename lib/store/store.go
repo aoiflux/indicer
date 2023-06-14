@@ -18,10 +18,10 @@ func Store(infile structs.InputFile, errchan chan error) {
 	names := strings.Split(infile.GetName(), cnst.FilePathSeperator)
 	name := names[len(names)-1]
 
-	if bytes.HasPrefix(infile.GetID(), []byte(cnst.IndexedFileNamespace)) {
+	if bytes.HasPrefix(infile.GetID(), []byte(cnst.IdxFileNamespace)) {
 		fmt.Println("Saving indexed file: ", name)
 		errchan <- storeIndexedFile(infile)
-	} else if bytes.HasPrefix(infile.GetID(), []byte(cnst.PartitionFileNamespace)) {
+	} else if bytes.HasPrefix(infile.GetID(), []byte(cnst.PartiFileNamespace)) {
 		fmt.Println("Saving partition file: ", name)
 		errchan <- storePartitionFile(infile)
 	} else {
@@ -204,7 +204,7 @@ func processChonk(cdata, chash []byte, db *badger.DB, batch *badger.WriteBatch) 
 	return err
 }
 func processRel(index int64, fhash, chash []byte, db *badger.DB, batch *badger.WriteBatch) error {
-	relKey := util.AppendToBytesSlice(cnst.RelationNapespace, fhash, cnst.PipeSeperator, index)
+	relKey := util.AppendToBytesSlice(cnst.RelationNamespace, fhash, cnst.PipeSeperator, index)
 
 	err := dbio.PingNode(relKey, db)
 	if err != nil && err == badger.ErrKeyNotFound {
@@ -214,7 +214,7 @@ func processRel(index int64, fhash, chash []byte, db *badger.DB, batch *badger.W
 	return err
 }
 func processRevRel(index int64, fhash, chash []byte, db *badger.DB) error {
-	relVal := util.AppendToBytesSlice(cnst.RelationNapespace, fhash, cnst.PipeSeperator, index)
+	relVal := util.AppendToBytesSlice(cnst.RelationNamespace, fhash, cnst.PipeSeperator, index)
 	revRelKey := util.AppendToBytesSlice(cnst.ReverseRelationNamespace, chash)
 
 	revRelList, err := dbio.GetReverseRelationNode(revRelKey, db)

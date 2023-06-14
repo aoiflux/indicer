@@ -19,7 +19,7 @@ func List(db *badger.DB) error {
 		it := txn.NewIterator(opts)
 		defer it.Close()
 
-		eviPrefix := []byte(cnst.EvidenceFileNamespace)
+		eviPrefix := []byte(cnst.EviFileNamespace)
 		for it.Seek(eviPrefix); it.ValidForPrefix(eviPrefix); it.Next() {
 			item := it.Item()
 			k := item.KeyCopy(nil)
@@ -59,7 +59,7 @@ func List(db *badger.DB) error {
 
 func listPartitions(phash []byte, txn *badger.Txn) error {
 	fmt.Println("Partition: ", base64.StdEncoding.EncodeToString(phash))
-	pid := append([]byte(cnst.PartitionFileNamespace), phash...)
+	pid := append([]byte(cnst.PartiFileNamespace), phash...)
 	item, err := txn.Get(pid)
 	if err != nil {
 		return err

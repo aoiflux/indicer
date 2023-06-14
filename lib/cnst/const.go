@@ -34,9 +34,8 @@ const (
 	ReverseRelationNamespace = "Я|||:"
 	ChonkNamespace           = "C|||:"
 	NamespaceSeperator       = "|||:"
-	PipeSeperator            = "|"
 	RangeSeperator           = "-"
-	FilePathSeperator        = "|||"
+	DataSeperator            = "|||"
 	PartitionIndexPrefix     = "p"
 
 	EviFType   = "evidence"

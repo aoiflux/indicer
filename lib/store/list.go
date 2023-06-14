@@ -45,6 +45,8 @@ func List(db *badger.DB) error {
 
 			evihash := bytes.Split(k, eviPrefix)[1]
 			fmt.Println(base64.StdEncoding.EncodeToString(evihash))
+			fmt.Printf("\t%v\n", evidata.Names)
+			fmt.Printf("\t%v\n", evidata.Size)
 			for _, phash := range evidata.InternalObjects {
 				err = listPartitions(phash, txn)
 				if err != nil {

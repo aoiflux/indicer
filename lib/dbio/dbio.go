@@ -31,11 +31,7 @@ func ConnectDB(datadir string, key []byte) (*badger.DB, error) {
 	return badger.Open(opts)
 }
 
-type FileTypes interface {
-	structs.IndexedFile | structs.PartitionFile | structs.EvidenceFile
-}
-
-func SetFile[T FileTypes](id []byte, filenode T, db *badger.DB) error {
+func SetFile[T structs.FileTypes](id []byte, filenode T, db *badger.DB) error {
 	data, err := msgpack.Marshal(filenode)
 	if err != nil {
 		return err

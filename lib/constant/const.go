@@ -49,6 +49,7 @@ var (
 	ErrIncompatibleFile       = errors.New("unknown/incompatible file detected")
 	ErrIncompatibleFileSystem = errors.New("unknown file system")
 	ErrUnknownFileType        = errors.New("unknown file type. please try one of the following: evidence|partition|indexed")
+	ErrIncorrectOption        = errors.New("indicer near <in|out> <hash|file_path>\n\tUse option in to get NeAR of files inside the database, provide a hash string\n\tUse option out to get NeAR of files outside of the database, provide a path")
 )
 
 const (
@@ -65,6 +66,9 @@ const (
 	SubCmdEvi       = "evi"
 	SubCmdPartition = "partition"
 	SubCmdIndexed   = "indexed"
+
+	InOptionIn  = "in"
+	InOptionOut = "out"
 )
 
 const IgnoreVar int64 = -1

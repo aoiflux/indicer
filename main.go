@@ -1,11 +1,11 @@
 package main
 
 import (
-	"encoding/base64"
 	"errors"
 	"fmt"
 	"indicer/lib/constant"
 	"indicer/lib/dbio"
+	"indicer/lib/near"
 	"indicer/lib/parser"
 	"indicer/lib/store"
 	"indicer/lib/structs"
@@ -33,7 +33,8 @@ func main() {
 
 	var db *badger.DB
 	if command != constant.CmdReset {
-		key := util.GetPassword()
+		// key := util.GetPassword()
+		key := []byte{}
 		db, err = dbio.ConnectDB(dbpath, key)
 		handle(nil, db, err)
 		defer db.Close()
@@ -160,26 +161,21 @@ func listData(db *badger.DB) error {
 func restoreData(db *badger.DB) error {
 	start := time.Now()
 
-	if len(os.Args) < 5 {
-		return errors.New("indicer restore <evidence|partition|indexed> <hash> <dstfilepath> [chonk_size_in_kb]")
+	if len(os.Args) < 4 {
+		return errors.New("indicer restore <hash> <dstfilepath> [chonk_size_in_kb]")
 	}
 
-	fhandle, err := os.Create(os.Args[4])
-	if err != nil {
-		return err
-	}
-
-	fid, err := getRestoreFileID(os.Args[2], os.Args[3])
+	fhandle, err := os.Create(os.Args[3])
 	if err != nil {
 		return err
 	}
 
 	if len(os.Args) > 5 {
-		util.SetChonkSize(os.Args[5])
+		util.SetChonkSize(os.Args[4])
 	}
 
 	fmt.Println("Restoring file ...")
-	err = store.Restore(db, fhandle, fid)
+	err = store.Restore(os.Args[2], fhandle, db)
 	if err != nil {
 		return err
 	}
@@ -190,10 +186,24 @@ func restoreData(db *badger.DB) error {
 
 func nearData(db *badger.DB) error {
 	if len(os.Args) < 4 {
-		return errors.New("indicer near <in|out> <hash|file_path>\n\tUse option in to get NeAR of files inside the database, provide a hash string\n\tUse option out to get NeAR of files outside of the database, provide a path")
+		return constant.ErrIncorrectOption
 	}
 
-	return nil
+	inoption := strings.ToLower(os.Args[2])
+	suboption := os.Args[3]
+
+	var err error
+
+	switch inoption {
+	case constant.InOptionIn:
+		err = near.NearInFile(suboption, db)
+	case constant.InOptionOut:
+		err = near.NearOutFile(suboption, db)
+	default:
+		return constant.ErrIncorrectOption
+	}
+
+	return err
 }
 
 func resetDatabase(dbpath string) error {
@@ -211,25 +221,6 @@ func resetDatabase(dbpath string) error {
 
 	color.Red("Deleting ALL data!")
 	return os.RemoveAll(dbpath)
-}
-
-func getRestoreFileID(ftype, fhashString string) ([]byte, error) {
-	fhash, err := base64.StdEncoding.DecodeString(fhashString)
-	if err != nil {
-		return nil, err
-	}
-
-	ftype = strings.ToLower(ftype)
-	switch ftype {
-	case constant.IndexedFileType:
-		return append([]byte(constant.IndexedFileNamespace), fhash...), nil
-	case constant.PartitionFileType:
-		return append([]byte(constant.PartitionFileNamespace), fhash...), nil
-	case constant.EvidenceFileType:
-		return append([]byte(constant.EvidenceFileNamespace), fhash...), nil
-	default:
-		return nil, constant.ErrUnknownFileType
-	}
 }
 
 func handle(mappedFile mmap.MMap, db *badger.DB, err error) {

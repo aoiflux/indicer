@@ -30,9 +30,33 @@
             "program": "N:\\research\\indicer\\main.go",
             "args": [
                 "restore",
-                "indexed",
-                "F22vztNaD3/SPtg2XM8HVPL02ZGGH79F+sswMECIW1U=",
+                "partition",
+                "CxmI72IZU2/dyNqOqhDffaQiWl7WQ6Rc94ranFoyV+I=",
                 "N:\\research\\indicer\\test"
+            ],
+        },
+        {
+            "name": "near out",
+            "type": "go",
+            "request": "launch",
+            "mode": "auto",
+            "program": "N:\\research\\indicer\\main.go",
+            "args": [
+                "near",
+                "out",
+                "N:\\research\\indicer\\go.mod"
+            ],
+        },
+        {
+            "name": "near in",
+            "type": "go",
+            "request": "launch",
+            "mode": "auto",
+            "program": "N:\\research\\indicer\\main.go",
+            "args": [
+                "near",
+                "in",
+                "CxmI72IZU2/dyNqOqhDffaQiWl7WQ6Rc94ranFoyV+I="
             ],
         }
     ]

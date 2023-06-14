@@ -36,3 +36,7 @@ func NewEvidenceFile(name string, start, size int64, partitions [][]byte) Eviden
 	partitionFile := NewPartitionFile(name, start, size, partitions)
 	return EvidenceFile{PartitionFile: partitionFile, Completed: false}
 }
+
+type FileTypes interface {
+	IndexedFile | PartitionFile | EvidenceFile
+}

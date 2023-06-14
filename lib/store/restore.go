@@ -2,19 +2,20 @@ package store
 
 import (
 	"bytes"
-	"encoding/base64"
 	"fmt"
 	"indicer/lib/constant"
 	"indicer/lib/dbio"
 	"indicer/lib/util"
-	"math"
 	"os"
-	"strings"
 
 	"github.com/dgraph-io/badger/v3"
 )
 
-func Restore(db *badger.DB, dst *os.File, fid []byte) error {
+func Restore(fhash string, dst *os.File, db *badger.DB) error {
+	fid, err := util.GuessFileType(fhash, db)
+	if err != nil {
+		return err
+	}
 	if bytes.HasPrefix(fid, []byte(constant.IndexedFileNamespace)) {
 		return restoreIndexedFile(fid, dst, db)
 	}
@@ -24,31 +25,8 @@ func Restore(db *badger.DB, dst *os.File, fid []byte) error {
 	return restoreEvidenceFile(fid, dst, db)
 }
 
-func getDBStartOffset(startIndex int64) int64 {
-	if startIndex == 0 {
-		return 0
-	}
-
-	ans := float64(startIndex) / float64(constant.ChonkSize)
-	ans = math.Floor(ans)
-
-	offset := int64(ans) * constant.ChonkSize
-	return offset
-}
-
-func getEvidenceFileHash(fname string) ([]byte, error) {
-	eviFileHashString := strings.Split(fname, constant.FilePathSeperator)[0]
-	eviFileHash, err := base64.StdEncoding.DecodeString(eviFileHashString)
-	if err != nil {
-		return nil, err
-	}
-	return eviFileHash, err
-}
-func getEvidenceFileID(eviFileHash []byte) []byte {
-	return append([]byte(constant.EvidenceFileNamespace), eviFileHash...)
-}
 func checkCompleted(ehash []byte, db *badger.DB) error {
-	eid := getEvidenceFileID(ehash)
+	eid := util.GetEvidenceFileID(ehash)
 	eviFile, err := dbio.GetEvidenceFile(eid, db)
 	if err != nil {
 		return err
@@ -64,7 +42,7 @@ func restoreIndexedFile(fid []byte, dst *os.File, db *badger.DB) error {
 	if err != nil {
 		return err
 	}
-	ehash, err := getEvidenceFileHash(indexedFile.Names[0])
+	ehash, err := util.GetEvidenceFileHash(indexedFile.Names[0])
 	if err != nil {
 		return err
 	}
@@ -74,21 +52,21 @@ func restoreIndexedFile(fid []byte, dst *os.File, db *badger.DB) error {
 	}
 
 	if indexedFile.DBStart == constant.IgnoreVar {
-		indexedFile.DBStart = getDBStartOffset(indexedFile.Start)
+		indexedFile.DBStart = util.GetDBStartOffset(indexedFile.Start)
 		err = dbio.SetFile(fid, indexedFile, db)
 		if err != nil {
 			return err
 		}
 	}
 
-	return restoreData(ehash, indexedFile.Start, indexedFile.DBStart, indexedFile.Size, dst, db)
+	return restoreData(indexedFile.Start, indexedFile.DBStart, indexedFile.Size, ehash, dst, db)
 }
 func restorePartitionFile(fid []byte, dst *os.File, db *badger.DB) error {
 	partitionFile, err := dbio.GetPartitionFile(fid, db)
 	if err != nil {
 		return err
 	}
-	ehash, err := getEvidenceFileHash(partitionFile.Names[0])
+	ehash, err := util.GetEvidenceFileHash(partitionFile.Names[0])
 	if err != nil {
 		return err
 	}
@@ -98,14 +76,14 @@ func restorePartitionFile(fid []byte, dst *os.File, db *badger.DB) error {
 	}
 
 	if partitionFile.DBStart == constant.IgnoreVar {
-		partitionFile.DBStart = getDBStartOffset(partitionFile.Start)
+		partitionFile.DBStart = util.GetDBStartOffset(partitionFile.Start)
 		err = dbio.SetFile(fid, partitionFile, db)
 		if err != nil {
 			return err
 		}
 	}
 
-	return restoreData(ehash, partitionFile.Start, partitionFile.DBStart, partitionFile.Size, dst, db)
+	return restoreData(partitionFile.Start, partitionFile.DBStart, partitionFile.Size, ehash, dst, db)
 }
 func restoreEvidenceFile(fid []byte, dst *os.File, db *badger.DB) error {
 	evidenceFile, err := dbio.GetEvidenceFile(fid, db)
@@ -116,24 +94,20 @@ func restoreEvidenceFile(fid []byte, dst *os.File, db *badger.DB) error {
 		return constant.ErrIncompleteFile
 	}
 	ehash := bytes.Split(fid, []byte(constant.EvidenceFileNamespace))[1]
-	return restoreData(ehash, evidenceFile.Start, 0, evidenceFile.Size, dst, db)
+	return restoreData(evidenceFile.Start, 0, evidenceFile.Size, ehash, dst, db)
 }
 
-func restoreData(ehash []byte, start, dbstart, size int64, dst *os.File, db *badger.DB) error {
+func restoreData(start, dbstart, size int64, ehash []byte, dst *os.File, db *badger.DB) error {
 	end := start + size
 
-	for restoreIndex := dbstart; ; restoreIndex += constant.ChonkSize {
-		if restoreIndex > end {
-			break
-		}
-
+	for restoreIndex := dbstart; restoreIndex <= end; restoreIndex += constant.ChonkSize {
 		relKey := util.AppendToBytesSlice(constant.RelationNapespace, ehash, constant.PipeSeperator, restoreIndex)
 		chash, err := dbio.GetNode(relKey, db)
 		if err != nil {
 			return err
 		}
 
-		ckey := append([]byte(constant.ChonkNamespace), chash...)
+		ckey := util.AppendToBytesSlice(constant.ChonkNamespace, chash)
 		data, err := dbio.GetNode(ckey, db)
 		if err != nil {
 			return err

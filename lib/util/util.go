@@ -3,15 +3,20 @@ package util
 import (
 	"bytes"
 	"crypto/sha256"
+	"encoding/base64"
 	"fmt"
 	"indicer/lib/constant"
+	"indicer/lib/dbio"
 	"io"
+	"math"
 	"os"
 	"path/filepath"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/cheggaaa/pb/v3"
+	"github.com/dgraph-io/badger/v3"
 	"github.com/diskfs/go-diskfs/partition/mbr"
 	"github.com/zeebo/blake3"
 	"golang.org/x/term"
@@ -150,4 +155,73 @@ func readPassword() ([]byte, error) {
 	}
 	fmt.Println()
 	return password, nil
+}
+
+func ByteSimilarityCount(s1, s2 []byte) float64 {
+	minLength := len(s1)
+	if len(s2) < minLength {
+		minLength = len(s2)
+	}
+
+	similarCount := 0
+	for i := 0; i < minLength; i++ {
+		if s1[i] == s2[i] {
+			similarCount++
+		}
+	}
+
+	return float64(similarCount) / float64(minLength)
+}
+
+func GetDBStartOffset(startIndex int64) int64 {
+	if startIndex == 0 {
+		return 0
+	}
+
+	ans := float64(startIndex) / float64(constant.ChonkSize)
+	ans = math.Floor(ans)
+
+	offset := int64(ans) * constant.ChonkSize
+	return offset
+}
+
+func GetEvidenceFileHash(fname string) ([]byte, error) {
+	eviFileHashString := strings.Split(fname, constant.FilePathSeperator)[0]
+	eviFileHash, err := base64.StdEncoding.DecodeString(eviFileHashString)
+	if err != nil {
+		return nil, err
+	}
+	return eviFileHash, err
+}
+func GetEvidenceFileID(eviFileHash []byte) []byte {
+	return append([]byte(constant.EvidenceFileNamespace), eviFileHash...)
+}
+
+func GuessFileType(encodedHash string, db *badger.DB) ([]byte, error) {
+	fhash, err := base64.StdEncoding.DecodeString(encodedHash)
+	if err != nil {
+		return nil, err
+	}
+
+	fid := AppendToBytesSlice(constant.IndexedFileNamespace, fhash)
+	err = dbio.PingNode(fid, db)
+	if err != nil && err != badger.ErrKeyNotFound {
+		return nil, err
+	}
+	if err == nil {
+		return fid, nil
+	}
+
+	fid = AppendToBytesSlice(constant.PartitionFileNamespace, fhash)
+	err = dbio.PingNode(fid, db)
+	if err != nil && err != badger.ErrKeyNotFound {
+		return nil, err
+	}
+	if err == nil {
+		return fid, nil
+	}
+
+	fid = AppendToBytesSlice(constant.EvidenceFileNamespace, fhash)
+	err = dbio.PingNode(fid, db)
+	return fid, err
 }

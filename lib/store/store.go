@@ -134,10 +134,7 @@ func storeEvidenceData(infile structs.InputFile) error {
 	tio.Err = make(chan error, constant.MaxThreadCount)
 	tio.MappedFile = infile.GetMappedFile()
 
-	for storeIndex := infile.GetStartIndex(); ; storeIndex += constant.ChonkSize {
-		if storeIndex > infile.GetSize() {
-			break
-		}
+	for storeIndex := infile.GetStartIndex(); storeIndex <= infile.GetSize(); storeIndex += constant.ChonkSize {
 		tio.Index = storeIndex
 
 		if infile.GetSize()-storeIndex <= constant.ChonkSize {

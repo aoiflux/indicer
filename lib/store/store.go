@@ -29,6 +29,20 @@ func Store(infile structs.InputFile, errchan chan error) {
 		errchan <- storeEvidenceFile(infile)
 	}
 }
+func EvidenceFilePreStoreCheck(infile structs.InputFile) error {
+	evidenceFile, err := dbio.GetEvidenceFile(infile.GetID(), infile.GetDB())
+	if err != nil {
+		return err
+	}
+	if !evidenceFile.Completed {
+		return cnst.ErrIncompleteFile
+	}
+	if slices.Contains(evidenceFile.Names, infile.GetName()) {
+		return nil
+	}
+	evidenceFile.Names = append(evidenceFile.Names, infile.GetName())
+	return dbio.SetFile(infile.GetID(), evidenceFile, infile.GetDB())
+}
 
 func storeIndexedFile(infile structs.InputFile) error {
 	indexedFile, err := dbio.GetIndexedFile(infile.GetID(), infile.GetDB())

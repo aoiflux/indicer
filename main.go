@@ -33,8 +33,7 @@ func main() {
 
 	var db *badger.DB
 	if command != constant.CmdReset {
-		// key := util.GetPassword()
-		key := []byte{}
+		key := util.GetPassword()
 		db, err = dbio.ConnectDB(dbpath, key)
 		handle(nil, db, err)
 		defer db.Close()
@@ -50,7 +49,7 @@ func main() {
 	case constant.CmdNear:
 		err = nearData(db)
 	case constant.CmdReset:
-		err = resetDatabase(dbpath)
+		err = resetData(dbpath)
 	}
 
 	handle(nil, db, err)
@@ -206,7 +205,7 @@ func nearData(db *badger.DB) error {
 	return err
 }
 
-func resetDatabase(dbpath string) error {
+func resetData(dbpath string) error {
 	color.Red("WARNING! This command will DELETE ALL the saved files.")
 	fmt.Printf("Are you sure about this? [y/N] ")
 

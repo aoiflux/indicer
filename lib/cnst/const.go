@@ -1,4 +1,4 @@
-package constant
+package cnst
 
 import (
 	"errors"
@@ -38,9 +38,9 @@ const (
 	FilePathSeperator        = "|||"
 	PartitionIndexPrefix     = "p"
 
-	EvidenceFileType  = "evidence"
-	PartitionFileType = "partition"
-	IndexedFileType   = "indexed"
+	EviFType   = "evidence"
+	PartiFType = "partition"
+	IdxFType   = "indexed"
 )
 
 var (

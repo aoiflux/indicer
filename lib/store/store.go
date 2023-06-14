@@ -3,7 +3,7 @@ package store
 import (
 	"bytes"
 	"fmt"
-	"indicer/lib/constant"
+	"indicer/lib/cnst"
 	"indicer/lib/dbio"
 	"indicer/lib/structs"
 	"indicer/lib/util"
@@ -15,13 +15,13 @@ import (
 )
 
 func Store(infile structs.InputFile, errchan chan error) {
-	names := strings.Split(infile.GetName(), constant.FilePathSeperator)
+	names := strings.Split(infile.GetName(), cnst.FilePathSeperator)
 	name := names[len(names)-1]
 
-	if bytes.HasPrefix(infile.GetID(), []byte(constant.IndexedFileNamespace)) {
+	if bytes.HasPrefix(infile.GetID(), []byte(cnst.IndexedFileNamespace)) {
 		fmt.Println("Saving indexed file: ", name)
 		errchan <- storeIndexedFile(infile)
-	} else if bytes.HasPrefix(infile.GetID(), []byte(constant.PartitionFileNamespace)) {
+	} else if bytes.HasPrefix(infile.GetID(), []byte(cnst.PartitionFileNamespace)) {
 		fmt.Println("Saving partition file: ", name)
 		errchan <- storePartitionFile(infile)
 	} else {
@@ -120,7 +120,7 @@ func evidenceFilePreflight(infile structs.InputFile) (structs.EvidenceFile, erro
 }
 func storeEvidenceData(infile structs.InputFile) error {
 	batch := infile.GetDB().NewWriteBatch()
-	batch.SetMaxPendingTxns(constant.MaxBatchCount)
+	batch.SetMaxPendingTxns(cnst.MaxBatchCount)
 	var buffSize int64
 	var active int
 
@@ -131,23 +131,23 @@ func storeEvidenceData(infile structs.InputFile) error {
 	tio.FHash = infile.GetHash()
 	tio.DB = infile.GetDB()
 	tio.Batch = batch
-	tio.Err = make(chan error, constant.MaxThreadCount)
+	tio.Err = make(chan error, cnst.MaxThreadCount)
 	tio.MappedFile = infile.GetMappedFile()
 
-	for storeIndex := infile.GetStartIndex(); storeIndex <= infile.GetSize(); storeIndex += constant.ChonkSize {
+	for storeIndex := infile.GetStartIndex(); storeIndex <= infile.GetSize(); storeIndex += cnst.ChonkSize {
 		tio.Index = storeIndex
 
-		if infile.GetSize()-storeIndex <= constant.ChonkSize {
+		if infile.GetSize()-storeIndex <= cnst.ChonkSize {
 			buffSize = infile.GetSize() - storeIndex
 		} else {
-			buffSize = constant.ChonkSize
+			buffSize = cnst.ChonkSize
 		}
 
 		tio.End = storeIndex + buffSize
 		go storeWorker(tio)
 		active++
 
-		if active > constant.MaxThreadCount {
+		if active > cnst.MaxThreadCount {
 			err := <-tio.Err
 			if err != nil {
 				return err
@@ -163,7 +163,7 @@ func storeEvidenceData(infile structs.InputFile) error {
 			return err
 		}
 		active--
-		bar.Add64(constant.ChonkSize)
+		bar.Add64(cnst.ChonkSize)
 	}
 
 	err := tio.Batch.Flush()
@@ -171,7 +171,7 @@ func storeEvidenceData(infile structs.InputFile) error {
 		return err
 	}
 
-	bar.Add64(constant.ChonkSize)
+	bar.Add64(cnst.ChonkSize)
 	bar.Finish()
 	return nil
 }
@@ -194,7 +194,7 @@ func storeWorker(tio structs.ThreadIO) {
 	tio.Err <- processRevRel(tio.Index, tio.FHash, chash, tio.DB)
 }
 func processChonk(cdata, chash []byte, db *badger.DB, batch *badger.WriteBatch) error {
-	ckey := append([]byte(constant.ChonkNamespace), chash...)
+	ckey := append([]byte(cnst.ChonkNamespace), chash...)
 
 	err := dbio.PingNode(ckey, db)
 	if err != nil && err == badger.ErrKeyNotFound {
@@ -204,7 +204,7 @@ func processChonk(cdata, chash []byte, db *badger.DB, batch *badger.WriteBatch) 
 	return err
 }
 func processRel(index int64, fhash, chash []byte, db *badger.DB, batch *badger.WriteBatch) error {
-	relKey := util.AppendToBytesSlice(constant.RelationNapespace, fhash, constant.PipeSeperator, index)
+	relKey := util.AppendToBytesSlice(cnst.RelationNapespace, fhash, cnst.PipeSeperator, index)
 
 	err := dbio.PingNode(relKey, db)
 	if err != nil && err == badger.ErrKeyNotFound {
@@ -214,8 +214,8 @@ func processRel(index int64, fhash, chash []byte, db *badger.DB, batch *badger.W
 	return err
 }
 func processRevRel(index int64, fhash, chash []byte, db *badger.DB) error {
-	relVal := util.AppendToBytesSlice(constant.RelationNapespace, fhash, constant.PipeSeperator, index)
-	revRelKey := util.AppendToBytesSlice(constant.ReverseRelationNamespace, chash)
+	relVal := util.AppendToBytesSlice(cnst.RelationNapespace, fhash, cnst.PipeSeperator, index)
+	revRelKey := util.AppendToBytesSlice(cnst.ReverseRelationNamespace, chash)
 
 	revRelList, err := dbio.GetReverseRelationNode(revRelKey, db)
 	revRelNode := structs.ReverseRelation{Value: relVal}

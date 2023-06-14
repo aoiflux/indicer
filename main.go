@@ -3,7 +3,7 @@ package main
 import (
 	"errors"
 	"fmt"
-	"indicer/lib/constant"
+	"indicer/lib/cnst"
 	"indicer/lib/dbio"
 	"indicer/lib/near"
 	"indicer/lib/parser"
@@ -32,7 +32,7 @@ func main() {
 	command := strings.ToLower(os.Args[1])
 
 	var db *badger.DB
-	if command != constant.CmdReset {
+	if command != cnst.CmdReset {
 		key := util.GetPassword()
 		db, err = dbio.ConnectDB(dbpath, key)
 		handle(nil, db, err)
@@ -40,15 +40,15 @@ func main() {
 	}
 
 	switch command {
-	case constant.CmdStore:
+	case cnst.CmdStore:
 		err = storeData(db)
-	case constant.CmdList:
+	case cnst.CmdList:
 		err = listData(db)
-	case constant.CmdRestore:
+	case cnst.CmdRestore:
 		err = restoreData(db)
-	case constant.CmdNear:
+	case cnst.CmdNear:
 		err = nearData(db)
-	case constant.CmdReset:
+	case cnst.CmdReset:
 		err = resetData(dbpath)
 	}
 
@@ -82,21 +82,21 @@ func storeData(db *badger.DB) error {
 			return err
 		}
 
-		pname := string(util.AppendToBytesSlice(ehash, constant.FilePathSeperator, constant.PartitionIndexPrefix, index))
+		pname := string(util.AppendToBytesSlice(ehash, cnst.FilePathSeperator, cnst.PartitionIndexPrefix, index))
 
 		pfile := structs.NewInputFile(
 			db,
 			eviFile.GetHandle(),
 			eviFile.GetMappedFile(),
 			pname,
-			constant.PartitionFileNamespace,
+			cnst.PartitionFileNamespace,
 			phash,
 			partition.Size,
 			partition.Start,
 		)
 
 		err = parser.IndexEXFAT(db, pfile)
-		if err == constant.ErrIncompatibleFileSystem {
+		if err == cnst.ErrIncompatibleFileSystem {
 			fmt.Println(err, "...continuing")
 			continue
 		}
@@ -144,7 +144,7 @@ func initEvidenceFile(db *badger.DB, evifilepath string) (structs.InputFile, err
 		eviHandle,
 		mappedFile,
 		eviFileName,
-		constant.EvidenceFileNamespace,
+		cnst.EvidenceFileNamespace,
 		eviFileHash,
 		eviSize,
 		0,
@@ -185,7 +185,7 @@ func restoreData(db *badger.DB) error {
 
 func nearData(db *badger.DB) error {
 	if len(os.Args) < 4 {
-		return constant.ErrIncorrectOption
+		return cnst.ErrIncorrectOption
 	}
 
 	inoption := strings.ToLower(os.Args[2])
@@ -194,12 +194,12 @@ func nearData(db *badger.DB) error {
 	var err error
 
 	switch inoption {
-	case constant.InOptionIn:
+	case cnst.InOptionIn:
 		err = near.NearInFile(suboption, db)
-	case constant.InOptionOut:
+	case cnst.InOptionOut:
 		err = near.NearOutFile(suboption, db)
 	default:
-		return constant.ErrIncorrectOption
+		return cnst.ErrIncorrectOption
 	}
 
 	return err

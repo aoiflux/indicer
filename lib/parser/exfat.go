@@ -1,7 +1,7 @@
 package parser
 
 import (
-	"indicer/lib/constant"
+	"indicer/lib/cnst"
 	"indicer/lib/store"
 	"indicer/lib/structs"
 	"indicer/lib/util"
@@ -14,7 +14,7 @@ func IndexEXFAT(db *badger.DB, pfile structs.InputFile) error {
 	startOffset := getStartOffset(uint64(pfile.GetStartIndex()))
 	exfatdata, err := libxfat.New(pfile.GetHandle(), true, startOffset)
 	if err != nil {
-		return constant.ErrIncompatibleFileSystem
+		return cnst.ErrIncompatibleFileSystem
 	}
 
 	rootEntries, err := exfatdata.ReadRootDir()
@@ -39,7 +39,7 @@ func IndexEXFAT(db *badger.DB, pfile structs.InputFile) error {
 		if err != nil {
 			return err
 		}
-		iname := string(util.AppendToBytesSlice(pfile.GetEviFileHash(), constant.FilePathSeperator, encodedPfileHash, constant.FilePathSeperator, entry.GetName()))
+		iname := string(util.AppendToBytesSlice(pfile.GetEviFileHash(), cnst.FilePathSeperator, encodedPfileHash, cnst.FilePathSeperator, entry.GetName()))
 		istart := int64(exfatdata.GetClusterOffset(entry.GetEntryCluster()))
 		isize := int64(entry.GetSize())
 		ihash, err := util.GetLogicalFileHash(pfile.GetHandle(), istart, isize)
@@ -52,7 +52,7 @@ func IndexEXFAT(db *badger.DB, pfile structs.InputFile) error {
 			pfile.GetHandle(),
 			pfile.GetMappedFile(),
 			iname,
-			constant.IndexedFileNamespace,
+			cnst.IndexedFileNamespace,
 			ihash,
 			isize,
 			istart,
@@ -62,7 +62,7 @@ func IndexEXFAT(db *badger.DB, pfile structs.InputFile) error {
 		go store.Store(ifile, echan)
 		active++
 
-		if active > constant.MaxThreadCount {
+		if active > cnst.MaxThreadCount {
 			if <-echan != nil {
 				return <-echan
 			}

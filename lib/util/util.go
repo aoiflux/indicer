@@ -5,7 +5,7 @@ import (
 	"crypto/sha256"
 	"encoding/base64"
 	"fmt"
-	"indicer/lib/constant"
+	"indicer/lib/cnst"
 	"indicer/lib/dbio"
 	"io"
 	"math"
@@ -49,7 +49,7 @@ func SetChonkSize(chonkSizeString string) {
 	if err != nil {
 		return
 	}
-	constant.ChonkSize = newChonkSize
+	cnst.ChonkSize = newChonkSize
 }
 
 func GetFileHash(fileHandle *os.File) ([]byte, error) {
@@ -106,8 +106,8 @@ func GetChonkHash(data []byte) ([]byte, error) {
 }
 
 func IsLogicalFile(inid []byte) bool {
-	return bytes.HasPrefix(inid, []byte(constant.PartitionFileNamespace)) ||
-		bytes.HasPrefix(inid, []byte(constant.IndexedFileNamespace))
+	return bytes.HasPrefix(inid, []byte(cnst.PartitionFileNamespace)) ||
+		bytes.HasPrefix(inid, []byte(cnst.IndexedFileNamespace))
 }
 
 // IsSupported checks if detected file system is supported or not
@@ -178,15 +178,15 @@ func GetDBStartOffset(startIndex int64) int64 {
 		return 0
 	}
 
-	ans := float64(startIndex) / float64(constant.ChonkSize)
+	ans := float64(startIndex) / float64(cnst.ChonkSize)
 	ans = math.Floor(ans)
 
-	offset := int64(ans) * constant.ChonkSize
+	offset := int64(ans) * cnst.ChonkSize
 	return offset
 }
 
 func GetEvidenceFileHash(fname string) ([]byte, error) {
-	eviFileHashString := strings.Split(fname, constant.FilePathSeperator)[0]
+	eviFileHashString := strings.Split(fname, cnst.FilePathSeperator)[0]
 	eviFileHash, err := base64.StdEncoding.DecodeString(eviFileHashString)
 	if err != nil {
 		return nil, err
@@ -194,7 +194,7 @@ func GetEvidenceFileHash(fname string) ([]byte, error) {
 	return eviFileHash, err
 }
 func GetEvidenceFileID(eviFileHash []byte) []byte {
-	return append([]byte(constant.EvidenceFileNamespace), eviFileHash...)
+	return append([]byte(cnst.EvidenceFileNamespace), eviFileHash...)
 }
 
 func GuessFileType(encodedHash string, db *badger.DB) ([]byte, error) {
@@ -203,7 +203,7 @@ func GuessFileType(encodedHash string, db *badger.DB) ([]byte, error) {
 		return nil, err
 	}
 
-	fid := AppendToBytesSlice(constant.IndexedFileNamespace, fhash)
+	fid := AppendToBytesSlice(cnst.IndexedFileNamespace, fhash)
 	err = dbio.PingNode(fid, db)
 	if err != nil && err != badger.ErrKeyNotFound {
 		return nil, err
@@ -212,7 +212,7 @@ func GuessFileType(encodedHash string, db *badger.DB) ([]byte, error) {
 		return fid, nil
 	}
 
-	fid = AppendToBytesSlice(constant.PartitionFileNamespace, fhash)
+	fid = AppendToBytesSlice(cnst.PartitionFileNamespace, fhash)
 	err = dbio.PingNode(fid, db)
 	if err != nil && err != badger.ErrKeyNotFound {
 		return nil, err
@@ -221,7 +221,7 @@ func GuessFileType(encodedHash string, db *badger.DB) ([]byte, error) {
 		return fid, nil
 	}
 
-	fid = AppendToBytesSlice(constant.EvidenceFileNamespace, fhash)
+	fid = AppendToBytesSlice(cnst.EvidenceFileNamespace, fhash)
 	err = dbio.PingNode(fid, db)
 	return fid, err
 }

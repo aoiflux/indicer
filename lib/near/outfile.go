@@ -3,7 +3,7 @@ package near
 import (
 	"encoding/hex"
 	"fmt"
-	"indicer/lib/constant"
+	"indicer/lib/cnst"
 	"indicer/lib/util"
 	"os"
 	"time"
@@ -61,12 +61,12 @@ func getOutfileChonks(size int64, mappedFile mmap.MMap) chan []byte {
 	chonk := make(chan []byte)
 	go func() {
 		defer close(chonk)
-		for outindex := int64(0); outindex <= size; outindex += constant.ChonkSize {
+		for outindex := int64(0); outindex <= size; outindex += cnst.ChonkSize {
 			var buffSize int64
-			if size-outindex <= constant.ChonkSize {
+			if size-outindex <= cnst.ChonkSize {
 				buffSize = size - outindex
 			} else {
-				buffSize = constant.ChonkSize
+				buffSize = cnst.ChonkSize
 			}
 			chonk <- mappedFile[outindex : outindex+buffSize]
 		}
@@ -109,7 +109,7 @@ func matchByBytes(chonk []byte, db *badger.DB) ([]byte, float64, error) {
 		it := txn.NewIterator(opts)
 		defer it.Close()
 
-		prefix := []byte(constant.ChonkNamespace)
+		prefix := []byte(cnst.ChonkNamespace)
 		for it.Seek(prefix); it.ValidForPrefix(prefix); it.Next() {
 			item := it.Item()
 			key := item.KeyCopy(nil)

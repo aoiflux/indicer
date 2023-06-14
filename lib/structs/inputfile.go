@@ -3,7 +3,7 @@ package structs
 import (
 	"bytes"
 	"encoding/base64"
-	"indicer/lib/constant"
+	"indicer/lib/cnst"
 	"os"
 	"strings"
 
@@ -67,7 +67,7 @@ func (i InputFile) GetSize() int64 {
 	return i.size
 }
 func (i InputFile) GetHash() []byte {
-	return bytes.Split(i.id, []byte(constant.NamespaceSeperator))[1]
+	return bytes.Split(i.id, []byte(cnst.NamespaceSeperator))[1]
 }
 func (i InputFile) GetEncodedHash() ([]byte, error) {
 	hash := i.GetHash()
@@ -77,15 +77,15 @@ func (i InputFile) GetInternalObjects() [][]byte {
 	return i.internalObjects
 }
 func (i InputFile) GetEviFileHash() []byte {
-	if strings.HasPrefix(i.name, constant.EvidenceFileNamespace) {
+	if strings.HasPrefix(i.name, cnst.EvidenceFileNamespace) {
 		return i.GetHash()
 	}
-	ehashString := strings.Split(i.name, constant.FilePathSeperator)[0]
+	ehashString := strings.Split(i.name, cnst.FilePathSeperator)[0]
 	return []byte(ehashString)
 }
 func (i InputFile) GetNamespace() []byte {
-	fileType := bytes.Split(i.id, []byte(constant.NamespaceSeperator))[0]
-	return append(fileType, []byte(constant.NamespaceSeperator)...)
+	fileType := bytes.Split(i.id, []byte(cnst.NamespaceSeperator))[0]
+	return append(fileType, []byte(cnst.NamespaceSeperator)...)
 }
 func (i *InputFile) UpdateInternalObjects(objectHash []byte) {
 	for _, item := range i.internalObjects {

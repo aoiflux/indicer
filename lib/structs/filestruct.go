@@ -1,6 +1,6 @@
 package structs
 
-import "indicer/lib/constant"
+import "indicer/lib/cnst"
 
 type baseFile struct {
 	Names []string `msgpack:"names"`
@@ -14,7 +14,7 @@ type IndexedFile struct {
 
 func NewIndexedFile(name string, start, size int64) IndexedFile {
 	bfile := baseFile{Names: []string{name}, Size: size}
-	return IndexedFile{baseFile: bfile, Start: start, DBStart: constant.IgnoreVar}
+	return IndexedFile{baseFile: bfile, Start: start, DBStart: cnst.IgnoreVar}
 }
 
 type PartitionFile struct {

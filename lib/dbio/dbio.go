@@ -1,7 +1,7 @@
 package dbio
 
 import (
-	"indicer/lib/constant"
+	"indicer/lib/cnst"
 	"indicer/lib/structs"
 	"time"
 
@@ -12,7 +12,7 @@ import (
 )
 
 func ConnectDB(datadir string, key []byte) (*badger.DB, error) {
-	cacheLimit, err := constant.GetCacheLimit()
+	cacheLimit, err := cnst.GetCacheLimit()
 	if err != nil {
 		return nil, err
 	}
@@ -20,7 +20,7 @@ func ConnectDB(datadir string, key []byte) (*badger.DB, error) {
 	opts = opts.WithLoggingLevel(badger.ERROR)
 	opts.IndexCacheSize = cacheLimit
 	opts.SyncWrites = true
-	opts.NumGoroutines = constant.MaxThreadCount
+	opts.NumGoroutines = cnst.MaxThreadCount
 	opts.BlockCacheSize = cacheLimit
 	opts.Compression = options.ZSTD
 	opts.ZSTDCompressionLevel = 15

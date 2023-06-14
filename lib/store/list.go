@@ -4,7 +4,7 @@ import (
 	"bytes"
 	"encoding/base64"
 	"fmt"
-	"indicer/lib/constant"
+	"indicer/lib/cnst"
 	"indicer/lib/structs"
 
 	"github.com/dgraph-io/badger/v3"
@@ -19,7 +19,7 @@ func List(db *badger.DB) error {
 		it := txn.NewIterator(opts)
 		defer it.Close()
 
-		eviPrefix := []byte(constant.EvidenceFileNamespace)
+		eviPrefix := []byte(cnst.EvidenceFileNamespace)
 		for it.Seek(eviPrefix); it.ValidForPrefix(eviPrefix); it.Next() {
 			item := it.Item()
 			k := item.KeyCopy(nil)
@@ -59,7 +59,7 @@ func List(db *badger.DB) error {
 
 func listPartitions(phash []byte, txn *badger.Txn) error {
 	fmt.Println("Partition: ", base64.StdEncoding.EncodeToString(phash))
-	pid := append([]byte(constant.PartitionFileNamespace), phash...)
+	pid := append([]byte(cnst.PartitionFileNamespace), phash...)
 	item, err := txn.Get(pid)
 	if err != nil {
 		return err

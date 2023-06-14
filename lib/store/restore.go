@@ -3,7 +3,7 @@ package store
 import (
 	"bytes"
 	"fmt"
-	"indicer/lib/constant"
+	"indicer/lib/cnst"
 	"indicer/lib/dbio"
 	"indicer/lib/util"
 	"os"
@@ -16,10 +16,10 @@ func Restore(fhash string, dst *os.File, db *badger.DB) error {
 	if err != nil {
 		return err
 	}
-	if bytes.HasPrefix(fid, []byte(constant.IndexedFileNamespace)) {
+	if bytes.HasPrefix(fid, []byte(cnst.IndexedFileNamespace)) {
 		return restoreIndexedFile(fid, dst, db)
 	}
-	if bytes.HasPrefix(fid, []byte(constant.PartitionFileNamespace)) {
+	if bytes.HasPrefix(fid, []byte(cnst.PartitionFileNamespace)) {
 		return restorePartitionFile(fid, dst, db)
 	}
 	return restoreEvidenceFile(fid, dst, db)
@@ -32,7 +32,7 @@ func checkCompleted(ehash []byte, db *badger.DB) error {
 		return err
 	}
 	if !eviFile.Completed {
-		return constant.ErrIncompleteFile
+		return cnst.ErrIncompleteFile
 	}
 	return nil
 }
@@ -51,7 +51,7 @@ func restoreIndexedFile(fid []byte, dst *os.File, db *badger.DB) error {
 		return err
 	}
 
-	if indexedFile.DBStart == constant.IgnoreVar {
+	if indexedFile.DBStart == cnst.IgnoreVar {
 		indexedFile.DBStart = util.GetDBStartOffset(indexedFile.Start)
 		err = dbio.SetFile(fid, indexedFile, db)
 		if err != nil {
@@ -75,7 +75,7 @@ func restorePartitionFile(fid []byte, dst *os.File, db *badger.DB) error {
 		return err
 	}
 
-	if partitionFile.DBStart == constant.IgnoreVar {
+	if partitionFile.DBStart == cnst.IgnoreVar {
 		partitionFile.DBStart = util.GetDBStartOffset(partitionFile.Start)
 		err = dbio.SetFile(fid, partitionFile, db)
 		if err != nil {
@@ -91,23 +91,23 @@ func restoreEvidenceFile(fid []byte, dst *os.File, db *badger.DB) error {
 		return err
 	}
 	if !evidenceFile.Completed {
-		return constant.ErrIncompleteFile
+		return cnst.ErrIncompleteFile
 	}
-	ehash := bytes.Split(fid, []byte(constant.EvidenceFileNamespace))[1]
+	ehash := bytes.Split(fid, []byte(cnst.EvidenceFileNamespace))[1]
 	return restoreData(evidenceFile.Start, 0, evidenceFile.Size, ehash, dst, db)
 }
 
 func restoreData(start, dbstart, size int64, ehash []byte, dst *os.File, db *badger.DB) error {
 	end := start + size
 
-	for restoreIndex := dbstart; restoreIndex <= end; restoreIndex += constant.ChonkSize {
-		relKey := util.AppendToBytesSlice(constant.RelationNapespace, ehash, constant.PipeSeperator, restoreIndex)
+	for restoreIndex := dbstart; restoreIndex <= end; restoreIndex += cnst.ChonkSize {
+		relKey := util.AppendToBytesSlice(cnst.RelationNapespace, ehash, cnst.PipeSeperator, restoreIndex)
 		chash, err := dbio.GetNode(relKey, db)
 		if err != nil {
 			return err
 		}
 
-		ckey := util.AppendToBytesSlice(constant.ChonkNamespace, chash)
+		ckey := util.AppendToBytesSlice(cnst.ChonkNamespace, chash)
 		data, err := dbio.GetNode(ckey, db)
 		if err != nil {
 			return err
@@ -119,7 +119,7 @@ func restoreData(start, dbstart, size int64, ehash []byte, dst *os.File, db *bad
 		}
 		if size < int64(len(data)) {
 			data = data[:size]
-		} else if (restoreIndex + constant.ChonkSize) > end {
+		} else if (restoreIndex + cnst.ChonkSize) > end {
 			actualEnd := end - restoreIndex
 			data = data[:actualEnd]
 		}

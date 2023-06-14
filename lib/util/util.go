@@ -184,7 +184,7 @@ func GetDBStartOffset(startIndex int64) int64 {
 }
 
 func GetEvidenceFileHash(fname string) ([]byte, error) {
-	eviFileHashString := strings.Split(fname, cnst.FilePathSeperator)[0]
+	eviFileHashString := strings.Split(fname, cnst.DataSeperator)[0]
 	eviFileHash, err := base64.StdEncoding.DecodeString(eviFileHashString)
 	if err != nil {
 		return nil, err

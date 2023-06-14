@@ -73,14 +73,14 @@ func storeData(db *badger.DB) error {
 	for index, partition := range partitions {
 		phash, err := util.GetLogicalFileHash(eviFile.GetHandle(), partition.Start, partition.Size)
 		handle(eviFile.GetMappedFile(), db, err)
-		eviFile.UpdateInternalObjects(phash)
+		eviFile.UpdateInternalObjects(partition.Start, partition.Size, phash)
 
 		ehash, err := eviFile.GetEncodedHash()
 		if err != nil {
 			return err
 		}
 
-		pname := string(util.AppendToBytesSlice(ehash, cnst.FilePathSeperator, cnst.PartitionIndexPrefix, index))
+		pname := string(util.AppendToBytesSlice(ehash, cnst.DataSeperator, cnst.PartitionIndexPrefix, index))
 
 		pfile := structs.NewInputFile(
 			db,

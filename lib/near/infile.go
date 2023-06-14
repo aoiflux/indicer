@@ -101,7 +101,7 @@ func getNear(start, dbstart, size int64, ehash []byte, db *badger.DB) chan struc
 		var neargen structs.NearGen
 
 		for nearIndex := dbstart; nearIndex <= end; nearIndex += cnst.ChonkSize {
-			relKey := util.AppendToBytesSlice(cnst.RelationNamespace, ehash, cnst.PipeSeperator, nearIndex)
+			relKey := util.AppendToBytesSlice(cnst.RelationNamespace, ehash, cnst.DataSeperator, nearIndex)
 			chash, err := dbio.GetNode(relKey, db)
 			if err != nil {
 				neargen.Err = err

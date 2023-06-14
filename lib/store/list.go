@@ -58,6 +58,7 @@ func List(db *badger.DB) error {
 }
 
 func listPartitions(phash []byte, txn *badger.Txn) error {
+	phash = bytes.Split(phash, []byte(cnst.DataSeperator))[0]
 	fmt.Println("Partition: ", base64.StdEncoding.EncodeToString(phash))
 	pid := append([]byte(cnst.PartiFileNamespace), phash...)
 	item, err := txn.Get(pid)
@@ -79,6 +80,7 @@ func listPartitions(phash []byte, txn *badger.Txn) error {
 	}
 
 	for i, ihash := range pdata.InternalObjects {
+		ihash = bytes.Split(ihash, []byte(cnst.DataSeperator))[0]
 		ihashStr := base64.StdEncoding.EncodeToString(ihash)
 		fmt.Printf("\tIndexed %d ---> %s\n", i, ihashStr)
 	}

@@ -15,7 +15,7 @@ import (
 )
 
 func Store(infile structs.InputFile, errchan chan error) {
-	names := strings.Split(infile.GetName(), cnst.FilePathSeperator)
+	names := strings.Split(infile.GetName(), cnst.DataSeperator)
 	name := names[len(names)-1]
 
 	if bytes.HasPrefix(infile.GetID(), []byte(cnst.IdxFileNamespace)) {
@@ -204,7 +204,7 @@ func processChonk(cdata, chash []byte, db *badger.DB, batch *badger.WriteBatch) 
 	return err
 }
 func processRel(index int64, fhash, chash []byte, db *badger.DB, batch *badger.WriteBatch) error {
-	relKey := util.AppendToBytesSlice(cnst.RelationNamespace, fhash, cnst.PipeSeperator, index)
+	relKey := util.AppendToBytesSlice(cnst.RelationNamespace, fhash, cnst.DataSeperator, index)
 
 	err := dbio.PingNode(relKey, db)
 	if err != nil && err == badger.ErrKeyNotFound {
@@ -214,7 +214,7 @@ func processRel(index int64, fhash, chash []byte, db *badger.DB, batch *badger.W
 	return err
 }
 func processRevRel(index int64, fhash, chash []byte, db *badger.DB) error {
-	relVal := util.AppendToBytesSlice(cnst.RelationNamespace, fhash, cnst.PipeSeperator, index)
+	relVal := util.AppendToBytesSlice(cnst.RelationNamespace, fhash, cnst.DataSeperator, index)
 	revRelKey := util.AppendToBytesSlice(cnst.ReverseRelationNamespace, chash)
 
 	revRelList, err := dbio.GetReverseRelationNode(revRelKey, db)

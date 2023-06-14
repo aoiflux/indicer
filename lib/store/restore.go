@@ -101,7 +101,7 @@ func restoreData(start, dbstart, size int64, ehash []byte, dst *os.File, db *bad
 	end := start + size
 
 	for restoreIndex := dbstart; restoreIndex <= end; restoreIndex += cnst.ChonkSize {
-		relKey := util.AppendToBytesSlice(cnst.RelationNamespace, ehash, cnst.PipeSeperator, restoreIndex)
+		relKey := util.AppendToBytesSlice(cnst.RelationNamespace, ehash, cnst.DataSeperator, restoreIndex)
 		chash, err := dbio.GetNode(relKey, db)
 		if err != nil {
 			return err

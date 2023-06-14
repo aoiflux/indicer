@@ -34,7 +34,7 @@ func NewInputFile(
 	var infile InputFile
 	infile.fileHandle = fileHandle
 	infile.mappedFile = mappedFile
-	infile.id = util.AppendToBytesSlice(namespace, inFileHash, cnst.PipeSeperator, startIndex, cnst.RangeSeperator, startIndex+size)
+	infile.id = util.AppendToBytesSlice(namespace, inFileHash)
 	infile.name = name
 	infile.db = db
 	infile.size = size
@@ -68,8 +68,7 @@ func (i InputFile) GetSize() int64 {
 	return i.size
 }
 func (i InputFile) GetHash() []byte {
-	inter := bytes.Split(i.id, []byte(cnst.NamespaceSeperator))[1]
-	return bytes.Split(inter, []byte(cnst.PipeSeperator))[0]
+	return bytes.Split(i.id, []byte(cnst.NamespaceSeperator))[1]
 }
 func (i InputFile) GetEncodedHash() ([]byte, error) {
 	hash := i.GetHash()
@@ -82,18 +81,20 @@ func (i InputFile) GetEviFileHash() []byte {
 	if strings.HasPrefix(i.name, cnst.EviFileNamespace) {
 		return i.GetHash()
 	}
-	ehashString := strings.Split(i.name, cnst.FilePathSeperator)[0]
+	ehashString := strings.Split(i.name, cnst.DataSeperator)[0]
 	return []byte(ehashString)
 }
 func (i InputFile) GetNamespace() []byte {
 	fileType := bytes.Split(i.id, []byte(cnst.NamespaceSeperator))[0]
 	return append(fileType, []byte(cnst.NamespaceSeperator)...)
 }
-func (i *InputFile) UpdateInternalObjects(objectHash []byte) {
+func (i *InputFile) UpdateInternalObjects(start, size int64, objectHash []byte) {
 	for _, item := range i.internalObjects {
-		if bytes.Equal(item, objectHash) {
+		internalObjectHash := bytes.Split(item, []byte(cnst.DataSeperator))[0]
+		if bytes.Equal(internalObjectHash, objectHash) {
 			return
 		}
 	}
+	objectHash = util.AppendToBytesSlice(objectHash, cnst.DataSeperator, start, cnst.RangeSeperator, start+size)
 	i.internalObjects = append(i.internalObjects, objectHash)
 }

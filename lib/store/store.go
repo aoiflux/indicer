@@ -138,8 +138,8 @@ func storeEvidenceData(infile structs.InputFile) error {
 	var buffSize int64
 	var active int
 
-	bar := progressbar.DefaultBytes(infile.GetSize())
 	fmt.Printf("\nSaving Evidence File\n")
+	bar := progressbar.DefaultBytes(infile.GetSize())
 
 	var tio structs.ThreadIO
 	tio.FHash = infile.GetHash()

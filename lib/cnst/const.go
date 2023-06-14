@@ -35,6 +35,7 @@ const (
 	ChonkNamespace           = "C|||:"
 	NamespaceSeperator       = "|||:"
 	PipeSeperator            = "|"
+	RangeSeperator           = "-"
 	FilePathSeperator        = "|||"
 	PartitionIndexPrefix     = "p"
 

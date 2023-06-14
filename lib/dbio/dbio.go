@@ -1,8 +1,10 @@
 package dbio
 
 import (
+	"encoding/base64"
 	"indicer/lib/cnst"
 	"indicer/lib/structs"
+	"indicer/lib/util"
 	"time"
 
 	"github.com/dgraph-io/badger/v3"
@@ -129,4 +131,33 @@ func GetNode(key []byte, db *badger.DB) ([]byte, error) {
 	}
 
 	return s2.Decode(nil, encoded)
+}
+
+func GuessFileType(encodedHash string, db *badger.DB) ([]byte, error) {
+	fhash, err := base64.StdEncoding.DecodeString(encodedHash)
+	if err != nil {
+		return nil, err
+	}
+
+	fid := util.AppendToBytesSlice(cnst.IdxFileNamespace, fhash)
+	err = PingNode(fid, db)
+	if err != nil && err != badger.ErrKeyNotFound {
+		return nil, err
+	}
+	if err == nil {
+		return fid, nil
+	}
+
+	fid = util.AppendToBytesSlice(cnst.PartiFileNamespace, fhash)
+	err = PingNode(fid, db)
+	if err != nil && err != badger.ErrKeyNotFound {
+		return nil, err
+	}
+	if err == nil {
+		return fid, nil
+	}
+
+	fid = util.AppendToBytesSlice(cnst.EviFileNamespace, fhash)
+	err = PingNode(fid, db)
+	return fid, err
 }

@@ -12,7 +12,7 @@ import (
 )
 
 func NearInFile(fhash string, db *badger.DB) error {
-	fid, err := util.GuessFileType(fhash, db)
+	fid, err := dbio.GuessFileType(fhash, db)
 	if err != nil {
 		return err
 	}

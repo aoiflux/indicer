@@ -12,7 +12,7 @@ import (
 )
 
 func Restore(fhash string, dst *os.File, db *badger.DB) error {
-	fid, err := util.GuessFileType(fhash, db)
+	fid, err := dbio.GuessFileType(fhash, db)
 	if err != nil {
 		return err
 	}

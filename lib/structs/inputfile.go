@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"encoding/base64"
 	"indicer/lib/cnst"
+	"indicer/lib/util"
 	"os"
 	"strings"
 
@@ -33,7 +34,7 @@ func NewInputFile(
 	var infile InputFile
 	infile.fileHandle = fileHandle
 	infile.mappedFile = mappedFile
-	infile.id = append([]byte(namespace), inFileHash...)
+	infile.id = util.AppendToBytesSlice(namespace, inFileHash, cnst.PipeSeperator, startIndex, cnst.RangeSeperator, startIndex+size)
 	infile.name = name
 	infile.db = db
 	infile.size = size
@@ -67,7 +68,8 @@ func (i InputFile) GetSize() int64 {
 	return i.size
 }
 func (i InputFile) GetHash() []byte {
-	return bytes.Split(i.id, []byte(cnst.NamespaceSeperator))[1]
+	inter := bytes.Split(i.id, []byte(cnst.NamespaceSeperator))[1]
+	return bytes.Split(inter, []byte(cnst.PipeSeperator))[0]
 }
 func (i InputFile) GetEncodedHash() ([]byte, error) {
 	hash := i.GetHash()

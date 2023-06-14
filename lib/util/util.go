@@ -6,7 +6,6 @@ import (
 	"encoding/base64"
 	"fmt"
 	"indicer/lib/cnst"
-	"indicer/lib/dbio"
 	"io"
 	"math"
 	"os"
@@ -16,7 +15,6 @@ import (
 	"time"
 
 	"github.com/cheggaaa/pb/v3"
-	"github.com/dgraph-io/badger/v3"
 	"github.com/diskfs/go-diskfs/partition/mbr"
 	"github.com/zeebo/blake3"
 	"golang.org/x/term"
@@ -195,33 +193,4 @@ func GetEvidenceFileHash(fname string) ([]byte, error) {
 }
 func GetEvidenceFileID(eviFileHash []byte) []byte {
 	return append([]byte(cnst.EviFileNamespace), eviFileHash...)
-}
-
-func GuessFileType(encodedHash string, db *badger.DB) ([]byte, error) {
-	fhash, err := base64.StdEncoding.DecodeString(encodedHash)
-	if err != nil {
-		return nil, err
-	}
-
-	fid := AppendToBytesSlice(cnst.IdxFileNamespace, fhash)
-	err = dbio.PingNode(fid, db)
-	if err != nil && err != badger.ErrKeyNotFound {
-		return nil, err
-	}
-	if err == nil {
-		return fid, nil
-	}
-
-	fid = AppendToBytesSlice(cnst.PartiFileNamespace, fhash)
-	err = dbio.PingNode(fid, db)
-	if err != nil && err != badger.ErrKeyNotFound {
-		return nil, err
-	}
-	if err == nil {
-		return fid, nil
-	}
-
-	fid = AppendToBytesSlice(cnst.EviFileNamespace, fhash)
-	err = dbio.PingNode(fid, db)
-	return fid, err
 }

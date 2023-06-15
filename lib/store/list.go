@@ -8,6 +8,7 @@ import (
 	"indicer/lib/structs"
 
 	"github.com/dgraph-io/badger/v3"
+	"github.com/dustin/go-humanize"
 	"github.com/klauspost/compress/s2"
 	"github.com/vmihailenco/msgpack/v5"
 )
@@ -46,7 +47,7 @@ func List(db *badger.DB) error {
 			evihash := bytes.Split(k, eviPrefix)[1]
 			fmt.Println(base64.StdEncoding.EncodeToString(evihash))
 			fmt.Printf("\t%v\n", evidata.Names)
-			fmt.Printf("\t%v\n", evidata.Size)
+			fmt.Printf("\t%v\n", humanize.Bytes(uint64(evidata.Size)))
 			for _, phash := range evidata.InternalObjects {
 				err = listPartitions(phash, txn)
 				if err != nil {

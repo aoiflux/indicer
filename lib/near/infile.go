@@ -34,8 +34,9 @@ func NearInFile(fhash string, db *badger.DB) error {
 
 	for id, val := range idmap {
 		namespace := strings.Split(id, cnst.NamespaceSeperator)[0]
-		id = base64.StdEncoding.EncodeToString([]byte(id))
-		id = namespace + cnst.NamespaceSeperator + id
+		hash := strings.Split(id, cnst.NamespaceSeperator)[1]
+		hash = base64.StdEncoding.EncodeToString([]byte(hash))
+		id = namespace + cnst.NamespaceSeperator + hash
 		fmt.Println(id, val)
 	}
 	fmt.Println("Total Chonk Count: ", count)
@@ -64,6 +65,8 @@ func nearIndexFile(fid []byte, db *badger.DB) (map[string]int64, int64, error) {
 	idmap := make(map[string]int64)
 	var count int64
 	for near := range getNear(ifile.Start, ifile.DBStart, ifile.Size, ehash, db) {
+		count++
+
 		if near.Err != nil {
 			return nil, cnst.IgnoreVar, err
 		}
@@ -75,8 +78,6 @@ func nearIndexFile(fid []byte, db *badger.DB) (map[string]int64, int64, error) {
 		if err != nil {
 			return nil, cnst.IgnoreVar, err
 		}
-
-		count++
 	}
 
 	return idmap, count, nil
@@ -102,6 +103,8 @@ func nearPartitionFile(fid []byte, db *badger.DB) (map[string]int64, int64, erro
 	idmap := make(map[string]int64)
 	var count int64
 	for near := range getNear(pfile.Start, pfile.DBStart, pfile.Size, ehash, db) {
+		count++
+
 		if near.Err != nil {
 			return nil, cnst.IgnoreVar, err
 		}
@@ -113,8 +116,6 @@ func nearPartitionFile(fid []byte, db *badger.DB) (map[string]int64, int64, erro
 		if err != nil {
 			return nil, cnst.IgnoreVar, err
 		}
-
-		count++
 	}
 
 	return idmap, count, nil
@@ -129,6 +130,8 @@ func nearEvidenceFile(fid []byte, db *badger.DB) (map[string]int64, int64, error
 	idmap := make(map[string]int64)
 	var count int64
 	for near := range getNear(efile.Start, 0, efile.Size, ehash, db) {
+		count++
+
 		if near.Err != nil {
 			return nil, cnst.IgnoreVar, err
 		}
@@ -140,8 +143,6 @@ func nearEvidenceFile(fid []byte, db *badger.DB) (map[string]int64, int64, error
 		if err != nil {
 			return nil, cnst.IgnoreVar, err
 		}
-
-		count++
 	}
 
 	return idmap, count, nil

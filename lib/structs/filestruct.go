@@ -1,20 +1,17 @@
 package structs
 
-import "indicer/lib/cnst"
-
 type baseFile struct {
 	Names []string `msgpack:"names"`
 	Size  int64    `msgpack:"size"`
 }
 type IndexedFile struct {
 	baseFile
-	Start   int64 `msgpack:"start"`
-	DBStart int64 `msgpack:"dbstart"`
+	Start int64 `msgpack:"start"`
 }
 
 func NewIndexedFile(name string, start, size int64) IndexedFile {
 	bfile := baseFile{Names: []string{name}, Size: size}
-	return IndexedFile{baseFile: bfile, Start: start, DBStart: cnst.IgnoreVar}
+	return IndexedFile{baseFile: bfile, Start: start}
 }
 
 type PartitionFile struct {

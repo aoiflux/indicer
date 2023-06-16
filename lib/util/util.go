@@ -183,6 +183,14 @@ func GetDBStartOffset(startIndex int64) int64 {
 	return offset
 }
 
+func GetDBEndOffset(endIndex int64) int64 {
+	ans := float64(endIndex) / float64(cnst.ChonkSize)
+	ans = math.Ceil(ans)
+
+	offset := int64(ans) * cnst.ChonkSize
+	return offset
+}
+
 func GetEvidenceFileHash(fname string) ([]byte, error) {
 	eviFileHashString := strings.Split(fname, cnst.DataSeperator)[0]
 	eviFileHash, err := base64.StdEncoding.DecodeString(eviFileHashString)

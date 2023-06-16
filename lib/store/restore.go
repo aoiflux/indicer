@@ -9,6 +9,8 @@ import (
 	"os"
 
 	"github.com/dgraph-io/badger/v3"
+	"github.com/dustin/go-humanize"
+	"github.com/schollz/progressbar/v3"
 )
 
 func Restore(fhash string, dst *os.File, db *badger.DB) error {
@@ -50,16 +52,7 @@ func restoreIndexedFile(fid []byte, dst *os.File, db *badger.DB) error {
 	if err != nil {
 		return err
 	}
-
-	if indexedFile.DBStart == cnst.IgnoreVar {
-		indexedFile.DBStart = util.GetDBStartOffset(indexedFile.Start)
-		err = dbio.SetFile(fid, indexedFile, db)
-		if err != nil {
-			return err
-		}
-	}
-
-	return restoreData(indexedFile.Start, indexedFile.DBStart, indexedFile.Size, ehash, dst, db)
+	return restoreData(indexedFile.Start, indexedFile.Size, ehash, dst, db)
 }
 func restorePartitionFile(fid []byte, dst *os.File, db *badger.DB) error {
 	partitionFile, err := dbio.GetPartitionFile(fid, db)
@@ -74,16 +67,7 @@ func restorePartitionFile(fid []byte, dst *os.File, db *badger.DB) error {
 	if err != nil {
 		return err
 	}
-
-	if partitionFile.DBStart == cnst.IgnoreVar {
-		partitionFile.DBStart = util.GetDBStartOffset(partitionFile.Start)
-		err = dbio.SetFile(fid, partitionFile, db)
-		if err != nil {
-			return err
-		}
-	}
-
-	return restoreData(partitionFile.Start, partitionFile.DBStart, partitionFile.Size, ehash, dst, db)
+	return restoreData(partitionFile.Start, partitionFile.Size, ehash, dst, db)
 }
 func restoreEvidenceFile(fid []byte, dst *os.File, db *badger.DB) error {
 	evidenceFile, err := dbio.GetEvidenceFile(fid, db)
@@ -94,12 +78,17 @@ func restoreEvidenceFile(fid []byte, dst *os.File, db *badger.DB) error {
 		return cnst.ErrIncompleteFile
 	}
 	ehash := bytes.Split(fid, []byte(cnst.EviFileNamespace))[1]
-	return restoreData(evidenceFile.Start, 0, evidenceFile.Size, ehash, dst, db)
+	return restoreData(evidenceFile.Start, evidenceFile.Size, ehash, dst, db)
 }
 
-func restoreData(start, dbstart, size int64, ehash []byte, dst *os.File, db *badger.DB) error {
+func restoreData(start, size int64, ehash []byte, dst *os.File, db *badger.DB) error {
+	var dbstart int64
+	if start > 0 {
+		dbstart = util.GetDBStartOffset(start)
+	}
 	end := start + size
 
+	bar := progressbar.DefaultBytes(size)
 	for restoreIndex := dbstart; restoreIndex <= end; restoreIndex += cnst.ChonkSize {
 		relKey := util.AppendToBytesSlice(cnst.RelationNamespace, ehash, cnst.DataSeperator, restoreIndex)
 		chash, err := dbio.GetNode(relKey, db)
@@ -128,8 +117,11 @@ func restoreData(start, dbstart, size int64, ehash []byte, dst *os.File, db *bad
 		if err != nil {
 			return err
 		}
+
+		bar.Add64(cnst.ChonkSize)
 	}
 
-	fmt.Println("Restored file with size: ", size)
+	bar.Finish()
+	fmt.Println("Restored file with size: ", humanize.Bytes(uint64(size)))
 	return nil
 }

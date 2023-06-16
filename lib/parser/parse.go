@@ -1,7 +1,6 @@
 package parser
 
 import (
-	"indicer/lib/cnst"
 	"indicer/lib/structs"
 	"indicer/lib/util"
 	"os"
@@ -32,7 +31,6 @@ func parseMBR(fhandle *os.File) []structs.PartitionFile {
 		}
 
 		var pfile structs.PartitionFile
-		pfile.DBStart = cnst.IgnoreVar
 		pfile.Start = partition.GetStart() * int64(libxfat.SECTOR_SIZE)
 		pfile.Size = partition.GetSize() * int64(libxfat.SECTOR_SIZE)
 		plist = append(plist, pfile)
@@ -45,7 +43,6 @@ func parsEXFAT(fhandle *os.File, size int64) []structs.PartitionFile {
 	var partition structs.PartitionFile
 	partition.Start = 0
 	partition.Size = size
-	partition.DBStart = cnst.IgnoreVar
 	_, err := libxfat.New(fhandle, true)
 	if err != nil {
 		return nil

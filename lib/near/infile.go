@@ -53,18 +53,11 @@ func nearIndexFile(fid []byte, db *badger.DB) (map[string]int64, int64, error) {
 	if err != nil {
 		return nil, cnst.IgnoreVar, err
 	}
-	if ifile.DBStart == cnst.IgnoreVar {
-		ifile.DBStart = util.GetDBStartOffset(ifile.Start)
-		err = dbio.SetFile(fid, ifile, db)
-		if err != nil {
-			return nil, cnst.IgnoreVar, err
-		}
-	}
 	ihash := bytes.Split(fid, []byte(cnst.IdxFileNamespace))[1]
 
 	idmap := make(map[string]int64)
 	var count int64
-	for near := range getNear(ifile.Start, ifile.DBStart, ifile.Size, ehash, db) {
+	for near := range getNear(ifile.Start, ifile.Size, ehash, db) {
 		count++
 
 		if near.Err != nil {
@@ -91,18 +84,11 @@ func nearPartitionFile(fid []byte, db *badger.DB) (map[string]int64, int64, erro
 	if err != nil {
 		return nil, cnst.IgnoreVar, err
 	}
-	if pfile.DBStart == cnst.IgnoreVar {
-		pfile.DBStart = util.GetDBStartOffset(pfile.Start)
-		err = dbio.SetFile(fid, pfile, db)
-		if err != nil {
-			return nil, cnst.IgnoreVar, err
-		}
-	}
 	phash := bytes.Split(fid, []byte(cnst.PartiFileNamespace))[1]
 
 	idmap := make(map[string]int64)
 	var count int64
-	for near := range getNear(pfile.Start, pfile.DBStart, pfile.Size, ehash, db) {
+	for near := range getNear(pfile.Start, pfile.Size, ehash, db) {
 		count++
 
 		if near.Err != nil {
@@ -129,7 +115,7 @@ func nearEvidenceFile(fid []byte, db *badger.DB) (map[string]int64, int64, error
 
 	idmap := make(map[string]int64)
 	var count int64
-	for near := range getNear(efile.Start, 0, efile.Size, ehash, db) {
+	for near := range getNear(efile.Start, efile.Size, ehash, db) {
 		count++
 
 		if near.Err != nil {
@@ -148,8 +134,13 @@ func nearEvidenceFile(fid []byte, db *badger.DB) (map[string]int64, int64, error
 	return idmap, count, nil
 }
 
-func getNear(start, dbstart, size int64, ehash []byte, db *badger.DB) chan structs.NearGen {
+func getNear(start, size int64, ehash []byte, db *badger.DB) chan structs.NearGen {
 	neargenChan := make(chan structs.NearGen)
+
+	var dbstart int64
+	if start > 0 {
+		dbstart = util.GetDBStartOffset(start)
+	}
 
 	go func() {
 		defer close(neargenChan)

@@ -98,6 +98,7 @@ func (i *InputFile) UpdateInternalObjects(start, size int64, objectHash []byte) 
 		}
 	}
 	dbstart := util.GetDBStartOffset(start)
-	objHashStr = fmt.Sprintf("%s%s%d%s%d", objHashStr, cnst.DataSeperator, dbstart, cnst.RangeSeperator, start+size)
+	dbend := util.GetDBEndOffset(start + size)
+	objHashStr = fmt.Sprintf("%s%s%d%s%d", objHashStr, cnst.DataSeperator, dbstart, cnst.RangeSeperator, dbend)
 	i.internalObjects = append(i.internalObjects, objHashStr)
 }

@@ -49,83 +49,47 @@ func nearIndexFile(fid []byte, db *badger.DB) (map[string]int64, int64, error) {
 	if err != nil {
 		return nil, cnst.IgnoreVar, err
 	}
-	ehash, err := util.GetEvidenceFileHash(ifile.Names[0])
-	if err != nil {
-		return nil, cnst.IgnoreVar, err
-	}
-	ihash := bytes.Split(fid, []byte(cnst.IdxFileNamespace))[1]
-
-	idmap := make(map[string]int64)
-	var count int64
-	for near := range getNear(ifile.Start, ifile.Size, ehash, db) {
-		count++
-
-		if near.Err != nil {
-			return nil, cnst.IgnoreVar, err
-		}
-		if len(near.RevList) == 1 {
-			continue
-		}
-
-		err = countRevListNear(ihash, idmap, near.RevList, db)
-		if err != nil {
-			return nil, cnst.IgnoreVar, err
-		}
-	}
-
-	return idmap, count, nil
+	return getNearLogicalFile(ifile.Start, ifile.Size, ifile.Names[0], fid, db)
 }
 func nearPartitionFile(fid []byte, db *badger.DB) (map[string]int64, int64, error) {
 	pfile, err := dbio.GetPartitionFile(fid, db)
 	if err != nil {
 		return nil, cnst.IgnoreVar, err
 	}
-	ehash, err := util.GetEvidenceFileHash(pfile.Names[0])
-	if err != nil {
-		return nil, cnst.IgnoreVar, err
-	}
-	phash := bytes.Split(fid, []byte(cnst.PartiFileNamespace))[1]
-
-	idmap := make(map[string]int64)
-	var count int64
-	for near := range getNear(pfile.Start, pfile.Size, ehash, db) {
-		count++
-
-		if near.Err != nil {
-			return nil, cnst.IgnoreVar, err
-		}
-		if len(near.RevList) == 1 {
-			continue
-		}
-
-		err = countRevListNear(phash, idmap, near.RevList, db)
-		if err != nil {
-			return nil, cnst.IgnoreVar, err
-		}
-	}
-
-	return idmap, count, nil
+	return getNearLogicalFile(pfile.Start, pfile.Size, pfile.Names[0], fid, db)
 }
 func nearEvidenceFile(fid []byte, db *badger.DB) (map[string]int64, int64, error) {
 	efile, err := dbio.GetEvidenceFile(fid, db)
 	if err != nil {
 		return nil, cnst.IgnoreVar, err
 	}
-	ehash := bytes.Split(fid, []byte(cnst.EviFileNamespace))[1]
+	ehash := bytes.Split(fid, []byte(cnst.NamespaceSeperator))[1]
+	return getNearFile(efile.Start, efile.Size, ehash, fid, db)
+}
 
+func getNearLogicalFile(start, size int64, fname string, fid []byte, db *badger.DB) (map[string]int64, int64, error) {
+	ehash, err := util.GetEvidenceFileHash(fname)
+	if err != nil {
+		return nil, cnst.IgnoreVar, err
+	}
+	return getNearFile(start, size, ehash, fid, db)
+}
+func getNearFile(start, size int64, ehash, fid []byte, db *badger.DB) (map[string]int64, int64, error) {
+	fhash := bytes.Split(fid, []byte(cnst.NamespaceSeperator))[1]
 	idmap := make(map[string]int64)
 	var count int64
-	for near := range getNear(efile.Start, efile.Size, ehash, db) {
+
+	for near := range getNear(start, size, ehash, db) {
 		count++
 
 		if near.Err != nil {
-			return nil, cnst.IgnoreVar, err
+			return nil, cnst.IgnoreVar, near.Err
 		}
 		if len(near.RevList) == 1 {
 			continue
 		}
 
-		err = countRevListNear(ehash, idmap, near.RevList, db)
+		err := countRevListNear(fhash, idmap, near.RevList, db)
 		if err != nil {
 			return nil, cnst.IgnoreVar, err
 		}
@@ -133,7 +97,6 @@ func nearEvidenceFile(fid []byte, db *badger.DB) (map[string]int64, int64, error
 
 	return idmap, count, nil
 }
-
 func getNear(start, size int64, ehash []byte, db *badger.DB) chan structs.NearGen {
 	neargenChan := make(chan structs.NearGen)
 

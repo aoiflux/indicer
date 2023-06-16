@@ -63,6 +63,7 @@ func List(db *badger.DB) error {
 
 func listPartitions(phash string, txn *badger.Txn) error {
 	phash = strings.Split(phash, cnst.DataSeperator)[0]
+	fmt.Printf("\tPartition: %v\n", phash)
 	decodedPhash, err := base64.StdEncoding.DecodeString(phash)
 	if err != nil {
 		return err
@@ -89,7 +90,7 @@ func listPartitions(phash string, txn *badger.Txn) error {
 
 	for i, ihash := range pdata.InternalObjects {
 		ihash = strings.Split(ihash, cnst.DataSeperator)[0]
-		fmt.Printf("\tIndexed %d ---> %s\n", i, ihash)
+		fmt.Printf("\t\tIndexed %d ---> %s\n", i, ihash)
 	}
 
 	return nil

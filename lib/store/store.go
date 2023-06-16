@@ -2,6 +2,7 @@ package store
 
 import (
 	"bytes"
+	"encoding/base64"
 	"fmt"
 	"indicer/lib/cnst"
 	"indicer/lib/dbio"
@@ -228,7 +229,8 @@ func processRel(index int64, fhash, chash []byte, db *badger.DB, batch *badger.W
 	return err
 }
 func processRevRel(index int64, fhash, chash []byte, db *badger.DB) error {
-	relVal := util.AppendToBytesSlice(cnst.RelationNamespace, fhash, cnst.DataSeperator, index)
+	fhashStr := base64.StdEncoding.EncodeToString(fhash)
+	relVal := util.AppendToBytesSlice(cnst.RelationNamespace, fhashStr, cnst.DataSeperator, index)
 	revRelKey := util.AppendToBytesSlice(cnst.ReverseRelationNamespace, chash)
 
 	revRelList, err := dbio.GetReverseRelationNode(revRelKey, db)

@@ -7,6 +7,7 @@ require (
 	github.com/cheggaaa/pb/v3 v3.1.2
 	github.com/dgraph-io/badger/v3 v3.2103.5
 	github.com/diskfs/go-diskfs v1.3.0
+	github.com/dustin/go-humanize v1.0.1
 	github.com/edsrzf/mmap-go v1.1.0
 	github.com/fatih/color v1.15.0
 	github.com/klauspost/compress v1.16.5
@@ -23,7 +24,6 @@ require (
 	github.com/cespare/xxhash v1.1.0 // indirect
 	github.com/cespare/xxhash/v2 v2.2.0 // indirect
 	github.com/dgraph-io/ristretto v0.1.1 // indirect
-	github.com/dustin/go-humanize v1.0.1 // indirect
 	github.com/go-ole/go-ole v1.2.6 // indirect
 	github.com/gogo/protobuf v1.3.2 // indirect
 	github.com/golang/glog v1.1.1 // indirect

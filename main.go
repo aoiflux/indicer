@@ -33,7 +33,8 @@ func main() {
 
 	var db *badger.DB
 	if command != cnst.CmdReset {
-		key := util.GetPassword()
+		// key := util.GetPassword()
+		key := []byte{}
 		db, err = dbio.ConnectDB(dbpath, key)
 		handle(nil, db, err)
 		defer db.Close()

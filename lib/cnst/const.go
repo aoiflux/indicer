@@ -37,10 +37,6 @@ const (
 	RangeSeperator           = "-"
 	DataSeperator            = "|||"
 	PartitionIndexPrefix     = "p"
-
-	EviFType   = "evidence"
-	PartiFType = "partition"
-	IdxFType   = "indexed"
 )
 
 var (

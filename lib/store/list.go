@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"indicer/lib/cnst"
 	"indicer/lib/structs"
+	"strings"
 
 	"github.com/dgraph-io/badger/v3"
 	"github.com/dustin/go-humanize"
@@ -60,10 +61,14 @@ func List(db *badger.DB) error {
 	})
 }
 
-func listPartitions(phash []byte, txn *badger.Txn) error {
-	phash = bytes.Split(phash, []byte(cnst.DataSeperator))[0]
-	fmt.Println("Partition: ", base64.StdEncoding.EncodeToString(phash))
-	pid := append([]byte(cnst.PartiFileNamespace), phash...)
+func listPartitions(phash string, txn *badger.Txn) error {
+	phash = strings.Split(phash, cnst.DataSeperator)[0]
+	decodedPhash, err := base64.StdEncoding.DecodeString(phash)
+	if err != nil {
+		return err
+	}
+
+	pid := append([]byte(cnst.PartiFileNamespace), decodedPhash...)
 	item, err := txn.Get(pid)
 	if err != nil {
 		return err
@@ -83,9 +88,8 @@ func listPartitions(phash []byte, txn *badger.Txn) error {
 	}
 
 	for i, ihash := range pdata.InternalObjects {
-		ihash = bytes.Split(ihash, []byte(cnst.DataSeperator))[0]
-		ihashStr := base64.StdEncoding.EncodeToString(ihash)
-		fmt.Printf("\tIndexed %d ---> %s\n", i, ihashStr)
+		ihash = strings.Split(ihash, cnst.DataSeperator)[0]
+		fmt.Printf("\tIndexed %d ---> %s\n", i, ihash)
 	}
 
 	return nil

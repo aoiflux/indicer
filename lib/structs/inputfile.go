@@ -3,6 +3,7 @@ package structs
 import (
 	"bytes"
 	"encoding/base64"
+	"fmt"
 	"indicer/lib/cnst"
 	"indicer/lib/util"
 	"os"
@@ -20,7 +21,7 @@ type InputFile struct {
 	name            string
 	startIndex      int64
 	db              *badger.DB
-	internalObjects [][]byte
+	internalObjects []string
 }
 
 func NewInputFile(
@@ -39,7 +40,7 @@ func NewInputFile(
 	infile.db = db
 	infile.size = size
 	infile.startIndex = startIndex
-	infile.internalObjects = make([][]byte, 0)
+	infile.internalObjects = make([]string, 0)
 
 	return infile
 }
@@ -74,7 +75,7 @@ func (i InputFile) GetEncodedHash() ([]byte, error) {
 	hash := i.GetHash()
 	return []byte(base64.StdEncoding.EncodeToString(hash)), nil
 }
-func (i InputFile) GetInternalObjects() [][]byte {
+func (i InputFile) GetInternalObjects() []string {
 	return i.internalObjects
 }
 func (i InputFile) GetEviFileHash() []byte {
@@ -89,12 +90,13 @@ func (i InputFile) GetNamespace() []byte {
 	return append(fileType, []byte(cnst.NamespaceSeperator)...)
 }
 func (i *InputFile) UpdateInternalObjects(start, size int64, objectHash []byte) {
+	objHashStr := base64.StdEncoding.EncodeToString(objectHash)
 	for _, item := range i.internalObjects {
-		internalObjectHash := bytes.Split(item, []byte(cnst.DataSeperator))[0]
-		if bytes.Equal(internalObjectHash, objectHash) {
+		internalObjectHash := strings.Split(item, cnst.DataSeperator)[0]
+		if internalObjectHash == objHashStr {
 			return
 		}
 	}
-	objectHash = util.AppendToBytesSlice(objectHash, cnst.DataSeperator, start, cnst.RangeSeperator, start+size)
-	i.internalObjects = append(i.internalObjects, objectHash)
+	objHashStr = fmt.Sprintf("%s%s%d%s%d", objHashStr, cnst.DataSeperator, start, cnst.RangeSeperator, start+size)
+	i.internalObjects = append(i.internalObjects, objHashStr)
 }

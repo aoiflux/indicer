@@ -2,7 +2,6 @@ package parser
 
 import (
 	"indicer/lib/structs"
-	"indicer/lib/util"
 	"os"
 
 	"github.com/aoiflux/libxfat"
@@ -10,14 +9,14 @@ import (
 )
 
 func GetPartitions(fhandle *os.File, size int64) []structs.PartitionFile {
-	plist := parseMBR(fhandle)
+	plist := parseMBR(fhandle, size)
 	if len(plist) > 0 {
 		return plist
 	}
 	return parsEXFAT(fhandle, size)
 }
 
-func parseMBR(fhandle *os.File) []structs.PartitionFile {
+func parseMBR(fhandle *os.File, size int64) []structs.PartitionFile {
 	dimbr, err := mbr.Read(fhandle, 0, 0)
 	if err != nil {
 		return nil
@@ -26,13 +25,16 @@ func parseMBR(fhandle *os.File) []structs.PartitionFile {
 	plist := []structs.PartitionFile{}
 	partitions := dimbr.Partitions
 	for _, partition := range partitions {
-		if !util.IsSupported(partition.Type) {
+		if _, err = libxfat.New(fhandle, true, uint64(partition.Start)); err != nil {
 			continue
 		}
-
 		var pfile structs.PartitionFile
 		pfile.Start = partition.GetStart() * int64(libxfat.SECTOR_SIZE)
 		pfile.Size = partition.GetSize() * int64(libxfat.SECTOR_SIZE)
+		if pfile.Size > size {
+			pfile.Size = partition.GetSize()
+		}
+
 		plist = append(plist, pfile)
 	}
 

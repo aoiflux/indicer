@@ -15,7 +15,6 @@ import (
 	"time"
 
 	"github.com/cheggaaa/pb/v3"
-	"github.com/diskfs/go-diskfs/partition/mbr"
 	"github.com/zeebo/blake3"
 	"golang.org/x/term"
 )
@@ -76,20 +75,28 @@ func GetFileHash(fileHandle *os.File) ([]byte, error) {
 	return hash, err
 }
 
-func GetLogicalFileHash(fhandle *os.File, start, size int64) ([]byte, error) {
-	_, err := fhandle.Seek(start, io.SeekStart)
+func GetLogicalFileHash(fileHandle *os.File, start, size int64) ([]byte, error) {
+	_, err := fileHandle.Seek(start, io.SeekStart)
 	if err != nil {
 		return nil, err
 	}
 
+	fmt.Println("Generating BLAKE3 hash for a logical file....")
+	startTime := time.Now()
+
 	hasher := blake3.New()
-	_, err = io.CopyN(hasher, fhandle, size)
+	bar := pb.Full.Start64(size)
+	barReader := bar.NewProxyReader(fileHandle)
+
+	_, err = io.CopyN(hasher, barReader, size)
 	if err != nil {
 		return nil, err
 	}
 	hash := hasher.Sum(nil)
 
-	_, err = fhandle.Seek(0, io.SeekStart)
+	bar.Finish()
+	fmt.Printf("Operation completed in: %s\n\n", time.Since(startTime))
+	_, err = fileHandle.Seek(0, io.SeekStart)
 	return hash, err
 }
 
@@ -106,12 +113,6 @@ func GetChonkHash(data []byte) ([]byte, error) {
 func IsLogicalFile(inid []byte) bool {
 	return bytes.HasPrefix(inid, []byte(cnst.PartiFileNamespace)) ||
 		bytes.HasPrefix(inid, []byte(cnst.IdxFileNamespace))
-}
-
-// IsSupported checks if detected file system is supported or not
-// Both exFAT & NTFS same the share partition type number ie 0x07
-func IsSupported(ptype mbr.Type) bool {
-	return ptype == mbr.NTFS
 }
 
 func AppendToBytesSlice(args ...interface{}) []byte {

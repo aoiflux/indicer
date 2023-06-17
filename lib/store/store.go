@@ -136,7 +136,6 @@ func evidenceFilePreflight(infile structs.InputFile) (structs.EvidenceFile, erro
 func storeEvidenceData(infile structs.InputFile) error {
 	batch := infile.GetDB().NewWriteBatch()
 	batch.SetMaxPendingTxns(cnst.MaxBatchCount)
-	var buffSize int64
 	var active int
 
 	fmt.Printf("\nSaving Evidence File\n")
@@ -147,18 +146,17 @@ func storeEvidenceData(infile structs.InputFile) error {
 	tio.DB = infile.GetDB()
 	tio.Batch = batch
 	tio.Err = make(chan error, cnst.MaxThreadCount)
-	tio.MappedFile = infile.GetMappedFile()
+	tio.FHandle = infile.GetHandle()
 
 	for storeIndex := infile.GetStartIndex(); storeIndex <= infile.GetSize(); storeIndex += cnst.ChonkSize {
 		tio.Index = storeIndex
 
 		if infile.GetSize()-storeIndex <= cnst.ChonkSize {
-			buffSize = infile.GetSize() - storeIndex
+			tio.BuffSize = infile.GetSize() - storeIndex
 		} else {
-			buffSize = cnst.ChonkSize
+			tio.BuffSize = cnst.ChonkSize
 		}
 
-		tio.End = storeIndex + buffSize
 		go storeWorker(tio)
 		active++
 
@@ -168,8 +166,10 @@ func storeEvidenceData(infile structs.InputFile) error {
 				return err
 			}
 			active--
-			bar.Add64(buffSize)
+			bar.Add64(tio.BuffSize)
 		}
+
+		tio.DB.RunValueLogGC(0.5)
 	}
 
 	for active > 0 {
@@ -191,7 +191,11 @@ func storeEvidenceData(infile structs.InputFile) error {
 	return nil
 }
 func storeWorker(tio structs.ThreadIO) {
-	lostChonk := tio.MappedFile[tio.Index:tio.End]
+	lostChonk := make([]byte, tio.BuffSize)
+	_, err := tio.FHandle.ReadAt(lostChonk, tio.Index)
+	if err != nil {
+		tio.Err <- err
+	}
 
 	chash, err := util.GetChonkHash(lostChonk)
 	if err != nil {
@@ -206,7 +210,7 @@ func storeWorker(tio structs.ThreadIO) {
 		tio.Err <- err
 	}
 
-	tio.Err <- processRevRel(tio.Index, tio.FHash, chash, tio.DB)
+	tio.Err <- processRevRel(tio.Index, tio.FHash, chash, tio.DB, tio.Batch)
 }
 func processChonk(cdata, chash []byte, db *badger.DB, batch *badger.WriteBatch) error {
 	ckey := append([]byte(cnst.ChonkNamespace), chash...)
@@ -228,7 +232,7 @@ func processRel(index int64, fhash, chash []byte, db *badger.DB, batch *badger.W
 
 	return err
 }
-func processRevRel(index int64, fhash, chash []byte, db *badger.DB) error {
+func processRevRel(index int64, fhash, chash []byte, db *badger.DB, batch *badger.WriteBatch) error {
 	fhashStr := base64.StdEncoding.EncodeToString(fhash)
 	relVal := util.AppendToBytesSlice(cnst.RelationNamespace, fhashStr, cnst.DataSeperator, index)
 	revRelKey := util.AppendToBytesSlice(cnst.ReverseRelationNamespace, chash)
@@ -236,9 +240,9 @@ func processRevRel(index int64, fhash, chash []byte, db *badger.DB) error {
 	revRelList, err := dbio.GetReverseRelationNode(revRelKey, db)
 	revRelNode := structs.ReverseRelation{Value: relVal}
 	if err != nil && err == badger.ErrKeyNotFound {
-		return dbio.SetReverseRelationNode(revRelKey, []structs.ReverseRelation{revRelNode}, db)
+		return dbio.SetReverseRelationNode(revRelKey, []structs.ReverseRelation{revRelNode}, batch)
 	}
 
 	revRelList = append(revRelList, revRelNode)
-	return dbio.SetReverseRelationNode(revRelKey, revRelList, db)
+	return dbio.SetReverseRelationNode(revRelKey, revRelList, batch)
 }

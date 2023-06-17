@@ -14,25 +14,21 @@ import (
 )
 
 func ConnectDB(datadir string, key []byte) (*badger.DB, error) {
-	cacheLimit, err := cnst.GetCacheLimit()
-	if err != nil {
-		return nil, err
-	}
 	opts := badger.DefaultOptions(datadir)
 	opts = opts.WithLoggingLevel(badger.ERROR)
-	opts.IndexCacheSize = cacheLimit
+	opts.IndexCacheSize = cnst.GetCacheLimit()
 	opts.SyncWrites = true
 	opts.NumGoroutines = cnst.MaxThreadCount
-	opts.BlockCacheSize = cacheLimit
+	opts.BlockCacheSize = cnst.GetCacheLimit()
 	opts.Compression = options.ZSTD
 	opts.ZSTDCompressionLevel = 15
 	opts.EncryptionKey = key
 	opts.EncryptionKeyRotationDuration = time.Hour * 168
 	opts.MetricsEnabled = false
 	opts.ChecksumVerificationMode = options.OnTableRead
-	opts.NumLevelZeroTables = 1
-	opts.NumLevelZeroTablesStall = 2
 	opts.BloomFalsePositive = 0
+	opts.NumMemtables = 1
+	opts.MemTableSize = cnst.GetCacheLimit()
 	return badger.Open(opts)
 }
 
@@ -78,12 +74,12 @@ func GetIndexedFile(key []byte, db *badger.DB) (structs.IndexedFile, error) {
 	return indexedFile, err
 }
 
-func SetReverseRelationNode(key []byte, revRelNode []structs.ReverseRelation, db *badger.DB) error {
+func SetReverseRelationNode(key []byte, revRelNode []structs.ReverseRelation, batch *badger.WriteBatch) error {
 	data, err := msgpack.Marshal(revRelNode)
 	if err != nil {
 		return err
 	}
-	return SetNode(key, data, db)
+	return SetBatchNode(key, data, batch)
 }
 func GetReverseRelationNode(key []byte, db *badger.DB) ([]structs.ReverseRelation, error) {
 	var reverseRelations []structs.ReverseRelation

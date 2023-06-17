@@ -3,8 +3,6 @@ package cnst
 import (
 	"errors"
 	"runtime"
-
-	"github.com/shirou/gopsutil/mem"
 )
 
 const (
@@ -69,7 +67,6 @@ const (
 
 const IgnoreVar int64 = -1
 
-func GetCacheLimit() (int64, error) {
-	vmemstat, err := mem.VirtualMemory()
-	return int64(vmemstat.Available / 8), err
+func GetCacheLimit() int64 {
+	return 10 * MB
 }

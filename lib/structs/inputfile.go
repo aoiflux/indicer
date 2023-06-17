@@ -10,11 +10,9 @@ import (
 	"strings"
 
 	"github.com/dgraph-io/badger/v3"
-	"github.com/edsrzf/mmap-go"
 )
 
 type InputFile struct {
-	mappedFile      mmap.MMap
 	fileHandle      *os.File
 	size            int64
 	id              []byte
@@ -27,14 +25,12 @@ type InputFile struct {
 func NewInputFile(
 	db *badger.DB,
 	fileHandle *os.File,
-	mappedFile mmap.MMap,
 	name, namespace string,
 	inFileHash []byte,
 	size, startIndex int64,
 ) InputFile {
 	var infile InputFile
 	infile.fileHandle = fileHandle
-	infile.mappedFile = mappedFile
 	infile.id = util.AppendToBytesSlice(namespace, inFileHash)
 	infile.name = name
 	infile.db = db
@@ -43,9 +39,6 @@ func NewInputFile(
 	infile.internalObjects = make([]string, 0)
 
 	return infile
-}
-func (i InputFile) GetMappedFile() mmap.MMap {
-	return i.mappedFile
 }
 func (i InputFile) GetHandle() *os.File {
 	return i.fileHandle

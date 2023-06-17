@@ -16,7 +16,6 @@ import (
 	"time"
 
 	"github.com/dgraph-io/badger/v3"
-	"github.com/edsrzf/mmap-go"
 	"github.com/fatih/color"
 )
 
@@ -29,7 +28,7 @@ func main() {
 	}
 
 	dbpath, err := util.GetDBPath()
-	handle(nil, nil, err)
+	handle(nil, err)
 
 	command := strings.ToLower(os.Args[1])
 
@@ -37,7 +36,7 @@ func main() {
 	if command != cnst.CmdReset {
 		key := util.GetPassword()
 		db, err = dbio.ConnectDB(dbpath, key)
-		handle(nil, db, err)
+		handle(db, err)
 		defer db.Close()
 	}
 
@@ -54,10 +53,12 @@ func main() {
 		err = resetData(dbpath)
 	}
 
-	handle(nil, db, err)
+	handle(db, err)
 }
 
 func storeData(db *badger.DB) error {
+	fmt.Println("Pre-store checks & indexing....")
+
 	start := time.Now()
 
 	if len(os.Args) < 3 {
@@ -69,9 +70,8 @@ func storeData(db *badger.DB) error {
 	}
 
 	eviFile, err := initEvidenceFile(db, os.Args[2])
-	mapped := eviFile.GetMappedFile()
-	defer mapped.Unmap()
-	handle(mapped, db, err)
+	defer eviFile.GetHandle().Close()
+	handle(db, err)
 
 	err = store.EvidenceFilePreStoreCheck(eviFile)
 	if err == nil {
@@ -82,7 +82,7 @@ func storeData(db *badger.DB) error {
 	partitions := parser.GetPartitions(eviFile.GetHandle(), eviFile.GetSize())
 	for index, partition := range partitions {
 		phash, err := util.GetLogicalFileHash(eviFile.GetHandle(), partition.Start, partition.Size)
-		handle(mapped, db, err)
+		handle(db, err)
 		eviFile.UpdateInternalObjects(partition.Start, partition.Size, phash)
 
 		ehash, err := eviFile.GetEncodedHash()
@@ -95,7 +95,6 @@ func storeData(db *badger.DB) error {
 		pfile := structs.NewInputFile(
 			db,
 			eviFile.GetHandle(),
-			mapped,
 			pname,
 			cnst.PartiFileNamespace,
 			phash,
@@ -108,7 +107,7 @@ func storeData(db *badger.DB) error {
 			fmt.Println(err, "...continuing")
 			continue
 		}
-		handle(mapped, db, err)
+		handle(db, err)
 	}
 
 	echan := make(chan error)
@@ -137,15 +136,10 @@ func initEvidenceFile(db *badger.DB, evifilepath string) (structs.InputFile, err
 	if err != nil {
 		return eviFile, err
 	}
-	mappedFile, err := mmap.Map(eviHandle, mmap.RDONLY, 0)
-	if err != nil {
-		return eviFile, err
-	}
 
 	eviFile = structs.NewInputFile(
 		db,
 		eviHandle,
-		mappedFile,
 		eviFileName,
 		cnst.EviFileNamespace,
 		eviFileHash,
@@ -225,16 +219,12 @@ func resetData(dbpath string) error {
 	return os.RemoveAll(dbpath)
 }
 
-func handle(mappedFile mmap.MMap, db *badger.DB, err error) {
+func handle(db *badger.DB, err error) {
 	if err != nil {
 		fmt.Printf("\n\n%v\n\n", err)
 
 		if db != nil {
 			db.Close()
-		}
-
-		if mappedFile != nil {
-			mappedFile.Unmap()
 		}
 
 		os.Exit(1)

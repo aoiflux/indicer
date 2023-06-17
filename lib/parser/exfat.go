@@ -5,6 +5,7 @@ import (
 	"indicer/lib/store"
 	"indicer/lib/structs"
 	"indicer/lib/util"
+	"os"
 
 	"github.com/aoiflux/libxfat"
 	"github.com/dgraph-io/badger/v3"
@@ -85,4 +86,15 @@ func getStartOffset(pfileStart uint64) uint64 {
 		return 0
 	}
 	return uint64(pfileStart) / libxfat.SECTOR_SIZE
+}
+
+func parsEXFAT(fhandle *os.File, size int64) []structs.PartitionFile {
+	var partition structs.PartitionFile
+	partition.Start = 0
+	partition.Size = size
+	_, err := libxfat.New(fhandle, true)
+	if err != nil {
+		return nil
+	}
+	return []structs.PartitionFile{partition}
 }

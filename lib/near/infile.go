@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/dgraph-io/badger/v3"
+	"github.com/schollz/progressbar/v3"
 )
 
 func NearInFile(fhash string, db *badger.DB) error {
@@ -48,7 +49,7 @@ func nearIndexFile(fid []byte, db *badger.DB) (map[string]int64, error) {
 	if err != nil {
 		return nil, err
 	}
-	idmap, _, err := getNearLogicalFile(ifile.Start, ifile.Size, ifile.Names[0], fid, db)
+	idmap, err := getNearLogicalFile(ifile.Start, ifile.Size, ifile.Names[0], fid, db)
 	return idmap, err
 }
 func nearPartitionFile(fid []byte, db *badger.DB) (map[string]int64, error) {
@@ -56,7 +57,7 @@ func nearPartitionFile(fid []byte, db *badger.DB) (map[string]int64, error) {
 	if err != nil {
 		return nil, err
 	}
-	idmap, _, err := getNearLogicalFile(pfile.Start, pfile.Size, pfile.Names[0], fid, db)
+	idmap, err := getNearLogicalFile(pfile.Start, pfile.Size, pfile.Names[0], fid, db)
 	return idmap, err
 }
 func nearEvidenceFile(fid []byte, db *badger.DB) (map[string]int64, error) {
@@ -65,27 +66,29 @@ func nearEvidenceFile(fid []byte, db *badger.DB) (map[string]int64, error) {
 		return nil, err
 	}
 	ehash := bytes.Split(fid, []byte(cnst.NamespaceSeperator))[1]
-	idmap, _, err := getNearFile(efile.Start, efile.Size, ehash, fid, db)
+	idmap, err := getNearFile(efile.Start, efile.Size, ehash, fid, db)
 	return idmap, err
 }
 
-func getNearLogicalFile(start, size int64, fname string, fid []byte, db *badger.DB) (map[string]int64, int64, error) {
+func getNearLogicalFile(start, size int64, fname string, fid []byte, db *badger.DB) (map[string]int64, error) {
 	ehash, err := util.GetEvidenceFileHash(fname)
 	if err != nil {
-		return nil, cnst.IgnoreVar, err
+		return nil, err
 	}
 	return getNearFile(start, size, ehash, fid, db)
 }
-func getNearFile(start, size int64, ehash, fid []byte, db *badger.DB) (map[string]int64, int64, error) {
+func getNearFile(start, size int64, ehash, fid []byte, db *badger.DB) (map[string]int64, error) {
 	fhash := bytes.Split(fid, []byte(cnst.NamespaceSeperator))[1]
 	idmap := make(map[string]int64)
-	var count int64
+
+	fmt.Println("Finding NeAR Artefacts....")
+	bar := progressbar.DefaultBytes(size)
 
 	for near := range getNear(start, size, ehash, db) {
-		count++
+		bar.Add64(cnst.ChonkSize)
 
 		if near.Err != nil {
-			return nil, cnst.IgnoreVar, near.Err
+			return nil, near.Err
 		}
 		if len(near.RevList) == 1 {
 			continue
@@ -93,11 +96,13 @@ func getNearFile(start, size int64, ehash, fid []byte, db *badger.DB) (map[strin
 
 		err := countRevListNear(fhash, idmap, near.RevList, db)
 		if err != nil {
-			return nil, cnst.IgnoreVar, err
+			return nil, err
 		}
 	}
 
-	return idmap, count, nil
+	bar.Finish()
+	fmt.Println("Found NeAR Artefacts. Generating GReAt Graph....")
+	return idmap, nil
 }
 func getNear(start, size int64, ehash []byte, db *badger.DB) chan structs.NearGen {
 	neargenChan := make(chan structs.NearGen)

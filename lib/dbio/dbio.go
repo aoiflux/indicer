@@ -16,6 +16,7 @@ import (
 func ConnectDB(datadir string, key []byte) (*badger.DB, error) {
 	opts := badger.DefaultOptions(datadir)
 	opts = opts.WithLoggingLevel(badger.ERROR)
+	opts = opts.WithLogger(nil)
 	opts.IndexCacheSize = cnst.GetCacheLimit()
 	opts.SyncWrites = true
 	opts.NumGoroutines = cnst.GetMaxThreadCount()

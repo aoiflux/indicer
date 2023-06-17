@@ -18,7 +18,7 @@ func ConnectDB(datadir string, key []byte) (*badger.DB, error) {
 	opts = opts.WithLoggingLevel(badger.ERROR)
 	opts.IndexCacheSize = cnst.GetCacheLimit()
 	opts.SyncWrites = true
-	opts.NumGoroutines = cnst.MaxThreadCount
+	opts.NumGoroutines = cnst.GetMaxThreadCount()
 	opts.BlockCacheSize = cnst.GetCacheLimit()
 	opts.Compression = options.ZSTD
 	opts.ZSTDCompressionLevel = 15

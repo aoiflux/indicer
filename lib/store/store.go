@@ -145,7 +145,7 @@ func storeEvidenceData(infile structs.InputFile) error {
 	tio.FHash = infile.GetHash()
 	tio.DB = infile.GetDB()
 	tio.Batch = batch
-	tio.Err = make(chan error, cnst.MaxThreadCount)
+	tio.Err = make(chan error, cnst.GetMaxThreadCount())
 	tio.FHandle = infile.GetHandle()
 
 	for storeIndex := infile.GetStartIndex(); storeIndex <= infile.GetSize(); storeIndex += cnst.ChonkSize {
@@ -160,7 +160,7 @@ func storeEvidenceData(infile structs.InputFile) error {
 		go storeWorker(tio)
 		active++
 
-		if active > cnst.MaxThreadCount {
+		if active > cnst.GetMaxThreadCount() {
 			err := <-tio.Err
 			if err != nil {
 				return err

@@ -21,7 +21,6 @@ const (
 	KeySize                 = 32
 )
 
-var MaxThreadCount = runtime.NumCPU() / 2
 var ChonkSize = DefaultChonkSize
 
 const (
@@ -67,6 +66,13 @@ const (
 
 const IgnoreVar int64 = -1
 
+func GetMaxThreadCount() int {
+	max := runtime.NumCPU() / 2
+	if max > 2 {
+		return max
+	}
+	return 2
+}
 func GetCacheLimit() int64 {
 	return 10 * MB
 }

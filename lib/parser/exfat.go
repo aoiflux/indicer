@@ -62,7 +62,7 @@ func IndexEXFAT(db *badger.DB, pfile structs.InputFile) error {
 		go store.Store(ifile, echan)
 		active++
 
-		if active > cnst.MaxThreadCount {
+		if active > cnst.GetMaxThreadCount() {
 			if <-echan != nil {
 				return <-echan
 			}

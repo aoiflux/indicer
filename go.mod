@@ -6,7 +6,6 @@ require (
 	github.com/aoiflux/libxfat v0.0.0-20230228122432-d5f29d31de5d
 	github.com/cheggaaa/pb/v3 v3.1.2
 	github.com/dgraph-io/badger/v3 v3.2103.5
-	github.com/diskfs/go-diskfs v1.3.0
 	github.com/dustin/go-humanize v1.0.1
 	github.com/edsrzf/mmap-go v1.1.0
 	github.com/fatih/color v1.15.0

@@ -2,13 +2,10 @@ package near
 
 import (
 	"bytes"
-	"encoding/base64"
-	"fmt"
 	"indicer/lib/cnst"
 	"indicer/lib/dbio"
 	"indicer/lib/structs"
 	"indicer/lib/util"
-	"strings"
 
 	"github.com/dgraph-io/badger/v3"
 )
@@ -20,51 +17,45 @@ func NearInFile(fhash string, db *badger.DB) error {
 	}
 
 	var idmap map[string]int64
-	var count int64
+
 	if bytes.HasPrefix(fid, []byte(cnst.IdxFileNamespace)) {
-		idmap, count, err = nearIndexFile(fid, db)
+		idmap, err = nearIndexFile(fid, db)
 	} else if bytes.HasPrefix(fid, []byte(cnst.PartiFileNamespace)) {
-		idmap, count, err = nearPartitionFile(fid, db)
+		idmap, err = nearPartitionFile(fid, db)
 	} else {
-		idmap, count, err = nearEvidenceFile(fid, db)
+		idmap, err = nearEvidenceFile(fid, db)
 	}
 	if err != nil {
 		return err
 	}
 
-	for id, val := range idmap {
-		namespace := strings.Split(id, cnst.NamespaceSeperator)[0]
-		hash := strings.Split(id, cnst.NamespaceSeperator)[1]
-		hash = base64.StdEncoding.EncodeToString([]byte(hash))
-		id = namespace + cnst.NamespaceSeperator + hash
-		fmt.Println(id, val)
-	}
-	fmt.Println("Total Chonk Count: ", count)
-
-	return nil
+	return visualise(fid, idmap, db)
 }
 
-func nearIndexFile(fid []byte, db *badger.DB) (map[string]int64, int64, error) {
+func nearIndexFile(fid []byte, db *badger.DB) (map[string]int64, error) {
 	ifile, err := dbio.GetIndexedFile(fid, db)
 	if err != nil {
-		return nil, cnst.IgnoreVar, err
+		return nil, err
 	}
-	return getNearLogicalFile(ifile.Start, ifile.Size, ifile.Names[0], fid, db)
+	idmap, _, err := getNearLogicalFile(ifile.Start, ifile.Size, ifile.Names[0], fid, db)
+	return idmap, err
 }
-func nearPartitionFile(fid []byte, db *badger.DB) (map[string]int64, int64, error) {
+func nearPartitionFile(fid []byte, db *badger.DB) (map[string]int64, error) {
 	pfile, err := dbio.GetPartitionFile(fid, db)
 	if err != nil {
-		return nil, cnst.IgnoreVar, err
+		return nil, err
 	}
-	return getNearLogicalFile(pfile.Start, pfile.Size, pfile.Names[0], fid, db)
+	idmap, _, err := getNearLogicalFile(pfile.Start, pfile.Size, pfile.Names[0], fid, db)
+	return idmap, err
 }
-func nearEvidenceFile(fid []byte, db *badger.DB) (map[string]int64, int64, error) {
+func nearEvidenceFile(fid []byte, db *badger.DB) (map[string]int64, error) {
 	efile, err := dbio.GetEvidenceFile(fid, db)
 	if err != nil {
-		return nil, cnst.IgnoreVar, err
+		return nil, err
 	}
 	ehash := bytes.Split(fid, []byte(cnst.NamespaceSeperator))[1]
-	return getNearFile(efile.Start, efile.Size, ehash, fid, db)
+	idmap, _, err := getNearFile(efile.Start, efile.Size, ehash, fid, db)
+	return idmap, err
 }
 
 func getNearLogicalFile(start, size int64, fname string, fid []byte, db *badger.DB) (map[string]int64, int64, error) {

@@ -21,6 +21,8 @@ import (
 )
 
 func main() {
+	fmt.Println("Initialising indicer....")
+
 	if len(os.Args) < 2 {
 		fmt.Println("indicer <store|list|restore|near|reset>")
 		os.Exit(1)
@@ -33,8 +35,7 @@ func main() {
 
 	var db *badger.DB
 	if command != cnst.CmdReset {
-		// key := util.GetPassword()
-		key := []byte{}
+		key := util.GetPassword()
 		db, err = dbio.ConnectDB(dbpath, key)
 		handle(nil, db, err)
 		defer db.Close()

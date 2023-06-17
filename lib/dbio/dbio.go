@@ -30,6 +30,9 @@ func ConnectDB(datadir string, key []byte) (*badger.DB, error) {
 	opts.EncryptionKeyRotationDuration = time.Hour * 168
 	opts.MetricsEnabled = false
 	opts.ChecksumVerificationMode = options.OnTableRead
+	opts.NumLevelZeroTables = 1
+	opts.NumLevelZeroTablesStall = 2
+	opts.BloomFalsePositive = 0
 	return badger.Open(opts)
 }
 

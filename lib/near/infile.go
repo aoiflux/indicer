@@ -2,15 +2,20 @@ package near
 
 import (
 	"bytes"
+	"fmt"
 	"indicer/lib/cnst"
 	"indicer/lib/dbio"
 	"indicer/lib/structs"
 	"indicer/lib/util"
+	"time"
 
 	"github.com/dgraph-io/badger/v3"
 )
 
 func NearInFile(fhash string, db *badger.DB) error {
+	fmt.Println("Finding NeAR artefacts & generating GReAt graph")
+	start := time.Now()
+
 	fid, err := dbio.GuessFileType(fhash, db)
 	if err != nil {
 		return err
@@ -29,7 +34,13 @@ func NearInFile(fhash string, db *badger.DB) error {
 		return err
 	}
 
-	return visualise(fid, idmap, db)
+	err = visualise(fid, idmap, db)
+	if err != nil {
+		return err
+	}
+
+	fmt.Printf("Done.... %v\n", time.Since(start))
+	return nil
 }
 
 func nearIndexFile(fid []byte, db *badger.DB) (map[string]int64, error) {

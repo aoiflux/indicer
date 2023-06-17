@@ -23,7 +23,7 @@ const (
 	KeySize                 = 32
 )
 
-var MaxThreadCount = runtime.NumCPU()
+var MaxThreadCount = runtime.NumCPU() / 2
 var ChonkSize = DefaultChonkSize
 
 const (

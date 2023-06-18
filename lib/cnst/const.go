@@ -3,6 +3,8 @@ package cnst
 import (
 	"errors"
 	"runtime"
+
+	"github.com/shirou/gopsutil/mem"
 )
 
 const (
@@ -73,6 +75,7 @@ func GetMaxThreadCount() int {
 	}
 	return 2
 }
-func GetCacheLimit() int64 {
-	return 10 * MB
+func GetCacheLimit() (int64, error) {
+	vmemstat, err := mem.VirtualMemory()
+	return int64(vmemstat.Available / 8), err
 }

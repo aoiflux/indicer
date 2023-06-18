@@ -20,6 +20,12 @@ func (c *ConcMap) Set(key string, value int64) {
 	defer c.mu.Unlock()
 
 	c.data[key] = value
+	if v, ok := c.data[key]; ok {
+		v += value
+		c.data[key] = v
+	} else {
+		c.data[key] = value
+	}
 }
 
 func (c *ConcMap) Get(key string) (int64, bool) {

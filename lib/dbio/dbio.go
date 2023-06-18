@@ -14,13 +14,17 @@ import (
 )
 
 func ConnectDB(datadir string, key []byte) (*badger.DB, error) {
+	cacheLimit, err := cnst.GetCacheLimit()
+	if err != nil {
+		return nil, err
+	}
 	opts := badger.DefaultOptions(datadir)
 	opts = opts.WithLoggingLevel(badger.ERROR)
 	opts = opts.WithLogger(nil)
-	opts.IndexCacheSize = cnst.GetCacheLimit()
+	opts.IndexCacheSize = cacheLimit
 	opts.SyncWrites = false
 	opts.NumGoroutines = cnst.GetMaxThreadCount()
-	opts.BlockCacheSize = cnst.GetCacheLimit()
+	opts.BlockCacheSize = cacheLimit
 	opts.Compression = options.ZSTD
 	opts.ZSTDCompressionLevel = 15
 	opts.EncryptionKey = key
@@ -29,7 +33,7 @@ func ConnectDB(datadir string, key []byte) (*badger.DB, error) {
 	opts.ChecksumVerificationMode = options.OnTableRead
 	opts.BloomFalsePositive = 0
 	opts.NumMemtables = 1
-	opts.MemTableSize = cnst.GetCacheLimit()
+	opts.MemTableSize = cacheLimit
 	return badger.Open(opts)
 }
 

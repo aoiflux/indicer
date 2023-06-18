@@ -80,6 +80,7 @@ func getNearLogicalFile(start, size int64, fname string, fid []byte, db *badger.
 func getNearFile(start, size int64, ehash, fid []byte, db *badger.DB) (*structs.ConcMap, error) {
 	fhash := bytes.Split(fid, []byte(cnst.NamespaceSeperator))[1]
 	idmap := structs.NewConcMap()
+	rim := structs.NewRimMap()
 
 	fmt.Println("Finding NeAR Artefacts....")
 	bar := progressbar.DefaultBytes(size)
@@ -103,7 +104,7 @@ func getNearFile(start, size int64, ehash, fid []byte, db *badger.DB) (*structs.
 			continue
 		}
 
-		go countRList(fhash, idmap, near.RevList, db, echan)
+		go countRList(fhash, idmap, rim, near.RevList, db, echan)
 		active++
 	}
 

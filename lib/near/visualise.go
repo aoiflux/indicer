@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"encoding/base64"
 	"indicer/lib/cnst"
+	"indicer/lib/structs"
 	"io"
 	"os"
 	"strings"
@@ -35,7 +36,7 @@ func sankeyBase(series string, nodes []opts.SankeyNode, links []opts.SankeyLink)
 	return sankey
 }
 
-func visualise(fid []byte, idmap map[string]int64, db *badger.DB) error {
+func visualise(fid []byte, idmap *structs.ConcMap, db *badger.DB) error {
 	page := components.NewPage()
 
 	fid = bytes.Split(fid, []byte(cnst.NamespaceSeperator))[1]
@@ -48,7 +49,7 @@ func visualise(fid []byte, idmap map[string]int64, db *badger.DB) error {
 	}
 	var links []opts.SankeyLink
 
-	for k, v := range idmap {
+	for k, v := range idmap.GetData() {
 		var node opts.SankeyNode
 		k = strings.Split(k, cnst.NamespaceSeperator)[1]
 		b64k := base64.StdEncoding.EncodeToString([]byte(k))

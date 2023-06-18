@@ -22,7 +22,7 @@ func NearInFile(fhash string, db *badger.DB) error {
 		return err
 	}
 
-	var idmap map[string]int64
+	var idmap *structs.ConcMap
 
 	if bytes.HasPrefix(fid, []byte(cnst.IdxFileNamespace)) {
 		idmap, err = nearIndexFile(fid, db)
@@ -44,7 +44,7 @@ func NearInFile(fhash string, db *badger.DB) error {
 	return nil
 }
 
-func nearIndexFile(fid []byte, db *badger.DB) (map[string]int64, error) {
+func nearIndexFile(fid []byte, db *badger.DB) (*structs.ConcMap, error) {
 	ifile, err := dbio.GetIndexedFile(fid, db)
 	if err != nil {
 		return nil, err
@@ -52,7 +52,7 @@ func nearIndexFile(fid []byte, db *badger.DB) (map[string]int64, error) {
 	idmap, err := getNearLogicalFile(ifile.Start, ifile.Size, ifile.Names[0], fid, db)
 	return idmap, err
 }
-func nearPartitionFile(fid []byte, db *badger.DB) (map[string]int64, error) {
+func nearPartitionFile(fid []byte, db *badger.DB) (*structs.ConcMap, error) {
 	pfile, err := dbio.GetPartitionFile(fid, db)
 	if err != nil {
 		return nil, err
@@ -60,7 +60,7 @@ func nearPartitionFile(fid []byte, db *badger.DB) (map[string]int64, error) {
 	idmap, err := getNearLogicalFile(pfile.Start, pfile.Size, pfile.Names[0], fid, db)
 	return idmap, err
 }
-func nearEvidenceFile(fid []byte, db *badger.DB) (map[string]int64, error) {
+func nearEvidenceFile(fid []byte, db *badger.DB) (*structs.ConcMap, error) {
 	efile, err := dbio.GetEvidenceFile(fid, db)
 	if err != nil {
 		return nil, err
@@ -70,22 +70,31 @@ func nearEvidenceFile(fid []byte, db *badger.DB) (map[string]int64, error) {
 	return idmap, err
 }
 
-func getNearLogicalFile(start, size int64, fname string, fid []byte, db *badger.DB) (map[string]int64, error) {
+func getNearLogicalFile(start, size int64, fname string, fid []byte, db *badger.DB) (*structs.ConcMap, error) {
 	ehash, err := util.GetEvidenceFileHash(fname)
 	if err != nil {
 		return nil, err
 	}
 	return getNearFile(start, size, ehash, fid, db)
 }
-func getNearFile(start, size int64, ehash, fid []byte, db *badger.DB) (map[string]int64, error) {
+func getNearFile(start, size int64, ehash, fid []byte, db *badger.DB) (*structs.ConcMap, error) {
 	fhash := bytes.Split(fid, []byte(cnst.NamespaceSeperator))[1]
-	idmap := make(map[string]int64)
+	idmap := structs.NewConcMap()
 
 	fmt.Println("Finding NeAR Artefacts....")
 	bar := progressbar.DefaultBytes(size)
 
+	var active int
+	echan := make(chan error)
+
 	for near := range getNear(start, size, ehash, db) {
-		bar.Add64(cnst.ChonkSize)
+		if active > cnst.GetMaxThreadCount() {
+			if <-echan != nil {
+				return nil, <-echan
+			}
+			bar.Add64(cnst.ChonkSize)
+			active--
+		}
 
 		if near.Err != nil {
 			return nil, near.Err
@@ -94,10 +103,16 @@ func getNearFile(start, size int64, ehash, fid []byte, db *badger.DB) (map[strin
 			continue
 		}
 
-		err := countRevListNear(fhash, idmap, near.RevList, db)
-		if err != nil {
-			return nil, err
+		go countRList(fhash, idmap, near.RevList, db, echan)
+		active++
+	}
+
+	for active > 0 {
+		if <-echan != nil {
+			return nil, <-echan
 		}
+		bar.Add64(cnst.ChonkSize)
+		active--
 	}
 
 	bar.Finish()

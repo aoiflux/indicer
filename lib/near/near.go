@@ -13,74 +13,64 @@ import (
 	"github.com/dgraph-io/badger/v3"
 )
 
-func countRevListNear(fhash []byte, idmap map[string]int64, revlist []structs.ReverseRelation, db *badger.DB) error {
+func countRList(fhash []byte, idmap *structs.ConcMap, rlist []structs.ReverseRelation, db *badger.DB, echan chan error) {
 	fhash = []byte(base64.StdEncoding.EncodeToString(fhash))
-	tempIDMap, err := countEviFile(fhash, revlist, db)
+	for _, rev := range rlist {
+		err := countEviFile(fhash, idmap, rev, db)
+		if err != nil {
+			echan <- err
+		}
+	}
+	echan <- nil
+}
+func countEviFile(fhash []byte, idmap *structs.ConcMap, rev structs.ReverseRelation, db *badger.DB) error {
+	if bytes.Contains(rev.Value, fhash) {
+		return nil
+	}
+
+	revhash := bytes.Split(rev.Value, []byte(cnst.RelationNamespace))[1]
+	eid, err := getIDFromHash(cnst.EviFileNamespace, string(revhash))
+	if err != nil {
+		return err
+	}
+	ridx, _, err := getIndicesFromHash(revhash)
 	if err != nil {
 		return err
 	}
 
-	for id := range tempIDMap {
-		if val, ok := idmap[id]; ok {
-			val++
-			idmap[id] = val
-			continue
-		}
-		idmap[id] = 1
+	efile, err := dbio.GetEvidenceFile(eid, db)
+	if err != nil {
+		return err
 	}
+	db.RunValueLogGC(0.5)
 
-	return nil
-}
-func countEviFile(fhash []byte, revlist []structs.ReverseRelation, db *badger.DB) (map[string]struct{}, error) {
-	idmap := make(map[string]struct{})
-
-	for _, rev := range revlist {
-		if bytes.Contains(rev.Value, fhash) {
-			continue
+	if len(efile.InternalObjects) == 0 {
+		if v, ok := idmap.Get(string(eid)); ok {
+			v++
+			idmap.Set(string(eid), v)
+			return nil
 		}
 
-		revhash := bytes.Split(rev.Value, []byte(cnst.RelationNamespace))[1]
-		eid, err := getIDFromHash(cnst.EviFileNamespace, string(revhash))
-		if err != nil {
-			return nil, err
-		}
-
-		ridx, _, err := getIndicesFromHash(revhash)
-		if err != nil {
-			return nil, err
-		}
-
-		efile, err := dbio.GetEvidenceFile(eid, db)
-		if err != nil {
-			return nil, err
-		}
-		if len(efile.InternalObjects) == 0 {
-			idmap[string(eid)] = struct{}{}
-			continue
-		}
-
-		tempIDMap, err := countPartiFile(ridx, fhash, eid, efile.InternalObjects, db)
-		if err != nil {
-			return nil, err
-		}
-		for k, v := range tempIDMap {
-			idmap[k] = v
-		}
+		idmap.Set(string(eid), 1)
+		return nil
 	}
-
-	return idmap, nil
+	return countPartiFile(ridx, fhash, eid, efile.InternalObjects, idmap, db)
 }
-func countPartiFile(ridx int64, fhash, eid []byte, phashes []string, db *badger.DB) (map[string]struct{}, error) {
-	idmap := make(map[string]struct{})
-
+func countPartiFile(ridx int64, fhash, eid []byte, phashes []string, idmap *structs.ConcMap, db *badger.DB) error {
 	for pindex, phash := range phashes {
 		pid, inRange, err := countFile(ridx, cnst.PartiFileNamespace, fhash, []byte(phash), db)
 		if err != nil {
-			return nil, err
+			return err
 		}
 
 		if !inRange && pindex == len(phashes)-1 {
-			idmap[string(eid)] = struct{}{}
+			if v, ok := idmap.Get(string(eid)); ok {
+				v++
+				idmap.Set(string(eid), v)
+				break
+			}
+
+			idmap.Set(string(eid), 1)
 			break
 		}
 		if !inRange {
@@ -89,47 +79,62 @@ func countPartiFile(ridx int64, fhash, eid []byte, phashes []string, db *badger.
 
 		pfile, err := dbio.GetPartitionFile(pid, db)
 		if err != nil {
-			return nil, err
+			return err
 		}
+		db.RunValueLogGC(0.5)
+
 		if len(pfile.InternalObjects) == 0 {
-			idmap[string(pid)] = struct{}{}
+			if v, ok := idmap.Get(string(pid)); ok {
+				v++
+				idmap.Set(string(pid), v)
+				continue
+			}
+
+			idmap.Set(string(pid), 1)
 			continue
 		}
-
-		tempIDMap, err := countIdxFile(ridx, fhash, pid, pfile.InternalObjects, db)
+		err = countIdxFile(ridx, fhash, pid, pfile.InternalObjects, idmap, db)
 		if err != nil {
-			return nil, err
-		}
-		for k, v := range tempIDMap {
-			idmap[k] = v
+			return err
 		}
 	}
 
-	return idmap, nil
+	return nil
 }
-func countIdxFile(ridx int64, fhash, pid []byte, ihashes []string, db *badger.DB) (map[string]struct{}, error) {
-	idmap := make(map[string]struct{})
 
+func countIdxFile(ridx int64, fhash, pid []byte, ihashes []string, idmap *structs.ConcMap, db *badger.DB) error {
 	for iindex, ihash := range ihashes {
 		iid, inRange, err := countFile(ridx, cnst.IdxFileNamespace, fhash, []byte(ihash), db)
 		if err != nil {
-			return nil, err
+			return err
 		}
 
 		if !inRange && iindex == len(ihashes)-1 {
-			idmap[string(pid)] = struct{}{}
+			if v, ok := idmap.Get(string(pid)); ok {
+				v++
+				idmap.Set(string(pid), v)
+				break
+			}
+
+			idmap.Set(string(pid), 1)
 			break
 		}
 		if !inRange {
 			continue
 		}
 
-		idmap[string(iid)] = struct{}{}
+		if v, ok := idmap.Get(string(iid)); ok {
+			v++
+			idmap.Set(string(iid), v)
+			continue
+		}
+
+		idmap.Set(string(iid), 1)
+		continue
 	}
 
-	return idmap, nil
+	return nil
 }
-
 func countFile(ridx int64, namespace string, filter, fhash []byte, db *badger.DB) ([]byte, bool, error) {
 	if bytes.Contains(fhash, filter) {
 		return nil, false, nil

@@ -136,7 +136,6 @@ func evidenceFilePreflight(infile structs.InputFile) (structs.EvidenceFile, erro
 func storeEvidenceData(infile structs.InputFile) error {
 	batch := infile.GetDB().NewWriteBatch()
 	batch.SetMaxPendingTxns(cnst.MaxBatchCount)
-	var active int
 
 	fmt.Printf("\nSaving Evidence File\n")
 	bar := progressbar.DefaultBytes(infile.GetSize())
@@ -147,6 +146,8 @@ func storeEvidenceData(infile structs.InputFile) error {
 	tio.Batch = batch
 	tio.Err = make(chan error, cnst.GetMaxThreadCount())
 	tio.FHandle = infile.GetHandle()
+
+	var active int
 
 	for storeIndex := infile.GetStartIndex(); storeIndex <= infile.GetSize(); storeIndex += cnst.ChonkSize {
 		tio.Index = storeIndex

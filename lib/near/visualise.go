@@ -1,8 +1,8 @@
 package near
 
 import (
-	"bytes"
 	"encoding/base64"
+	"fmt"
 	"indicer/lib/cnst"
 	"indicer/lib/structs"
 	"io"
@@ -38,9 +38,7 @@ func sankeyBase(series string, nodes []opts.SankeyNode, links []opts.SankeyLink)
 
 func visualise(fid []byte, idmap *structs.ConcMap, db *badger.DB) error {
 	page := components.NewPage()
-
-	fid = bytes.Split(fid, []byte(cnst.NamespaceSeperator))[1]
-	b64fid := base64.StdEncoding.EncodeToString(fid)
+	b64fid := getB64HashedID(string(fid))
 
 	nodes := []opts.SankeyNode{
 		{
@@ -51,14 +49,12 @@ func visualise(fid []byte, idmap *structs.ConcMap, db *badger.DB) error {
 
 	for k, v := range idmap.GetData() {
 		var node opts.SankeyNode
-		k = strings.Split(k, cnst.NamespaceSeperator)[1]
-		b64k := base64.StdEncoding.EncodeToString([]byte(k))
-		node.Name = b64k
+		node.Name = getB64HashedID(k)
 		nodes = append(nodes, node)
 
 		var link opts.SankeyLink
 		link.Source = b64fid
-		link.Target = b64k
+		link.Target = node.Name
 		link.Value = float32(v)
 		links = append(links, link)
 	}
@@ -72,4 +68,10 @@ func visualise(fid []byte, idmap *structs.ConcMap, db *badger.DB) error {
 	}
 	defer f.Close()
 	return page.Render(io.MultiWriter(f))
+}
+
+func getB64HashedID(id string) string {
+	splits := strings.Split(id, cnst.NamespaceSeperator)
+	b64hash := base64.StdEncoding.EncodeToString([]byte(splits[1]))
+	return fmt.Sprintf("%s%s%s", splits[0], cnst.NamespaceSeperator, b64hash)
 }

@@ -39,7 +39,7 @@ func countEviFile(fhash []byte, idmap *structs.ConcMap, rim *structs.RimMap, rev
 	}
 	if vs, ok := rim.Get(ridx); ok {
 		for _, v := range vs {
-			idmap.Set(string(v), 1)
+			idmap.Set(v, 1)
 		}
 		return nil
 	}

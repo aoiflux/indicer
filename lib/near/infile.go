@@ -49,16 +49,14 @@ func nearIndexFile(fid []byte, db *badger.DB) (*structs.ConcMap, error) {
 	if err != nil {
 		return nil, err
 	}
-	idmap, err := getNearLogicalFile(ifile.Start, ifile.Size, ifile.Names[0], fid, db)
-	return idmap, err
+	return getNearLogicalFile(ifile.Start, ifile.Size, ifile.Names[0], fid, db)
 }
 func nearPartitionFile(fid []byte, db *badger.DB) (*structs.ConcMap, error) {
 	pfile, err := dbio.GetPartitionFile(fid, db)
 	if err != nil {
 		return nil, err
 	}
-	idmap, err := getNearLogicalFile(pfile.Start, pfile.Size, pfile.Names[0], fid, db)
-	return idmap, err
+	return getNearLogicalFile(pfile.Start, pfile.Size, pfile.Names[0], fid, db)
 }
 func nearEvidenceFile(fid []byte, db *badger.DB) (*structs.ConcMap, error) {
 	efile, err := dbio.GetEvidenceFile(fid, db)
@@ -66,8 +64,7 @@ func nearEvidenceFile(fid []byte, db *badger.DB) (*structs.ConcMap, error) {
 		return nil, err
 	}
 	ehash := bytes.Split(fid, []byte(cnst.NamespaceSeperator))[1]
-	idmap, err := getNearFile(efile.Start, efile.Size, ehash, fid, db)
-	return idmap, err
+	return getNearFile(efile.Start, efile.Size, ehash, fid, db)
 }
 
 func getNearLogicalFile(start, size int64, fname string, fid []byte, db *badger.DB) (*structs.ConcMap, error) {

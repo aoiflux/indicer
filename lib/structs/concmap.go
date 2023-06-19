@@ -15,16 +15,14 @@ func NewConcMap() *ConcMap {
 	}
 }
 
-func (c *ConcMap) Set(key string, value int64) {
+func (c *ConcMap) Set(key string, _v int64) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 
-	c.data[key] = value
 	if v, ok := c.data[key]; ok {
-		v += value
-		c.data[key] = v
+		c.data[key] = v + _v
 	} else {
-		c.data[key] = value
+		c.data[key] = _v
 	}
 }
 

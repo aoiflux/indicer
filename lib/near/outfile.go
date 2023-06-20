@@ -10,7 +10,6 @@ import (
 
 	"github.com/dgraph-io/badger/v3"
 	"github.com/edsrzf/mmap-go"
-	"github.com/klauspost/compress/s2"
 )
 
 func NearOutFile(fpath string, db *badger.DB) error {
@@ -97,40 +96,4 @@ func getParitalMatches(chonk []byte, db *badger.DB) ([]string, error) {
 	// fmt.Printf("%s | 1\n", chashString)
 
 	return nil, nil
-}
-
-func matchByBytes(chonk []byte, db *badger.DB) ([]byte, float64, error) {
-	var similarityCount float64
-	var keyToReturn []byte
-
-	err := db.View(func(txn *badger.Txn) error {
-		opts := badger.DefaultIteratorOptions
-		opts.PrefetchSize = 1000
-		it := txn.NewIterator(opts)
-		defer it.Close()
-
-		prefix := []byte(cnst.ChonkNamespace)
-		for it.Seek(prefix); it.ValidForPrefix(prefix); it.Next() {
-			item := it.Item()
-			key := item.KeyCopy(nil)
-			v, err := item.ValueCopy(nil)
-			if err != nil {
-				return err
-			}
-			data, err := s2.Decode(nil, v)
-			if err != nil {
-				return err
-			}
-
-			tempCount := util.ByteSimilarityCount(chonk, data)
-			if tempCount > similarityCount {
-				similarityCount = tempCount
-				keyToReturn = key
-			}
-		}
-
-		return nil
-	})
-
-	return keyToReturn, similarityCount, err
 }

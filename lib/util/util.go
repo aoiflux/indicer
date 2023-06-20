@@ -156,7 +156,7 @@ func readPassword() ([]byte, error) {
 	return password, nil
 }
 
-func ByteSimilarityCount(s1, s2 []byte) float64 {
+func ByteSimilarityCount(s1, s2 []byte) float32 {
 	minLength := len(s1)
 	if len(s2) < minLength {
 		minLength = len(s2)
@@ -169,7 +169,7 @@ func ByteSimilarityCount(s1, s2 []byte) float64 {
 		}
 	}
 
-	return float64(similarCount) / float64(minLength)
+	return float32(similarCount) / float32(minLength)
 }
 
 func GetDBStartOffset(startIndex int64) int64 {

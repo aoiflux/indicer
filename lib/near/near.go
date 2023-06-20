@@ -11,6 +11,7 @@ import (
 	"strings"
 
 	"github.com/dgraph-io/badger/v3"
+	"github.com/klauspost/compress/s2"
 )
 
 func countRList(fhash []byte, idmap *structs.ConcMap, rim *structs.RimMap, rlist []structs.ReverseRelation, db *badger.DB, echan chan error) {
@@ -162,4 +163,40 @@ func getIndicesFromHash(hash []byte) (int64, int64, error) {
 }
 func isInRange(start, end, index int64) bool {
 	return index >= start && index <= end
+}
+
+func matchByBytes(chonk []byte, db *badger.DB) ([]byte, float32, error) {
+	var similarityCount float32
+	var keyToReturn []byte
+
+	err := db.View(func(txn *badger.Txn) error {
+		opts := badger.DefaultIteratorOptions
+		opts.PrefetchSize = 1000
+		it := txn.NewIterator(opts)
+		defer it.Close()
+
+		prefix := []byte(cnst.ChonkNamespace)
+		for it.Seek(prefix); it.ValidForPrefix(prefix); it.Next() {
+			item := it.Item()
+			key := item.KeyCopy(nil)
+			v, err := item.ValueCopy(nil)
+			if err != nil {
+				return err
+			}
+			data, err := s2.Decode(nil, v)
+			if err != nil {
+				return err
+			}
+
+			tempCount := util.ByteSimilarityCount(chonk, data)
+			if tempCount > similarityCount {
+				similarityCount = tempCount
+				keyToReturn = key
+			}
+		}
+
+		return nil
+	})
+
+	return keyToReturn, similarityCount, err
 }

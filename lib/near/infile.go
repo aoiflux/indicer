@@ -117,7 +117,7 @@ func getNearFile(start, size int64, ehash, fid []byte, db *badger.DB) (*structs.
 	fmt.Println("Found NeAR Artefacts. Generating GReAt Graph....")
 	return idmap, nil
 }
-func getNear(start, size int64, ehash []byte, db *badger.DB) chan structs.NearGen {
+func getNear(start, size int64, ehash []byte, db *badger.DB, deep ...bool) chan structs.NearGen {
 	neargenChan := make(chan structs.NearGen)
 
 	var dbstart int64
@@ -144,6 +144,9 @@ func getNear(start, size int64, ehash []byte, db *badger.DB) chan structs.NearGe
 			if err != nil {
 				neargen.Err = err
 				neargenChan <- neargen
+			}
+			if len(revlist) < 2 {
+				continue
 			}
 
 			neargen.RevList = revlist

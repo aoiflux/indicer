@@ -1,6 +1,7 @@
 package structs
 
 type NearGen struct {
-	RevList []ReverseRelation
-	Err     error
+	RevList    []ReverseRelation
+	Err        error
+	Confidence float32
 }

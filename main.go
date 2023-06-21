@@ -188,11 +188,16 @@ func nearData(db *badger.DB) error {
 	inoption := strings.ToLower(os.Args[2])
 	suboption := os.Args[3]
 
+	var deepoption string
+	if len(os.Args) > 4 {
+		deepoption = strings.ToLower(os.Args[4])
+	}
+
 	var err error
 
 	switch inoption {
 	case cnst.InOptionIn:
-		err = near.NearInFile(suboption, db)
+		err = near.NearInFile(deepoption, suboption, db)
 	case cnst.InOptionOut:
 		err = near.NearOutFile(suboption, db)
 	default:

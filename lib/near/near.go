@@ -14,17 +14,17 @@ import (
 	"github.com/klauspost/compress/s2"
 )
 
-func countRList(fhash []byte, idmap *structs.ConcMap, rim *structs.RimMap, rlist []structs.ReverseRelation, db *badger.DB, echan chan error) {
+func countRList(fhash []byte, idmap *structs.ConcMap, rim *structs.RimMap, near structs.NearGen, db *badger.DB, echan chan error) {
 	fhash = []byte(base64.StdEncoding.EncodeToString(fhash))
-	for _, rev := range rlist {
-		err := countEviFile(fhash, idmap, rim, rev, db)
+	for _, rev := range near.RevList {
+		err := countEviFile(near.Confidence, fhash, idmap, rim, rev, db)
 		if err != nil {
 			echan <- err
 		}
 	}
 	echan <- nil
 }
-func countEviFile(fhash []byte, idmap *structs.ConcMap, rim *structs.RimMap, rev structs.ReverseRelation, db *badger.DB) error {
+func countEviFile(confidence float32, fhash []byte, idmap *structs.ConcMap, rim *structs.RimMap, rev structs.ReverseRelation, db *badger.DB) error {
 	if bytes.Contains(rev.Value, fhash) {
 		return nil
 	}
@@ -52,13 +52,13 @@ func countEviFile(fhash []byte, idmap *structs.ConcMap, rim *structs.RimMap, rev
 	db.RunValueLogGC(0.5)
 
 	if len(efile.InternalObjects) == 0 {
-		idmap.Set(string(eid), 1)
+		idmap.Set(string(eid), confidence)
 		rim.Set(ridx, string(eid))
 		return nil
 	}
-	return countPartiFile(ridx, fhash, eid, efile.InternalObjects, idmap, rim, db)
+	return countPartiFile(confidence, ridx, fhash, eid, efile.InternalObjects, idmap, rim, db)
 }
-func countPartiFile(ridx int64, fhash, eid []byte, phashes []string, idmap *structs.ConcMap, rim *structs.RimMap, db *badger.DB) error {
+func countPartiFile(confidence float32, ridx int64, fhash, eid []byte, phashes []string, idmap *structs.ConcMap, rim *structs.RimMap, db *badger.DB) error {
 	for pindex, phash := range phashes {
 		pid, inRange, err := countFile(ridx, cnst.PartiFileNamespace, fhash, []byte(phash), db)
 		if err != nil {
@@ -66,7 +66,7 @@ func countPartiFile(ridx int64, fhash, eid []byte, phashes []string, idmap *stru
 		}
 
 		if !inRange && pindex == len(phashes)-1 {
-			idmap.Set(string(eid), 1)
+			idmap.Set(string(eid), confidence)
 			rim.Set(ridx, string(eid))
 			break
 		}
@@ -81,11 +81,11 @@ func countPartiFile(ridx int64, fhash, eid []byte, phashes []string, idmap *stru
 		db.RunValueLogGC(0.5)
 
 		if len(pfile.InternalObjects) == 0 {
-			idmap.Set(string(pid), 1)
+			idmap.Set(string(pid), confidence)
 			rim.Set(ridx, string(pid))
 			continue
 		}
-		err = countIdxFile(ridx, fhash, pid, pfile.InternalObjects, idmap, rim, db)
+		err = countIdxFile(confidence, ridx, fhash, pid, pfile.InternalObjects, idmap, rim, db)
 		if err != nil {
 			return err
 		}
@@ -94,7 +94,7 @@ func countPartiFile(ridx int64, fhash, eid []byte, phashes []string, idmap *stru
 	return nil
 }
 
-func countIdxFile(ridx int64, fhash, pid []byte, ihashes []string, idmap *structs.ConcMap, rim *structs.RimMap, db *badger.DB) error {
+func countIdxFile(confidence float32, ridx int64, fhash, pid []byte, ihashes []string, idmap *structs.ConcMap, rim *structs.RimMap, db *badger.DB) error {
 	for iindex, ihash := range ihashes {
 		iid, inRange, err := countFile(ridx, cnst.IdxFileNamespace, fhash, []byte(ihash), db)
 		if err != nil {
@@ -102,7 +102,7 @@ func countIdxFile(ridx int64, fhash, pid []byte, ihashes []string, idmap *struct
 		}
 
 		if !inRange && iindex == len(ihashes)-1 {
-			idmap.Set(string(pid), 1)
+			idmap.Set(string(pid), confidence)
 			rim.Set(ridx, string(pid))
 			break
 		}
@@ -110,7 +110,7 @@ func countIdxFile(ridx int64, fhash, pid []byte, ihashes []string, idmap *struct
 			continue
 		}
 
-		idmap.Set(string(iid), 1)
+		idmap.Set(string(iid), confidence)
 		rim.Set(ridx, string(iid))
 	}
 
@@ -165,8 +165,8 @@ func isInRange(start, end, index int64) bool {
 	return index >= start && index <= end
 }
 
-func matchByBytes(chonk []byte, db *badger.DB) ([]byte, float32, error) {
-	var similarityCount float32
+func partialChonkMatch(chonk []byte, db *badger.DB) ([]byte, float32, error) {
+	var confidence float32
 	var keyToReturn []byte
 
 	err := db.View(func(txn *badger.Txn) error {
@@ -188,9 +188,12 @@ func matchByBytes(chonk []byte, db *badger.DB) ([]byte, float32, error) {
 				return err
 			}
 
-			tempCount := util.ByteSimilarityCount(chonk, data)
-			if tempCount > similarityCount {
-				similarityCount = tempCount
+			tempCount := util.PartialMatchConfidence(chonk, data)
+			if tempCount == 1 {
+				continue
+			}
+			if tempCount > confidence {
+				confidence = tempCount
 				keyToReturn = key
 			}
 		}
@@ -198,5 +201,5 @@ func matchByBytes(chonk []byte, db *badger.DB) ([]byte, float32, error) {
 		return nil
 	})
 
-	return keyToReturn, similarityCount, err
+	return keyToReturn, confidence, err
 }

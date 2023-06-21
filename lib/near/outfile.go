@@ -75,7 +75,7 @@ func getOutfileChonks(size int64, mappedFile mmap.MMap) chan []byte {
 
 func getParitalMatches(chonk []byte, db *badger.DB) ([]string, error) {
 	start := time.Now()
-	chash, count, err := matchByBytes(chonk, db)
+	chash, count, err := partialChonkMatch(chonk, db)
 	if err != nil {
 		return nil, err
 	}

@@ -156,7 +156,7 @@ func readPassword() ([]byte, error) {
 	return password, nil
 }
 
-func ByteSimilarityCount(s1, s2 []byte) float32 {
+func PartialMatchConfidence(s1, s2 []byte) float32 {
 	minLength := len(s1)
 	if len(s2) < minLength {
 		minLength = len(s2)

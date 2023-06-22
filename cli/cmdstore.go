@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/dgraph-io/badger/v3"
+	"github.com/edsrzf/mmap-go"
 	"github.com/ibraimgm/libcmd"
 )
 
@@ -52,12 +53,11 @@ func StoreData(cmd *libcmd.Cmd) error {
 		if err != nil {
 			return err
 		}
-
 		pname := string(util.AppendToBytesSlice(ehash, cnst.DataSeperator, cnst.PartitionIndexPrefix, index))
-
 		pfile := structs.NewInputFile(
 			db,
 			eviFile.GetHandle(),
+			eviFile.GetMappedFile(),
 			pname,
 			cnst.PartiFileNamespace,
 			phash,
@@ -81,7 +81,16 @@ func StoreData(cmd *libcmd.Cmd) error {
 		return <-echan
 	}
 
+	mappedFile := eviFile.GetMappedFile()
+	err = mappedFile.Unmap()
+	if err != nil {
+		return err
+	}
 	err = eviFile.GetHandle().Close()
+	if err != nil {
+		return err
+	}
+	err = eviFile.GetDB().Close()
 	if err != nil {
 		return err
 	}
@@ -107,9 +116,15 @@ func initEvidenceFile(evifilepath string, db *badger.DB) (structs.InputFile, err
 		return eviFile, err
 	}
 
+	mappedFile, err := mmap.Map(eviHandle, mmap.RDONLY, 0)
+	if err != nil {
+		return eviFile, err
+	}
+
 	eviFile = structs.NewInputFile(
 		db,
 		eviHandle,
+		mappedFile,
 		eviFileName,
 		cnst.EviFileNamespace,
 		eviFileHash,

@@ -145,19 +145,23 @@ func storeEvidenceData(infile structs.InputFile) error {
 	tio.DB = infile.GetDB()
 	tio.Batch = batch
 	tio.Err = make(chan error, cnst.GetMaxThreadCount())
-	tio.FHandle = infile.GetHandle()
+	tio.MappedFile = infile.GetMappedFile()
 
 	var active int
-
-	for storeIndex := infile.GetStartIndex(); storeIndex <= infile.GetSize(); storeIndex += cnst.ChonkSize {
+	var buffsize int64
+	for storeIndex := infile.GetStartIndex(); ; storeIndex += cnst.ChonkSize {
+		if storeIndex > infile.GetSize() {
+			break
+		}
 		tio.Index = storeIndex
 
 		if infile.GetSize()-storeIndex <= cnst.ChonkSize {
-			tio.BuffSize = infile.GetSize() - storeIndex
+			buffsize = infile.GetSize() - storeIndex
 		} else {
-			tio.BuffSize = cnst.ChonkSize
+			buffsize = cnst.ChonkSize
 		}
 
+		tio.ChonkEnd = tio.Index + buffsize
 		go storeWorker(tio)
 		active++
 
@@ -167,7 +171,7 @@ func storeEvidenceData(infile structs.InputFile) error {
 				return err
 			}
 			active--
-			bar.Add64(tio.BuffSize)
+			bar.Add64(buffsize)
 		}
 
 		tio.DB.RunValueLogGC(0.5)
@@ -192,16 +196,12 @@ func storeEvidenceData(infile structs.InputFile) error {
 	return nil
 }
 func storeWorker(tio structs.ThreadIO) {
-	lostChonk := make([]byte, tio.BuffSize)
-	_, err := tio.FHandle.ReadAt(lostChonk, tio.Index)
-	if err != nil {
-		tio.Err <- err
-	}
-
+	lostChonk := tio.MappedFile[tio.Index:tio.ChonkEnd]
 	chash, err := util.GetChonkHash(lostChonk)
 	if err != nil {
 		tio.Err <- err
 	}
+
 	err = processChonk(lostChonk, chash, tio.DB, tio.Batch)
 	if err != nil {
 		tio.Err <- err
@@ -214,7 +214,7 @@ func storeWorker(tio structs.ThreadIO) {
 	tio.Err <- processRevRel(tio.Index, tio.FHash, chash, tio.DB, tio.Batch)
 }
 func processChonk(cdata, chash []byte, db *badger.DB, batch *badger.WriteBatch) error {
-	ckey := append([]byte(cnst.ChonkNamespace), chash...)
+	ckey := util.AppendToBytesSlice(cnst.ChonkNamespace, chash)
 
 	err := dbio.PingNode(ckey, db)
 	if err != nil && err == badger.ErrKeyNotFound {
@@ -233,6 +233,7 @@ func processRel(index int64, fhash, chash []byte, db *badger.DB, batch *badger.W
 
 	return err
 }
+
 func processRevRel(index int64, fhash, chash []byte, db *badger.DB, batch *badger.WriteBatch) error {
 	fhashStr := base64.StdEncoding.EncodeToString(fhash)
 	relVal := util.AppendToBytesSlice(cnst.RelationNamespace, fhashStr, cnst.DataSeperator, index)

@@ -20,20 +20,13 @@ func ConnectDB(datadir string, key []byte) (*badger.DB, error) {
 	}
 	opts := badger.DefaultOptions(datadir)
 	opts = opts.WithLoggingLevel(badger.ERROR)
-	opts = opts.WithLogger(nil)
 	opts.IndexCacheSize = cacheLimit
-	opts.SyncWrites = false
+	opts.SyncWrites = true
 	opts.NumGoroutines = cnst.GetMaxThreadCount()
-	opts.BlockCacheSize = cacheLimit
 	opts.Compression = options.ZSTD
 	opts.ZSTDCompressionLevel = 15
 	opts.EncryptionKey = key
 	opts.EncryptionKeyRotationDuration = time.Hour * 168
-	opts.MetricsEnabled = false
-	opts.ChecksumVerificationMode = options.OnTableRead
-	opts.BloomFalsePositive = 0
-	opts.NumMemtables = 1
-	opts.MemTableSize = cacheLimit
 	return badger.Open(opts)
 }
 

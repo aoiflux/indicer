@@ -34,6 +34,10 @@ func RestoreData(cmd *libcmd.Cmd) error {
 		return err
 	}
 
+	err = db.Close()
+	if err != nil {
+		return err
+	}
 	fmt.Println("Restored in: ", time.Since(start))
 	return nil
 }

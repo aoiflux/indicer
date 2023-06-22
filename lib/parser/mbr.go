@@ -1,50 +1,31 @@
 package parser
 
 import (
-	"encoding/binary"
 	"indicer/lib/structs"
-	"log"
 	"os"
 
 	"github.com/aoiflux/libxfat"
+	"github.com/diskfs/go-diskfs/partition/mbr"
 )
 
-const (
-	mbrSize       = 512
-	partitionSize = 16
-)
-
-type PartitionEntry struct {
-	Status        byte
-	CHSFirst      [3]byte
-	PartitionType byte
-	CHSLast       [3]byte
-	FirstLBA      uint32
-	SectorCount   uint32
-}
-
-type MBR struct {
-	Code       [446]byte
-	Partitions [4]PartitionEntry
-	Signature  uint16
-}
-
-func parseMBR(fhandle *os.File) []structs.PartitionFile {
-	mbr := MBR{}
-	err := binary.Read(fhandle, binary.LittleEndian, &mbr)
+func parseMBR(size int64, fhandle *os.File) []structs.PartitionFile {
+	mbrdata, err := mbr.Read(fhandle, 0, 0)
 	if err != nil {
-		log.Fatal(err)
+		return nil
 	}
 
-	plist := []structs.PartitionFile{}
-	for _, partition := range mbr.Partitions {
-		if _, err = libxfat.New(fhandle, true, uint64(partition.FirstLBA)); err != nil {
+	var plist []structs.PartitionFile
+	for _, partition := range mbrdata.Partitions {
+		if partition.GetSize() == 0 || partition.GetSize()*int64(libxfat.SECTOR_SIZE) > size {
+			continue
+		}
+		if _, err := libxfat.New(fhandle, true, uint64(partition.GetStart())); err != nil {
 			continue
 		}
 
 		var pfile structs.PartitionFile
-		pfile.Start = int64(partition.FirstLBA) * int64(libxfat.SECTOR_SIZE)
-		pfile.Size = int64(partition.SectorCount) * int64(libxfat.SECTOR_SIZE)
+		pfile.Start = partition.GetStart() * int64(libxfat.SECTOR_SIZE)
+		pfile.Size = partition.GetSize() * int64(libxfat.SECTOR_SIZE)
 
 		plist = append(plist, pfile)
 	}

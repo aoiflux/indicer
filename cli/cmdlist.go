@@ -11,5 +11,9 @@ func ListData(cmd *libcmd.Cmd) error {
 	if err != nil {
 		return err
 	}
-	return store.List(db)
+	err = store.List(db)
+	if err != nil {
+		return err
+	}
+	return db.Close()
 }

@@ -28,9 +28,10 @@ func StoreData(cmd *libcmd.Cmd) error {
 		return cnst.ErrFileNotFound
 	}
 
+	fmt.Println(cnst.ChonkSize)
+
 	fmt.Println("Pre-store checks & indexing....")
 	eviFile, err := initEvidenceFile(file, db)
-	defer eviFile.GetHandle().Close()
 	if err != nil {
 		return err
 	}
@@ -41,7 +42,7 @@ func StoreData(cmd *libcmd.Cmd) error {
 		return nil
 	}
 
-	partitions := parser.GetPartitions(eviFile.GetHandle(), eviFile.GetSize())
+	partitions := parser.GetPartitions(eviFile.GetSize(), eviFile.GetHandle())
 	for index, partition := range partitions {
 		phash, err := util.GetLogicalFileHash(eviFile.GetHandle(), partition.Start, partition.Size)
 		if err != nil {
@@ -82,6 +83,10 @@ func StoreData(cmd *libcmd.Cmd) error {
 		return <-echan
 	}
 
+	err = eviFile.GetHandle().Close()
+	if err != nil {
+		return err
+	}
 	fmt.Println("Stored in: ", time.Since(start))
 	return nil
 }

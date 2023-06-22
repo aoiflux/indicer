@@ -33,5 +33,10 @@ func NearOutData(cmd *libcmd.Cmd) error {
 		return cnst.ErrFileNotFound
 	}
 
-	return near.NearOutFile(file, db)
+	err = near.NearOutFile(file, db)
+	if err != nil {
+		return err
+	}
+
+	return db.Close()
 }

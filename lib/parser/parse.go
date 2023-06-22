@@ -5,8 +5,8 @@ import (
 	"os"
 )
 
-func GetPartitions(fhandle *os.File, size int64) []structs.PartitionFile {
-	plist := parseMBR(fhandle)
+func GetPartitions(size int64, fhandle *os.File) []structs.PartitionFile {
+	plist := parseMBR(size, fhandle)
 	if len(plist) > 0 {
 		return plist
 	}

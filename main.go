@@ -1,237 +1,77 @@
 package main
 
 import (
-	"errors"
 	"fmt"
+	"indicer/cli"
 	"indicer/lib/cnst"
-	"indicer/lib/dbio"
-	"indicer/lib/near"
-	"indicer/lib/parser"
-	"indicer/lib/store"
-	"indicer/lib/structs"
-	"indicer/lib/util"
 	"os"
-	"path/filepath"
-	"strings"
-	"time"
 
-	"github.com/dgraph-io/badger/v3"
-	"github.com/fatih/color"
+	"github.com/ibraimgm/libcmd"
 )
 
 func main() {
-	fmt.Println("Initialising indicer....")
+	fmt.Println("Initialising dues ....")
 
-	if len(os.Args) < 2 {
-		fmt.Println("indicer <store|list|restore|near|reset>")
+	app := libcmd.NewApp("dues", "Deduplicated Unified Evidence Store")
+	app.Command(cnst.CmdStore, "Store file in database", cmdstore)
+	app.Command(cnst.CmdRestore, "Restore file from database", cmdrestore)
+	app.Command(cnst.CmdList, "List all the saved files in the database", cmdlist)
+	app.Command(cnst.CmdNear, "Get NeAr file objects", cmdnear)
+	app.Command(cnst.CmdReset, "Reset database", cmdreset)
+	app.Usage = "dues <store|restore|list|near|reset> [-d] [dbpath] [-p] [password] [filepath|hash]"
+
+	app.Run(func(*libcmd.Cmd) error {
+		app.Help()
+		return nil
+	})
+
+	if err := app.Parse(); err != nil {
+		fmt.Println(err)
 		os.Exit(1)
 	}
-
-	dbpath, err := util.GetDBPath()
-	handle(nil, err)
-
-	command := strings.ToLower(os.Args[1])
-
-	var db *badger.DB
-	if command != cnst.CmdReset {
-		key := util.GetPassword()
-		db, err = dbio.ConnectDB(dbpath, key)
-		handle(db, err)
-		defer db.Close()
-	}
-
-	switch command {
-	case cnst.CmdStore:
-		err = storeData(db)
-	case cnst.CmdList:
-		err = listData(db)
-	case cnst.CmdRestore:
-		err = restoreData(db)
-	case cnst.CmdNear:
-		err = nearData(db)
-	case cnst.CmdReset:
-		err = resetData(dbpath)
-	}
-
-	handle(db, err)
 }
 
-func storeData(db *badger.DB) error {
-	fmt.Println("Pre-store checks & indexing....")
-
-	start := time.Now()
-
-	if len(os.Args) < 3 {
-		return errors.New("indicer store <src_file_path> [chonk_size_in_kb]")
-	}
-
-	if len(os.Args) > 3 {
-		util.SetChonkSize(os.Args[3])
-	}
-
-	eviFile, err := initEvidenceFile(db, os.Args[2])
-	defer eviFile.GetHandle().Close()
-	handle(db, err)
-
-	err = store.EvidenceFilePreStoreCheck(eviFile)
-	if err == nil {
-		fmt.Println("Evidence Store Time: ", time.Since(start))
-		return nil
-	}
-
-	partitions := parser.GetPartitions(eviFile.GetHandle(), eviFile.GetSize())
-	for index, partition := range partitions {
-		phash, err := util.GetLogicalFileHash(eviFile.GetHandle(), partition.Start, partition.Size)
-		handle(db, err)
-		eviFile.UpdateInternalObjects(partition.Start, partition.Size, phash)
-
-		ehash, err := eviFile.GetEncodedHash()
-		if err != nil {
-			return err
-		}
-
-		pname := string(util.AppendToBytesSlice(ehash, cnst.DataSeperator, cnst.PartitionIndexPrefix, index))
-
-		pfile := structs.NewInputFile(
-			db,
-			eviFile.GetHandle(),
-			pname,
-			cnst.PartiFileNamespace,
-			phash,
-			partition.Size,
-			partition.Start,
-		)
-
-		err = parser.IndexEXFAT(db, pfile)
-		if err == cnst.ErrIncompatibleFileSystem {
-			fmt.Println(err, "...continuing")
-			continue
-		}
-		handle(db, err)
-	}
-
-	echan := make(chan error)
-	go store.Store(eviFile, echan)
-	if <-echan != nil {
-		return <-echan
-	}
-
-	fmt.Println("Evidence Store Time: ", time.Since(start))
-	return nil
+func cmdstore(cmd *libcmd.Cmd) {
+	cmd.String(cnst.FlagDBPath, cnst.FlagDBPathShort, "")
+	cmd.String(cnst.FlagPassword, cnst.FlagPasswordShort, "")
+	cmd.Int32(cnst.FlagChonkSize, cnst.FlagChonkSizeShort, 256)
+	cmd.AddOperand(cnst.OperandFile, "")
+	cmd.Run(func(cmd *libcmd.Cmd) error { return cli.StoreData(cmd) })
 }
-func initEvidenceFile(db *badger.DB, evifilepath string) (structs.InputFile, error) {
-	var eviFile structs.InputFile
-
-	eviInfo, err := os.Stat(evifilepath)
-	if err != nil {
-		return eviFile, err
-	}
-	eviSize := eviInfo.Size()
-	eviHandle, err := os.Open(evifilepath)
-	if err != nil {
-		return eviFile, err
-	}
-	eviFileName := filepath.Base(evifilepath)
-	eviFileHash, err := util.GetFileHash(eviHandle)
-	if err != nil {
-		return eviFile, err
-	}
-
-	eviFile = structs.NewInputFile(
-		db,
-		eviHandle,
-		eviFileName,
-		cnst.EviFileNamespace,
-		eviFileHash,
-		eviSize,
-		0,
-	)
-
-	return eviFile, nil
+func cmdrestore(cmd *libcmd.Cmd) {
+	cmd.String(cnst.FlagDBPath, cnst.FlagDBPathShort, "")
+	cmd.String(cnst.FlagPassword, cnst.FlagPasswordShort, "")
+	cmd.String(cnst.FlagRestoreFilePath, cnst.FlagRestoreFilePathShort, "restored")
+	cmd.Int32(cnst.FlagChonkSize, cnst.FlagChonkSizeShort, 256)
+	cmd.AddOperand(cnst.OperandHash, "")
+	cmd.Run(func(cmd *libcmd.Cmd) error { return cli.ResetData(cmd) })
 }
-
-func listData(db *badger.DB) error {
-	return store.List(db)
+func cmdlist(cmd *libcmd.Cmd) {
+	cmd.String(cnst.FlagDBPath, cnst.FlagDBPathShort, "")
+	cmd.String(cnst.FlagPassword, cnst.FlagPasswordShort, "")
+	cmd.Int32(cnst.FlagChonkSize, cnst.FlagChonkSizeShort, 256)
+	cmd.Run(func(cmd *libcmd.Cmd) error { return cli.ListData(cmd) })
 }
+func cmdnear(cmd *libcmd.Cmd) {
+	cmd.Command(cnst.SubCmdIn, "Finds NeAr objects & generates GReAt graph for file INside of the database", func(cmd *libcmd.Cmd) {
+		cmd.String(cnst.FlagDBPath, cnst.FlagDBPathShort, "")
+		cmd.String(cnst.FlagPassword, cnst.FlagPasswordShort, "")
+		cmd.Int32(cnst.FlagChonkSize, cnst.FlagChonkSizeShort, 256)
+		cmd.Bool(cnst.FlagDeep, cnst.FlagDeepShort, false)
+		cmd.AddOperand(cnst.OperandHash, "")
 
-func restoreData(db *badger.DB) error {
-	start := time.Now()
+		cmd.Run(cli.NearInData)
+	})
 
-	if len(os.Args) < 4 {
-		return errors.New("indicer restore <hash> <dstfilepath> [chonk_size_in_kb]")
-	}
+	cmd.Command(cnst.SubCmdOut, "Finds NeAr objects & generates GReAt graph for file OUTside of the database", func(cmd *libcmd.Cmd) {
+		cmd.String(cnst.FlagDBPath, cnst.FlagDBPathShort, "")
+		cmd.String(cnst.FlagPassword, cnst.FlagPasswordShort, "")
+		cmd.Int32(cnst.FlagChonkSize, cnst.FlagChonkSizeShort, 256)
+		cmd.AddOperand(cnst.OperandFile, "")
 
-	fhandle, err := os.Create(os.Args[3])
-	if err != nil {
-		return err
-	}
-
-	if len(os.Args) > 5 {
-		util.SetChonkSize(os.Args[4])
-	}
-
-	fmt.Println("Restoring file ...")
-	err = store.Restore(os.Args[2], fhandle, db)
-	if err != nil {
-		return err
-	}
-
-	fmt.Println("Restored in: ", time.Since(start))
-	return nil
+		cmd.Run(cli.NearOutData)
+	})
 }
-
-func nearData(db *badger.DB) error {
-	if len(os.Args) < 4 {
-		return cnst.ErrIncorrectOption
-	}
-
-	inoption := strings.ToLower(os.Args[2])
-	suboption := os.Args[3]
-
-	var deepoption string
-	if len(os.Args) > 4 {
-		deepoption = strings.ToLower(os.Args[4])
-	}
-
-	var err error
-
-	switch inoption {
-	case cnst.InOptionIn:
-		err = near.NearInFile(deepoption, suboption, db)
-	case cnst.InOptionOut:
-		err = near.NearOutFile(suboption, db)
-	default:
-		return cnst.ErrIncorrectOption
-	}
-
-	return err
-}
-
-func resetData(dbpath string) error {
-	color.Red("WARNING! This command will DELETE ALL the saved files.")
-	fmt.Printf("Are you sure about this? [y/N] ")
-
-	var in string
-	fmt.Scanln(&in)
-	in = strings.ToLower(in)
-
-	if in != "y" {
-		color.Blue("Your data is SAFE!")
-		return nil
-	}
-
-	color.Red("Deleting ALL data!")
-	return os.RemoveAll(dbpath)
-}
-
-func handle(db *badger.DB, err error) {
-	if err != nil {
-		fmt.Printf("\n\n%v\n\n", err)
-
-		if db != nil {
-			db.Close()
-		}
-
-		os.Exit(1)
-	}
+func cmdreset(cmd *libcmd.Cmd) {
+	cmd.Run(func(cmd *libcmd.Cmd) error { return cli.ResetData(cmd) })
 }

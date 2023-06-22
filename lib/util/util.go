@@ -16,12 +16,10 @@ import (
 
 	"github.com/cheggaaa/pb/v3"
 	"github.com/zeebo/blake3"
-	"golang.org/x/term"
 )
 
 func GetDBPath() (string, error) {
-	const dbdir = ".indicer"
-
+	const dbdir = ".dues"
 	path, err := os.UserHomeDir()
 	if err != nil {
 		path, err = os.Getwd()
@@ -41,12 +39,8 @@ func GetDBPath() (string, error) {
 	return dbpath, err
 }
 
-func SetChonkSize(chonkSizeString string) {
-	newChonkSize, err := strconv.ParseInt(chonkSizeString, 10, 64)
-	if err != nil {
-		return
-	}
-	cnst.ChonkSize = newChonkSize
+func SetChonkSize(chonkSize int) {
+	cnst.ChonkSize = int64(chonkSize) * cnst.KB
 }
 
 func GetFileHash(fileHandle *os.File) ([]byte, error) {
@@ -136,24 +130,9 @@ func AppendToBytesSlice(args ...interface{}) []byte {
 	return buffer.Bytes()
 }
 
-func GetPassword() []byte {
-	fmt.Print("Password: ")
-	password, err := readPassword()
-	if err != nil {
-		fmt.Println("error reading input. using empty password")
-		return []byte{}
-	}
-	hash := sha256.Sum256(password)
+func HashPassword(password string) []byte {
+	hash := sha256.Sum256([]byte(password))
 	return hash[:]
-}
-
-func readPassword() ([]byte, error) {
-	password, err := term.ReadPassword(int(os.Stdin.Fd()))
-	if err != nil {
-		return nil, err
-	}
-	fmt.Println()
-	return password, nil
 }
 
 func PartialMatchConfidence(s1, s2 []byte) float32 {

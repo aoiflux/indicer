@@ -10,13 +10,13 @@ require (
 	github.com/edsrzf/mmap-go v1.1.0
 	github.com/fatih/color v1.15.0
 	github.com/go-echarts/go-echarts/v2 v2.2.6
+	github.com/ibraimgm/libcmd v0.0.0-20191128182100-e7535948fadb
 	github.com/klauspost/compress v1.16.5
 	github.com/schollz/progressbar/v3 v3.13.1
 	github.com/shirou/gopsutil v3.21.11+incompatible
 	github.com/vmihailenco/msgpack/v5 v5.3.5
 	github.com/zeebo/blake3 v0.2.3
 	golang.org/x/exp v0.0.0-20230522175609-2e198f4a06a1
-	golang.org/x/term v0.8.0
 )
 
 require (
@@ -43,5 +43,6 @@ require (
 	go.opencensus.io v0.24.0 // indirect
 	golang.org/x/net v0.10.0 // indirect
 	golang.org/x/sys v0.8.0 // indirect
+	golang.org/x/term v0.8.0 // indirect
 	google.golang.org/protobuf v1.30.0 // indirect
 )

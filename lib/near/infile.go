@@ -14,7 +14,7 @@ import (
 	"github.com/schollz/progressbar/v3"
 )
 
-func NearInFile(deep, fhash string, db *badger.DB) error {
+func NearInFile(fhash string, db *badger.DB, deep ...bool) error {
 	fmt.Println("Finding NeAR artefacts & generating GReAt graph")
 	start := time.Now()
 
@@ -26,9 +26,11 @@ func NearInFile(deep, fhash string, db *badger.DB) error {
 	var idmap *structs.ConcMap
 
 	var isdeep bool
-	if deep == cnst.DeepOption {
+	if len(deep) > 0 {
+		isdeep = deep[0]
+	}
+	if isdeep {
 		color.Red("DEEP option selected. NeAr calculation may take a long time.")
-		isdeep = true
 	}
 
 	if bytes.HasPrefix(fid, []byte(cnst.IdxFileNamespace)) {

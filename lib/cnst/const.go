@@ -39,6 +39,8 @@ const (
 )
 
 var (
+	ErrHashNotFound           = errors.New("must provide file hash")
+	ErrFileNotFound           = errors.New("must provide a file to save")
 	ErrIncompleteFile         = errors.New("incomplete file")
 	ErrUnableToParseFile      = errors.New("unable to find partitions/parse image file")
 	ErrIncompatibleFile       = errors.New("unknown/incompatible file detected")
@@ -57,14 +59,24 @@ const (
 	CmdRestore = "restore"
 	CmdNear    = "near"
 	CmdReset   = "reset"
+	SubCmdIn   = "in"
+	SubCmdOut  = "out"
 
-	SubCmdEvi       = "evi"
-	SubCmdPartition = "partition"
-	SubCmdIndexed   = "indexed"
+	FlagDBPath               = "dbpath"
+	FlagDBPathShort          = 'd'
+	FlagPassword             = "password"
+	FlagPasswordShort        = 'p'
+	FlagNearOption           = "nearoption"
+	FlagNearOptionShort      = 'n'
+	FlagDeep                 = "deep"
+	FlagDeepShort            = 'd'
+	FlagChonkSize            = "chonksize"
+	FlagChonkSizeShort       = 'c'
+	FlagRestoreFilePath      = "filepath"
+	FlagRestoreFilePathShort = 'f'
 
-	InOptionIn  = "in"
-	InOptionOut = "out"
-	DeepOption  = "deep"
+	OperandFile = "FILE"
+	OperandHash = "HASH"
 )
 
 const IgnoreVar int64 = -1

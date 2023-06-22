@@ -28,8 +28,6 @@ func StoreData(cmd *libcmd.Cmd) error {
 		return cnst.ErrFileNotFound
 	}
 
-	fmt.Println(cnst.ChonkSize)
-
 	fmt.Println("Pre-store checks & indexing....")
 	eviFile, err := initEvidenceFile(file, db)
 	if err != nil {

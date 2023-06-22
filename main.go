@@ -42,7 +42,7 @@ func cmdrestore(cmd *libcmd.Cmd) {
 	cmd.String(cnst.FlagRestoreFilePath, cnst.FlagRestoreFilePathShort, "restored")
 	cmd.Int32(cnst.FlagChonkSize, cnst.FlagChonkSizeShort, 256)
 	cmd.AddOperand(cnst.OperandHash, "")
-	cmd.Run(func(cmd *libcmd.Cmd) error { return cli.ResetData(cmd) })
+	cmd.Run(func(cmd *libcmd.Cmd) error { return cli.RestoreData(cmd) })
 }
 func cmdlist(cmd *libcmd.Cmd) {
 	cmd.String(cnst.FlagDBPath, cnst.FlagDBPathShort, "")
@@ -71,5 +71,6 @@ func cmdnear(cmd *libcmd.Cmd) {
 	})
 }
 func cmdreset(cmd *libcmd.Cmd) {
+	cmd.String(cnst.FlagDBPath, cnst.FlagDBPathShort, "")
 	cmd.Run(func(cmd *libcmd.Cmd) error { return cli.ResetData(cmd) })
 }

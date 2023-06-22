@@ -10,9 +10,7 @@ import (
 )
 
 func main() {
-	fmt.Println("Initialising dues ....")
-
-	app := libcmd.NewApp("dues", "Deduplicated Unified Evidence Store")
+	app := libcmd.NewApp("DUES", "Deduplicated Unified Evidence Store")
 	app.Command(cnst.CmdStore, "Store file in database", cmdstore)
 	app.Command(cnst.CmdRestore, "Restore file from database", cmdrestore)
 	app.Command(cnst.CmdList, "List all the saved files in the database", cmdlist)

@@ -2,12 +2,10 @@ package cli
 
 import (
 	"indicer/lib/store"
-
-	"github.com/ibraimgm/libcmd"
 )
 
-func ListData(cmd *libcmd.Cmd) error {
-	db, err := common(cmd)
+func ListData(chonkSize int, dbpath, pwd string) error {
+	db, err := common(chonkSize, dbpath, pwd)
 	if err != nil {
 		return err
 	}

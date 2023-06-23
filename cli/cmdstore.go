@@ -13,24 +13,18 @@ import (
 
 	"github.com/dgraph-io/badger/v3"
 	"github.com/edsrzf/mmap-go"
-	"github.com/ibraimgm/libcmd"
 )
 
-func StoreData(cmd *libcmd.Cmd) error {
+func StoreData(chonkSize int, dbpath, pwd, evipath string) error {
 	start := time.Now()
 
-	db, err := common(cmd)
+	db, err := common(chonkSize, dbpath, pwd)
 	if err != nil {
 		return err
 	}
 
-	file := cmd.Operand(cnst.OperandFile)
-	if file == "" {
-		return cnst.ErrFileNotFound
-	}
-
 	fmt.Println("Pre-store checks & indexing....")
-	eviFile, err := initEvidenceFile(file, db)
+	eviFile, err := initEvidenceFile(evipath, db)
 	if err != nil {
 		return err
 	}

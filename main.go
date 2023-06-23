@@ -6,71 +6,54 @@ import (
 	"indicer/lib/cnst"
 	"os"
 
-	"github.com/ibraimgm/libcmd"
+	"github.com/alecthomas/kingpin/v2"
 )
 
 func main() {
-	app := libcmd.NewApp("DUES", "Deduplicated Unified Evidence Store")
-	app.Command(cnst.CmdStore, "Store file in database", cmdstore)
-	app.Command(cnst.CmdRestore, "Restore file from database", cmdrestore)
-	app.Command(cnst.CmdList, "List all the saved files in the database", cmdlist)
-	app.Command(cnst.CmdNear, "Get NeAr file objects", cmdnear)
-	app.Command(cnst.CmdReset, "Reset database", cmdreset)
-	app.Usage = "dues <store|restore|list|near|reset> [-d] [dbpath] [-p] [password] [filepath|hash]"
+	app := kingpin.New("DUES", "Deduplicated Unified Evidence Store")
+	dbpath := app.Flag(cnst.FlagDBPath, "Custom path for DUES database").Short(cnst.FlagDBPathShort).String()
+	pwd := app.Flag(cnst.FlagPassword, "Password for the DUES database").Short(cnst.FlagPasswordShort).String()
+	chonkSize := app.Flag(cnst.FlagChonkSize, "Custom chunk size(KB) to be used for dedup").Short(cnst.FlagChonkSizeShort).Default("256").Int()
+	app.Version("DUES v3")
 
-	app.Run(func(*libcmd.Cmd) error {
-		app.Help()
-		return nil
-	})
+	cmdstore := app.Command(cnst.CmdStore, "Store file in database")
+	evipath := cmdstore.Arg(cnst.OperandFile, "Path of file that must be saved").Required().String()
 
-	if err := app.Parse(); err != nil {
-		fmt.Println(err)
+	cmdrestore := app.Command(cnst.CmdRestore, "Restore file from database")
+	rpath := cmdrestore.Flag(cnst.FlagRestoreFilePath, "Path for restoring the file").Short(cnst.FlagRestoreFilePathShort).Default("restored").String()
+	rhash := cmdrestore.Arg(cnst.OperandHash, "Hash of file that must be restoed").String()
+
+	cmdlist := app.Command(cnst.CmdList, "List all the saved files in the database")
+
+	cmdnear := app.Command(cnst.CmdNear, "Get NeAr file objects")
+	cmdin := cmdnear.Command(cnst.SubCmdIn, "Finds NeAr objects & generates GReAt graph for file INside of the database")
+	deep := cmdin.Flag(cnst.FlagDeep, "Enable/Disable partial chunk match").Short(cnst.FlagDeepShort).Default("false").Bool()
+	inhash := cmdin.Arg(cnst.OperandHash, "Hash of the file in DUES DB for which you need to run NeAr").String()
+
+	cmdout := cmdnear.Command(cnst.SubCmdOut, "Finds NeAr objects & generates GReAt graph for file OUTside of the database")
+	outpath := cmdout.Arg(cnst.OperandFile, "Path to the file for which you need to run NeAr").String()
+
+	var err error
+
+	switch kingpin.MustParse(app.Parse(os.Args[1:])) {
+	case cmdstore.FullCommand():
+		err = cli.StoreData(*chonkSize, *dbpath, *pwd, *evipath)
+	case cmdrestore.FullCommand():
+		err = cli.RestoreData(*chonkSize, *dbpath, *pwd, *rhash, *rpath)
+	case cmdlist.FullCommand():
+		err = cli.ListData(*chonkSize, *dbpath, *pwd)
+	case cmdin.FullCommand():
+		err = cli.NearInData(*deep, *chonkSize, *dbpath, *pwd, *inhash)
+	case cmdout.FullCommand():
+		err = cli.NearOutData(*chonkSize, *dbpath, *pwd, *outpath)
+	}
+
+	handle(err)
+}
+
+func handle(err error) {
+	if err != nil {
+		fmt.Printf("\n\n %v \n\n", err)
 		os.Exit(1)
 	}
-}
-
-func cmdstore(cmd *libcmd.Cmd) {
-	cmd.String(cnst.FlagDBPath, cnst.FlagDBPathShort, "")
-	cmd.String(cnst.FlagPassword, cnst.FlagPasswordShort, "")
-	cmd.Int32(cnst.FlagChonkSize, cnst.FlagChonkSizeShort, 256)
-	cmd.AddOperand(cnst.OperandFile, "")
-	cmd.Run(func(cmd *libcmd.Cmd) error { return cli.StoreData(cmd) })
-}
-func cmdrestore(cmd *libcmd.Cmd) {
-	cmd.String(cnst.FlagDBPath, cnst.FlagDBPathShort, "")
-	cmd.String(cnst.FlagPassword, cnst.FlagPasswordShort, "")
-	cmd.String(cnst.FlagRestoreFilePath, cnst.FlagRestoreFilePathShort, "restored")
-	cmd.Int32(cnst.FlagChonkSize, cnst.FlagChonkSizeShort, 256)
-	cmd.AddOperand(cnst.OperandHash, "")
-	cmd.Run(func(cmd *libcmd.Cmd) error { return cli.RestoreData(cmd) })
-}
-func cmdlist(cmd *libcmd.Cmd) {
-	cmd.String(cnst.FlagDBPath, cnst.FlagDBPathShort, "")
-	cmd.String(cnst.FlagPassword, cnst.FlagPasswordShort, "")
-	cmd.Int32(cnst.FlagChonkSize, cnst.FlagChonkSizeShort, 256)
-	cmd.Run(func(cmd *libcmd.Cmd) error { return cli.ListData(cmd) })
-}
-func cmdnear(cmd *libcmd.Cmd) {
-	cmd.Command(cnst.SubCmdIn, "Finds NeAr objects & generates GReAt graph for file INside of the database", func(cmd *libcmd.Cmd) {
-		cmd.String(cnst.FlagDBPath, cnst.FlagDBPathShort, "")
-		cmd.String(cnst.FlagPassword, cnst.FlagPasswordShort, "")
-		cmd.Int32(cnst.FlagChonkSize, cnst.FlagChonkSizeShort, 256)
-		cmd.Bool(cnst.FlagDeep, cnst.FlagDeepShort, false)
-		cmd.AddOperand(cnst.OperandHash, "")
-
-		cmd.Run(cli.NearInData)
-	})
-
-	cmd.Command(cnst.SubCmdOut, "Finds NeAr objects & generates GReAt graph for file OUTside of the database", func(cmd *libcmd.Cmd) {
-		cmd.String(cnst.FlagDBPath, cnst.FlagDBPathShort, "")
-		cmd.String(cnst.FlagPassword, cnst.FlagPasswordShort, "")
-		cmd.Int32(cnst.FlagChonkSize, cnst.FlagChonkSizeShort, 256)
-		cmd.AddOperand(cnst.OperandFile, "")
-
-		cmd.Run(cli.NearOutData)
-	})
-}
-func cmdreset(cmd *libcmd.Cmd) {
-	cmd.String(cnst.FlagDBPath, cnst.FlagDBPathShort, "")
-	cmd.Run(func(cmd *libcmd.Cmd) error { return cli.ResetData(cmd) })
 }

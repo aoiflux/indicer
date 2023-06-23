@@ -1,42 +1,25 @@
 package cli
 
 import (
-	"indicer/lib/cnst"
 	"indicer/lib/near"
-
-	"github.com/ibraimgm/libcmd"
 )
 
-func NearInData(cmd *libcmd.Cmd) error {
-	db, err := common(cmd)
+func NearInData(deep bool, chonkSize int, dbpath, pwd, inhash string) error {
+	db, err := common(chonkSize, dbpath, pwd)
 	if err != nil {
 		return err
 	}
-
-	deep := cmd.GetBool(cnst.FlagDeep)
-	fhash := cmd.Operand(cnst.OperandHash)
-	if fhash == "" {
-		return cnst.ErrHashNotFound
-	}
-
-	return near.NearInFile(fhash, db, *deep)
+	return near.NearInFile(inhash, db, deep)
 }
 
-func NearOutData(cmd *libcmd.Cmd) error {
-	db, err := common(cmd)
+func NearOutData(chonkSize int, dbpath, pwd, outpath string) error {
+	db, err := common(chonkSize, dbpath, pwd)
 	if err != nil {
 		return err
 	}
-
-	file := cmd.Operand(cnst.OperandFile)
-	if file == "" {
-		return cnst.ErrFileNotFound
-	}
-
-	err = near.NearOutFile(file, db)
+	err = near.NearOutFile(outpath, db)
 	if err != nil {
 		return err
 	}
-
 	return db.Close()
 }

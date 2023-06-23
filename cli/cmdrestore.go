@@ -2,34 +2,26 @@ package cli
 
 import (
 	"fmt"
-	"indicer/lib/cnst"
 	"indicer/lib/store"
 	"os"
 	"time"
-
-	"github.com/ibraimgm/libcmd"
 )
 
-func RestoreData(cmd *libcmd.Cmd) error {
+func RestoreData(chonkSize int, dbpath, pwd, rhash, rpath string) error {
 	start := time.Now()
 
-	db, err := common(cmd)
+	db, err := common(chonkSize, dbpath, pwd)
 	if err != nil {
 		return err
 	}
-	fhash := cmd.Operand(cnst.OperandHash)
-	if fhash == "" {
-		return cnst.ErrHashNotFound
-	}
-	fpath := cmd.GetString(cnst.FlagRestoreFilePath)
 
-	fhandle, err := os.Create(*fpath)
+	fhandle, err := os.Create(rpath)
 	if err != nil {
 		return err
 	}
 
 	fmt.Println("Restoring file ...")
-	err = store.Restore(fhash, fhandle, db)
+	err = store.Restore(rhash, fhandle, db)
 	if err != nil {
 		return err
 	}

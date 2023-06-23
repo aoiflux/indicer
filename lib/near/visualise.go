@@ -38,6 +38,7 @@ func sankeyBase(series string, nodes []opts.SankeyNode, links []opts.SankeyLink)
 
 func visualise(fid []byte, idmap *structs.ConcMap, db *badger.DB) error {
 	page := components.NewPage()
+	page.Initialization.AssetsHost = "."
 	b64fid := getB64HashedID(string(fid))
 
 	nodes := []opts.SankeyNode{
@@ -55,7 +56,7 @@ func visualise(fid []byte, idmap *structs.ConcMap, db *badger.DB) error {
 		var link opts.SankeyLink
 		link.Source = b64fid
 		link.Target = node.Name
-		link.Value = float32(v)
+		link.Value = v
 		links = append(links, link)
 	}
 

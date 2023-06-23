@@ -69,7 +69,7 @@ const (
 	FlagNearOption           = "nearoption"
 	FlagNearOptionShort      = 'n'
 	FlagDeep                 = "deep"
-	FlagDeepShort            = 'd'
+	FlagDeepShort            = 'e'
 	FlagChonkSize            = "chonksize"
 	FlagChonkSizeShort       = 'c'
 	FlagRestoreFilePath      = "filepath"

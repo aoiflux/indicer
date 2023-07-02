@@ -2,20 +2,18 @@ package cli
 
 import (
 	"fmt"
-	"indicer/lib/cnst"
 	"indicer/lib/util"
 	"os"
 	"strings"
 
 	"github.com/fatih/color"
-	"github.com/ibraimgm/libcmd"
 )
 
-func ResetData(cmd *libcmd.Cmd) error {
+func ResetData(dbpath string) error {
 	var err error
-	dbpath := cmd.GetString(cnst.FlagDBPath)
-	if *dbpath == "" {
-		*dbpath, err = util.GetDBPath()
+
+	if dbpath == "" {
+		dbpath, err = util.GetDBPath()
 		if err != nil {
 			return err
 		}
@@ -34,5 +32,5 @@ func ResetData(cmd *libcmd.Cmd) error {
 	}
 
 	color.Red("Deleting ALL data!")
-	return os.RemoveAll(*dbpath)
+	return os.RemoveAll(dbpath)
 }

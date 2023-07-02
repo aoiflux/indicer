@@ -24,6 +24,7 @@ const (
 )
 
 var ChonkSize = DefaultChonkSize
+var MEMOPT bool
 
 const (
 	EviFileNamespace         = "E|||:"
@@ -74,6 +75,8 @@ const (
 	FlagChonkSizeShort       = 'c'
 	FlagRestoreFilePath      = "filepath"
 	FlagRestoreFilePathShort = 'f'
+	FlagMemoryOptimise       = "memopt"
+	FlagMemoryOptimiseShort  = 'm'
 
 	OperandFile = "FILE"
 	OperandHash = "HASH"
@@ -82,13 +85,15 @@ const (
 const IgnoreVar int64 = -1
 
 func GetMaxThreadCount() int {
-	max := runtime.NumCPU() / 2
-	if max > 2 {
-		return max
+	if MEMOPT {
+		return 1
 	}
-	return 2
+	return runtime.NumCPU() * 2
 }
 func GetCacheLimit() (int64, error) {
+	if MEMOPT {
+		return 64 * KB, nil
+	}
 	vmemstat, err := mem.VirtualMemory()
-	return int64(vmemstat.Available / 8), err
+	return int64(vmemstat.Available / 4), err
 }

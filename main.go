@@ -14,6 +14,9 @@ func main() {
 	dbpath := app.Flag(cnst.FlagDBPath, "Custom path for DUES database").Short(cnst.FlagDBPathShort).String()
 	pwd := app.Flag(cnst.FlagPassword, "Password for the DUES database").Short(cnst.FlagPasswordShort).String()
 	chonkSize := app.Flag(cnst.FlagChonkSize, "Custom chunk size(KB) to be used for dedup").Short(cnst.FlagChonkSizeShort).Default("256").Int()
+	memopt := app.Flag(cnst.FlagMemoryOptimise, "Optimise for memory, forego performance").Short(cnst.FlagChonkSizeShort).Default("false").Bool()
+	cnst.MEMOPT = *memopt
+
 	app.Version("DUES v3")
 
 	cmdstore := app.Command(cnst.CmdStore, "Store file in database")

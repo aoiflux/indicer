@@ -75,8 +75,8 @@ const (
 	FlagChonkSizeShort       = 'c'
 	FlagRestoreFilePath      = "filepath"
 	FlagRestoreFilePathShort = 'f'
-	FlagMemoryOptimise       = "memopt"
-	FlagMemoryOptimiseShort  = 'm'
+	FlagLowResource          = "low"
+	FlagLowResourceShort     = 'l'
 
 	OperandFile = "FILE"
 	OperandHash = "HASH"

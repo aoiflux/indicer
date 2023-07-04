@@ -4,10 +4,10 @@ import (
 	"indicer/lib/dbio"
 	"indicer/lib/util"
 
-	"github.com/dgraph-io/badger/v3"
+	"go.etcd.io/bbolt"
 )
 
-func common(chonkSize int, dbpath, pwd string) (*badger.DB, error) {
+func common(readOnly bool, chonkSize int, dbpath string) (*bbolt.DB, error) {
 	var err error
 	if dbpath == "" {
 		dbpath, err = util.GetDBPath()
@@ -15,7 +15,6 @@ func common(chonkSize int, dbpath, pwd string) (*badger.DB, error) {
 			return nil, err
 		}
 	}
-	key := util.HashPassword(pwd)
 	util.SetChonkSize(chonkSize)
-	return dbio.ConnectDB(dbpath, key)
+	return dbio.ConnectDB(readOnly, dbpath)
 }

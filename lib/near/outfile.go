@@ -8,11 +8,11 @@ import (
 	"os"
 	"time"
 
-	"github.com/dgraph-io/badger/v3"
 	"github.com/edsrzf/mmap-go"
+	"go.etcd.io/bbolt"
 )
 
-func NearOutFile(fpath string, db *badger.DB) error {
+func NearOutFile(fpath string, db *bbolt.DB) error {
 	size, _, mappedFile, err := outfileSetup(fpath)
 	if err != nil {
 		return err
@@ -73,7 +73,7 @@ func getOutfileChonks(size int64, mappedFile mmap.MMap) chan []byte {
 	return chonk
 }
 
-func getParitalMatches(chonk []byte, db *badger.DB) ([]string, error) {
+func getParitalMatches(chonk []byte, db *bbolt.DB) ([]string, error) {
 	start := time.Now()
 	chash, count, err := partialChonkMatch(chonk, db)
 	if err != nil {
@@ -85,7 +85,7 @@ func getParitalMatches(chonk []byte, db *badger.DB) ([]string, error) {
 
 	// start := time.Now()
 	// chash, err := matchByChash(chonk, db)
-	// if err != nil && err == badger.ErrKeyNotFound {
+	// if err != nil && err == cnst.ErrKeyNotFound {
 	// 	return nil, nil
 	// }
 	// if err != nil {

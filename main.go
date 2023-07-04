@@ -13,7 +13,6 @@ import (
 func main() {
 	app := kingpin.New("DUES", "Deduplicated Unified Evidence Store")
 	dbpath := app.Flag(cnst.FlagDBPath, "Custom path for DUES database").Short(cnst.FlagDBPathShort).String()
-	pwd := app.Flag(cnst.FlagPassword, "Password for the DUES database").Short(cnst.FlagPasswordShort).String()
 	chonkSize := app.Flag(cnst.FlagChonkSize, "Custom chunk size(KB) to be used for dedup").Short(cnst.FlagChonkSizeShort).Default("256").Int()
 	memopt := app.Flag(cnst.FlagLowResource, "Low resource use mode, foregoes performance in favour of utilising less memory, cpu, and energy").Short(cnst.FlagLowResourceShort).Default("false").Bool()
 	app.Version("DUES v3")
@@ -50,15 +49,15 @@ func main() {
 
 	switch parsed {
 	case cmdstore.FullCommand():
-		err = cli.StoreData(*chonkSize, *dbpath, *pwd, *evipath)
+		err = cli.StoreData(*chonkSize, *dbpath, *evipath)
 	case cmdrestore.FullCommand():
-		err = cli.RestoreData(*chonkSize, *dbpath, *pwd, *rhash, *rpath)
+		err = cli.RestoreData(*chonkSize, *dbpath, *rhash, *rpath)
 	case cmdlist.FullCommand():
-		err = cli.ListData(*chonkSize, *dbpath, *pwd)
+		err = cli.ListData(*chonkSize, *dbpath)
 	case cmdin.FullCommand():
-		err = cli.NearInData(*deep, *chonkSize, *dbpath, *pwd, *inhash)
+		err = cli.NearInData(*deep, *chonkSize, *dbpath, *inhash)
 	case cmdout.FullCommand():
-		err = cli.NearOutData(*chonkSize, *dbpath, *pwd, *outpath)
+		err = cli.NearOutData(*chonkSize, *dbpath, *outpath)
 	case cmdreset.FullCommand():
 		err = cli.ResetData(*dbpath)
 	}

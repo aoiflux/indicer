@@ -9,12 +9,12 @@ import (
 	"indicer/lib/util"
 	"time"
 
-	"github.com/dgraph-io/badger/v3"
 	"github.com/fatih/color"
 	"github.com/schollz/progressbar/v3"
+	"go.etcd.io/bbolt"
 )
 
-func NearInFile(fhash string, db *badger.DB, deep ...bool) error {
+func NearInFile(fhash string, db *bbolt.DB, deep ...bool) error {
 	fmt.Println("Finding NeAR artefacts & generating GReAt graph")
 	start := time.Now()
 
@@ -53,7 +53,7 @@ func NearInFile(fhash string, db *badger.DB, deep ...bool) error {
 	return nil
 }
 
-func nearIndexFile(fid []byte, db *badger.DB, deep ...bool) (*structs.ConcMap, error) {
+func nearIndexFile(fid []byte, db *bbolt.DB, deep ...bool) (*structs.ConcMap, error) {
 	ifile, err := dbio.GetIndexedFile(fid, db)
 	if err != nil {
 		return nil, err
@@ -64,7 +64,7 @@ func nearIndexFile(fid []byte, db *badger.DB, deep ...bool) (*structs.ConcMap, e
 	}
 	return getNearLogicalFile(ifile.Start, ifile.Size, ifile.Names[0], fid, db, isdeep)
 }
-func nearPartitionFile(fid []byte, db *badger.DB, deep ...bool) (*structs.ConcMap, error) {
+func nearPartitionFile(fid []byte, db *bbolt.DB, deep ...bool) (*structs.ConcMap, error) {
 	pfile, err := dbio.GetPartitionFile(fid, db)
 	if err != nil {
 		return nil, err
@@ -75,7 +75,7 @@ func nearPartitionFile(fid []byte, db *badger.DB, deep ...bool) (*structs.ConcMa
 	}
 	return getNearLogicalFile(pfile.Start, pfile.Size, pfile.Names[0], fid, db, isdeep)
 }
-func nearEvidenceFile(fid []byte, db *badger.DB, deep ...bool) (*structs.ConcMap, error) {
+func nearEvidenceFile(fid []byte, db *bbolt.DB, deep ...bool) (*structs.ConcMap, error) {
 	efile, err := dbio.GetEvidenceFile(fid, db)
 	if err != nil {
 		return nil, err
@@ -88,7 +88,7 @@ func nearEvidenceFile(fid []byte, db *badger.DB, deep ...bool) (*structs.ConcMap
 	return getNearFile(efile.Start, efile.Size, ehash, fid, db, isdeep)
 }
 
-func getNearLogicalFile(start, size int64, fname string, fid []byte, db *badger.DB, deep ...bool) (*structs.ConcMap, error) {
+func getNearLogicalFile(start, size int64, fname string, fid []byte, db *bbolt.DB, deep ...bool) (*structs.ConcMap, error) {
 	ehash, err := util.GetEvidenceFileHash(fname)
 	if err != nil {
 		return nil, err
@@ -99,7 +99,7 @@ func getNearLogicalFile(start, size int64, fname string, fid []byte, db *badger.
 	}
 	return getNearFile(start, size, ehash, fid, db, isdeep)
 }
-func getNearFile(start, size int64, ehash, fid []byte, db *badger.DB, deep ...bool) (*structs.ConcMap, error) {
+func getNearFile(start, size int64, ehash, fid []byte, db *bbolt.DB, deep ...bool) (*structs.ConcMap, error) {
 	fhash := bytes.Split(fid, []byte(cnst.NamespaceSeperator))[1]
 	idmap := structs.NewConcMap()
 	rim := structs.NewRimMap()
@@ -147,7 +147,7 @@ func getNearFile(start, size int64, ehash, fid []byte, db *badger.DB, deep ...bo
 	fmt.Println("Found NeAR Artefacts. Generating GReAt Graph....")
 	return idmap, nil
 }
-func getNear(start, size int64, ehash []byte, db *badger.DB, deep ...bool) chan structs.NearGen {
+func getNear(start, size int64, ehash []byte, db *bbolt.DB, deep ...bool) chan structs.NearGen {
 	neargenChan := make(chan structs.NearGen)
 
 	var dbstart int64

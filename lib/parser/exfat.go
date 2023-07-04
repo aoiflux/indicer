@@ -8,10 +8,10 @@ import (
 	"os"
 
 	"github.com/aoiflux/libxfat"
-	"github.com/dgraph-io/badger/v3"
+	"go.etcd.io/bbolt"
 )
 
-func IndexEXFAT(db *badger.DB, pfile structs.InputFile) error {
+func IndexEXFAT(db *bbolt.DB, pfile structs.InputFile) error {
 	startOffset := getStartOffset(uint64(pfile.GetStartIndex()))
 	exfatdata, err := libxfat.New(pfile.GetHandle(), true, startOffset)
 	if err != nil {

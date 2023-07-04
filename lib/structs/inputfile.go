@@ -9,8 +9,8 @@ import (
 	"os"
 	"strings"
 
-	"github.com/dgraph-io/badger/v3"
 	"github.com/edsrzf/mmap-go"
+	"go.etcd.io/bbolt"
 )
 
 type InputFile struct {
@@ -20,12 +20,12 @@ type InputFile struct {
 	id              []byte
 	name            string
 	startIndex      int64
-	db              *badger.DB
+	db              *bbolt.DB
 	internalObjects []string
 }
 
 func NewInputFile(
-	db *badger.DB,
+	db *bbolt.DB,
 	fileHandle *os.File,
 	mappedFile mmap.MMap,
 	name, namespace string,
@@ -63,7 +63,7 @@ func (i InputFile) GetStartIndex() int64 {
 func (i *InputFile) GetEndIndex() int64 {
 	return i.startIndex + i.size
 }
-func (i InputFile) GetDB() *badger.DB {
+func (i InputFile) GetDB() *bbolt.DB {
 	return i.db
 }
 func (i InputFile) GetSize() int64 {

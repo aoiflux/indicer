@@ -8,12 +8,12 @@ import (
 	"indicer/lib/util"
 	"os"
 
-	"github.com/dgraph-io/badger/v3"
 	"github.com/dustin/go-humanize"
 	"github.com/schollz/progressbar/v3"
+	"go.etcd.io/bbolt"
 )
 
-func Restore(fhash string, dst *os.File, db *badger.DB) error {
+func Restore(fhash string, dst *os.File, db *bbolt.DB) error {
 	fid, err := dbio.GuessFileType(fhash, db)
 	if err != nil {
 		return err
@@ -27,7 +27,7 @@ func Restore(fhash string, dst *os.File, db *badger.DB) error {
 	return restoreEvidenceFile(fid, dst, db)
 }
 
-func checkCompleted(ehash []byte, db *badger.DB) error {
+func checkCompleted(ehash []byte, db *bbolt.DB) error {
 	eid := util.GetEvidenceFileID(ehash)
 	eviFile, err := dbio.GetEvidenceFile(eid, db)
 	if err != nil {
@@ -39,7 +39,7 @@ func checkCompleted(ehash []byte, db *badger.DB) error {
 	return nil
 }
 
-func restoreIndexedFile(fid []byte, dst *os.File, db *badger.DB) error {
+func restoreIndexedFile(fid []byte, dst *os.File, db *bbolt.DB) error {
 	indexedFile, err := dbio.GetIndexedFile(fid, db)
 	if err != nil {
 		return err
@@ -54,7 +54,7 @@ func restoreIndexedFile(fid []byte, dst *os.File, db *badger.DB) error {
 	}
 	return restoreData(indexedFile.Start, indexedFile.Size, ehash, dst, db)
 }
-func restorePartitionFile(fid []byte, dst *os.File, db *badger.DB) error {
+func restorePartitionFile(fid []byte, dst *os.File, db *bbolt.DB) error {
 	partitionFile, err := dbio.GetPartitionFile(fid, db)
 	if err != nil {
 		return err
@@ -69,7 +69,7 @@ func restorePartitionFile(fid []byte, dst *os.File, db *badger.DB) error {
 	}
 	return restoreData(partitionFile.Start, partitionFile.Size, ehash, dst, db)
 }
-func restoreEvidenceFile(fid []byte, dst *os.File, db *badger.DB) error {
+func restoreEvidenceFile(fid []byte, dst *os.File, db *bbolt.DB) error {
 	evidenceFile, err := dbio.GetEvidenceFile(fid, db)
 	if err != nil {
 		return err
@@ -81,7 +81,7 @@ func restoreEvidenceFile(fid []byte, dst *os.File, db *badger.DB) error {
 	return restoreData(evidenceFile.Start, evidenceFile.Size, ehash, dst, db)
 }
 
-func restoreData(start, size int64, ehash []byte, dst *os.File, db *badger.DB) error {
+func restoreData(start, size int64, ehash []byte, dst *os.File, db *bbolt.DB) error {
 	var dbstart int64
 	if start > 0 {
 		dbstart = util.GetDBStartOffset(start)

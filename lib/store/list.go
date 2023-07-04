@@ -1,35 +1,22 @@
 package store
 
 import (
-	"bytes"
 	"encoding/base64"
 	"fmt"
 	"indicer/lib/cnst"
 	"indicer/lib/structs"
 	"strings"
 
-	"github.com/dgraph-io/badger/v3"
 	"github.com/dustin/go-humanize"
 	"github.com/klauspost/compress/s2"
 	"github.com/vmihailenco/msgpack/v5"
+	"go.etcd.io/bbolt"
 )
 
-func List(db *badger.DB) error {
-	return db.View(func(txn *badger.Txn) error {
-		opts := badger.DefaultIteratorOptions
-		opts.PrefetchSize = 1000
-		it := txn.NewIterator(opts)
-		defer it.Close()
-
-		eviPrefix := []byte(cnst.EviFileNamespace)
-		for it.Seek(eviPrefix); it.ValidForPrefix(eviPrefix); it.Next() {
-			item := it.Item()
-			k := item.KeyCopy(nil)
-			v, err := item.ValueCopy(nil)
-			if err != nil {
-				return err
-			}
-
+func List(db *bbolt.DB) error {
+	return db.View(func(tx *bbolt.Tx) error {
+		bucket := tx.Bucket([]byte(cnst.EviBucket))
+		return bucket.ForEach(func(k, v []byte) error {
 			decoded, err := s2.Decode(nil, v)
 			if err != nil {
 				return err
@@ -42,26 +29,25 @@ func List(db *badger.DB) error {
 			}
 
 			if !evidata.Completed {
-				continue
+				return nil
 			}
 
-			evihash := bytes.Split(k, eviPrefix)[1]
-			fmt.Println(base64.StdEncoding.EncodeToString(evihash))
+			fmt.Println(base64.StdEncoding.EncodeToString(k))
 			fmt.Printf("\tNames: %v\n", evidata.Names)
 			fmt.Printf("\tSize: %v\n", humanize.Bytes(uint64(evidata.Size)))
 			for _, phash := range evidata.InternalObjects {
-				err = listPartitions(phash, txn)
+				err = listPartitions(phash, tx)
 				if err != nil {
 					return err
 				}
 			}
-		}
 
-		return nil
+			return nil
+		})
 	})
 }
 
-func listPartitions(phash string, txn *badger.Txn) error {
+func listPartitions(phash string, txn *bbolt.Tx) error {
 	phash = strings.Split(phash, cnst.DataSeperator)[0]
 	fmt.Printf("\tPartition: %v\n", phash)
 	decodedPhash, err := base64.StdEncoding.DecodeString(phash)
@@ -69,16 +55,12 @@ func listPartitions(phash string, txn *badger.Txn) error {
 		return err
 	}
 
-	pid := append([]byte(cnst.PartiFileNamespace), decodedPhash...)
-	item, err := txn.Get(pid)
-	if err != nil {
-		return err
+	bucket := txn.Bucket([]byte(cnst.PartiFileNamespace))
+	item := bucket.Get(decodedPhash)
+	if item == nil {
+		return cnst.ErrKeyNotFound
 	}
-	v, err := item.ValueCopy(nil)
-	if err != nil {
-		return err
-	}
-	decoded, err := s2.Decode(nil, v)
+	decoded, err := s2.Decode(nil, item)
 	if err != nil {
 		return err
 	}

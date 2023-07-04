@@ -10,11 +10,11 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/dgraph-io/badger/v3"
 	"github.com/klauspost/compress/s2"
+	"go.etcd.io/bbolt"
 )
 
-func countRList(fhash []byte, idmap *structs.ConcMap, rim *structs.RimMap, near structs.NearGen, db *badger.DB, echan chan error) {
+func countRList(fhash []byte, idmap *structs.ConcMap, rim *structs.RimMap, near structs.NearGen, db *bbolt.DB, echan chan error) {
 	fhash = []byte(base64.StdEncoding.EncodeToString(fhash))
 	for _, rev := range near.RevList {
 		err := countEviFile(near.Confidence, fhash, idmap, rim, rev, db)
@@ -24,7 +24,7 @@ func countRList(fhash []byte, idmap *structs.ConcMap, rim *structs.RimMap, near 
 	}
 	echan <- nil
 }
-func countEviFile(confidence float32, fhash []byte, idmap *structs.ConcMap, rim *structs.RimMap, rev structs.ReverseRelation, db *badger.DB) error {
+func countEviFile(confidence float32, fhash []byte, idmap *structs.ConcMap, rim *structs.RimMap, rev structs.ReverseRelation, db *bbolt.DB) error {
 	if bytes.Contains(rev.Value, fhash) {
 		return nil
 	}
@@ -49,7 +49,6 @@ func countEviFile(confidence float32, fhash []byte, idmap *structs.ConcMap, rim 
 	if err != nil {
 		return err
 	}
-	db.RunValueLogGC(0.5)
 
 	if len(efile.InternalObjects) == 0 {
 		idmap.Set(string(eid), confidence)
@@ -58,7 +57,7 @@ func countEviFile(confidence float32, fhash []byte, idmap *structs.ConcMap, rim 
 	}
 	return countPartiFile(confidence, ridx, fhash, eid, efile.InternalObjects, idmap, rim, db)
 }
-func countPartiFile(confidence float32, ridx int64, fhash, eid []byte, phashes []string, idmap *structs.ConcMap, rim *structs.RimMap, db *badger.DB) error {
+func countPartiFile(confidence float32, ridx int64, fhash, eid []byte, phashes []string, idmap *structs.ConcMap, rim *structs.RimMap, db *bbolt.DB) error {
 	for pindex, phash := range phashes {
 		pid, inRange, err := countFile(ridx, cnst.PartiFileNamespace, fhash, []byte(phash), db)
 		if err != nil {
@@ -78,7 +77,6 @@ func countPartiFile(confidence float32, ridx int64, fhash, eid []byte, phashes [
 		if err != nil {
 			return err
 		}
-		db.RunValueLogGC(0.5)
 
 		if len(pfile.InternalObjects) == 0 {
 			idmap.Set(string(pid), confidence)
@@ -94,7 +92,7 @@ func countPartiFile(confidence float32, ridx int64, fhash, eid []byte, phashes [
 	return nil
 }
 
-func countIdxFile(confidence float32, ridx int64, fhash, pid []byte, ihashes []string, idmap *structs.ConcMap, rim *structs.RimMap, db *badger.DB) error {
+func countIdxFile(confidence float32, ridx int64, fhash, pid []byte, ihashes []string, idmap *structs.ConcMap, rim *structs.RimMap, db *bbolt.DB) error {
 	for iindex, ihash := range ihashes {
 		iid, inRange, err := countFile(ridx, cnst.IdxFileNamespace, fhash, []byte(ihash), db)
 		if err != nil {
@@ -116,7 +114,7 @@ func countIdxFile(confidence float32, ridx int64, fhash, pid []byte, ihashes []s
 
 	return nil
 }
-func countFile(ridx int64, namespace string, filter, fhash []byte, db *badger.DB) ([]byte, bool, error) {
+func countFile(ridx int64, namespace string, filter, fhash []byte, db *bbolt.DB) ([]byte, bool, error) {
 	if bytes.Contains(fhash, filter) {
 		return nil, false, nil
 	}
@@ -165,40 +163,26 @@ func isInRange(start, end, index int64) bool {
 	return index >= start && index <= end
 }
 
-func partialChonkMatch(chonk []byte, db *badger.DB) ([]byte, float32, error) {
+func partialChonkMatch(chonk []byte, db *bbolt.DB) ([]byte, float32, error) {
 	var confidence float32
 	var keyToReturn []byte
 
-	err := db.View(func(txn *badger.Txn) error {
-		opts := badger.DefaultIteratorOptions
-		opts.PrefetchSize = 1000
-		it := txn.NewIterator(opts)
-		defer it.Close()
-
-		prefix := []byte(cnst.ChonkNamespace)
-		for it.Seek(prefix); it.ValidForPrefix(prefix); it.Next() {
-			item := it.Item()
-			key := item.KeyCopy(nil)
-			v, err := item.ValueCopy(nil)
-			if err != nil {
-				return err
-			}
+	err := db.View(func(tx *bbolt.Tx) error {
+		bucket := tx.Bucket([]byte(cnst.ChonkBucket))
+		return bucket.ForEach(func(k, v []byte) error {
 			data, err := s2.Decode(nil, v)
 			if err != nil {
 				return err
 			}
 
 			tempCount := util.PartialMatchConfidence(chonk, data)
-			if tempCount == 1 {
-				continue
-			}
-			if tempCount > confidence {
+			if tempCount > confidence && tempCount != 1 {
 				confidence = tempCount
-				keyToReturn = key
+				keyToReturn = k
 			}
-		}
 
-		return nil
+			return nil
+		})
 	})
 
 	return keyToReturn, confidence, err

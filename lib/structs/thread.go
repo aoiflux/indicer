@@ -1,8 +1,8 @@
 package structs
 
 import (
-	"github.com/dgraph-io/badger/v3"
 	"github.com/edsrzf/mmap-go"
+	"go.etcd.io/bbolt"
 )
 
 type ThreadIO struct {
@@ -10,7 +10,6 @@ type ThreadIO struct {
 	ChonkEnd   int64
 	MappedFile mmap.MMap
 	FHash      []byte
-	DB         *badger.DB
-	Batch      *badger.WriteBatch
+	DB         *bbolt.DB
 	Err        chan error
 }

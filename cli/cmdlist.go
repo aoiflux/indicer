@@ -4,8 +4,8 @@ import (
 	"indicer/lib/store"
 )
 
-func ListData(chonkSize int, dbpath, pwd string) error {
-	db, err := common(chonkSize, dbpath, pwd)
+func ListData(chonkSize int, dbpath string) error {
+	db, err := common(true, chonkSize, dbpath)
 	if err != nil {
 		return err
 	}

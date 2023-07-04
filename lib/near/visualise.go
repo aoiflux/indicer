@@ -9,10 +9,10 @@ import (
 	"os"
 	"strings"
 
-	"github.com/dgraph-io/badger/v3"
 	"github.com/go-echarts/go-echarts/v2/charts"
 	"github.com/go-echarts/go-echarts/v2/components"
 	"github.com/go-echarts/go-echarts/v2/opts"
+	"go.etcd.io/bbolt"
 )
 
 const title = "Graph of Related Artefacts"
@@ -36,7 +36,7 @@ func sankeyBase(series string, nodes []opts.SankeyNode, links []opts.SankeyLink)
 	return sankey
 }
 
-func visualise(fid []byte, idmap *structs.ConcMap, db *badger.DB) error {
+func visualise(fid []byte, idmap *structs.ConcMap, db *bbolt.DB) error {
 	page := components.NewPage()
 	page.Initialization.AssetsHost = "."
 	b64fid := getB64HashedID(string(fid))

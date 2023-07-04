@@ -7,10 +7,10 @@ import (
 	"time"
 )
 
-func RestoreData(chonkSize int, dbpath, pwd, rhash, rpath string) error {
+func RestoreData(chonkSize int, dbpath, rhash, rpath string) error {
 	start := time.Now()
 
-	db, err := common(chonkSize, dbpath, pwd)
+	db, err := common(true, chonkSize, dbpath)
 	if err != nil {
 		return err
 	}

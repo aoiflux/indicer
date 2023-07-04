@@ -11,14 +11,14 @@ import (
 	"path/filepath"
 	"time"
 
-	"github.com/dgraph-io/badger/v3"
 	"github.com/edsrzf/mmap-go"
+	"go.etcd.io/bbolt"
 )
 
-func StoreData(chonkSize int, dbpath, pwd, evipath string) error {
+func StoreData(chonkSize int, dbpath, evipath string) error {
 	start := time.Now()
 
-	db, err := common(chonkSize, dbpath, pwd)
+	db, err := common(false, chonkSize, dbpath)
 	if err != nil {
 		return err
 	}
@@ -92,7 +92,7 @@ func StoreData(chonkSize int, dbpath, pwd, evipath string) error {
 	return nil
 }
 
-func initEvidenceFile(evifilepath string, db *badger.DB) (structs.InputFile, error) {
+func initEvidenceFile(evifilepath string, db *bbolt.DB) (structs.InputFile, error) {
 	var eviFile structs.InputFile
 
 	eviInfo, err := os.Stat(evifilepath)

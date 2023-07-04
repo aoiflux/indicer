@@ -37,6 +37,12 @@ const (
 	RangeSeperator           = "-"
 	DataSeperator            = "|||"
 	PartitionIndexPrefix     = "p"
+	EviBucket                = "E"
+	PartiBucket              = "P"
+	IdxBucket                = "I"
+	RelBucket                = "R"
+	ReverseRelBucket         = "Я"
+	ChonkBucket              = "C"
 )
 
 var (
@@ -48,6 +54,7 @@ var (
 	ErrIncompatibleFileSystem = errors.New("unknown file system")
 	ErrUnknownFileType        = errors.New("unknown file type. please try one of the following: evidence|partition|indexed")
 	ErrIncorrectOption        = errors.New("indicer near <in|out> <hash|file_path> [deep]\n\tUse option in to get NeAR of files inside the database, provide a hash string\n\tUse option out to get NeAR of files outside of the database, provide a path")
+	ErrKeyNotFound            = errors.New("key not found")
 )
 
 const (

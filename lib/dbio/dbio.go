@@ -1,43 +1,65 @@
 package dbio
 
 import (
+	"bytes"
 	"encoding/base64"
 	"indicer/lib/cnst"
 	"indicer/lib/structs"
 	"indicer/lib/util"
-	"time"
 
-	"github.com/dgraph-io/badger/v3"
-	"github.com/dgraph-io/badger/v3/options"
 	"github.com/klauspost/compress/s2"
 	"github.com/vmihailenco/msgpack/v5"
+	"go.etcd.io/bbolt"
 )
 
-func ConnectDB(datadir string, key []byte) (*badger.DB, error) {
-	cacheLimit, err := cnst.GetCacheLimit()
+func ConnectDB(readOnly bool, dbpath string) (*bbolt.DB, error) {
+	opts := bbolt.DefaultOptions
+	opts.ReadOnly = readOnly
+	db, err := bbolt.Open(dbpath, 0666, opts)
 	if err != nil {
 		return nil, err
 	}
-
-	opts := badger.DefaultOptions(datadir)
-	if cnst.MEMOPT {
-		opts.NumMemtables = 1
-		opts.BloomFalsePositive = 0
+	if readOnly {
+		return db, err
 	}
 
-	opts = opts.WithLoggingLevel(badger.ERROR)
-	opts.IndexCacheSize = cacheLimit
-	opts.SyncWrites = true
-	opts.NumGoroutines = cnst.GetMaxThreadCount()
-	opts.Compression = options.ZSTD
-	opts.ZSTDCompressionLevel = 15
-	opts.EncryptionKey = key
-	opts.EncryptionKeyRotationDuration = time.Hour * 168
+	err = db.Batch(func(tx *bbolt.Tx) error {
+		_, err := tx.CreateBucket([]byte(cnst.EviBucket))
+		if err != nil && err != bbolt.ErrBucketExists {
+			return err
+		}
 
-	return badger.Open(opts)
+		_, err = tx.CreateBucket([]byte(cnst.PartiBucket))
+		if err != nil && err != bbolt.ErrBucketExists {
+			return err
+		}
+
+		_, err = tx.CreateBucket([]byte(cnst.IdxBucket))
+		if err != nil && err != bbolt.ErrBucketExists {
+			return err
+		}
+
+		_, err = tx.CreateBucket([]byte(cnst.RelBucket))
+		if err != nil && err != bbolt.ErrBucketExists {
+			return err
+		}
+
+		_, err = tx.CreateBucket([]byte(cnst.ReverseRelBucket))
+		if err != nil && err != bbolt.ErrBucketExists {
+			return err
+		}
+
+		_, err = tx.CreateBucket([]byte(cnst.ChonkBucket))
+		if err != nil && err != bbolt.ErrBucketExists {
+			return err
+		}
+
+		return nil
+	})
+
+	return db, err
 }
-
-func SetFile[T structs.FileTypes](id []byte, filenode T, db *badger.DB) error {
+func SetFile[T structs.FileTypes](id []byte, filenode T, db *bbolt.DB) error {
 	data, err := msgpack.Marshal(filenode)
 	if err != nil {
 		return err
@@ -45,7 +67,7 @@ func SetFile[T structs.FileTypes](id []byte, filenode T, db *badger.DB) error {
 	return SetNode(id, data, db)
 }
 
-func GetEvidenceFile(key []byte, db *badger.DB) (structs.EvidenceFile, error) {
+func GetEvidenceFile(key []byte, db *bbolt.DB) (structs.EvidenceFile, error) {
 	var evidenceFile structs.EvidenceFile
 
 	data, err := GetNode(key, db)
@@ -56,7 +78,7 @@ func GetEvidenceFile(key []byte, db *badger.DB) (structs.EvidenceFile, error) {
 	err = msgpack.Unmarshal(data, &evidenceFile)
 	return evidenceFile, err
 }
-func GetPartitionFile(key []byte, db *badger.DB) (structs.PartitionFile, error) {
+func GetPartitionFile(key []byte, db *bbolt.DB) (structs.PartitionFile, error) {
 	var partitionFile structs.PartitionFile
 
 	data, err := GetNode(key, db)
@@ -67,7 +89,7 @@ func GetPartitionFile(key []byte, db *badger.DB) (structs.PartitionFile, error) 
 	err = msgpack.Unmarshal(data, &partitionFile)
 	return partitionFile, err
 }
-func GetIndexedFile(key []byte, db *badger.DB) (structs.IndexedFile, error) {
+func GetIndexedFile(key []byte, db *bbolt.DB) (structs.IndexedFile, error) {
 	var indexedFile structs.IndexedFile
 
 	data, err := GetNode(key, db)
@@ -79,14 +101,14 @@ func GetIndexedFile(key []byte, db *badger.DB) (structs.IndexedFile, error) {
 	return indexedFile, err
 }
 
-func SetReverseRelationNode(key []byte, revRelNode []structs.ReverseRelation, batch *badger.WriteBatch) error {
+func SetReverseRelationNode(key []byte, revRelNode []structs.ReverseRelation, db *bbolt.DB) error {
 	data, err := msgpack.Marshal(revRelNode)
 	if err != nil {
 		return err
 	}
-	return SetBatchNode(key, data, batch)
+	return SetNode(key, data, db)
 }
-func GetReverseRelationNode(key []byte, db *badger.DB) ([]structs.ReverseRelation, error) {
+func GetReverseRelationNode(key []byte, db *bbolt.DB) ([]structs.ReverseRelation, error) {
 	var reverseRelations []structs.ReverseRelation
 
 	data, err := GetNode(key, db)
@@ -98,46 +120,47 @@ func GetReverseRelationNode(key []byte, db *badger.DB) ([]structs.ReverseRelatio
 	return reverseRelations, err
 }
 
-func SetBatchNode(key, data []byte, batch *badger.WriteBatch) error {
-	encoded := s2.EncodeBest(nil, data)
-	return batch.Set(key, encoded)
-}
-func SetNode(key, data []byte, db *badger.DB) error {
-	encoded := s2.EncodeBest(nil, data)
-	return db.Update(func(txn *badger.Txn) error {
-		return txn.Set(key, encoded)
+func SetNode(key, value []byte, db *bbolt.DB) error {
+	splits := bytes.Split(key, []byte(cnst.NamespaceSeperator))
+	bucket := splits[0]
+	key = splits[1]
+	encoded := s2.EncodeBest(nil, value)
+	return db.Batch(func(tx *bbolt.Tx) error {
+		bucket := tx.Bucket(bucket)
+		return bucket.Put(key, encoded)
 	})
 }
-func PingNode(key []byte, db *badger.DB) error {
-	return db.View(func(txn *badger.Txn) error {
-		_, err := txn.Get(key)
-		return err
+
+func GetNode(key []byte, db *bbolt.DB) ([]byte, error) {
+	splits := bytes.Split(key, []byte(cnst.NamespaceSeperator))
+	bucket := splits[0]
+	key = splits[1]
+	var value []byte
+	db.Batch(func(tx *bbolt.Tx) error {
+		bucket := tx.Bucket(bucket)
+		value = bucket.Get(key)
+		return nil
 	})
-}
-func GetNode(key []byte, db *badger.DB) ([]byte, error) {
-	var encoded []byte
-
-	err := db.View(func(txn *badger.Txn) error {
-		item, err := txn.Get(key)
-		if err != nil {
-			return err
-		}
-
-		err = item.Value(func(val []byte) error {
-			encoded, err = item.ValueCopy(val)
-			return err
-		})
-
-		return err
-	})
-	if err != nil {
-		return nil, err
+	if value == nil {
+		return nil, cnst.ErrKeyNotFound
 	}
-
-	return s2.Decode(nil, encoded)
+	return s2.Decode(value, nil)
+}
+func PingNode(key []byte, db *bbolt.DB) error {
+	splits := bytes.Split(key, []byte(cnst.NamespaceSeperator))
+	bucket := splits[0]
+	key = splits[1]
+	return db.View(func(tx *bbolt.Tx) error {
+		bucket := tx.Bucket(bucket)
+		v := bucket.Get(key)
+		if v == nil {
+			return cnst.ErrKeyNotFound
+		}
+		return nil
+	})
 }
 
-func GuessFileType(encodedHash string, db *badger.DB) ([]byte, error) {
+func GuessFileType(encodedHash string, db *bbolt.DB) ([]byte, error) {
 	fhash, err := base64.StdEncoding.DecodeString(encodedHash)
 	if err != nil {
 		return nil, err
@@ -145,7 +168,7 @@ func GuessFileType(encodedHash string, db *badger.DB) ([]byte, error) {
 
 	fid := util.AppendToBytesSlice(cnst.IdxFileNamespace, fhash)
 	err = PingNode(fid, db)
-	if err != nil && err != badger.ErrKeyNotFound {
+	if err != nil && err != cnst.ErrKeyNotFound {
 		return nil, err
 	}
 	if err == nil {
@@ -154,7 +177,7 @@ func GuessFileType(encodedHash string, db *badger.DB) ([]byte, error) {
 
 	fid = util.AppendToBytesSlice(cnst.PartiFileNamespace, fhash)
 	err = PingNode(fid, db)
-	if err != nil && err != badger.ErrKeyNotFound {
+	if err != nil && err != cnst.ErrKeyNotFound {
 		return nil, err
 	}
 	if err == nil {

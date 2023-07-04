@@ -12,7 +12,6 @@ require (
 	github.com/edsrzf/mmap-go v1.1.0
 	github.com/fatih/color v1.15.0
 	github.com/go-echarts/go-echarts/v2 v2.2.6
-	github.com/ibraimgm/libcmd v0.0.0-20191128182100-e7535948fadb
 	github.com/klauspost/compress v1.16.5
 	github.com/schollz/progressbar/v3 v3.13.1
 	github.com/shirou/gopsutil v3.21.11+incompatible

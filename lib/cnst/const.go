@@ -97,10 +97,12 @@ func GetMaxThreadCount() int {
 	}
 	return runtime.NumCPU() * 2
 }
-func GetCacheLimit() (int64, error) {
+func GetBatchLimit() (int, error) {
 	if MEMOPT {
-		return 64 * KB, nil
+		return 1000, nil
 	}
 	vmemstat, err := mem.VirtualMemory()
-	return int64(vmemstat.Available / 4), err
+	batchLimitBytes := int64(vmemstat.Available / 4)
+	batchLimitChonks := batchLimitBytes / DefaultChonkSize
+	return int(batchLimitChonks), err
 }

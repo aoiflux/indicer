@@ -21,6 +21,8 @@ func ConnectDB(readOnly bool, dbpath string) (*bbolt.DB, error) {
 
 	opts := bbolt.DefaultOptions
 	opts.ReadOnly = readOnly
+	opts.FreelistType = bbolt.FreelistMapType
+	opts.PreLoadFreelist = true
 	db, err := bbolt.Open(dbpath, 0666, opts)
 	if err != nil {
 		return nil, err
@@ -29,6 +31,10 @@ func ConnectDB(readOnly bool, dbpath string) (*bbolt.DB, error) {
 		return db, err
 	}
 
+	db.MaxBatchSize, err = cnst.GetBatchLimit()
+	if err != nil {
+		return nil, err
+	}
 	err = db.Batch(func(tx *bbolt.Tx) error {
 		_, err := tx.CreateBucket([]byte(cnst.EviBucket))
 		if err != nil && err != bbolt.ErrBucketExists {

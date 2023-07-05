@@ -15,6 +15,8 @@ import (
 	"time"
 
 	"github.com/cheggaaa/pb/v3"
+	"github.com/klauspost/compress/s2"
+	"github.com/schollz/progressbar/v3"
 	"github.com/zeebo/blake3"
 )
 
@@ -181,4 +183,103 @@ func GetEvidenceFileHash(fname string) ([]byte, error) {
 }
 func GetEvidenceFileID(eviFileHash []byte) []byte {
 	return append([]byte(cnst.EviFileNamespace), eviFileHash...)
+}
+
+func DecompressDB(dbpath string) error {
+	_, err := os.Stat(dbpath)
+	if os.IsNotExist(err) {
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+
+	fmt.Printf("\nDecompressing db ...\n")
+
+	dbfile, err := os.Open(dbpath)
+	if err != nil {
+		return err
+	}
+	fname := "." + filepath.Base(dbpath)
+	fpath := filepath.Join(filepath.Dir(dbpath), fname)
+	dstfile, err := os.Create(fpath)
+	if err != nil {
+		return err
+	}
+
+	s2proxy := s2.NewReader(dbfile)
+	spinner := progressbar.DefaultBytes(-1, "Decompressing db")
+	barProxy := progressbar.NewReader(s2proxy, spinner)
+	_, err = io.Copy(dstfile, &barProxy)
+	if err != nil {
+		return err
+	}
+
+	err = dbfile.Close()
+	if err != nil {
+		return err
+	}
+	err = dstfile.Close()
+	if err != nil {
+		return err
+	}
+
+	err = os.Remove(dbpath)
+	if err != nil {
+		return err
+	}
+	spinner.Finish()
+
+	return os.Rename(fpath, dbpath)
+}
+
+func CompressDB(dbpath string) error {
+	dbinfo, err := os.Stat(dbpath)
+	if err != nil {
+		return err
+	}
+
+	fmt.Printf("\nCompressing db ... \n")
+	bar := pb.Full.Start64(dbinfo.Size())
+
+	dbfile, err := os.Open(dbpath)
+	if err != nil {
+		return err
+	}
+
+	fname := "." + filepath.Base(dbpath)
+	fpath := filepath.Join(filepath.Dir(dbpath), fname)
+	dstfile, err := os.Create(fpath)
+	if err != nil {
+		return err
+	}
+
+	barProxy := bar.NewProxyReader(dbfile)
+	s2proxy := s2.NewWriter(dstfile, s2.WriterBestCompression(), s2.WriterConcurrency(cnst.GetMaxThreadCount()))
+	_, err = io.Copy(s2proxy, barProxy)
+	if err != nil {
+		return err
+	}
+
+	err = s2proxy.Close()
+	if err != nil {
+		return err
+	}
+
+	err = dbfile.Close()
+	if err != nil {
+		return err
+	}
+	err = dstfile.Close()
+	if err != nil {
+		return err
+	}
+
+	err = os.Remove(dbpath)
+	if err != nil {
+		return err
+	}
+	bar.Finish()
+
+	return os.Rename(fpath, dbpath)
 }

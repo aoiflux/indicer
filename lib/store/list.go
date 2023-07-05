@@ -55,7 +55,7 @@ func listPartitions(phash string, txn *bbolt.Tx) error {
 		return err
 	}
 
-	bucket := txn.Bucket([]byte(cnst.PartiFileNamespace))
+	bucket := txn.Bucket([]byte(cnst.PartiBucket))
 	item := bucket.Get(decodedPhash)
 	if item == nil {
 		return cnst.ErrKeyNotFound

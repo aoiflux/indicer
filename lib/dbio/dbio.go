@@ -6,6 +6,7 @@ import (
 	"indicer/lib/cnst"
 	"indicer/lib/structs"
 	"indicer/lib/util"
+	"os"
 
 	"github.com/klauspost/compress/s2"
 	"github.com/vmihailenco/msgpack/v5"
@@ -13,6 +14,11 @@ import (
 )
 
 func ConnectDB(readOnly bool, dbpath string) (*bbolt.DB, error) {
+	_, err := os.Stat(dbpath)
+	if readOnly && os.IsNotExist(err) {
+		return nil, err
+	}
+
 	opts := bbolt.DefaultOptions
 	opts.ReadOnly = readOnly
 	db, err := bbolt.Open(dbpath, 0666, opts)
@@ -122,36 +128,36 @@ func GetReverseRelationNode(key []byte, db *bbolt.DB) ([]structs.ReverseRelation
 
 func SetNode(key, value []byte, db *bbolt.DB) error {
 	splits := bytes.Split(key, []byte(cnst.NamespaceSeperator))
-	bucket := splits[0]
+	namespace := splits[0]
 	key = splits[1]
 	encoded := s2.EncodeBest(nil, value)
 	return db.Batch(func(tx *bbolt.Tx) error {
-		bucket := tx.Bucket(bucket)
+		bucket := tx.Bucket(namespace)
 		return bucket.Put(key, encoded)
 	})
 }
 
 func GetNode(key []byte, db *bbolt.DB) ([]byte, error) {
 	splits := bytes.Split(key, []byte(cnst.NamespaceSeperator))
-	bucket := splits[0]
+	namespace := splits[0]
 	key = splits[1]
 	var value []byte
-	db.Batch(func(tx *bbolt.Tx) error {
-		bucket := tx.Bucket(bucket)
+	db.View(func(tx *bbolt.Tx) error {
+		bucket := tx.Bucket(namespace)
 		value = bucket.Get(key)
 		return nil
 	})
 	if value == nil {
 		return nil, cnst.ErrKeyNotFound
 	}
-	return s2.Decode(value, nil)
+	return s2.Decode(nil, value)
 }
 func PingNode(key []byte, db *bbolt.DB) error {
 	splits := bytes.Split(key, []byte(cnst.NamespaceSeperator))
-	bucket := splits[0]
+	namespace := splits[0]
 	key = splits[1]
 	return db.View(func(tx *bbolt.Tx) error {
-		bucket := tx.Bucket(bucket)
+		bucket := tx.Bucket(namespace)
 		v := bucket.Get(key)
 		if v == nil {
 			return cnst.ErrKeyNotFound

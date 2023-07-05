@@ -2,6 +2,7 @@ package cli
 
 import (
 	"indicer/lib/near"
+	"indicer/lib/util"
 )
 
 func NearInData(deep bool, chonkSize int, dbpath, inhash string) error {
@@ -9,7 +10,15 @@ func NearInData(deep bool, chonkSize int, dbpath, inhash string) error {
 	if err != nil {
 		return err
 	}
-	return near.NearInFile(inhash, db, deep)
+	err = near.NearInFile(inhash, db, deep)
+	if err != nil {
+		return err
+	}
+	err = db.Close()
+	if err != nil {
+		return err
+	}
+	return util.CompressDB(dbpath)
 }
 
 func NearOutData(chonkSize int, dbpath, outpath string) error {
@@ -21,5 +30,9 @@ func NearOutData(chonkSize int, dbpath, outpath string) error {
 	if err != nil {
 		return err
 	}
-	return db.Close()
+	err = db.Close()
+	if err != nil {
+		return err
+	}
+	return util.CompressDB(dbpath)
 }

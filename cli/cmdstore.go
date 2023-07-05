@@ -31,6 +31,10 @@ func StoreData(chonkSize int, dbpath, evipath string) error {
 
 	err = store.EvidenceFilePreStoreCheck(eviFile)
 	if err == nil {
+		err = util.CompressDB(dbpath)
+		if err != nil {
+			return err
+		}
 		fmt.Println("Evidence Store Time: ", time.Since(start))
 		return nil
 	}
@@ -88,7 +92,12 @@ func StoreData(chonkSize int, dbpath, evipath string) error {
 	if err != nil {
 		return err
 	}
-	fmt.Println("Stored in: ", time.Since(start))
+	err = util.CompressDB(dbpath)
+	if err != nil {
+		return err
+	}
+
+	fmt.Printf("\nStored in: %v\n", time.Since(start))
 	return nil
 }
 

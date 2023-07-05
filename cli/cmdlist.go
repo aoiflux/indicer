@@ -2,6 +2,7 @@ package cli
 
 import (
 	"indicer/lib/store"
+	"indicer/lib/util"
 )
 
 func ListData(chonkSize int, dbpath string) error {
@@ -13,5 +14,9 @@ func ListData(chonkSize int, dbpath string) error {
 	if err != nil {
 		return err
 	}
-	return db.Close()
+	err = db.Close()
+	if err != nil {
+		return err
+	}
+	return util.CompressDB(dbpath)
 }

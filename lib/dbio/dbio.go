@@ -139,6 +139,7 @@ func SetNode(key, value []byte, db *bbolt.DB) error {
 	encoded := s2.EncodeBest(nil, value)
 	return db.Batch(func(tx *bbolt.Tx) error {
 		bucket := tx.Bucket(namespace)
+		bucket.FillPercent = 1
 		return bucket.Put(key, encoded)
 	})
 }

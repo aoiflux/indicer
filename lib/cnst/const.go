@@ -4,7 +4,7 @@ import (
 	"errors"
 	"runtime"
 
-	"github.com/shirou/gopsutil/mem"
+	"github.com/shirou/gopsutil/v3/mem"
 )
 
 const (
@@ -18,7 +18,6 @@ const (
 const (
 	CacheLimit              = GB
 	SectorSize       uint64 = 512
-	MaxBatchCount           = 1024 * 10
 	DefaultChonkSize        = 256 * KB
 	KeySize                 = 32
 )
@@ -96,4 +95,16 @@ func GetCacheLimit() (int64, error) {
 	}
 	vmemstat, err := mem.VirtualMemory()
 	return int64(vmemstat.Available / 4), err
+}
+func GetMaxBatchCount() (int, error) {
+	if MEMOPT {
+		return 16, nil
+	}
+	vmemstat, err := mem.VirtualMemory()
+	if err != nil {
+		return int(IgnoreVar), err
+	}
+	limit := vmemstat.Available / 4
+	batchCount := limit / uint64(ChonkSize)
+	return int(batchCount), nil
 }

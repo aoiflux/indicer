@@ -134,16 +134,20 @@ func evidenceFilePreflight(infile structs.InputFile) (structs.EvidenceFile, erro
 	return evidenceFile, err
 }
 func storeEvidenceData(infile structs.InputFile) error {
-	batch := infile.GetDB().NewWriteBatch()
-	batch.SetMaxPendingTxns(cnst.MaxBatchCount)
-
 	fmt.Printf("\nSaving Evidence File\n")
 	bar := progressbar.DefaultBytes(infile.GetSize())
 
 	var tio structs.ThreadIO
 	tio.FHash = infile.GetHash()
 	tio.DB = infile.GetDB()
-	tio.Batch = batch
+
+	count, err := cnst.GetMaxBatchCount()
+	if err != nil {
+		return err
+	}
+	tio.Batch = infile.GetDB().NewWriteBatch()
+	tio.Batch.SetMaxPendingTxns(count)
+
 	tio.Err = make(chan error, cnst.GetMaxThreadCount())
 	tio.MappedFile = infile.GetMappedFile()
 
@@ -173,8 +177,6 @@ func storeEvidenceData(infile structs.InputFile) error {
 			active--
 			bar.Add64(buffsize)
 		}
-
-		tio.DB.RunValueLogGC(0.5)
 	}
 
 	for active > 0 {
@@ -186,7 +188,7 @@ func storeEvidenceData(infile structs.InputFile) error {
 		bar.Add64(cnst.ChonkSize)
 	}
 
-	err := tio.Batch.Flush()
+	err = tio.Batch.Flush()
 	if err != nil {
 		return err
 	}

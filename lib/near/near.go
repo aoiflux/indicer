@@ -183,12 +183,13 @@ func partialChonkMatch(chonk []byte, db *badger.DB) ([]byte, float32, error) {
 			if err != nil {
 				return err
 			}
-			data, err := s2.Decode(nil, v)
-			if err != nil {
-				return err
+
+			decoded, err := s2.Decode(nil, v)
+			if err == nil {
+				v = decoded
 			}
 
-			tempCount := util.PartialMatchConfidence(chonk, data)
+			tempCount := util.PartialMatchConfidence(chonk, v)
 			if tempCount == 1 {
 				continue
 			}

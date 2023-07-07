@@ -24,11 +24,13 @@ func ConnectDB(datadir string, key []byte) (*badger.DB, error) {
 	opts.IndexCacheSize = cacheLimit
 	opts.SyncWrites = true
 	opts.NumGoroutines = cnst.GetMaxThreadCount()
-	opts.Compression = options.ZSTD
-	opts.ZSTDCompressionLevel = 15
+	if !cnst.QUICKOPT {
+		opts.Compression = options.ZSTD
+		opts.ZSTDCompressionLevel = 15
+		opts.EncryptionKey = key
+		opts.EncryptionKeyRotationDuration = time.Hour * 168
+	}
 	opts.CompactL0OnClose = true
-	opts.EncryptionKey = key
-	opts.EncryptionKeyRotationDuration = time.Hour * 168
 	opts.NumMemtables = 1
 	opts.NumLevelZeroTables = 1
 	opts.NumLevelZeroTablesStall = 2
@@ -99,13 +101,17 @@ func GetReverseRelationNode(key []byte, db *badger.DB) ([]structs.ReverseRelatio
 }
 
 func SetBatchNode(key, data []byte, batch *badger.WriteBatch) error {
-	encoded := s2.EncodeBest(nil, data)
-	return batch.Set(key, encoded)
+	if !cnst.QUICKOPT {
+		data = s2.EncodeBest(nil, data)
+	}
+	return batch.Set(key, data)
 }
 func SetNode(key, data []byte, db *badger.DB) error {
-	encoded := s2.EncodeBest(nil, data)
+	if !cnst.QUICKOPT {
+		data = s2.EncodeBest(nil, data)
+	}
 	return db.Update(func(txn *badger.Txn) error {
-		return txn.Set(key, encoded)
+		return txn.Set(key, data)
 	})
 }
 func PingNode(key []byte, db *badger.DB) error {
@@ -115,7 +121,7 @@ func PingNode(key []byte, db *badger.DB) error {
 	})
 }
 func GetNode(key []byte, db *badger.DB) ([]byte, error) {
-	var encoded []byte
+	var data []byte
 
 	err := db.View(func(txn *badger.Txn) error {
 		item, err := txn.Get(key)
@@ -124,7 +130,7 @@ func GetNode(key []byte, db *badger.DB) ([]byte, error) {
 		}
 
 		err = item.Value(func(val []byte) error {
-			encoded, err = item.ValueCopy(val)
+			data, err = item.ValueCopy(val)
 			return err
 		})
 
@@ -134,7 +140,12 @@ func GetNode(key []byte, db *badger.DB) ([]byte, error) {
 		return nil, err
 	}
 
-	return s2.Decode(nil, encoded)
+	decoded, err := s2.Decode(nil, data)
+	if err == nil {
+		data = decoded
+	}
+
+	return data, nil
 }
 
 func GuessFileType(encodedHash string, db *badger.DB) ([]byte, error) {

@@ -16,6 +16,7 @@ func main() {
 	pwd := app.Flag(cnst.FlagPassword, "Password for the DUES database").Short(cnst.FlagPasswordShort).String()
 	chonkSize := app.Flag(cnst.FlagChonkSize, "Custom chunk size(KB) to be used for dedup").Short(cnst.FlagChonkSizeShort).Default("256").Int()
 	memopt := app.Flag(cnst.FlagLowResource, "Low resource use mode, foregoes performance in favour of utilising less memory, cpu, and energy").Short(cnst.FlagLowResourceShort).Default("false").Bool()
+	QUICKOPT := app.Flag(cnst.FlagFastMode, "Quick mode, forgoes encryption, intra-chunk & overall db compression in favour of higher throughput").Short(cnst.FlagFastModeShort).Default("false").Bool()
 	app.Version("DUES v3.1")
 
 	cmdstore := app.Command(cnst.CmdStore, "Store file in database")
@@ -41,11 +42,15 @@ func main() {
 
 	parsed := kingpin.MustParse(app.Parse(os.Args[1:]))
 	cnst.MEMOPT = *memopt
+	cnst.QUICKOPT = *QUICKOPT
 
 	if cnst.MEMOPT {
 		color.Green("🍃 running in LOW RESOURCE mode 🍃")
 	} else {
 		color.Cyan("⚡ running in HIGH PERFORMANCE mode ⚡")
+	}
+	if cnst.QUICKOPT {
+		color.Magenta("🚅 quick mode enabled 🚅")
 	}
 
 	switch parsed {

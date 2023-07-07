@@ -31,12 +31,12 @@ func List(db *badger.DB) error {
 			}
 
 			decoded, err := s2.Decode(nil, v)
-			if err != nil {
-				return err
+			if err == nil {
+				v = decoded
 			}
 
 			var evidata structs.EvidenceFile
-			err = msgpack.Unmarshal(decoded, &evidata)
+			err = msgpack.Unmarshal(v, &evidata)
 			if err != nil {
 				return err
 			}
@@ -78,12 +78,14 @@ func listPartitions(phash string, txn *badger.Txn) error {
 	if err != nil {
 		return err
 	}
+
 	decoded, err := s2.Decode(nil, v)
-	if err != nil {
-		return err
+	if err == nil {
+		v = decoded
 	}
+
 	var pdata structs.PartitionFile
-	err = msgpack.Unmarshal(decoded, &pdata)
+	err = msgpack.Unmarshal(v, &pdata)
 	if err != nil {
 		return err
 	}

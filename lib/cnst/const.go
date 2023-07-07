@@ -24,6 +24,7 @@ const (
 
 var ChonkSize = DefaultChonkSize
 var MEMOPT bool
+var QUICKOPT bool
 
 const (
 	EviFileNamespace         = "E|||:"
@@ -76,6 +77,8 @@ const (
 	FlagRestoreFilePathShort = 'f'
 	FlagLowResource          = "low"
 	FlagLowResourceShort     = 'l'
+	FlagFastMode             = "quick"
+	FlagFastModeShort        = 'q'
 
 	OperandFile = "FILE"
 	OperandHash = "HASH"

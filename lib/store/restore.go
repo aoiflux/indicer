@@ -6,6 +6,7 @@ import (
 	"indicer/lib/cnst"
 	"indicer/lib/dbio"
 	"indicer/lib/util"
+	"io"
 	"os"
 
 	"github.com/dgraph-io/badger/v3"
@@ -54,6 +55,7 @@ func restoreIndexedFile(fid []byte, dst *os.File, db *badger.DB) error {
 	}
 	return restoreData(indexedFile.Start, indexedFile.Size, ehash, dst, db)
 }
+
 func restorePartitionFile(fid []byte, dst *os.File, db *badger.DB) error {
 	partitionFile, err := dbio.GetPartitionFile(fid, db)
 	if err != nil {
@@ -69,6 +71,7 @@ func restorePartitionFile(fid []byte, dst *os.File, db *badger.DB) error {
 	}
 	return restoreData(partitionFile.Start, partitionFile.Size, ehash, dst, db)
 }
+
 func restoreEvidenceFile(fid []byte, dst *os.File, db *badger.DB) error {
 	evidenceFile, err := dbio.GetEvidenceFile(fid, db)
 	if err != nil {
@@ -89,6 +92,14 @@ func restoreData(start, size int64, ehash []byte, dst *os.File, db *badger.DB) e
 	end := start + size
 
 	bar := progressbar.DefaultBytes(size)
+	defer bar.Finish()
+
+	// Seek to the appropriate start offset in the destination file
+	if _, err := dst.Seek(start-dbstart, io.SeekStart); err != nil {
+		return err
+	}
+
+	// Copy the data from the database to the destination file
 	for restoreIndex := dbstart; restoreIndex <= end; restoreIndex += cnst.ChonkSize {
 		relKey := util.AppendToBytesSlice(cnst.RelationNamespace, ehash, cnst.DataSeperator, restoreIndex)
 		chash, err := dbio.GetNode(relKey, db)
@@ -102,26 +113,22 @@ func restoreData(start, size int64, ehash []byte, dst *os.File, db *badger.DB) e
 			return err
 		}
 
-		if restoreIndex == dbstart {
-			actualStart := start - restoreIndex
-			data = data[actualStart:]
+		// Calculate the actual start and length of the data to be written
+		actualStart := start - restoreIndex
+		actualEnd := start + size - restoreIndex
+		if actualEnd > int64(len(data)) {
+			actualEnd = int64(len(data))
 		}
-		if size < int64(len(data)) {
-			data = data[:size]
-		} else if (restoreIndex + cnst.ChonkSize) > end {
-			actualEnd := end - restoreIndex
-			data = data[:actualEnd]
-		}
+		data = data[actualStart:actualEnd]
 
-		_, err = dst.Write(data)
-		if err != nil {
+		// Write the data to the destination file
+		if _, err := dst.Write(data); err != nil {
 			return err
 		}
 
-		bar.Add64(cnst.ChonkSize)
+		bar.Add64(actualEnd - actualStart)
 	}
 
-	bar.Finish()
 	fmt.Println("Restored file with size: ", humanize.Bytes(uint64(size)))
 	return nil
 }

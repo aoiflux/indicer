@@ -85,7 +85,7 @@ func getParitalMatches(chonk []byte, db *badger.DB) ([]string, error) {
 
 	// start := time.Now()
 	// chash, err := matchByChash(chonk, db)
-	// if err != nil && err == badger.ErrKeyNotFound {
+	// if err != nil && errors.Is(err, badger.ErrKeyNotFound) {
 	// 	return nil, nil
 	// }
 	// if err != nil {

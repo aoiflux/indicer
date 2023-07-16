@@ -7,16 +7,22 @@ import (
 	"fmt"
 	"indicer/lib/cnst"
 	"io"
-	"math"
 	"os"
 	"path/filepath"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/cheggaaa/pb/v3"
 	"github.com/zeebo/blake3"
 )
+
+var globalHasherPool = sync.Pool{
+	New: func() interface{} {
+		return blake3.New()
+	},
+}
 
 func GetDBPath() (string, error) {
 	const dbdir = ".dues"
@@ -49,22 +55,11 @@ func GetFileHash(fileHandle *os.File) ([]byte, error) {
 		return nil, err
 	}
 
-	fmt.Println("Generating BLAKE3 hash for file: ", fileHandle.Name())
-	start := time.Now()
-	fileHandle.Seek(0, io.SeekStart)
-
-	hasher := blake3.New()
-	bar := pb.Full.Start64(info.Size())
-	barReader := bar.NewProxyReader(fileHandle)
-
-	_, err = io.Copy(hasher, barReader)
+	hash, err := getHash(fileHandle, info.Size())
 	if err != nil {
 		return nil, err
 	}
-	hash := hasher.Sum(nil)
 
-	bar.Finish()
-	fmt.Printf("Operation completed in: %s\n\n", time.Since(start))
 	_, err = fileHandle.Seek(0, io.SeekStart)
 	return hash, err
 }
@@ -75,30 +70,56 @@ func GetLogicalFileHash(fileHandle *os.File, start, size int64) ([]byte, error) 
 		return nil, err
 	}
 
-	fmt.Println("Generating BLAKE3 hash for a logical file....")
+	hash, err := getHash(fileHandle, size)
+	if err != nil {
+		return nil, err
+	}
+
+	_, err = fileHandle.Seek(0, io.SeekStart)
+	return hash, err
+}
+
+func getHash(fileHandle *os.File, size int64) ([]byte, error) {
+	hasher := globalHasherPool.Get().(*blake3.Hasher)
+	defer globalHasherPool.Put(hasher)
+
+	fmt.Println("Generating BLAKE3 hash ....")
 	startTime := time.Now()
 
-	hasher := blake3.New()
 	bar := pb.Full.Start64(size)
 	barReader := bar.NewProxyReader(fileHandle)
 
-	_, err = io.CopyN(hasher, barReader, size)
-	if err != nil {
-		return nil, err
+	bufferSize := 4 * cnst.MB
+	buffer := make([]byte, bufferSize)
+	for size > 0 {
+		chunkSize := int64(bufferSize)
+		if size < int64(bufferSize) {
+			chunkSize = size
+		}
+
+		_, err := barReader.Read(buffer[:chunkSize])
+		if err != nil {
+			return nil, err
+		}
+
+		_, err = hasher.Write(buffer[:chunkSize])
+		if err != nil {
+			return nil, err
+		}
+
+		size -= chunkSize
 	}
 	hash := hasher.Sum(nil)
 
 	bar.Finish()
 	fmt.Printf("Operation completed in: %s\n\n", time.Since(startTime))
-	_, err = fileHandle.Seek(0, io.SeekStart)
-	return hash, err
+	return hash, nil
 }
 
 func GetChonkHash(data []byte) ([]byte, error) {
-	hasher := blake3.New()
-	reader := bytes.NewReader(data)
-	_, err := io.Copy(hasher, reader)
-	if err != nil {
+	hasher := globalHasherPool.Get().(*blake3.Hasher)
+	defer globalHasherPool.Put(hasher)
+	if _, err := hasher.Write(data); err != nil {
 		return nil, err
 	}
 	return hasher.Sum(nil), nil
@@ -119,9 +140,9 @@ func AppendToBytesSlice(args ...interface{}) []byte {
 		case string:
 			buffer.WriteString(value)
 		case int64:
-			buffer.WriteString(strconv.FormatInt(value, 10))
+			buffer.Write(strconv.AppendInt(nil, value, 10))
 		case int:
-			buffer.WriteString(strconv.FormatInt(int64(value), 10))
+			buffer.Write(strconv.AppendInt(nil, int64(value), 10))
 		default:
 			buffer.WriteString("Unsupported Type")
 		}
@@ -155,20 +176,14 @@ func GetDBStartOffset(startIndex int64) int64 {
 	if startIndex == 0 {
 		return 0
 	}
-
-	ans := float64(startIndex) / float64(cnst.ChonkSize)
-	ans = math.Floor(ans)
-
-	offset := int64(ans) * cnst.ChonkSize
-	return offset
+	return (startIndex / cnst.ChonkSize) * cnst.ChonkSize
 }
 
 func GetDBEndOffset(endIndex int64) int64 {
-	ans := float64(endIndex) / float64(cnst.ChonkSize)
-	ans = math.Ceil(ans)
-
-	offset := int64(ans) * cnst.ChonkSize
-	return offset
+	if endIndex == 0 {
+		return 0
+	}
+	return (endIndex-1)/cnst.ChonkSize*cnst.ChonkSize + cnst.ChonkSize
 }
 
 func GetEvidenceFileHash(fname string) ([]byte, error) {

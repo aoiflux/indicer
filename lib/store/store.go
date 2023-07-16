@@ -235,7 +235,6 @@ func processRel(index int64, fhash, chash []byte, db *badger.DB, batch *badger.W
 
 	return err
 }
-
 func processRevRel(index int64, fhash, chash []byte, db *badger.DB, batch *badger.WriteBatch) error {
 	fhashStr := base64.StdEncoding.EncodeToString(fhash)
 	relVal := util.AppendToBytesSlice(cnst.RelationNamespace, fhashStr, cnst.DataSeperator, index)

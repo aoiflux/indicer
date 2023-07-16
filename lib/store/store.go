@@ -217,11 +217,23 @@ func storeWorker(tio structs.ThreadIO) {
 }
 func processChonk(cdata, chash []byte, db *badger.DB, batch *badger.WriteBatch) error {
 	ckey := util.AppendToBytesSlice(cnst.ChonkNamespace, chash)
-	return dbio.SetBatchNode(ckey, cdata, batch)
+
+	err := dbio.PingNode(ckey, db)
+	if err != nil && err == badger.ErrKeyNotFound {
+		return dbio.SetBatchNode(ckey, cdata, batch)
+	}
+
+	return err
 }
 func processRel(index int64, fhash, chash []byte, db *badger.DB, batch *badger.WriteBatch) error {
 	relKey := util.AppendToBytesSlice(cnst.RelationNamespace, fhash, cnst.DataSeperator, index)
-	return dbio.SetBatchNode(relKey, chash, batch)
+
+	err := dbio.PingNode(relKey, db)
+	if err != nil && err == badger.ErrKeyNotFound {
+		return dbio.SetBatchNode(relKey, chash, batch)
+	}
+
+	return err
 }
 
 func processRevRel(index int64, fhash, chash []byte, db *badger.DB, batch *badger.WriteBatch) error {

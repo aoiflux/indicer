@@ -8,7 +8,22 @@ import (
 
 	"github.com/alecthomas/kingpin/v2"
 	"github.com/fatih/color"
+	"github.com/pyroscope-io/client/pyroscope"
 )
+
+func init() {
+	pyroscope.Start(pyroscope.Config{
+		ApplicationName: "DUES",
+		Logger:          pyroscope.StandardLogger,
+		ServerAddress:   "http://localhost:4040",
+		ProfileTypes: []pyroscope.ProfileType{
+			pyroscope.ProfileCPU,
+			pyroscope.ProfileAllocSpace,
+			pyroscope.ProfileGoroutines,
+			pyroscope.ProfileAllocObjects,
+		},
+	})
+}
 
 func main() {
 	app := kingpin.New("DUES", "Deduplicated Unified Evidence Store")

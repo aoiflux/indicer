@@ -13,6 +13,7 @@ require (
 	github.com/fatih/color v1.15.0
 	github.com/go-echarts/go-echarts/v2 v2.2.6
 	github.com/klauspost/compress v1.16.7
+	github.com/pyroscope-io/client v0.7.1
 	github.com/schollz/progressbar/v3 v3.13.1
 	github.com/shirou/gopsutil/v3 v3.23.6
 	github.com/vmihailenco/msgpack/v5 v5.3.5
@@ -41,6 +42,7 @@ require (
 	github.com/mitchellh/colorstring v0.0.0-20190213212951-d06e56a500db // indirect
 	github.com/pkg/errors v0.9.1 // indirect
 	github.com/power-devops/perfstat v0.0.0-20210106213030-5aafc221ea8c // indirect
+	github.com/pyroscope-io/godeltaprof v0.1.1 // indirect
 	github.com/rivo/uniseg v0.4.4 // indirect
 	github.com/tklauser/go-sysconf v0.3.11 // indirect
 	github.com/tklauser/numcpus v0.6.0 // indirect

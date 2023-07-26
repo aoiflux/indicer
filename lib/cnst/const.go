@@ -42,7 +42,7 @@ const (
 const (
 	BLOBSDIR    = "BLOBS"
 	BLOBEXT     = ".blob"
-	FileNameLen = 20
+	FileNameLen = 25
 )
 
 var (

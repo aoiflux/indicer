@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"crypto/rand"
 	"crypto/sha256"
+	"encoding/base32"
 	"encoding/base64"
 	"fmt"
 	"indicer/lib/cnst"
@@ -49,13 +50,13 @@ func GetDBPath() (string, error) {
 func EnsureBlobPath(dbpath string) error {
 	blobpath := filepath.Join(dbpath, cnst.BLOBSDIR)
 	_, err := os.Stat(blobpath)
-	if err != nil {
+	if err != nil && !os.IsNotExist(err) {
 		return err
 	}
 	if os.IsExist(err) {
 		return nil
 	}
-	return os.Mkdir(blobpath, os.ModeDir)
+	return os.MkdirAll(blobpath, os.ModeDir)
 }
 
 func SetChonkSize(chonkSize int) {
@@ -217,5 +218,5 @@ func GetRandomName(length int) string {
 	if err != nil {
 		panic(err)
 	}
-	return base64.StdEncoding.EncodeToString(randomBytes)[:length]
+	return base32.StdEncoding.EncodeToString(randomBytes)[:length]
 }

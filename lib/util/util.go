@@ -239,7 +239,6 @@ func SealAES(key, plaintext []byte) ([]byte, error) {
 
 	return ciphertext, nil
 }
-
 func UnsealAES(key, ciphertext []byte) ([]byte, error) {
 	block, err := aes.NewCipher(key)
 	if err != nil {

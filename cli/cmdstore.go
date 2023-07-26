@@ -28,7 +28,7 @@ func StoreData(chonkSize int, dbpath, evipath string, key []byte) error {
 	}
 
 	fmt.Println("Pre-store checks & indexing....")
-	eviFile, err := initEvidenceFile(evipath, key, db)
+	eviFile, err := initEvidenceFile(evipath, db)
 	if err != nil {
 		return err
 	}
@@ -59,7 +59,6 @@ func StoreData(chonkSize int, dbpath, evipath string, key []byte) error {
 			pname,
 			cnst.PartiFileNamespace,
 			phash,
-			eviFile.GetEncryptionKey(),
 			partition.Size,
 			partition.Start,
 		)
@@ -97,7 +96,7 @@ func StoreData(chonkSize int, dbpath, evipath string, key []byte) error {
 	return nil
 }
 
-func initEvidenceFile(evifilepath string, key []byte, db *badger.DB) (structs.InputFile, error) {
+func initEvidenceFile(evifilepath string, db *badger.DB) (structs.InputFile, error) {
 	var eviFile structs.InputFile
 
 	eviInfo, err := os.Stat(evifilepath)
@@ -127,7 +126,6 @@ func initEvidenceFile(evifilepath string, key []byte, db *badger.DB) (structs.In
 		eviFileName,
 		cnst.EviFileNamespace,
 		eviFileHash,
-		key,
 		eviSize,
 		0,
 	)

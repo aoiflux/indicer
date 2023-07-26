@@ -55,7 +55,6 @@ func IndexEXFAT(db *badger.DB, pfile structs.InputFile) error {
 			iname,
 			cnst.IdxFileNamespace,
 			ihash,
-			pfile.GetEncryptionKey(),
 			isize,
 			istart,
 		)

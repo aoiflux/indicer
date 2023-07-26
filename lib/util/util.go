@@ -2,6 +2,8 @@ package util
 
 import (
 	"bytes"
+	"crypto/aes"
+	"crypto/cipher"
 	"crypto/rand"
 	"crypto/sha256"
 	"encoding/base32"
@@ -219,4 +221,41 @@ func GetRandomName(length int) string {
 		panic(err)
 	}
 	return base32.StdEncoding.EncodeToString(randomBytes)[:length]
+}
+
+func SealAES(key, plaintext []byte) ([]byte, error) {
+	block, err := aes.NewCipher(key)
+	if err != nil {
+		return nil, err
+	}
+
+	gcm, err := cipher.NewGCM(block)
+	if err != nil {
+		return nil, err
+	}
+
+	nonce := sha256.Sum256(key)
+	ciphertext := gcm.Seal(nil, nonce[:], plaintext, nil)
+
+	return ciphertext, nil
+}
+
+func UnsealAES(key, ciphertext []byte) ([]byte, error) {
+	block, err := aes.NewCipher(key)
+	if err != nil {
+		return nil, err
+	}
+
+	gcm, err := cipher.NewGCM(block)
+	if err != nil {
+		return nil, err
+	}
+
+	nonce := sha256.Sum256(key)
+	plaintext, err := gcm.Open(nil, nonce[:], ciphertext, nil)
+	if err != nil {
+		return nil, err
+	}
+
+	return plaintext, nil
 }

@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"indicer/lib/cnst"
 	"indicer/lib/dbio"
-	"indicer/lib/fio"
 	"indicer/lib/structs"
 	"indicer/lib/util"
 	"strings"
@@ -205,7 +204,7 @@ func storeWorker(tio structs.ThreadIO) {
 		tio.Err <- err
 	}
 
-	err = processChonk(lostChonk, chash, tio.DB, tio.Batch)
+	err = processChonk(lostChonk, chash, lostChonk, tio.DB, tio.Batch)
 	if err != nil {
 		tio.Err <- err
 	}
@@ -216,16 +215,12 @@ func storeWorker(tio structs.ThreadIO) {
 
 	tio.Err <- processRevRel(tio.Index, tio.FHash, chash, tio.DB, tio.Batch)
 }
-func processChonk(cdata, chash []byte, db *badger.DB, batch *badger.WriteBatch) error {
+func processChonk(cdata, chash, key []byte, db *badger.DB, batch *badger.WriteBatch) error {
 	ckey := util.AppendToBytesSlice(cnst.ChonkNamespace, chash)
 
 	err := dbio.PingNode(ckey, db)
 	if err != nil && err == badger.ErrKeyNotFound {
-		cfpath, err := fio.WriteChonk(db.Opts().Dir, cdata, nil)
-		if err != nil {
-			return err
-		}
-		return dbio.SetBatchNode(ckey, cfpath, batch)
+		return dbio.SetBatchChonkNode(ckey, cdata, db, batch)
 	}
 
 	return err

@@ -2,6 +2,7 @@ package util
 
 import (
 	"bytes"
+	"crypto/rand"
 	"crypto/sha256"
 	"encoding/base64"
 	"fmt"
@@ -43,6 +44,18 @@ func GetDBPath() (string, error) {
 	err = os.MkdirAll(dbpath, os.ModeDir)
 
 	return dbpath, err
+}
+
+func EnsureBlobPath(dbpath string) error {
+	blobpath := filepath.Join(dbpath, cnst.BLOBSDIR)
+	_, err := os.Stat(blobpath)
+	if err != nil {
+		return err
+	}
+	if os.IsExist(err) {
+		return nil
+	}
+	return os.Mkdir(blobpath, os.ModeDir)
 }
 
 func SetChonkSize(chonkSize int) {
@@ -196,4 +209,13 @@ func GetEvidenceFileHash(fname string) ([]byte, error) {
 }
 func GetEvidenceFileID(eviFileHash []byte) []byte {
 	return append([]byte(cnst.EviFileNamespace), eviFileHash...)
+}
+
+func GetRandomName(length int) string {
+	randomBytes := make([]byte, 32)
+	_, err := rand.Read(randomBytes)
+	if err != nil {
+		panic(err)
+	}
+	return base64.StdEncoding.EncodeToString(randomBytes)[:length]
 }

@@ -39,6 +39,12 @@ const (
 	PartitionIndexPrefix     = "p"
 )
 
+const (
+	BLOBSDIR    = "BLOBS"
+	BLOBEXT     = ".blob"
+	FileNameLen = 20
+)
+
 var (
 	ErrHashNotFound           = errors.New("must provide file hash")
 	ErrFileNotFound           = errors.New("must provide a file to save")

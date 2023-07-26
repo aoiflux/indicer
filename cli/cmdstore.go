@@ -15,16 +15,20 @@ import (
 	"github.com/edsrzf/mmap-go"
 )
 
-func StoreData(chonkSize int, dbpath, pwd, evipath string) error {
+func StoreData(chonkSize int, dbpath, evipath string, key []byte) error {
 	start := time.Now()
 
-	db, err := common(chonkSize, dbpath, pwd)
+	db, err := common(chonkSize, dbpath, key)
+	if err != nil {
+		return err
+	}
+	err = util.EnsureBlobPath(dbpath)
 	if err != nil {
 		return err
 	}
 
 	fmt.Println("Pre-store checks & indexing....")
-	eviFile, err := initEvidenceFile(evipath, db)
+	eviFile, err := initEvidenceFile(evipath, key, db)
 	if err != nil {
 		return err
 	}
@@ -55,6 +59,7 @@ func StoreData(chonkSize int, dbpath, pwd, evipath string) error {
 			pname,
 			cnst.PartiFileNamespace,
 			phash,
+			eviFile.GetEncryptionKey(),
 			partition.Size,
 			partition.Start,
 		)
@@ -92,7 +97,7 @@ func StoreData(chonkSize int, dbpath, pwd, evipath string) error {
 	return nil
 }
 
-func initEvidenceFile(evifilepath string, db *badger.DB) (structs.InputFile, error) {
+func initEvidenceFile(evifilepath string, key []byte, db *badger.DB) (structs.InputFile, error) {
 	var eviFile structs.InputFile
 
 	eviInfo, err := os.Stat(evifilepath)
@@ -122,6 +127,7 @@ func initEvidenceFile(evifilepath string, db *badger.DB) (structs.InputFile, err
 		eviFileName,
 		cnst.EviFileNamespace,
 		eviFileHash,
+		key,
 		eviSize,
 		0,
 	)

@@ -22,6 +22,7 @@ type InputFile struct {
 	startIndex      int64
 	db              *badger.DB
 	internalObjects []string
+	encryptionKey   []byte
 }
 
 func NewInputFile(
@@ -29,7 +30,7 @@ func NewInputFile(
 	fileHandle *os.File,
 	mappedFile mmap.MMap,
 	name, namespace string,
-	inFileHash []byte,
+	inFileHash, encKey []byte,
 	size, startIndex int64,
 ) InputFile {
 	var infile InputFile
@@ -41,6 +42,7 @@ func NewInputFile(
 	infile.db = db
 	infile.size = size
 	infile.startIndex = startIndex
+	infile.encryptionKey = encKey
 	infile.internalObjects = make([]string, 0)
 
 	return infile
@@ -68,6 +70,9 @@ func (i InputFile) GetDB() *badger.DB {
 }
 func (i InputFile) GetSize() int64 {
 	return i.size
+}
+func (i InputFile) GetEncryptionKey() []byte {
+	return i.encryptionKey
 }
 func (i InputFile) GetHash() []byte {
 	return bytes.Split(i.id, []byte(cnst.NamespaceSeperator))[1]

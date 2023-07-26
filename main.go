@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"indicer/cli"
 	"indicer/lib/cnst"
+	"indicer/lib/util"
 	"os"
 
 	"github.com/alecthomas/kingpin/v2"
@@ -43,6 +44,7 @@ func main() {
 	parsed := kingpin.MustParse(app.Parse(os.Args[1:]))
 	cnst.MEMOPT = *memopt
 	cnst.QUICKOPT = *QUICKOPT
+	key := util.HashPassword(*pwd)
 
 	if cnst.MEMOPT {
 		color.Green("🍃 running in LOW RESOURCE mode 🍃")
@@ -55,15 +57,15 @@ func main() {
 
 	switch parsed {
 	case cmdstore.FullCommand():
-		err = cli.StoreData(*chonkSize, *dbpath, *pwd, *evipath)
+		err = cli.StoreData(*chonkSize, *dbpath, *evipath, key)
 	case cmdrestore.FullCommand():
-		err = cli.RestoreData(*chonkSize, *dbpath, *pwd, *rhash, *rpath)
+		err = cli.RestoreData(*chonkSize, *dbpath, *rhash, *rpath, key)
 	case cmdlist.FullCommand():
-		err = cli.ListData(*chonkSize, *dbpath, *pwd)
+		err = cli.ListData(*chonkSize, *dbpath, key)
 	case cmdin.FullCommand():
-		err = cli.NearInData(*deep, *chonkSize, *dbpath, *pwd, *inhash)
+		err = cli.NearInData(*deep, *chonkSize, *dbpath, *inhash, key)
 	case cmdout.FullCommand():
-		err = cli.NearOutData(*chonkSize, *dbpath, *pwd, *outpath)
+		err = cli.NearOutData(*chonkSize, *dbpath, *outpath, key)
 	case cmdreset.FullCommand():
 		err = cli.ResetData(*dbpath)
 	}

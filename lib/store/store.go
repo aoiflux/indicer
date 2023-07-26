@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"indicer/lib/cnst"
 	"indicer/lib/dbio"
+	"indicer/lib/fio"
 	"indicer/lib/structs"
 	"indicer/lib/util"
 	"strings"
@@ -220,7 +221,11 @@ func processChonk(cdata, chash []byte, db *badger.DB, batch *badger.WriteBatch) 
 
 	err := dbio.PingNode(ckey, db)
 	if err != nil && err == badger.ErrKeyNotFound {
-		return dbio.SetBatchNode(ckey, cdata, batch)
+		cfpath, err := fio.WriteChonk(db.Opts().Dir, cdata, nil)
+		if err != nil {
+			return err
+		}
+		return dbio.SetBatchNode(ckey, cfpath, batch)
 	}
 
 	return err

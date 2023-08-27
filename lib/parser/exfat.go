@@ -9,43 +9,52 @@ import (
 
 	"github.com/aoiflux/libxfat"
 	"github.com/dgraph-io/badger/v3"
+	"github.com/schollz/progressbar/v3"
 )
 
-func IndexEXFAT(db *badger.DB, pfile structs.InputFile) error {
+func IndexEXFAT(db *badger.DB, pfile structs.InputFile, idxChan chan error) {
 	startOffset := getStartOffset(uint64(pfile.GetStartIndex()))
 	exfatdata, err := libxfat.New(pfile.GetHandle(), true, startOffset)
 	if err != nil {
-		return cnst.ErrIncompatibleFileSystem
+		idxChan <- cnst.ErrIncompatibleFileSystem
 	}
 
 	rootEntries, err := exfatdata.ReadRootDir()
 	if err != nil {
-		return err
+		idxChan <- err
 	}
 
 	allEntries, err := exfatdata.GetAllEntries(rootEntries)
 	if err != nil {
-		return err
+		idxChan <- err
 	}
 
 	var active int
+	var flag bool
 	echan := make(chan error)
+	bar := progressbar.Default(-1, "indexing files")
+	bar.Clear()
+
+	encodedPfileHash, err := pfile.GetEncodedHash()
+	if err != nil {
+		idxChan <- err
+	}
 
 	for _, entry := range allEntries {
+		if !flag {
+			flag = checkChannel(idxChan)
+		}
+
 		if entry.IsDeleted() || entry.IsDir() || entry.IsInvalid() || entry.HasFatChain() {
 			continue
 		}
 
-		encodedPfileHash, err := pfile.GetEncodedHash()
-		if err != nil {
-			return err
-		}
 		iname := string(util.AppendToBytesSlice(pfile.GetEviFileHash(), cnst.DataSeperator, encodedPfileHash, cnst.DataSeperator, entry.GetName()))
 		istart := int64(exfatdata.GetClusterOffset(entry.GetEntryCluster()))
 		isize := int64(entry.GetSize())
-		ihash, err := util.GetLogicalFileHash(pfile.GetHandle(), istart, isize)
+		ihash, err := util.GetLogicalFileHash(pfile.GetHandle(), istart, isize, false)
 		if err != nil {
-			return err
+			idxChan <- err
 		}
 
 		ifile := structs.NewInputFile(
@@ -64,21 +73,53 @@ func IndexEXFAT(db *badger.DB, pfile structs.InputFile) error {
 		active++
 
 		if active > cnst.GetMaxThreadCount() {
-			if <-echan != nil {
-				return <-echan
+			err = <-echan
+			if err != nil {
+				idxChan <- err
 			}
 			active--
+
+			if flag {
+				bar.Add(1)
+			}
 		}
 	}
 	for active > 0 {
-		if <-echan != nil {
-			return <-echan
+		if !flag {
+			flag = checkChannel(idxChan)
+		}
+
+		err = <-echan
+		if err != nil {
+			idxChan <- err
 		}
 		active--
+
+		if flag {
+			bar.Add(1)
+		}
 	}
 
-	go store.Store(pfile, echan)
-	return <-echan
+	err = db.Sync()
+	if err != nil {
+		idxChan <- err
+	}
+	if flag {
+		bar.Finish()
+	}
+
+	pchan := make(chan error)
+	go store.Store(pfile, pchan)
+	idxChan <- <-pchan
+}
+
+func checkChannel(idxChan chan error) bool {
+	select {
+	case _, ok := <-idxChan:
+		return ok
+	default:
+		return false
+	}
 }
 
 func getStartOffset(pfileStart uint64) uint64 {

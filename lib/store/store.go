@@ -3,12 +3,10 @@ package store
 import (
 	"bytes"
 	"encoding/base64"
-	"fmt"
 	"indicer/lib/cnst"
 	"indicer/lib/dbio"
 	"indicer/lib/structs"
 	"indicer/lib/util"
-	"strings"
 
 	"github.com/dgraph-io/badger/v3"
 	"github.com/schollz/progressbar/v3"
@@ -16,17 +14,11 @@ import (
 )
 
 func Store(infile structs.InputFile, errchan chan error) {
-	names := strings.Split(infile.GetName(), cnst.DataSeperator)
-	name := names[len(names)-1]
-
 	if bytes.HasPrefix(infile.GetID(), []byte(cnst.IdxFileNamespace)) {
-		fmt.Println("Saving indexed file: ", name)
 		errchan <- storeIndexedFile(infile)
 	} else if bytes.HasPrefix(infile.GetID(), []byte(cnst.PartiFileNamespace)) {
-		fmt.Println("Saving partition file: ", name)
 		errchan <- storePartitionFile(infile)
 	} else {
-		fmt.Println("Saving evidence file: ", name)
 		errchan <- storeEvidenceFile(infile)
 	}
 }
@@ -134,7 +126,6 @@ func evidenceFilePreflight(infile structs.InputFile) (structs.EvidenceFile, erro
 	return evidenceFile, err
 }
 func storeEvidenceData(infile structs.InputFile) error {
-	fmt.Printf("\nSaving Evidence File\n")
 	bar := progressbar.DefaultBytes(infile.GetSize())
 
 	var tio structs.ThreadIO

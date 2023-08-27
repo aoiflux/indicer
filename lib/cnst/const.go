@@ -85,6 +85,8 @@ const (
 	FlagLowResourceShort     = 'l'
 	FlagFastMode             = "quick"
 	FlagFastModeShort        = 'q'
+	FlagSyncIndex            = "sync"
+	FlagSyncIndexShort       = 's'
 
 	OperandFile = "FILE"
 	OperandHash = "HASH"

@@ -22,6 +22,7 @@ func main() {
 
 	cmdstore := app.Command(cnst.CmdStore, "Store file in database")
 	evipath := cmdstore.Arg(cnst.OperandFile, "Path of file that must be saved").Required().String()
+	syncIndex := cmdstore.Flag(cnst.FlagSyncIndex, "Run file indexer synchronously, this will block dedup").Short(cnst.FlagSyncIndexShort).Default("false").Bool()
 
 	cmdrestore := app.Command(cnst.CmdRestore, "Restore file from database")
 	rpath := cmdrestore.Flag(cnst.FlagRestoreFilePath, "Path for restoring the file").Short(cnst.FlagRestoreFilePathShort).Default("restored").String()
@@ -52,12 +53,12 @@ func main() {
 		color.Cyan("⚡ running in HIGH PERFORMANCE mode ⚡")
 	}
 	if cnst.QUICKOPT {
-		color.Magenta("🚅 quick mode enabled 🚅")
+		color.Magenta("🛫 quick mode enabled 🛬")
 	}
 
 	switch parsed {
 	case cmdstore.FullCommand():
-		err = cli.StoreData(*chonkSize, *dbpath, *evipath, key)
+		err = cli.StoreData(*chonkSize, *dbpath, *evipath, key, *syncIndex)
 	case cmdrestore.FullCommand():
 		err = cli.RestoreData(*chonkSize, *dbpath, *rhash, *rpath, key)
 	case cmdlist.FullCommand():

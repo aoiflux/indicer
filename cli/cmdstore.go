@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"errors"
 	"fmt"
 	"indicer/lib/cnst"
 	"indicer/lib/parser"
@@ -15,7 +16,7 @@ import (
 	"github.com/edsrzf/mmap-go"
 )
 
-func StoreData(chonkSize int, dbpath, evipath string, key []byte) error {
+func StoreData(chonkSize int, dbpath, evipath string, key []byte, syncIndex bool) error {
 	start := time.Now()
 
 	db, err := common(chonkSize, dbpath, key)
@@ -33,15 +34,11 @@ func StoreData(chonkSize int, dbpath, evipath string, key []byte) error {
 		return err
 	}
 
-	err = store.EvidenceFilePreStoreCheck(eviFile)
-	if err == nil {
-		fmt.Println("Evidence Store Time: ", time.Since(start))
-		return nil
-	}
-
+	// not limiting goroutines here because max number of partitions will be 4 or less
+	idxChan := make(chan error)
 	partitions := parser.GetPartitions(eviFile.GetSize(), eviFile.GetHandle())
 	for index, partition := range partitions {
-		phash, err := util.GetLogicalFileHash(eviFile.GetHandle(), partition.Start, partition.Size)
+		phash, err := util.GetLogicalFileHash(eviFile.GetHandle(), partition.Start, partition.Size, true)
 		if err != nil {
 			return err
 		}
@@ -63,20 +60,51 @@ func StoreData(chonkSize int, dbpath, evipath string, key []byte) error {
 			partition.Start,
 		)
 
-		err = parser.IndexEXFAT(db, pfile)
-		if err == cnst.ErrIncompatibleFileSystem {
-			fmt.Println(err, "...continuing")
-			continue
+		go parser.IndexEXFAT(db, pfile, idxChan)
+		if syncIndex {
+			idxChan <- nil
+			err = <-idxChan
+			if errors.Is(err, cnst.ErrIncompatibleFile) {
+				continue
+			}
+			if err != nil {
+				return err
+			}
 		}
 		if err != nil {
 			return err
 		}
 	}
 
+	fmt.Printf("\nSaving Evidence File\n")
+	if !syncIndex {
+		fmt.Println("(indexer running async)")
+	}
+
 	echan := make(chan error)
 	go store.Store(eviFile, echan)
-	if <-echan != nil {
-		return <-echan
+	err = <-echan
+	if err != nil {
+		return err
+	}
+
+	if !syncIndex {
+		select {
+		case err, ok := <-idxChan:
+			if ok {
+				if err != nil {
+					return err
+				}
+			} else {
+				idxChan <- nil
+				fmt.Println()
+				err := <-idxChan
+				if !errors.Is(err, cnst.ErrIncompatibleFileSystem) {
+					return err
+				}
+			}
+		default:
+		}
 	}
 
 	mappedFile := eviFile.GetMappedFile()

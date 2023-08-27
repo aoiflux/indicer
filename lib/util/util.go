@@ -71,7 +71,7 @@ func GetFileHash(fileHandle *os.File) ([]byte, error) {
 		return nil, err
 	}
 
-	hash, err := getHash(fileHandle, info.Size())
+	hash, err := getHash(fileHandle, info.Size(), true)
 	if err != nil {
 		return nil, err
 	}
@@ -80,13 +80,13 @@ func GetFileHash(fileHandle *os.File) ([]byte, error) {
 	return hash, err
 }
 
-func GetLogicalFileHash(fileHandle *os.File, start, size int64) ([]byte, error) {
+func GetLogicalFileHash(fileHandle *os.File, start, size int64, showBar bool) ([]byte, error) {
 	_, err := fileHandle.Seek(start, io.SeekStart)
 	if err != nil {
 		return nil, err
 	}
 
-	hash, err := getHash(fileHandle, size)
+	hash, err := getHash(fileHandle, size, showBar)
 	if err != nil {
 		return nil, err
 	}
@@ -95,14 +95,20 @@ func GetLogicalFileHash(fileHandle *os.File, start, size int64) ([]byte, error) 
 	return hash, err
 }
 
-func getHash(fileHandle *os.File, size int64) ([]byte, error) {
+func getHash(fileHandle *os.File, size int64, showBar bool) ([]byte, error) {
 	hasher := globalHasherPool.Get().(*blake3.Hasher)
 	defer globalHasherPool.Put(hasher)
 
-	fmt.Println("Generating BLAKE3 hash ....")
-	startTime := time.Now()
+	var startTime time.Time
+	if showBar {
+		fmt.Println("Generating BLAKE3 hash ....")
+		startTime = time.Now()
+	}
 
-	bar := pb.Full.Start64(size)
+	bar := pb.New64(100)
+	if showBar {
+		bar = pb.Full.Start64(size)
+	}
 	barReader := bar.NewProxyReader(fileHandle)
 
 	bufferSize := 4 * cnst.MB
@@ -127,8 +133,10 @@ func getHash(fileHandle *os.File, size int64) ([]byte, error) {
 	}
 	hash := hasher.Sum(nil)
 
-	bar.Finish()
-	fmt.Printf("Operation completed in: %s\n\n", time.Since(startTime))
+	if showBar {
+		bar.Finish()
+		fmt.Printf("Operation completed in: %s\n\n", time.Since(startTime))
+	}
 	return hash, nil
 }
 

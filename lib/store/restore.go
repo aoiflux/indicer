@@ -91,13 +91,13 @@ func restoreData(start, size int64, ehash []byte, dst *os.File, db *badger.DB) e
 	bar := progressbar.DefaultBytes(size)
 	for restoreIndex := dbstart; restoreIndex <= end; restoreIndex += cnst.ChonkSize {
 		relKey := util.AppendToBytesSlice(cnst.RelationNamespace, ehash, cnst.DataSeperator, restoreIndex)
-		chash, err := dbio.GetChonkNode(relKey, db)
+		chash, err := dbio.GetNode(relKey, db)
 		if err != nil {
 			return err
 		}
 
 		ckey := util.AppendToBytesSlice(cnst.ChonkNamespace, chash)
-		data, err := dbio.GetNode(ckey, db)
+		data, err := dbio.GetChonkNode(ckey, db)
 		if err != nil {
 			return err
 		}

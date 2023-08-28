@@ -144,10 +144,7 @@ func storeEvidenceData(infile structs.InputFile) error {
 
 	var active int
 	var buffsize int64
-	for storeIndex := infile.GetStartIndex(); ; storeIndex += cnst.ChonkSize {
-		if storeIndex > infile.GetSize() {
-			break
-		}
+	for storeIndex := infile.GetStartIndex(); storeIndex <= infile.GetSize(); storeIndex += cnst.ChonkSize {
 		tio.Index = storeIndex
 
 		if infile.GetSize()-storeIndex <= cnst.ChonkSize {

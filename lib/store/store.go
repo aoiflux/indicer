@@ -3,6 +3,7 @@ package store
 import (
 	"bytes"
 	"encoding/base64"
+	"errors"
 	"indicer/lib/cnst"
 	"indicer/lib/dbio"
 	"indicer/lib/structs"
@@ -39,7 +40,7 @@ func EvidenceFilePreStoreCheck(infile structs.InputFile) error {
 
 func storeIndexedFile(infile structs.InputFile) error {
 	indexedFile, err := dbio.GetIndexedFile(infile.GetID(), infile.GetDB())
-	if err != nil && err == badger.ErrKeyNotFound {
+	if errors.Is(err, badger.ErrKeyNotFound) {
 		indexedFile = structs.NewIndexedFile(
 			infile.GetName(),
 			infile.GetStartIndex(),
@@ -47,7 +48,7 @@ func storeIndexedFile(infile structs.InputFile) error {
 		)
 		return dbio.SetFile(infile.GetID(), indexedFile, infile.GetDB())
 	}
-	if err != nil && err != badger.ErrKeyNotFound {
+	if !errors.Is(err, badger.ErrKeyNotFound) {
 		return err
 	}
 
@@ -60,7 +61,7 @@ func storeIndexedFile(infile structs.InputFile) error {
 }
 func storePartitionFile(infile structs.InputFile) error {
 	partitionFile, err := dbio.GetPartitionFile(infile.GetID(), infile.GetDB())
-	if err != nil && err == badger.ErrKeyNotFound {
+	if errors.Is(err, badger.ErrKeyNotFound) {
 		partitionFile = structs.NewPartitionFile(
 			infile.GetName(),
 			infile.GetStartIndex(),
@@ -100,7 +101,7 @@ func storeEvidenceFile(infile structs.InputFile) error {
 }
 func evidenceFilePreflight(infile structs.InputFile) (structs.EvidenceFile, error) {
 	evidenceFile, err := dbio.GetEvidenceFile(infile.GetID(), infile.GetDB())
-	if err != nil && err == badger.ErrKeyNotFound {
+	if errors.Is(err, badger.ErrKeyNotFound) {
 		evidenceFile := structs.NewEvidenceFile(
 			infile.GetName(),
 			infile.GetStartIndex(),
@@ -207,7 +208,7 @@ func processChonk(cdata, chash, key []byte, db *badger.DB, batch *badger.WriteBa
 	ckey := util.AppendToBytesSlice(cnst.ChonkNamespace, chash)
 
 	err := dbio.PingNode(ckey, db)
-	if err != nil && err == badger.ErrKeyNotFound {
+	if errors.Is(err, badger.ErrKeyNotFound) {
 		return dbio.SetBatchChonkNode(ckey, cdata, db, batch)
 	}
 
@@ -217,7 +218,7 @@ func processRel(index int64, fhash, chash []byte, db *badger.DB, batch *badger.W
 	relKey := util.AppendToBytesSlice(cnst.RelationNamespace, fhash, cnst.DataSeperator, index)
 
 	err := dbio.PingNode(relKey, db)
-	if err != nil && err == badger.ErrKeyNotFound {
+	if errors.Is(err, badger.ErrKeyNotFound) {
 		return dbio.SetBatchNode(relKey, chash, batch)
 	}
 
@@ -230,7 +231,7 @@ func processRevRel(index int64, fhash, chash []byte, db *badger.DB, batch *badge
 
 	revRelList, err := dbio.GetReverseRelationNode(revRelKey, db)
 	revRelNode := structs.ReverseRelation{Value: relVal}
-	if err != nil && err == badger.ErrKeyNotFound {
+	if errors.Is(err, badger.ErrKeyNotFound) {
 		return dbio.SetReverseRelationNode(revRelKey, []structs.ReverseRelation{revRelNode}, batch)
 	}
 

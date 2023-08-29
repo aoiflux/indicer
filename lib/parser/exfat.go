@@ -40,6 +40,7 @@ func IndexEXFAT(db *badger.DB, pfile structs.InputFile, idxChan chan error) {
 		idxChan <- err
 	}
 
+	maxThreadCount := cnst.GetMaxThreadCount() / 2
 	for _, entry := range allEntries {
 		if !flag {
 			flag = checkChannel(idxChan)
@@ -72,7 +73,7 @@ func IndexEXFAT(db *badger.DB, pfile structs.InputFile, idxChan chan error) {
 		go store.Store(ifile, echan)
 		active++
 
-		if active > cnst.GetMaxThreadCount() {
+		if active > maxThreadCount {
 			err = <-echan
 			if err != nil {
 				idxChan <- err

@@ -34,6 +34,7 @@ func StoreData(chonkSize int, dbpath, evipath string, key []byte, syncIndex bool
 		return err
 	}
 
+	var active int
 	// not limiting goroutines here because max number of partitions will be 4 or less
 	idxChan := make(chan error)
 	partitions := parser.GetPartitions(eviFile.GetSize(), eviFile.GetHandle())
@@ -61,6 +62,9 @@ func StoreData(chonkSize int, dbpath, evipath string, key []byte, syncIndex bool
 		)
 
 		go parser.IndexEXFAT(db, pfile, idxChan)
+		if !syncIndex {
+			active++
+		}
 		if syncIndex {
 			idxChan <- nil
 			err = <-idxChan
@@ -89,21 +93,24 @@ func StoreData(chonkSize int, dbpath, evipath string, key []byte, syncIndex bool
 	}
 
 	if !syncIndex {
-		select {
-		case err, ok := <-idxChan:
-			if ok {
-				if err != nil {
-					return err
+		for active > 0 {
+			select {
+			case err, ok := <-idxChan:
+				if ok {
+					if err != nil {
+						return err
+					}
+				} else {
+					idxChan <- nil
+					fmt.Println()
+					err := <-idxChan
+					if !errors.Is(err, cnst.ErrIncompatibleFileSystem) {
+						return err
+					}
 				}
-			} else {
-				idxChan <- nil
-				fmt.Println()
-				err := <-idxChan
-				if !errors.Is(err, cnst.ErrIncompatibleFileSystem) {
-					return err
-				}
+			default:
 			}
-		default:
+			active--
 		}
 	}
 

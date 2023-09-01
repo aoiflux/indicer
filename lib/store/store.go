@@ -39,6 +39,11 @@ func EvidenceFilePreStoreCheck(infile structs.InputFile) error {
 }
 
 func storeIndexedFile(infile structs.InputFile) error {
+	batch, err := infile.GetBatch()
+	if err != nil {
+		return err
+	}
+
 	indexedFile, err := dbio.GetIndexedFile(infile.GetID(), infile.GetDB())
 	if errors.Is(err, badger.ErrKeyNotFound) {
 		indexedFile = structs.NewIndexedFile(
@@ -46,7 +51,7 @@ func storeIndexedFile(infile structs.InputFile) error {
 			infile.GetStartIndex(),
 			infile.GetSize(),
 		)
-		return dbio.SetFile(infile.GetID(), indexedFile, infile.GetDB())
+		return dbio.SetIndexedFile(infile.GetID(), indexedFile, batch)
 	}
 	if !errors.Is(err, badger.ErrKeyNotFound) {
 		return err
@@ -57,7 +62,7 @@ func storeIndexedFile(infile structs.InputFile) error {
 	}
 
 	indexedFile.Names = append(indexedFile.Names, infile.GetName())
-	return dbio.SetFile(infile.GetID(), indexedFile, infile.GetDB())
+	return dbio.SetIndexedFile(infile.GetID(), indexedFile, batch)
 }
 func storePartitionFile(infile structs.InputFile) error {
 	partitionFile, err := dbio.GetPartitionFile(infile.GetID(), infile.GetDB())
@@ -133,12 +138,14 @@ func storeEvidenceData(infile structs.InputFile) error {
 	tio.FHash = infile.GetHash()
 	tio.DB = infile.GetDB()
 
-	count, err := cnst.GetMaxBatchCount()
+	err := infile.SetBatch()
 	if err != nil {
 		return err
 	}
-	tio.Batch = infile.GetDB().NewWriteBatch()
-	tio.Batch.SetMaxPendingTxns(count)
+	tio.Batch, err = infile.GetBatch()
+	if err != nil {
+		return err
+	}
 
 	tio.Err = make(chan error, cnst.GetMaxThreadCount())
 	tio.MappedFile = infile.GetMappedFile()

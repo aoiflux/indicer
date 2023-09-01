@@ -46,6 +46,13 @@ func SetFile[T structs.FileTypes](id []byte, filenode T, db *badger.DB) error {
 	}
 	return SetNode(id, data, db)
 }
+func SetIndexedFile(id []byte, idxfilenode structs.IndexedFile, batch *badger.WriteBatch) error {
+	data, err := msgpack.Marshal(idxfilenode)
+	if err != nil {
+		return err
+	}
+	return SetBatchNode(id, data, batch)
+}
 
 func GetEvidenceFile(key []byte, db *badger.DB) (structs.EvidenceFile, error) {
 	var evidenceFile structs.EvidenceFile

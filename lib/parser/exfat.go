@@ -40,7 +40,21 @@ func IndexEXFAT(db *badger.DB, pfile structs.InputFile, idxChan chan error) {
 		idxChan <- err
 	}
 
-	maxThreadCount := cnst.GetMaxThreadCount() / 2
+	ifile := structs.NewInputFile(
+		pfile.GetDB(),
+		pfile.GetHandle(),
+		pfile.GetMappedFile(),
+		"",
+		cnst.IdxFileNamespace,
+		nil,
+		0,
+		0,
+	)
+	err = ifile.SetBatch()
+	if err != nil {
+		idxChan <- err
+	}
+
 	for _, entry := range allEntries {
 		if !flag {
 			flag = checkChannel(idxChan)
@@ -58,22 +72,13 @@ func IndexEXFAT(db *badger.DB, pfile structs.InputFile, idxChan chan error) {
 			idxChan <- err
 		}
 
-		ifile := structs.NewInputFile(
-			pfile.GetDB(),
-			pfile.GetHandle(),
-			pfile.GetMappedFile(),
-			iname,
-			cnst.IdxFileNamespace,
-			ihash,
-			isize,
-			istart,
-		)
+		ifile.UpdateInputFile(iname, cnst.IdxFileNamespace, ihash, isize, istart)
 		pfile.UpdateInternalObjects(istart, isize, ihash)
 
 		go store.Store(ifile, echan)
 		active++
 
-		if active > maxThreadCount {
+		if active > 1 {
 			err = <-echan
 			if err != nil {
 				idxChan <- err
@@ -101,7 +106,11 @@ func IndexEXFAT(db *badger.DB, pfile structs.InputFile, idxChan chan error) {
 		}
 	}
 
-	err = db.Sync()
+	batch, err := ifile.GetBatch()
+	if err != nil {
+		idxChan <- err
+	}
+	err = batch.Flush()
 	if err != nil {
 		idxChan <- err
 	}
@@ -116,8 +125,8 @@ func IndexEXFAT(db *badger.DB, pfile structs.InputFile, idxChan chan error) {
 
 func checkChannel(idxChan chan error) bool {
 	select {
-	case _, ok := <-idxChan:
-		return ok
+	case <-idxChan:
+		return true
 	default:
 		return false
 	}

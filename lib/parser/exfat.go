@@ -24,7 +24,7 @@ func IndexEXFAT(db *badger.DB, pfile structs.InputFile, idxChan chan error) {
 		idxChan <- err
 	}
 
-	allEntries, err := exfatdata.GetAllEntries(rootEntries)
+	indexableEntries, err := exfatdata.GetIndexableEntries(rootEntries)
 	if err != nil {
 		idxChan <- err
 	}
@@ -32,7 +32,8 @@ func IndexEXFAT(db *badger.DB, pfile structs.InputFile, idxChan chan error) {
 	var active int
 	var flag bool
 	echan := make(chan error)
-	bar := progressbar.Default(-1, "indexing files")
+	total := int64(len(indexableEntries))
+	bar := progressbar.Default(total, "indexing files")
 	bar.Clear()
 
 	encodedPfileHash, err := pfile.GetEncodedHash()
@@ -45,7 +46,7 @@ func IndexEXFAT(db *badger.DB, pfile structs.InputFile, idxChan chan error) {
 		pfile.GetHandle(),
 		pfile.GetMappedFile(),
 		"",
-		cnst.IdxFileNamespace,
+		"",
 		nil,
 		0,
 		0,
@@ -55,13 +56,14 @@ func IndexEXFAT(db *badger.DB, pfile structs.InputFile, idxChan chan error) {
 		idxChan <- err
 	}
 
-	for _, entry := range allEntries {
+	var index int
+	var entry libxfat.Entry
+	for index, entry = range indexableEntries {
 		if !flag {
 			flag = checkChannel(idxChan)
-		}
-
-		if entry.IsDeleted() || entry.IsDir() || entry.IsInvalid() || entry.HasFatChain() {
-			continue
+			if flag {
+				bar.Set(index)
+			}
 		}
 
 		iname := string(util.AppendToBytesSlice(pfile.GetEviFileHash(), cnst.DataSeperator, encodedPfileHash, cnst.DataSeperator, entry.GetName()))
@@ -78,7 +80,7 @@ func IndexEXFAT(db *badger.DB, pfile structs.InputFile, idxChan chan error) {
 		go store.Store(ifile, echan)
 		active++
 
-		if active > 1 {
+		if active > cnst.GetMaxThreadCount() {
 			err = <-echan
 			if err != nil {
 				idxChan <- err
@@ -93,6 +95,9 @@ func IndexEXFAT(db *badger.DB, pfile structs.InputFile, idxChan chan error) {
 	for active > 0 {
 		if !flag {
 			flag = checkChannel(idxChan)
+			if flag {
+				bar.Set(index - active)
+			}
 		}
 
 		err = <-echan
@@ -111,6 +116,10 @@ func IndexEXFAT(db *badger.DB, pfile structs.InputFile, idxChan chan error) {
 		idxChan <- err
 	}
 	err = batch.Flush()
+	if err != nil {
+		idxChan <- err
+	}
+	err = db.Sync()
 	if err != nil {
 		idxChan <- err
 	}

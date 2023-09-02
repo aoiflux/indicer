@@ -53,7 +53,7 @@ func storeIndexedFile(infile structs.InputFile) error {
 		)
 		return dbio.SetIndexedFile(infile.GetID(), indexedFile, batch)
 	}
-	if !errors.Is(err, badger.ErrKeyNotFound) {
+	if err != nil && err != badger.ErrKeyNotFound {
 		return err
 	}
 

@@ -94,16 +94,17 @@ func StoreData(chonkSize int, dbpath, evipath string, key []byte, syncIndex bool
 
 	if !syncIndex {
 		for active > 0 {
+
 			select {
-			case <-idxChan:
-				if err != nil {
+			case err = <-idxChan:
+				if err != nil && err != cnst.ErrIncompatibleFileSystem {
 					return err
 				}
 			default:
 				fmt.Println()
 				idxChan <- nil
-				err := <-idxChan
-				if !errors.Is(err, cnst.ErrIncompatibleFileSystem) {
+				err = <-idxChan
+				if err != nil && err != cnst.ErrIncompatibleFileSystem {
 					return err
 				}
 			}
@@ -125,7 +126,7 @@ func StoreData(chonkSize int, dbpath, evipath string, key []byte, syncIndex bool
 	if err != nil {
 		return err
 	}
-	fmt.Println("Stored in: ", time.Since(start))
+	fmt.Printf("\nStored in: %v\n", time.Since(start))
 	return nil
 }
 

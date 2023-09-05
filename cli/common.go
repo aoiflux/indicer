@@ -4,7 +4,7 @@ import (
 	"indicer/lib/dbio"
 	"indicer/lib/util"
 
-	"github.com/dgraph-io/badger/v3"
+	"github.com/dgraph-io/badger/v4"
 )
 
 func common(chonkSize int, dbpath string, key []byte) (*badger.DB, error) {

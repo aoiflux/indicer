@@ -8,8 +8,8 @@ import (
 	"indicer/lib/util"
 	"time"
 
-	"github.com/dgraph-io/badger/v3"
-	"github.com/dgraph-io/badger/v3/options"
+	"github.com/dgraph-io/badger/v4"
+	"github.com/dgraph-io/badger/v4/options"
 	"github.com/klauspost/compress/s2"
 	"github.com/vmihailenco/msgpack/v5"
 )

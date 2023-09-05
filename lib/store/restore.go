@@ -8,7 +8,7 @@ import (
 	"indicer/lib/util"
 	"os"
 
-	"github.com/dgraph-io/badger/v3"
+	"github.com/dgraph-io/badger/v4"
 	"github.com/dustin/go-humanize"
 	"github.com/schollz/progressbar/v3"
 )

@@ -9,7 +9,7 @@ import (
 	"indicer/lib/structs"
 	"indicer/lib/util"
 
-	"github.com/dgraph-io/badger/v3"
+	"github.com/dgraph-io/badger/v4"
 	"github.com/schollz/progressbar/v3"
 	"golang.org/x/exp/slices"
 )

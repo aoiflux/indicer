@@ -9,7 +9,7 @@ import (
 	"indicer/lib/util"
 	"time"
 
-	"github.com/dgraph-io/badger/v3"
+	"github.com/dgraph-io/badger/v4"
 	"github.com/fatih/color"
 	"github.com/schollz/progressbar/v3"
 )

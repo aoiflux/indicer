@@ -9,7 +9,7 @@ import (
 	"os"
 	"strings"
 
-	"github.com/dgraph-io/badger/v3"
+	"github.com/dgraph-io/badger/v4"
 	"github.com/edsrzf/mmap-go"
 )
 
@@ -21,6 +21,7 @@ type InputFile struct {
 	name            string
 	startIndex      int64
 	db              *badger.DB
+	batch           *badger.WriteBatch
 	internalObjects []string
 }
 
@@ -42,6 +43,7 @@ func NewInputFile(
 	infile.size = size
 	infile.startIndex = startIndex
 	infile.internalObjects = make([]string, 0)
+	infile.batch = nil
 
 	return infile
 }
@@ -102,4 +104,25 @@ func (i *InputFile) UpdateInternalObjects(start, size int64, objectHash []byte) 
 	dbend := util.GetDBEndOffset(start + size)
 	objHashStr = fmt.Sprintf("%s%s%d%s%d", objHashStr, cnst.DataSeperator, dbstart, cnst.RangeSeperator, dbend)
 	i.internalObjects = append(i.internalObjects, objHashStr)
+}
+func (i *InputFile) SetBatch() error {
+	i.batch = i.db.NewWriteBatch()
+	count, err := cnst.GetMaxBatchCount()
+	if err != nil {
+		return err
+	}
+	i.batch.SetMaxPendingTxns(count)
+	return nil
+}
+func (i *InputFile) GetBatch() (*badger.WriteBatch, error) {
+	if i.batch == nil {
+		return nil, cnst.ErrNilBatch
+	}
+	return i.batch, nil
+}
+func (i *InputFile) UpdateInputFile(name, namespace string, hash []byte, size, start int64) {
+	i.name = name
+	i.id = util.AppendToBytesSlice(namespace, hash)
+	i.size = size
+	i.startIndex = start
 }

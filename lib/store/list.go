@@ -8,7 +8,7 @@ import (
 	"indicer/lib/structs"
 	"strings"
 
-	"github.com/dgraph-io/badger/v3"
+	"github.com/dgraph-io/badger/v4"
 	"github.com/dustin/go-humanize"
 	"github.com/klauspost/compress/s2"
 	"github.com/vmihailenco/msgpack/v5"

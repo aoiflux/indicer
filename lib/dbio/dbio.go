@@ -3,12 +3,13 @@ package dbio
 import (
 	"encoding/base64"
 	"indicer/lib/cnst"
+	"indicer/lib/fio"
 	"indicer/lib/structs"
 	"indicer/lib/util"
 	"time"
 
-	"github.com/dgraph-io/badger/v3"
-	"github.com/dgraph-io/badger/v3/options"
+	"github.com/dgraph-io/badger/v4"
+	"github.com/dgraph-io/badger/v4/options"
 	"github.com/klauspost/compress/s2"
 	"github.com/vmihailenco/msgpack/v5"
 )
@@ -34,7 +35,6 @@ func ConnectDB(datadir string, key []byte) (*badger.DB, error) {
 	opts.NumMemtables = 1
 	opts.NumLevelZeroTables = 1
 	opts.NumLevelZeroTablesStall = 2
-	opts.BloomFalsePositive = 0
 
 	return badger.Open(opts)
 }
@@ -45,6 +45,13 @@ func SetFile[T structs.FileTypes](id []byte, filenode T, db *badger.DB) error {
 		return err
 	}
 	return SetNode(id, data, db)
+}
+func SetIndexedFile(id []byte, idxfilenode structs.IndexedFile, batch *badger.WriteBatch) error {
+	data, err := msgpack.Marshal(idxfilenode)
+	if err != nil {
+		return err
+	}
+	return SetBatchNode(id, data, batch)
 }
 
 func GetEvidenceFile(key []byte, db *badger.DB) (structs.EvidenceFile, error) {
@@ -100,6 +107,13 @@ func GetReverseRelationNode(key []byte, db *badger.DB) ([]structs.ReverseRelatio
 	return reverseRelations, err
 }
 
+func SetBatchChonkNode(key, data []byte, db *badger.DB, batch *badger.WriteBatch) error {
+	cfpath, err := fio.WriteChonk(db.Opts().Dir, data, db.Opts().EncryptionKey)
+	if err != nil {
+		return err
+	}
+	return SetBatchNode(key, cfpath, batch)
+}
 func SetBatchNode(key, data []byte, batch *badger.WriteBatch) error {
 	if !cnst.QUICKOPT {
 		data = s2.EncodeBest(nil, data)
@@ -119,6 +133,13 @@ func PingNode(key []byte, db *badger.DB) error {
 		_, err := txn.Get(key)
 		return err
 	})
+}
+func GetChonkNode(key []byte, db *badger.DB) ([]byte, error) {
+	cfpath, err := GetNode(key, db)
+	if err != nil {
+		return nil, err
+	}
+	return fio.ReadChonk(cfpath, db.Opts().EncryptionKey)
 }
 func GetNode(key []byte, db *badger.DB) ([]byte, error) {
 	var data []byte

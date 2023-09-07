@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"errors"
 	"fmt"
 	"indicer/lib/cnst"
 	"indicer/lib/parser"
@@ -11,14 +12,18 @@ import (
 	"path/filepath"
 	"time"
 
-	"github.com/dgraph-io/badger/v3"
+	"github.com/dgraph-io/badger/v4"
 	"github.com/edsrzf/mmap-go"
 )
 
-func StoreData(chonkSize int, dbpath, pwd, evipath string) error {
+func StoreData(chonkSize int, dbpath, evipath string, key []byte, syncIndex bool) error {
 	start := time.Now()
 
-	db, err := common(chonkSize, dbpath, pwd)
+	db, err := common(chonkSize, dbpath, key)
+	if err != nil {
+		return err
+	}
+	err = util.EnsureBlobPath(dbpath)
 	if err != nil {
 		return err
 	}
@@ -29,15 +34,12 @@ func StoreData(chonkSize int, dbpath, pwd, evipath string) error {
 		return err
 	}
 
-	err = store.EvidenceFilePreStoreCheck(eviFile)
-	if err == nil {
-		fmt.Println("Evidence Store Time: ", time.Since(start))
-		return nil
-	}
-
+	var active int
+	// not limiting goroutines here because max number of partitions will be 4 or less
+	idxChan := make(chan error)
 	partitions := parser.GetPartitions(eviFile.GetSize(), eviFile.GetHandle())
 	for index, partition := range partitions {
-		phash, err := util.GetLogicalFileHash(eviFile.GetHandle(), partition.Start, partition.Size)
+		phash, err := util.GetLogicalFileHash(eviFile.GetHandle(), partition.Start, partition.Size, true)
 		if err != nil {
 			return err
 		}
@@ -59,20 +61,56 @@ func StoreData(chonkSize int, dbpath, pwd, evipath string) error {
 			partition.Start,
 		)
 
-		err = parser.IndexEXFAT(db, pfile)
-		if err == cnst.ErrIncompatibleFileSystem {
-			fmt.Println(err, "...continuing")
-			continue
+		go parser.IndexEXFAT(db, pfile, idxChan)
+		if !syncIndex {
+			active++
+		}
+		if syncIndex {
+			idxChan <- nil
+			err = <-idxChan
+			if errors.Is(err, cnst.ErrIncompatibleFile) {
+				continue
+			}
+			if err != nil {
+				return err
+			}
 		}
 		if err != nil {
 			return err
 		}
 	}
 
+	fmt.Printf("\nSaving Evidence File\n")
+	if !syncIndex {
+		fmt.Println("(indexer running async)")
+	}
+
 	echan := make(chan error)
 	go store.Store(eviFile, echan)
-	if <-echan != nil {
-		return <-echan
+	err = <-echan
+	if err != nil {
+		return err
+	}
+
+	if !syncIndex {
+		for active > 0 {
+
+			select {
+			case err = <-idxChan:
+				if err != nil && err != cnst.ErrIncompatibleFileSystem {
+					return err
+				}
+			default:
+				fmt.Println()
+				idxChan <- nil
+				err = <-idxChan
+				if err != nil && err != cnst.ErrIncompatibleFileSystem {
+					return err
+				}
+			}
+
+			active--
+		}
 	}
 
 	mappedFile := eviFile.GetMappedFile()
@@ -88,7 +126,7 @@ func StoreData(chonkSize int, dbpath, pwd, evipath string) error {
 	if err != nil {
 		return err
 	}
-	fmt.Println("Stored in: ", time.Since(start))
+	fmt.Printf("\nStored in: %v\n", time.Since(start))
 	return nil
 }
 

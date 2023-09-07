@@ -3,30 +3,23 @@ package store
 import (
 	"bytes"
 	"encoding/base64"
-	"fmt"
+	"errors"
 	"indicer/lib/cnst"
 	"indicer/lib/dbio"
 	"indicer/lib/structs"
 	"indicer/lib/util"
-	"strings"
 
-	"github.com/dgraph-io/badger/v3"
+	"github.com/dgraph-io/badger/v4"
 	"github.com/schollz/progressbar/v3"
 	"golang.org/x/exp/slices"
 )
 
 func Store(infile structs.InputFile, errchan chan error) {
-	names := strings.Split(infile.GetName(), cnst.DataSeperator)
-	name := names[len(names)-1]
-
 	if bytes.HasPrefix(infile.GetID(), []byte(cnst.IdxFileNamespace)) {
-		fmt.Println("Saving indexed file: ", name)
 		errchan <- storeIndexedFile(infile)
 	} else if bytes.HasPrefix(infile.GetID(), []byte(cnst.PartiFileNamespace)) {
-		fmt.Println("Saving partition file: ", name)
 		errchan <- storePartitionFile(infile)
 	} else {
-		fmt.Println("Saving evidence file: ", name)
 		errchan <- storeEvidenceFile(infile)
 	}
 }
@@ -46,14 +39,19 @@ func EvidenceFilePreStoreCheck(infile structs.InputFile) error {
 }
 
 func storeIndexedFile(infile structs.InputFile) error {
+	batch, err := infile.GetBatch()
+	if err != nil {
+		return err
+	}
+
 	indexedFile, err := dbio.GetIndexedFile(infile.GetID(), infile.GetDB())
-	if err != nil && err == badger.ErrKeyNotFound {
+	if errors.Is(err, badger.ErrKeyNotFound) {
 		indexedFile = structs.NewIndexedFile(
 			infile.GetName(),
 			infile.GetStartIndex(),
 			infile.GetSize(),
 		)
-		return dbio.SetFile(infile.GetID(), indexedFile, infile.GetDB())
+		return dbio.SetIndexedFile(infile.GetID(), indexedFile, batch)
 	}
 	if err != nil && err != badger.ErrKeyNotFound {
 		return err
@@ -64,11 +62,11 @@ func storeIndexedFile(infile structs.InputFile) error {
 	}
 
 	indexedFile.Names = append(indexedFile.Names, infile.GetName())
-	return dbio.SetFile(infile.GetID(), indexedFile, infile.GetDB())
+	return dbio.SetIndexedFile(infile.GetID(), indexedFile, batch)
 }
 func storePartitionFile(infile structs.InputFile) error {
 	partitionFile, err := dbio.GetPartitionFile(infile.GetID(), infile.GetDB())
-	if err != nil && err == badger.ErrKeyNotFound {
+	if errors.Is(err, badger.ErrKeyNotFound) {
 		partitionFile = structs.NewPartitionFile(
 			infile.GetName(),
 			infile.GetStartIndex(),
@@ -108,7 +106,7 @@ func storeEvidenceFile(infile structs.InputFile) error {
 }
 func evidenceFilePreflight(infile structs.InputFile) (structs.EvidenceFile, error) {
 	evidenceFile, err := dbio.GetEvidenceFile(infile.GetID(), infile.GetDB())
-	if err != nil && err == badger.ErrKeyNotFound {
+	if errors.Is(err, badger.ErrKeyNotFound) {
 		evidenceFile := structs.NewEvidenceFile(
 			infile.GetName(),
 			infile.GetStartIndex(),
@@ -134,29 +132,27 @@ func evidenceFilePreflight(infile structs.InputFile) (structs.EvidenceFile, erro
 	return evidenceFile, err
 }
 func storeEvidenceData(infile structs.InputFile) error {
-	fmt.Printf("\nSaving Evidence File\n")
 	bar := progressbar.DefaultBytes(infile.GetSize())
 
 	var tio structs.ThreadIO
 	tio.FHash = infile.GetHash()
 	tio.DB = infile.GetDB()
 
-	count, err := cnst.GetMaxBatchCount()
+	err := infile.SetBatch()
 	if err != nil {
 		return err
 	}
-	tio.Batch = infile.GetDB().NewWriteBatch()
-	tio.Batch.SetMaxPendingTxns(count)
+	tio.Batch, err = infile.GetBatch()
+	if err != nil {
+		return err
+	}
 
 	tio.Err = make(chan error, cnst.GetMaxThreadCount())
 	tio.MappedFile = infile.GetMappedFile()
 
 	var active int
 	var buffsize int64
-	for storeIndex := infile.GetStartIndex(); ; storeIndex += cnst.ChonkSize {
-		if storeIndex > infile.GetSize() {
-			break
-		}
+	for storeIndex := infile.GetStartIndex(); storeIndex <= infile.GetSize(); storeIndex += cnst.ChonkSize {
 		tio.Index = storeIndex
 
 		if infile.GetSize()-storeIndex <= cnst.ChonkSize {
@@ -204,7 +200,7 @@ func storeWorker(tio structs.ThreadIO) {
 		tio.Err <- err
 	}
 
-	err = processChonk(lostChonk, chash, tio.DB, tio.Batch)
+	err = processChonk(lostChonk, chash, lostChonk, tio.DB, tio.Batch)
 	if err != nil {
 		tio.Err <- err
 	}
@@ -215,12 +211,12 @@ func storeWorker(tio structs.ThreadIO) {
 
 	tio.Err <- processRevRel(tio.Index, tio.FHash, chash, tio.DB, tio.Batch)
 }
-func processChonk(cdata, chash []byte, db *badger.DB, batch *badger.WriteBatch) error {
+func processChonk(cdata, chash, key []byte, db *badger.DB, batch *badger.WriteBatch) error {
 	ckey := util.AppendToBytesSlice(cnst.ChonkNamespace, chash)
 
 	err := dbio.PingNode(ckey, db)
-	if err != nil && err == badger.ErrKeyNotFound {
-		return dbio.SetBatchNode(ckey, cdata, batch)
+	if errors.Is(err, badger.ErrKeyNotFound) {
+		return dbio.SetBatchChonkNode(ckey, cdata, db, batch)
 	}
 
 	return err
@@ -229,7 +225,7 @@ func processRel(index int64, fhash, chash []byte, db *badger.DB, batch *badger.W
 	relKey := util.AppendToBytesSlice(cnst.RelationNamespace, fhash, cnst.DataSeperator, index)
 
 	err := dbio.PingNode(relKey, db)
-	if err != nil && err == badger.ErrKeyNotFound {
+	if errors.Is(err, badger.ErrKeyNotFound) {
 		return dbio.SetBatchNode(relKey, chash, batch)
 	}
 
@@ -242,7 +238,7 @@ func processRevRel(index int64, fhash, chash []byte, db *badger.DB, batch *badge
 
 	revRelList, err := dbio.GetReverseRelationNode(revRelKey, db)
 	revRelNode := structs.ReverseRelation{Value: relVal}
-	if err != nil && err == badger.ErrKeyNotFound {
+	if errors.Is(err, badger.ErrKeyNotFound) {
 		return dbio.SetReverseRelationNode(revRelKey, []structs.ReverseRelation{revRelNode}, batch)
 	}
 

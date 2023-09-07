@@ -8,7 +8,7 @@ import (
 	"indicer/lib/util"
 	"os"
 
-	"github.com/dgraph-io/badger/v3"
+	"github.com/dgraph-io/badger/v4"
 	"github.com/dustin/go-humanize"
 	"github.com/schollz/progressbar/v3"
 )
@@ -97,7 +97,7 @@ func restoreData(start, size int64, ehash []byte, dst *os.File, db *badger.DB) e
 		}
 
 		ckey := util.AppendToBytesSlice(cnst.ChonkNamespace, chash)
-		data, err := dbio.GetNode(ckey, db)
+		data, err := dbio.GetChonkNode(ckey, db)
 		if err != nil {
 			return err
 		}

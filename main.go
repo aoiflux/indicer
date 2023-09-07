@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"indicer/cli"
 	"indicer/lib/cnst"
+	"indicer/lib/util"
 	"os"
 
 	"github.com/alecthomas/kingpin/v2"
@@ -21,6 +22,7 @@ func main() {
 
 	cmdstore := app.Command(cnst.CmdStore, "Store file in database")
 	evipath := cmdstore.Arg(cnst.OperandFile, "Path of file that must be saved").Required().String()
+	syncIndex := cmdstore.Flag(cnst.FlagSyncIndex, "Run file indexer synchronously, this will block dedup").Short(cnst.FlagSyncIndexShort).Default("false").Bool()
 
 	cmdrestore := app.Command(cnst.CmdRestore, "Restore file from database")
 	rpath := cmdrestore.Flag(cnst.FlagRestoreFilePath, "Path for restoring the file").Short(cnst.FlagRestoreFilePathShort).Default("restored").String()
@@ -43,6 +45,7 @@ func main() {
 	parsed := kingpin.MustParse(app.Parse(os.Args[1:]))
 	cnst.MEMOPT = *memopt
 	cnst.QUICKOPT = *QUICKOPT
+	key := util.HashPassword(*pwd)
 
 	if cnst.MEMOPT {
 		color.Green("🍃 running in LOW RESOURCE mode 🍃")
@@ -50,20 +53,20 @@ func main() {
 		color.Cyan("⚡ running in HIGH PERFORMANCE mode ⚡")
 	}
 	if cnst.QUICKOPT {
-		color.Magenta("🚅 quick mode enabled 🚅")
+		color.Magenta("🛫 quick mode enabled 🛬")
 	}
 
 	switch parsed {
 	case cmdstore.FullCommand():
-		err = cli.StoreData(*chonkSize, *dbpath, *pwd, *evipath)
+		err = cli.StoreData(*chonkSize, *dbpath, *evipath, key, *syncIndex)
 	case cmdrestore.FullCommand():
-		err = cli.RestoreData(*chonkSize, *dbpath, *pwd, *rhash, *rpath)
+		err = cli.RestoreData(*chonkSize, *dbpath, *rhash, *rpath, key)
 	case cmdlist.FullCommand():
-		err = cli.ListData(*chonkSize, *dbpath, *pwd)
+		err = cli.ListData(*chonkSize, *dbpath, key)
 	case cmdin.FullCommand():
-		err = cli.NearInData(*deep, *chonkSize, *dbpath, *pwd, *inhash)
+		err = cli.NearInData(*deep, *chonkSize, *dbpath, *inhash, key)
 	case cmdout.FullCommand():
-		err = cli.NearOutData(*chonkSize, *dbpath, *pwd, *outpath)
+		err = cli.NearOutData(*chonkSize, *dbpath, *outpath, key)
 	case cmdreset.FullCommand():
 		err = cli.ResetData(*dbpath)
 	}

@@ -8,77 +8,137 @@ import (
 	"os"
 
 	"github.com/aoiflux/libxfat"
-	"github.com/dgraph-io/badger/v3"
+	"github.com/dgraph-io/badger/v4"
+	"github.com/schollz/progressbar/v3"
 )
 
-func IndexEXFAT(db *badger.DB, pfile structs.InputFile) error {
+func IndexEXFAT(db *badger.DB, pfile structs.InputFile, idxChan chan error) {
 	startOffset := getStartOffset(uint64(pfile.GetStartIndex()))
 	exfatdata, err := libxfat.New(pfile.GetHandle(), true, startOffset)
 	if err != nil {
-		return cnst.ErrIncompatibleFileSystem
+		idxChan <- cnst.ErrIncompatibleFileSystem
 	}
 
 	rootEntries, err := exfatdata.ReadRootDir()
 	if err != nil {
-		return err
+		idxChan <- err
 	}
 
-	allEntries, err := exfatdata.GetAllEntries(rootEntries)
+	indexableEntries, err := exfatdata.GetIndexableEntries(rootEntries)
 	if err != nil {
-		return err
+		idxChan <- err
 	}
 
 	var active int
+	var flag bool
 	echan := make(chan error)
+	total := int64(len(indexableEntries))
+	bar := progressbar.Default(total, "indexing files")
+	bar.Clear()
 
-	for _, entry := range allEntries {
-		if entry.IsDeleted() || entry.IsDir() || entry.IsInvalid() || entry.HasFatChain() {
-			continue
+	encodedPfileHash, err := pfile.GetEncodedHash()
+	if err != nil {
+		idxChan <- err
+	}
+
+	ifile := structs.NewInputFile(
+		pfile.GetDB(),
+		pfile.GetHandle(),
+		pfile.GetMappedFile(),
+		"",
+		"",
+		nil,
+		0,
+		0,
+	)
+	err = ifile.SetBatch()
+	if err != nil {
+		idxChan <- err
+	}
+
+	var index int
+	var entry libxfat.Entry
+	for index, entry = range indexableEntries {
+		if !flag {
+			flag = checkChannel(idxChan)
+			if flag {
+				bar.Set(index)
+			}
 		}
 
-		encodedPfileHash, err := pfile.GetEncodedHash()
-		if err != nil {
-			return err
-		}
 		iname := string(util.AppendToBytesSlice(pfile.GetEviFileHash(), cnst.DataSeperator, encodedPfileHash, cnst.DataSeperator, entry.GetName()))
 		istart := int64(exfatdata.GetClusterOffset(entry.GetEntryCluster()))
 		isize := int64(entry.GetSize())
-		ihash, err := util.GetLogicalFileHash(pfile.GetHandle(), istart, isize)
+		ihash, err := util.GetLogicalFileHash(pfile.GetHandle(), istart, isize, false)
 		if err != nil {
-			return err
+			idxChan <- err
 		}
 
-		ifile := structs.NewInputFile(
-			pfile.GetDB(),
-			pfile.GetHandle(),
-			pfile.GetMappedFile(),
-			iname,
-			cnst.IdxFileNamespace,
-			ihash,
-			isize,
-			istart,
-		)
+		ifile.UpdateInputFile(iname, cnst.IdxFileNamespace, ihash, isize, istart)
 		pfile.UpdateInternalObjects(istart, isize, ihash)
 
 		go store.Store(ifile, echan)
 		active++
 
 		if active > cnst.GetMaxThreadCount() {
-			if <-echan != nil {
-				return <-echan
+			err = <-echan
+			if err != nil {
+				idxChan <- err
 			}
 			active--
+
+			if flag {
+				bar.Add(1)
+			}
 		}
 	}
 	for active > 0 {
-		if <-echan != nil {
-			return <-echan
+		if !flag {
+			flag = checkChannel(idxChan)
+			if flag {
+				bar.Set(index - active)
+			}
+		}
+
+		err = <-echan
+		if err != nil {
+			idxChan <- err
 		}
 		active--
+
+		if flag {
+			bar.Add(1)
+		}
 	}
 
-	go store.Store(pfile, echan)
-	return <-echan
+	batch, err := ifile.GetBatch()
+	if err != nil {
+		idxChan <- err
+	}
+	err = batch.Flush()
+	if err != nil {
+		idxChan <- err
+	}
+	err = db.Sync()
+	if err != nil {
+		idxChan <- err
+	}
+	if flag {
+		bar.Finish()
+	}
+
+	pchan := make(chan error)
+	go store.Store(pfile, pchan)
+	idxChan <- <-pchan
+}
+
+func checkChannel(idxChan chan error) bool {
+	select {
+	case <-idxChan:
+		return true
+	default:
+		return false
+	}
 }
 
 func getStartOffset(pfileStart uint64) uint64 {

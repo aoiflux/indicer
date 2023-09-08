@@ -81,7 +81,7 @@ func StoreData(chonkSize int, dbpath, evipath string, key []byte, syncIndex bool
 	}
 
 	fmt.Printf("\nSaving Evidence File\n")
-	if !syncIndex {
+	if !syncIndex && active > 0 {
 		fmt.Println("(indexer running async)")
 	}
 

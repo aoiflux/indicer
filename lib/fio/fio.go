@@ -5,15 +5,13 @@ import (
 	"indicer/lib/util"
 	"os"
 	"path/filepath"
-
-	"github.com/klauspost/compress/s2"
 )
 
 func WriteChonk(dbpath string, data, key []byte) ([]byte, error) {
 	var err error
 	if !cnst.QUICKOPT {
-		encoded := s2.EncodeBest(nil, data)
-		data, err = util.SealAES(key, encoded)
+		data = cnst.ENCODER.EncodeAll(data, make([]byte, 0, len(data)))
+		data, err = util.SealAES(key, data)
 		if err != nil {
 			return nil, err
 		}
@@ -35,7 +33,7 @@ func ReadChonk(cfpath, key []byte) ([]byte, error) {
 	if err == nil {
 		data = decrypted
 	}
-	decoded, err := s2.Decode(nil, data)
+	decoded, err := cnst.DECODER.DecodeAll(data, nil)
 	if err == nil {
 		data = decoded
 	}

@@ -9,7 +9,18 @@ import (
 
 	"github.com/alecthomas/kingpin/v2"
 	"github.com/fatih/color"
+	"github.com/klauspost/compress/zstd"
 )
+
+func init() {
+	var err error
+
+	cnst.DECODER, err = zstd.NewReader(nil, zstd.WithDecoderConcurrency(0))
+	handle(err)
+
+	cnst.ENCODER, err = zstd.NewWriter(nil, zstd.WithEncoderLevel(zstd.EncoderLevel(zstd.SpeedBestCompression)))
+	handle(err)
+}
 
 func main() {
 	app := kingpin.New("DUES", "Deduplicated Unified Evidence Store")

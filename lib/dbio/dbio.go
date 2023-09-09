@@ -10,7 +10,6 @@ import (
 
 	"github.com/dgraph-io/badger/v4"
 	"github.com/dgraph-io/badger/v4/options"
-	"github.com/klauspost/compress/s2"
 	"github.com/vmihailenco/msgpack/v5"
 )
 
@@ -116,13 +115,13 @@ func SetBatchChonkNode(key, data []byte, db *badger.DB, batch *badger.WriteBatch
 }
 func SetBatchNode(key, data []byte, batch *badger.WriteBatch) error {
 	if !cnst.QUICKOPT {
-		data = s2.EncodeBest(nil, data)
+		data = cnst.ENCODER.EncodeAll(data, make([]byte, 0, len(data)))
 	}
 	return batch.Set(key, data)
 }
 func SetNode(key, data []byte, db *badger.DB) error {
 	if !cnst.QUICKOPT {
-		data = s2.EncodeBest(nil, data)
+		data = cnst.ENCODER.EncodeAll(data, make([]byte, 0, len(data)))
 	}
 	return db.Update(func(txn *badger.Txn) error {
 		return txn.Set(key, data)
@@ -161,11 +160,10 @@ func GetNode(key []byte, db *badger.DB) ([]byte, error) {
 		return nil, err
 	}
 
-	decoded, err := s2.Decode(nil, data)
+	decoded, err := cnst.DECODER.DecodeAll(data, nil)
 	if err == nil {
 		data = decoded
 	}
-
 	return data, nil
 }
 

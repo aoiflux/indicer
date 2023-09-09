@@ -4,6 +4,7 @@ import (
 	"errors"
 	"runtime"
 
+	"github.com/klauspost/compress/zstd"
 	"github.com/shirou/gopsutil/v3/mem"
 )
 
@@ -96,6 +97,9 @@ const (
 )
 
 const IgnoreVar int64 = -1
+
+var DECODER *zstd.Decoder
+var ENCODER *zstd.Encoder
 
 func GetMaxThreadCount() int {
 	if MEMOPT {

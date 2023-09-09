@@ -10,7 +10,6 @@ import (
 
 	"github.com/dgraph-io/badger/v4"
 	"github.com/dustin/go-humanize"
-	"github.com/klauspost/compress/s2"
 	"github.com/vmihailenco/msgpack/v5"
 )
 
@@ -30,7 +29,7 @@ func List(db *badger.DB) error {
 				return err
 			}
 
-			decoded, err := s2.Decode(nil, v)
+			decoded, err := cnst.DECODER.DecodeAll(v, nil)
 			if err == nil {
 				v = decoded
 			}
@@ -79,7 +78,7 @@ func listPartitions(phash string, txn *badger.Txn) error {
 		return err
 	}
 
-	decoded, err := s2.Decode(nil, v)
+	decoded, err := cnst.DECODER.DecodeAll(v, nil)
 	if err == nil {
 		v = decoded
 	}

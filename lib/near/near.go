@@ -11,7 +11,6 @@ import (
 	"strings"
 
 	"github.com/dgraph-io/badger/v4"
-	"github.com/klauspost/compress/s2"
 )
 
 func countRList(fhash []byte, idmap *structs.ConcMap, rim *structs.RimMap, near structs.NearGen, db *badger.DB, echan chan error) {
@@ -184,7 +183,7 @@ func partialChonkMatch(chonk []byte, db *badger.DB) ([]byte, float32, error) {
 				return err
 			}
 
-			decoded, err := s2.Decode(nil, v)
+			decoded, err := cnst.DECODER.DecodeAll(v, nil)
 			if err == nil {
 				v = decoded
 			}

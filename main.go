@@ -84,6 +84,10 @@ func main() {
 	}
 
 	handle(err)
+
+	err = cnst.ENCODER.Close()
+	handle(err)
+	cnst.DECODER.Close()
 }
 
 func handle(err error) {

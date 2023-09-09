@@ -23,6 +23,7 @@ func main() {
 	cmdstore := app.Command(cnst.CmdStore, "Store file in database")
 	evipath := cmdstore.Arg(cnst.OperandFile, "Path of file that must be saved").Required().String()
 	syncIndex := cmdstore.Flag(cnst.FlagSyncIndex, "Run file indexer synchronously, this will block dedup").Short(cnst.FlagSyncIndexShort).Default("false").Bool()
+	noIndex := cmdstore.Flag(cnst.FlagNoIndex, "Don't run indexer").Short(cnst.FlagNoIndexShort).Default("false").Bool()
 
 	cmdrestore := app.Command(cnst.CmdRestore, "Restore file from database")
 	rpath := cmdrestore.Flag(cnst.FlagRestoreFilePath, "Path for restoring the file").Short(cnst.FlagRestoreFilePathShort).Default("restored").String()
@@ -58,7 +59,7 @@ func main() {
 
 	switch parsed {
 	case cmdstore.FullCommand():
-		err = cli.StoreData(*chonkSize, *dbpath, *evipath, key, *syncIndex)
+		err = cli.StoreData(*chonkSize, *dbpath, *evipath, key, *syncIndex, *noIndex)
 	case cmdrestore.FullCommand():
 		err = cli.RestoreData(*chonkSize, *dbpath, *rhash, *rpath, key)
 	case cmdlist.FullCommand():

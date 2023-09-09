@@ -16,7 +16,7 @@ import (
 	"github.com/edsrzf/mmap-go"
 )
 
-func StoreData(chonkSize int, dbpath, evipath string, key []byte, syncIndex bool) error {
+func StoreData(chonkSize int, dbpath, evipath string, key []byte, syncIndex, noIndex bool) error {
 	start := time.Now()
 
 	db, err := common(chonkSize, dbpath, key)
@@ -35,48 +35,50 @@ func StoreData(chonkSize int, dbpath, evipath string, key []byte, syncIndex bool
 	}
 
 	var active int
-	// not limiting goroutines here because max number of partitions will be 4 or less
 	idxChan := make(chan error)
-	partitions := parser.GetPartitions(eviFile.GetSize(), eviFile.GetHandle())
-	for index, partition := range partitions {
-		phash, err := util.GetLogicalFileHash(eviFile.GetHandle(), partition.Start, partition.Size, true)
-		if err != nil {
-			return err
-		}
-		eviFile.UpdateInternalObjects(partition.Start, partition.Size, phash)
+	if !noIndex {
+		partitions := parser.GetPartitions(eviFile.GetSize(), eviFile.GetHandle())
+		// not limiting goroutines here because max number of partitions will be 4 or less
+		for index, partition := range partitions {
+			phash, err := util.GetLogicalFileHash(eviFile.GetHandle(), partition.Start, partition.Size, true)
+			if err != nil {
+				return err
+			}
+			eviFile.UpdateInternalObjects(partition.Start, partition.Size, phash)
 
-		ehash, err := eviFile.GetEncodedHash()
-		if err != nil {
-			return err
-		}
-		pname := string(util.AppendToBytesSlice(ehash, cnst.DataSeperator, cnst.PartitionIndexPrefix, index))
-		pfile := structs.NewInputFile(
-			db,
-			eviFile.GetHandle(),
-			eviFile.GetMappedFile(),
-			pname,
-			cnst.PartiFileNamespace,
-			phash,
-			partition.Size,
-			partition.Start,
-		)
+			ehash, err := eviFile.GetEncodedHash()
+			if err != nil {
+				return err
+			}
+			pname := string(util.AppendToBytesSlice(ehash, cnst.DataSeperator, cnst.PartitionIndexPrefix, index))
+			pfile := structs.NewInputFile(
+				db,
+				eviFile.GetHandle(),
+				eviFile.GetMappedFile(),
+				pname,
+				cnst.PartiFileNamespace,
+				phash,
+				partition.Size,
+				partition.Start,
+			)
 
-		go parser.IndexEXFAT(db, pfile, idxChan)
-		if !syncIndex {
-			active++
-		}
-		if syncIndex {
-			idxChan <- nil
-			err = <-idxChan
-			if errors.Is(err, cnst.ErrIncompatibleFile) {
-				continue
+			go parser.IndexEXFAT(db, pfile, idxChan)
+			if !syncIndex {
+				active++
+			}
+			if syncIndex {
+				idxChan <- nil
+				err = <-idxChan
+				if errors.Is(err, cnst.ErrIncompatibleFile) {
+					continue
+				}
+				if err != nil {
+					return err
+				}
 			}
 			if err != nil {
 				return err
 			}
-		}
-		if err != nil {
-			return err
 		}
 	}
 

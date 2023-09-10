@@ -51,10 +51,6 @@ func IndexEXFAT(db *badger.DB, pfile structs.InputFile, idxChan chan error) {
 		0,
 		0,
 	)
-	err = ifile.SetBatch()
-	if err != nil {
-		idxChan <- err
-	}
 
 	var index int
 	var entry libxfat.Entry
@@ -111,18 +107,6 @@ func IndexEXFAT(db *badger.DB, pfile structs.InputFile, idxChan chan error) {
 		}
 	}
 
-	batch, err := ifile.GetBatch()
-	if err != nil {
-		idxChan <- err
-	}
-	err = batch.Flush()
-	if err != nil {
-		idxChan <- err
-	}
-	err = db.Sync()
-	if err != nil {
-		idxChan <- err
-	}
 	if flag {
 		bar.Finish()
 	}

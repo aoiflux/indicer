@@ -39,11 +39,6 @@ func EvidenceFilePreStoreCheck(infile structs.InputFile) error {
 }
 
 func storeIndexedFile(infile structs.InputFile) error {
-	batch, err := infile.GetBatch()
-	if err != nil {
-		return err
-	}
-
 	indexedFile, err := dbio.GetIndexedFile(infile.GetID(), infile.GetDB())
 	if errors.Is(err, badger.ErrKeyNotFound) {
 		indexedFile = structs.NewIndexedFile(
@@ -51,7 +46,7 @@ func storeIndexedFile(infile structs.InputFile) error {
 			infile.GetStartIndex(),
 			infile.GetSize(),
 		)
-		return dbio.SetIndexedFile(infile.GetID(), indexedFile, batch)
+		return dbio.SetFile(infile.GetID(), indexedFile, infile.GetDB())
 	}
 	if err != nil && err != badger.ErrKeyNotFound {
 		return err
@@ -62,7 +57,7 @@ func storeIndexedFile(infile structs.InputFile) error {
 	}
 
 	indexedFile.Names = append(indexedFile.Names, infile.GetName())
-	return dbio.SetIndexedFile(infile.GetID(), indexedFile, batch)
+	return dbio.SetFile(infile.GetID(), indexedFile, infile.GetDB())
 }
 func storePartitionFile(infile structs.InputFile) error {
 	partitionFile, err := dbio.GetPartitionFile(infile.GetID(), infile.GetDB())

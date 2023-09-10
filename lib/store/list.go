@@ -90,9 +90,45 @@ func listPartitions(phash string, txn *badger.Txn) error {
 	}
 
 	for i, ihash := range pdata.InternalObjects {
-		ihash = strings.Split(ihash, cnst.DataSeperator)[0]
-		fmt.Printf("\t\tIndexed %d ---> %s\n", i, ihash)
+		err = listIndexedFiles(i, ihash, txn)
+		if err != nil {
+			return err
+		}
 	}
+
+	return nil
+}
+
+func listIndexedFiles(index int, ihash string, txn *badger.Txn) error {
+	ihash = strings.Split(ihash, cnst.DataSeperator)[0]
+	fmt.Printf("\t\tIndexed %d ---> %s\n", index, ihash)
+	decidedIhash, err := base64.StdEncoding.DecodeString(ihash)
+	if err != nil {
+		return err
+	}
+
+	pid := append([]byte(cnst.IdxFileNamespace), decidedIhash...)
+	item, err := txn.Get(pid)
+	if err != nil {
+		return err
+	}
+	v, err := item.ValueCopy(nil)
+	if err != nil {
+		return err
+	}
+
+	decoded, err := cnst.DECODER.DecodeAll(v, nil)
+	if err == nil {
+		v = decoded
+	}
+
+	var idata structs.IndexedFile
+	err = msgpack.Unmarshal(v, &idata)
+	if err != nil {
+		return err
+	}
+
+	fmt.Printf("\t\tNames: %v", idata.Names)
 
 	return nil
 }

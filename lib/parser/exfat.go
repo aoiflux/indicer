@@ -8,11 +8,10 @@ import (
 	"os"
 
 	"github.com/aoiflux/libxfat"
-	"github.com/dgraph-io/badger/v4"
 	"github.com/schollz/progressbar/v3"
 )
 
-func IndexEXFAT(db *badger.DB, pfile structs.InputFile, idxChan chan error) {
+func IndexEXFAT(pfile structs.InputFile, idxChan chan error) {
 	startOffset := getStartOffset(uint64(pfile.GetStartIndex()))
 	exfatdata, err := libxfat.New(pfile.GetHandle(), true, startOffset)
 	if err != nil {
@@ -65,7 +64,7 @@ func IndexEXFAT(db *badger.DB, pfile structs.InputFile, idxChan chan error) {
 		iname := string(util.AppendToBytesSlice(pfile.GetEviFileHash(), cnst.DataSeperator, encodedPfileHash, cnst.DataSeperator, entry.GetName()))
 		istart := int64(exfatdata.GetClusterOffset(entry.GetEntryCluster()))
 		isize := int64(entry.GetSize())
-		ihash, err := util.GetLogicalFileHash(pfile.GetHandle(), istart, isize, false)
+		ihash, err := util.GetLogicalFileHash(ifile.GetHandle(), istart, isize, false)
 		if err != nil {
 			idxChan <- err
 		}

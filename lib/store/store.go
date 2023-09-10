@@ -188,7 +188,7 @@ func storeWorker(tio structs.ThreadIO) {
 		tio.Err <- err
 	}
 
-	err = processChonk(lostChonk, chash, lostChonk, tio.DB, tio.Batch)
+	err = processChonk(lostChonk, chash, tio.DB, tio.Batch)
 	if err != nil {
 		tio.Err <- err
 	}
@@ -199,7 +199,7 @@ func storeWorker(tio structs.ThreadIO) {
 
 	tio.Err <- processRevRel(tio.Index, tio.FHash, chash, tio.DB, tio.Batch)
 }
-func processChonk(cdata, chash, key []byte, db *badger.DB, batch *badger.WriteBatch) error {
+func processChonk(cdata, chash []byte, db *badger.DB, batch *badger.WriteBatch) error {
 	ckey := util.AppendToBytesSlice(cnst.ChonkNamespace, chash)
 
 	err := dbio.PingNode(ckey, db)

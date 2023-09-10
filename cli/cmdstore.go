@@ -63,7 +63,7 @@ func StoreData(chonkSize int, dbpath, evipath string, key []byte, syncIndex, noI
 				partition.Start,
 			)
 
-			go parser.IndexEXFAT(db, pfile, idxChan)
+			go parser.IndexEXFAT(pfile, idxChan)
 			if !syncIndex {
 				active++
 			}

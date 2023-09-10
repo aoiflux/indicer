@@ -15,18 +15,11 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
-	"sync"
 	"time"
 
 	"github.com/cheggaaa/pb/v3"
-	"github.com/zeebo/blake3"
+	"golang.org/x/crypto/sha3"
 )
-
-var globalHasherPool = sync.Pool{
-	New: func() interface{} {
-		return blake3.New()
-	},
-}
 
 func GetDBPath() (string, error) {
 	const dbdir = ".dues"
@@ -96,12 +89,11 @@ func GetLogicalFileHash(fileHandle *os.File, start, size int64, showBar bool) ([
 }
 
 func getHash(fileHandle *os.File, size int64, showBar bool) ([]byte, error) {
-	hasher := globalHasherPool.Get().(*blake3.Hasher)
-	defer globalHasherPool.Put(hasher)
+	hasher := sha3.New256()
 
 	var startTime time.Time
 	if showBar {
-		fmt.Println("Generating BLAKE3 hash ....")
+		fmt.Println("Generating SHA3-256 hash ....")
 		startTime = time.Now()
 	}
 
@@ -111,25 +103,9 @@ func getHash(fileHandle *os.File, size int64, showBar bool) ([]byte, error) {
 	}
 	barReader := bar.NewProxyReader(fileHandle)
 
-	bufferSize := 4 * cnst.MB
-	buffer := make([]byte, bufferSize)
-	for size > 0 {
-		chunkSize := int64(bufferSize)
-		if size < int64(bufferSize) {
-			chunkSize = size
-		}
-
-		_, err := barReader.Read(buffer[:chunkSize])
-		if err != nil {
-			return nil, err
-		}
-
-		_, err = hasher.Write(buffer[:chunkSize])
-		if err != nil {
-			return nil, err
-		}
-
-		size -= chunkSize
+	_, err := io.CopyN(hasher, barReader, size)
+	if err != nil {
+		return nil, err
 	}
 	hash := hasher.Sum(nil)
 
@@ -141,8 +117,7 @@ func getHash(fileHandle *os.File, size int64, showBar bool) ([]byte, error) {
 }
 
 func GetChonkHash(data []byte) ([]byte, error) {
-	hasher := globalHasherPool.Get().(*blake3.Hasher)
-	defer globalHasherPool.Put(hasher)
+	hasher := sha3.New512()
 	if _, err := hasher.Write(data); err != nil {
 		return nil, err
 	}

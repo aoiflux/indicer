@@ -16,7 +16,7 @@ require (
 	github.com/schollz/progressbar/v3 v3.13.1
 	github.com/shirou/gopsutil/v3 v3.23.7
 	github.com/vmihailenco/msgpack/v5 v5.3.5
-	github.com/zeebo/blake3 v0.2.3
+	golang.org/x/crypto v0.12.0
 	golang.org/x/exp v0.0.0-20230811145659-89c5cff77bcb
 )
 
@@ -32,7 +32,6 @@ require (
 	github.com/golang/protobuf v1.5.3 // indirect
 	github.com/golang/snappy v0.0.4 // indirect
 	github.com/google/flatbuffers v23.5.26+incompatible // indirect
-	github.com/klauspost/cpuid/v2 v2.2.5 // indirect
 	github.com/lufia/plan9stats v0.0.0-20230326075908-cb1d2100619a // indirect
 	github.com/mattn/go-colorable v0.1.13 // indirect
 	github.com/mattn/go-isatty v0.0.19 // indirect

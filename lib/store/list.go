@@ -128,7 +128,10 @@ func listIndexedFiles(index int, ihash string, txn *badger.Txn) error {
 		return err
 	}
 
-	fmt.Printf("\t\tNames: %v", idata.Names)
+	for i := range idata.Names {
+		idata.Names[i] = strings.Split(idata.Names[i], cnst.DataSeperator)[2]
+	}
+	fmt.Printf("\t\tNames: %v\n\n", idata.Names)
 
 	return nil
 }

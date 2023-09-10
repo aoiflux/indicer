@@ -90,14 +90,7 @@ func storeEvidenceFile(infile structs.InputFile) error {
 	if evidenceFile.Completed {
 		return nil
 	}
-
-	err = storeEvidenceData(infile)
-	if err != nil {
-		return err
-	}
-
-	evidenceFile.Completed = true
-	return dbio.SetFile(infile.GetID(), evidenceFile, infile.GetDB())
+	return storeEvidenceData(infile)
 }
 func evidenceFilePreflight(infile structs.InputFile) (structs.EvidenceFile, error) {
 	evidenceFile, err := dbio.GetEvidenceFile(infile.GetID(), infile.GetDB())

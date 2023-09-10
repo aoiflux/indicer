@@ -4,6 +4,7 @@ import (
 	"errors"
 	"fmt"
 	"indicer/lib/cnst"
+	"indicer/lib/dbio"
 	"indicer/lib/parser"
 	"indicer/lib/store"
 	"indicer/lib/structs"
@@ -113,6 +114,16 @@ func StoreData(chonkSize int, dbpath, evipath string, key []byte, syncIndex, noI
 
 			active--
 		}
+	}
+
+	eviNode, err := dbio.GetEvidenceFile(eviFile.GetID(), eviFile.GetDB())
+	if err != nil {
+		return err
+	}
+	eviNode.Completed = true
+	err = dbio.SetFile(eviFile.GetID(), eviNode, eviFile.GetDB())
+	if err != nil {
+		return err
 	}
 
 	mappedFile := eviFile.GetMappedFile()

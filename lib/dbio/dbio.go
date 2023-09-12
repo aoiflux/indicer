@@ -31,9 +31,7 @@ func ConnectDB(datadir string, key []byte) (*badger.DB, error) {
 		opts.EncryptionKeyRotationDuration = time.Hour * 168
 	}
 	opts.CompactL0OnClose = true
-	opts.NumMemtables = 1
-	opts.NumLevelZeroTables = 1
-	opts.NumLevelZeroTablesStall = 2
+	opts.LmaxCompaction = true
 
 	return badger.Open(opts)
 }

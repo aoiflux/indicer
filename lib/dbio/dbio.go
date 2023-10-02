@@ -32,6 +32,7 @@ func ConnectDB(datadir string, key []byte) (*badger.DB, error) {
 	}
 	opts.CompactL0OnClose = true
 	opts.LmaxCompaction = true
+	opts.NumCompactors = opts.NumGoroutines
 
 	return badger.Open(opts)
 }

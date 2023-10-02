@@ -35,5 +35,5 @@ func NewEvidenceFile(name string, start, size int64, partitions []string) Eviden
 }
 
 type FileTypes interface {
-	IndexedFile | PartitionFile | EvidenceFile
+	PartitionFile | EvidenceFile
 }

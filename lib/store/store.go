@@ -15,9 +15,7 @@ import (
 )
 
 func Store(infile structs.InputFile, errchan chan error) {
-	if bytes.HasPrefix(infile.GetID(), []byte(cnst.IdxFileNamespace)) {
-		errchan <- storeIndexedFile(infile)
-	} else if bytes.HasPrefix(infile.GetID(), []byte(cnst.PartiFileNamespace)) {
+	if bytes.HasPrefix(infile.GetID(), []byte(cnst.PartiFileNamespace)) {
 		errchan <- storePartitionFile(infile)
 	} else {
 		errchan <- storeEvidenceFile(infile)
@@ -38,27 +36,6 @@ func EvidenceFilePreStoreCheck(infile structs.InputFile) error {
 	return dbio.SetFile(infile.GetID(), evidenceFile, infile.GetDB())
 }
 
-func storeIndexedFile(infile structs.InputFile) error {
-	indexedFile, err := dbio.GetIndexedFile(infile.GetID(), infile.GetDB())
-	if errors.Is(err, badger.ErrKeyNotFound) {
-		indexedFile = structs.NewIndexedFile(
-			infile.GetName(),
-			infile.GetStartIndex(),
-			infile.GetSize(),
-		)
-		return dbio.SetFile(infile.GetID(), indexedFile, infile.GetDB())
-	}
-	if err != nil && err != badger.ErrKeyNotFound {
-		return err
-	}
-
-	if slices.Contains(indexedFile.Names, infile.GetName()) {
-		return nil
-	}
-
-	indexedFile.Names = append(indexedFile.Names, infile.GetName())
-	return dbio.SetFile(infile.GetID(), indexedFile, infile.GetDB())
-}
 func storePartitionFile(infile structs.InputFile) error {
 	partitionFile, err := dbio.GetPartitionFile(infile.GetID(), infile.GetDB())
 	if errors.Is(err, badger.ErrKeyNotFound) {

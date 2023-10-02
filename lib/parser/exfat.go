@@ -1,14 +1,18 @@
 package parser
 
 import (
+	"errors"
 	"indicer/lib/cnst"
+	"indicer/lib/dbio"
 	"indicer/lib/store"
 	"indicer/lib/structs"
 	"indicer/lib/util"
 	"os"
 
 	"github.com/aoiflux/libxfat"
+	"github.com/dgraph-io/badger/v4"
 	"github.com/schollz/progressbar/v3"
+	"golang.org/x/exp/slices"
 )
 
 func IndexEXFAT(pfile structs.InputFile, idxChan chan error) {
@@ -28,9 +32,9 @@ func IndexEXFAT(pfile structs.InputFile, idxChan chan error) {
 		idxChan <- err
 	}
 
-	var active int
 	var flag bool
-	echan := make(chan error)
+	var active int
+	storeChan := make(chan error)
 	total := int64(len(indexableEntries))
 	bar := progressbar.Default(total, "indexing files")
 	bar.Clear()
@@ -50,6 +54,15 @@ func IndexEXFAT(pfile structs.InputFile, idxChan chan error) {
 		0,
 		0,
 	)
+
+	err = ifile.SetBatch()
+	if err != nil {
+		idxChan <- err
+	}
+	batch, err := ifile.GetBatch()
+	if err != nil {
+		idxChan <- err
+	}
 
 	var index int
 	var entry libxfat.Entry
@@ -72,11 +85,11 @@ func IndexEXFAT(pfile structs.InputFile, idxChan chan error) {
 		ifile.UpdateInputFile(iname, cnst.IdxFileNamespace, ihash, isize, istart)
 		pfile.UpdateInternalObjects(istart, isize, ihash)
 
-		go store.Store(ifile, echan)
+		go storeIndexedFile(ifile, batch, storeChan)
 		active++
 
 		if active > cnst.GetMaxThreadCount() {
-			err = <-echan
+			err = <-storeChan
 			if err != nil {
 				idxChan <- err
 			}
@@ -88,14 +101,7 @@ func IndexEXFAT(pfile structs.InputFile, idxChan chan error) {
 		}
 	}
 	for active > 0 {
-		if !flag {
-			flag = checkChannel(idxChan)
-			if flag {
-				bar.Set(index - active)
-			}
-		}
-
-		err = <-echan
+		err = <-storeChan
 		if err != nil {
 			idxChan <- err
 		}
@@ -106,6 +112,10 @@ func IndexEXFAT(pfile structs.InputFile, idxChan chan error) {
 		}
 	}
 
+	err = batch.Flush()
+	if err != nil {
+		idxChan <- err
+	}
 	if flag {
 		bar.Finish()
 	}
@@ -140,4 +150,26 @@ func parsEXFAT(fhandle *os.File, size int64) []structs.PartitionFile {
 		return nil
 	}
 	return []structs.PartitionFile{partition}
+}
+
+func storeIndexedFile(infile structs.InputFile, batch *badger.WriteBatch, storeChan chan error) {
+	indexedFile, err := dbio.GetIndexedFile(infile.GetID(), infile.GetDB())
+	if errors.Is(err, badger.ErrKeyNotFound) {
+		indexedFile = structs.NewIndexedFile(
+			infile.GetName(),
+			infile.GetStartIndex(),
+			infile.GetSize(),
+		)
+		storeChan <- dbio.SetIndexedFile(infile.GetID(), indexedFile, batch)
+	}
+	if err != nil && err != badger.ErrKeyNotFound {
+		storeChan <- err
+	}
+
+	if slices.Contains(indexedFile.Names, infile.GetName()) {
+		storeChan <- nil
+	}
+
+	indexedFile.Names = append(indexedFile.Names, infile.GetName())
+	storeChan <- dbio.SetIndexedFile(infile.GetID(), indexedFile, batch)
 }

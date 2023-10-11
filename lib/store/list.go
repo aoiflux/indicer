@@ -48,7 +48,7 @@ func List(db *badger.DB) error {
 			fmt.Println(base64.StdEncoding.EncodeToString(evihash))
 			fmt.Printf("\tNames: %v\n", evidata.Names)
 			fmt.Printf("\tSize: %v\n", humanize.Bytes(uint64(evidata.Size)))
-			for _, phash := range evidata.InternalObjects {
+			for phash := range evidata.InternalObjects {
 				err = listPartitions(phash, txn)
 				if err != nil {
 					return err
@@ -61,7 +61,6 @@ func List(db *badger.DB) error {
 }
 
 func listPartitions(phash string, txn *badger.Txn) error {
-	phash = strings.Split(phash, cnst.DataSeperator)[0]
 	fmt.Printf("\tPartition: %v\n", phash)
 	decodedPhash, err := base64.StdEncoding.DecodeString(phash)
 	if err != nil {
@@ -89,18 +88,19 @@ func listPartitions(phash string, txn *badger.Txn) error {
 		return err
 	}
 
-	for i, ihash := range pdata.InternalObjects {
-		err = listIndexedFiles(i, ihash, txn)
+	var index int
+	for ihash := range pdata.InternalObjects {
+		err = listIndexedFiles(index, ihash, txn)
 		if err != nil {
 			return err
 		}
+		index++
 	}
 
 	return nil
 }
 
 func listIndexedFiles(index int, ihash string, txn *badger.Txn) error {
-	ihash = strings.Split(ihash, cnst.DataSeperator)[0]
 	fmt.Printf("\t\tIndexed %d ---> %s\n", index, ihash)
 	decidedIhash, err := base64.StdEncoding.DecodeString(ihash)
 	if err != nil {

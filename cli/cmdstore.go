@@ -41,9 +41,12 @@ func StoreData(chonkSize int, dbpath, evipath string, key []byte, syncIndex, noI
 		partitions := parser.GetPartitions(eviFile.GetSize(), eviFile.GetHandle())
 		// not limiting goroutines here because max number of partitions will be 4 or less
 		for index, partition := range partitions {
-			phash, err := util.GetLogicalFileHash(eviFile.GetHandle(), partition.Start, partition.Size, true)
-			if err != nil {
-				return err
+			phash := eviFile.GetHash()
+			if partition.Start != 0 && partition.Size != eviFile.GetSize() {
+				phash, err = util.GetLogicalFileHash(eviFile.GetHandle(), partition.Start, partition.Size, true)
+				if err != nil {
+					return err
+				}
 			}
 			eviFile.UpdateInternalObjects(partition.Start, partition.Size, phash)
 

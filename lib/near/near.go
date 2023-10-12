@@ -57,7 +57,7 @@ func countEviFile(confidence float32, fhash []byte, idmap *structs.ConcMap, rim 
 	}
 	return countPartiFile(confidence, ridx, fhash, eid, efile.InternalObjects, idmap, rim, db)
 }
-func countPartiFile(confidence float32, ridx int64, fhash, eid []byte, phashes map[string]structs.HashOffsetMap, idmap *structs.ConcMap, rim *structs.RimMap, db *badger.DB) error {
+func countPartiFile(confidence float32, ridx int64, fhash, eid []byte, phashes map[string]struct{}, idmap *structs.ConcMap, rim *structs.RimMap, db *badger.DB) error {
 	var pindex int
 	for phash := range phashes {
 		pid, inRange, err := countFile(ridx, cnst.PartiFileNamespace, fhash, []byte(phash), db)
@@ -95,7 +95,7 @@ func countPartiFile(confidence float32, ridx int64, fhash, eid []byte, phashes m
 	return nil
 }
 
-func countIdxFile(confidence float32, ridx int64, fhash, pid []byte, ihashes map[string]structs.HashOffsetMap, idmap *structs.ConcMap, rim *structs.RimMap, db *badger.DB) error {
+func countIdxFile(confidence float32, ridx int64, fhash, pid []byte, ihashes map[string]struct{}, idmap *structs.ConcMap, rim *structs.RimMap, db *badger.DB) error {
 	var iindex int
 	for ihash := range ihashes {
 		iid, inRange, err := countFile(ridx, cnst.IdxFileNamespace, fhash, []byte(ihash), db)

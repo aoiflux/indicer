@@ -16,10 +16,10 @@ func NewIndexedFile(name string, start, size int64) IndexedFile {
 
 type PartitionFile struct {
 	IndexedFile
-	InternalObjects map[string]HashOffsetMap `msgpack:"internal_objects"`
+	InternalObjects map[string]struct{} `msgpack:"internal_objects"`
 }
 
-func NewPartitionFile(name string, start, size int64, indexedFiles map[string]HashOffsetMap) PartitionFile {
+func NewPartitionFile(name string, start, size int64, indexedFiles map[string]struct{}) PartitionFile {
 	indexedFile := NewIndexedFile(name, start, size)
 	return PartitionFile{IndexedFile: indexedFile, InternalObjects: indexedFiles}
 }
@@ -29,7 +29,7 @@ type EvidenceFile struct {
 	Completed bool `msgpack:"completed"`
 }
 
-func NewEvidenceFile(name string, start, size int64, partitions map[string]HashOffsetMap) EvidenceFile {
+func NewEvidenceFile(name string, start, size int64, partitions map[string]struct{}) EvidenceFile {
 	partitionFile := NewPartitionFile(name, start, size, partitions)
 	return EvidenceFile{PartitionFile: partitionFile, Completed: false}
 }

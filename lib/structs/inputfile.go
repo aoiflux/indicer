@@ -21,7 +21,7 @@ type InputFile struct {
 	startIndex      int64
 	db              *badger.DB
 	batch           *badger.WriteBatch
-	internalObjects map[string]HashOffsetMap
+	internalObjects map[string]struct{}
 }
 
 func NewInputFile(
@@ -41,7 +41,7 @@ func NewInputFile(
 	infile.db = db
 	infile.size = size
 	infile.startIndex = startIndex
-	infile.internalObjects = make(map[string]HashOffsetMap, 0)
+	infile.internalObjects = make(map[string]struct{}, 0)
 	infile.batch = nil
 
 	return infile
@@ -77,7 +77,7 @@ func (i InputFile) GetEncodedHash() ([]byte, error) {
 	hash := i.GetHash()
 	return []byte(base64.StdEncoding.EncodeToString(hash)), nil
 }
-func (i InputFile) GetInternalObjects() map[string]HashOffsetMap {
+func (i InputFile) GetInternalObjects() map[string]struct{} {
 	return i.internalObjects
 }
 func (i InputFile) GetEviFileHash() []byte {
@@ -92,11 +92,9 @@ func (i InputFile) GetNamespace() []byte {
 	return append(fileType, []byte(cnst.NamespaceSeperator)...)
 }
 
-func (i *InputFile) UpdateInternalObjects(start, size int64, objectHash []byte) {
+func (i *InputFile) UpdateInternalObjects(objectHash []byte) {
 	objHashStr := base64.StdEncoding.EncodeToString(objectHash)
-	dbstart := util.GetDBStartOffset(start)
-	dbend := util.GetDBEndOffset(start + size)
-	i.internalObjects[objHashStr] = HashOffsetMap{Start: dbstart, End: dbend}
+	i.internalObjects[objHashStr] = struct{}{}
 }
 func (i *InputFile) SetBatch() error {
 	i.batch = i.db.NewWriteBatch()

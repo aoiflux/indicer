@@ -55,11 +55,7 @@ func IndexEXFAT(pfile structs.InputFile, idxChan chan error) {
 		0,
 	)
 
-	err = ifile.SetBatch()
-	if err != nil {
-		idxChan <- err
-	}
-	batch, err := ifile.GetBatch()
+	batch, err := util.InitBatch(pfile.GetDB())
 	if err != nil {
 		idxChan <- err
 	}
@@ -77,11 +73,10 @@ func IndexEXFAT(pfile structs.InputFile, idxChan chan error) {
 		iname := string(util.AppendToBytesSlice(pfile.GetEviFileHash(), cnst.DataSeperator, encodedPfileHash, cnst.DataSeperator, entry.GetName()))
 		istart := int64(exfatdata.GetClusterOffset(entry.GetEntryCluster()))
 		isize := int64(entry.GetSize())
-		ihash, err := util.GetLogicalFileHash(ifile.GetHandle(), istart, isize, false)
+		ihash, err := util.GetLogicalFileHash(pfile.GetHandle(), istart, isize, false)
 		if err != nil {
 			idxChan <- err
 		}
-
 		ifile.UpdateInputFile(iname, cnst.IdxFileNamespace, ihash, isize, istart)
 		pfile.UpdateInternalObjects(ihash)
 

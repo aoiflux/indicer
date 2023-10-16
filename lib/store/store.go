@@ -103,11 +103,8 @@ func storeEvidenceData(infile structs.InputFile) error {
 	tio.FHash = infile.GetHash()
 	tio.DB = infile.GetDB()
 
-	err := infile.SetBatch()
-	if err != nil {
-		return err
-	}
-	tio.Batch, err = infile.GetBatch()
+	var err error
+	tio.Batch, err = util.InitBatch(infile.GetDB())
 	if err != nil {
 		return err
 	}

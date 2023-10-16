@@ -18,6 +18,7 @@ import (
 	"time"
 
 	"github.com/cheggaaa/pb/v3"
+	"github.com/dgraph-io/badger/v4"
 	"golang.org/x/crypto/sha3"
 )
 
@@ -240,4 +241,14 @@ func UnsealAES(key, ciphertext []byte) ([]byte, error) {
 	}
 
 	return plaintext, nil
+}
+
+func InitBatch(db *badger.DB) (*badger.WriteBatch, error) {
+	batch := db.NewWriteBatch()
+	count, err := cnst.GetMaxBatchCount()
+	if err != nil {
+		return nil, err
+	}
+	batch.SetMaxPendingTxns(count)
+	return batch, nil
 }

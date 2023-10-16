@@ -96,21 +96,7 @@ func (i *InputFile) UpdateInternalObjects(objectHash []byte) {
 	objHashStr := base64.StdEncoding.EncodeToString(objectHash)
 	i.internalObjects[objHashStr] = struct{}{}
 }
-func (i *InputFile) SetBatch() error {
-	i.batch = i.db.NewWriteBatch()
-	count, err := cnst.GetMaxBatchCount()
-	if err != nil {
-		return err
-	}
-	i.batch.SetMaxPendingTxns(count)
-	return nil
-}
-func (i *InputFile) GetBatch() (*badger.WriteBatch, error) {
-	if i.batch == nil {
-		return nil, cnst.ErrNilBatch
-	}
-	return i.batch, nil
-}
+
 func (i *InputFile) UpdateInputFile(name, namespace string, hash []byte, size, start int64) {
 	i.name = name
 	i.id = util.AppendToBytesSlice(namespace, hash)

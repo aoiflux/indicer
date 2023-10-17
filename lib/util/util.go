@@ -252,3 +252,11 @@ func InitBatch(db *badger.DB) (*badger.WriteBatch, error) {
 	batch.SetMaxPendingTxns(count)
 	return batch, nil
 }
+
+func GetArbitratyMapKey(kv map[string]struct{}) string {
+	var k string
+	for k = range kv {
+		break
+	}
+	return k
+}

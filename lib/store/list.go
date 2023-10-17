@@ -129,7 +129,8 @@ func listIndexedFiles(index int, ihash string, txn *badger.Txn) error {
 	}
 
 	for i := range idata.Names {
-		idata.Names[i] = strings.Split(idata.Names[i], cnst.DataSeperator)[2]
+		name := strings.Split(i, cnst.DataSeperator)[2]
+		idata.Names[name] = struct{}{}
 	}
 	fmt.Printf("\t\tNames: %v\n\n", idata.Names)
 

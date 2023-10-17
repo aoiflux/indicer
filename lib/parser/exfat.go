@@ -12,7 +12,6 @@ import (
 	"github.com/aoiflux/libxfat"
 	"github.com/dgraph-io/badger/v4"
 	"github.com/schollz/progressbar/v3"
-	"golang.org/x/exp/slices"
 )
 
 func IndexEXFAT(pfile structs.InputFile, idxChan chan error) {
@@ -160,11 +159,10 @@ func storeIndexedFile(infile structs.InputFile, batch *badger.WriteBatch, storeC
 	if err != nil && err != badger.ErrKeyNotFound {
 		storeChan <- err
 	}
-
-	if slices.Contains(indexedFile.Names, infile.GetName()) {
+	if _, ok := indexedFile.Names[infile.GetName()]; ok {
 		storeChan <- nil
 	}
 
-	indexedFile.Names = append(indexedFile.Names, infile.GetName())
+	indexedFile.Names[infile.GetName()] = struct{}{}
 	storeChan <- dbio.SetIndexedFile(infile.GetID(), indexedFile, batch)
 }

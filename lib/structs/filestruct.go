@@ -1,8 +1,8 @@
 package structs
 
 type baseFile struct {
-	Names []string `msgpack:"names"`
-	Size  int64    `msgpack:"size"`
+	Names map[string]struct{} `msgpack:"names"`
+	Size  int64               `msgpack:"size"`
 }
 type IndexedFile struct {
 	baseFile
@@ -10,7 +10,7 @@ type IndexedFile struct {
 }
 
 func NewIndexedFile(name string, start, size int64) IndexedFile {
-	bfile := baseFile{Names: []string{name}, Size: size}
+	bfile := baseFile{Names: map[string]struct{}{name: {}}, Size: size}
 	return IndexedFile{baseFile: bfile, Start: start}
 }
 

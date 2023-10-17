@@ -44,7 +44,8 @@ func restoreIndexedFile(fid []byte, dst *os.File, db *badger.DB) error {
 	if err != nil {
 		return err
 	}
-	ehash, err := util.GetEvidenceFileHash(indexedFile.Names[0])
+	iname := util.GetArbitratyMapKey(indexedFile.Names)
+	ehash, err := util.GetEvidenceFileHash(iname)
 	if err != nil {
 		return err
 	}
@@ -59,7 +60,8 @@ func restorePartitionFile(fid []byte, dst *os.File, db *badger.DB) error {
 	if err != nil {
 		return err
 	}
-	ehash, err := util.GetEvidenceFileHash(partitionFile.Names[0])
+	pname := util.GetArbitratyMapKey(partitionFile.Names)
+	ehash, err := util.GetEvidenceFileHash(pname)
 	if err != nil {
 		return err
 	}

@@ -11,7 +11,6 @@ import (
 
 	"github.com/dgraph-io/badger/v4"
 	"github.com/schollz/progressbar/v3"
-	"golang.org/x/exp/slices"
 )
 
 func Store(infile structs.InputFile, errchan chan error) {
@@ -29,10 +28,11 @@ func EvidenceFilePreStoreCheck(infile structs.InputFile) error {
 	if !evidenceFile.Completed {
 		return cnst.ErrIncompleteFile
 	}
-	if slices.Contains(evidenceFile.Names, infile.GetName()) {
+	if _, ok := evidenceFile.Names[infile.GetName()]; ok {
 		return nil
 	}
-	evidenceFile.Names = append(evidenceFile.Names, infile.GetName())
+
+	evidenceFile.Names[infile.GetName()] = struct{}{}
 	return dbio.SetFile(infile.GetID(), evidenceFile, infile.GetDB())
 }
 
@@ -51,11 +51,11 @@ func storePartitionFile(infile structs.InputFile) error {
 		return err
 	}
 
-	if slices.Contains(partitionFile.Names, infile.GetName()) {
+	if _, ok := partitionFile.Names[infile.GetName()]; ok {
 		return nil
 	}
 
-	partitionFile.Names = append(partitionFile.Names, infile.GetName())
+	partitionFile.Names[infile.GetName()] = struct{}{}
 	return dbio.SetFile(infile.GetID(), partitionFile, infile.GetDB())
 }
 
@@ -88,11 +88,11 @@ func evidenceFilePreflight(infile structs.InputFile) (structs.EvidenceFile, erro
 	if !evidenceFile.Completed {
 		return evidenceFile, nil
 	}
-	if slices.Contains(evidenceFile.Names, infile.GetName()) {
+	if _, ok := evidenceFile.Names[infile.GetName()]; ok {
 		return evidenceFile, nil
 	}
 
-	evidenceFile.Names = append(evidenceFile.Names, infile.GetName())
+	evidenceFile.Names[infile.GetName()] = struct{}{}
 	err = dbio.SetFile(infile.GetID(), evidenceFile, infile.GetDB())
 	return evidenceFile, err
 }

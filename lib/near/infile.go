@@ -62,7 +62,8 @@ func nearIndexFile(fid []byte, db *badger.DB, deep ...bool) (*structs.ConcMap, e
 	if len(deep) > 0 {
 		isdeep = deep[0]
 	}
-	return getNearLogicalFile(ifile.Start, ifile.Size, ifile.Names[0], fid, db, isdeep)
+	iname := util.GetArbitratyMapKey(ifile.Names)
+	return getNearLogicalFile(ifile.Start, ifile.Size, iname, fid, db, isdeep)
 }
 func nearPartitionFile(fid []byte, db *badger.DB, deep ...bool) (*structs.ConcMap, error) {
 	pfile, err := dbio.GetPartitionFile(fid, db)
@@ -73,7 +74,8 @@ func nearPartitionFile(fid []byte, db *badger.DB, deep ...bool) (*structs.ConcMa
 	if len(deep) > 0 {
 		isdeep = deep[0]
 	}
-	return getNearLogicalFile(pfile.Start, pfile.Size, pfile.Names[0], fid, db, isdeep)
+	pname := util.GetArbitratyMapKey(pfile.Names)
+	return getNearLogicalFile(pfile.Start, pfile.Size, pname, fid, db, isdeep)
 }
 func nearEvidenceFile(fid []byte, db *badger.DB, deep ...bool) (*structs.ConcMap, error) {
 	efile, err := dbio.GetEvidenceFile(fid, db)

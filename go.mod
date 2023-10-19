@@ -17,7 +17,6 @@ require (
 	github.com/shirou/gopsutil/v3 v3.23.9
 	github.com/vmihailenco/msgpack/v5 v5.4.0
 	golang.org/x/crypto v0.14.0
-	golang.org/x/exp v0.0.0-20231006140011-7918f672742d
 )
 
 require (

@@ -129,6 +129,10 @@ func listIndexedFiles(index int, ihash string, txn *badger.Txn) error {
 	}
 
 	for i := range idata.Names {
+		if !strings.Contains(i, cnst.DataSeperator) {
+			continue
+		}
+		delete(idata.Names, i)
 		name := strings.Split(i, cnst.DataSeperator)[2]
 		idata.Names[name] = struct{}{}
 	}

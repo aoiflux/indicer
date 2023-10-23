@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"indicer/lib/cnst"
 	"indicer/lib/structs"
+	"indicer/lib/util"
 	"strings"
 
 	"github.com/dgraph-io/badger/v4"
@@ -67,7 +68,7 @@ func listPartitions(phash string, txn *badger.Txn) error {
 		return err
 	}
 
-	pid := append([]byte(cnst.PartiFileNamespace), decodedPhash...)
+	pid := util.AppendToBytesSlice(cnst.PartiFileNamespace, decodedPhash)
 	item, err := txn.Get(pid)
 	if err != nil {
 		return err
@@ -102,13 +103,13 @@ func listPartitions(phash string, txn *badger.Txn) error {
 
 func listIndexedFiles(index int, ihash string, txn *badger.Txn) error {
 	fmt.Printf("\t\tIndexed %d ---> %s\n", index, ihash)
-	decidedIhash, err := base64.StdEncoding.DecodeString(ihash)
+	decodedIhash, err := base64.StdEncoding.DecodeString(ihash)
 	if err != nil {
 		return err
 	}
 
-	pid := append([]byte(cnst.IdxFileNamespace), decidedIhash...)
-	item, err := txn.Get(pid)
+	iid := util.AppendToBytesSlice(cnst.IdxFileNamespace, decodedIhash)
+	item, err := txn.Get(iid)
 	if err != nil {
 		return err
 	}

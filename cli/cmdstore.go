@@ -35,7 +35,7 @@ func StoreData(chonkSize int, dbpath, evipath string, key []byte, syncIndex, noI
 		return err
 	}
 	eviNode, err := dbio.GetEvidenceFile(eviFile.GetID(), eviFile.GetDB())
-	if err != nil {
+	if err != nil && err != badger.ErrKeyNotFound {
 		return err
 	}
 	if eviNode.Completed {

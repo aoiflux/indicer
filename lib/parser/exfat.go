@@ -32,8 +32,6 @@ func IndexEXFAT(pfile structs.InputFile, idxChan chan error) {
 	}
 
 	var flag bool
-	var active int
-	storeChan := make(chan error)
 	total := int64(len(indexableEntries))
 	bar := progressbar.Default(total, "indexing files")
 	bar.Clear()
@@ -43,17 +41,6 @@ func IndexEXFAT(pfile structs.InputFile, idxChan chan error) {
 		idxChan <- err
 	}
 
-	ifile := structs.NewInputFile(
-		pfile.GetDB(),
-		pfile.GetHandle(),
-		pfile.GetMappedFile(),
-		"",
-		"",
-		nil,
-		0,
-		0,
-	)
-
 	batch, err := util.InitBatch(pfile.GetDB())
 	if err != nil {
 		idxChan <- err
@@ -61,6 +48,7 @@ func IndexEXFAT(pfile structs.InputFile, idxChan chan error) {
 
 	var index int
 	var entry libxfat.Entry
+	idxmap := make(map[string]structs.IndexedFile)
 	for index, entry = range indexableEntries {
 		if !flag {
 			flag = checkChannel(idxChan)
@@ -76,34 +64,24 @@ func IndexEXFAT(pfile structs.InputFile, idxChan chan error) {
 		if err != nil {
 			idxChan <- err
 		}
-		ifile.UpdateInputFile(iname, cnst.IdxFileNamespace, ihash, isize, istart)
+
+		if val, ok := idxmap[string(ihash)]; ok {
+			if _, ok := val.Names[iname]; !ok {
+				val.Names[iname] = struct{}{}
+			}
+		} else {
+			idxmap[string(ihash)] = structs.NewIndexedFile(iname, istart, isize)
+		}
 		pfile.UpdateInternalObjects(ihash)
-
-		go storeIndexedFile(ifile, batch, storeChan)
-		active++
-
-		if active > cnst.GetMaxThreadCount() {
-			err = <-storeChan
-			if err != nil {
-				idxChan <- err
-			}
-			active--
-
-			if flag {
-				bar.Add(1)
-			}
-		}
-	}
-	for active > 0 {
-		err = <-storeChan
-		if err != nil {
-			idxChan <- err
-		}
-		active--
 
 		if flag {
 			bar.Add(1)
 		}
+	}
+
+	err = storeIndexedFiles(idxmap, pfile.GetDB(), batch)
+	if err != nil {
+		idxChan <- err
 	}
 
 	err = batch.Flush()
@@ -146,23 +124,35 @@ func parsEXFAT(fhandle *os.File, size int64) []structs.PartitionFile {
 	return []structs.PartitionFile{partition}
 }
 
-func storeIndexedFile(infile structs.InputFile, batch *badger.WriteBatch, storeChan chan error) {
-	indexedFile, err := dbio.GetIndexedFile(infile.GetID(), infile.GetDB())
-	if errors.Is(err, badger.ErrKeyNotFound) {
-		indexedFile = structs.NewIndexedFile(
-			infile.GetName(),
-			infile.GetStartIndex(),
-			infile.GetSize(),
-		)
-		storeChan <- dbio.SetIndexedFile(infile.GetID(), indexedFile, batch)
-	}
-	if err != nil && err != badger.ErrKeyNotFound {
-		storeChan <- err
-	}
-	if _, ok := indexedFile.Names[infile.GetName()]; ok {
-		storeChan <- nil
-	}
+func storeIndexedFiles(idxmap map[string]structs.IndexedFile, db *badger.DB, batch *badger.WriteBatch) error {
+	for ihash, idxfile := range idxmap {
+		id := util.AppendToBytesSlice(cnst.IdxFileNamespace, ihash)
+		oldIdxFile, err := dbio.GetIndexedFile(id, db)
+		if errors.Is(err, badger.ErrKeyNotFound) {
+			err = dbio.SetIndexedFile(id, idxfile, batch)
+			if err != nil {
+				return err
+			}
+			continue
+		}
+		if err != nil && err != badger.ErrKeyNotFound {
+			return err
+		}
 
-	indexedFile.Names[infile.GetName()] = struct{}{}
-	storeChan <- dbio.SetIndexedFile(infile.GetID(), indexedFile, batch)
+		flag := true
+		for name := range oldIdxFile.Names {
+			if _, ok := idxfile.Names[name]; !ok {
+				idxfile.Names[name] = struct{}{}
+				flag = false
+			}
+		}
+		if flag {
+			continue
+		}
+		err = dbio.SetIndexedFile(id, idxfile, batch)
+		if err != nil {
+			return err
+		}
+	}
+	return nil
 }

@@ -3,20 +3,20 @@ module indicer
 go 1.21
 
 require (
-	github.com/alecthomas/kingpin/v2 v2.3.2
+	github.com/alecthomas/kingpin/v2 v2.4.0
 	github.com/aoiflux/libxfat v0.0.0-20230228122432-d5f29d31de5d
 	github.com/cheggaaa/pb/v3 v3.1.4
 	github.com/dgraph-io/badger/v4 v4.2.0
 	github.com/diskfs/go-diskfs v1.4.0
 	github.com/dustin/go-humanize v1.0.1
 	github.com/edsrzf/mmap-go v1.1.0
-	github.com/fatih/color v1.15.0
-	github.com/go-echarts/go-echarts/v2 v2.2.7
-	github.com/klauspost/compress v1.17.0
-	github.com/schollz/progressbar/v3 v3.13.1
-	github.com/shirou/gopsutil/v3 v3.23.9
-	github.com/vmihailenco/msgpack/v5 v5.4.0
-	golang.org/x/crypto v0.14.0
+	github.com/fatih/color v1.16.0
+	github.com/go-echarts/go-echarts/v2 v2.3.2
+	github.com/klauspost/compress v1.17.3
+	github.com/schollz/progressbar/v3 v3.14.1
+	github.com/shirou/gopsutil/v3 v3.23.10
+	github.com/vmihailenco/msgpack/v5 v5.4.1
+	golang.org/x/crypto v0.15.0
 )
 
 require (
@@ -31,9 +31,9 @@ require (
 	github.com/golang/protobuf v1.5.3 // indirect
 	github.com/golang/snappy v0.0.4 // indirect
 	github.com/google/flatbuffers v23.5.26+incompatible // indirect
-	github.com/lufia/plan9stats v0.0.0-20230326075908-cb1d2100619a // indirect
+	github.com/lufia/plan9stats v0.0.0-20231016141302-07b5767bb0ed // indirect
 	github.com/mattn/go-colorable v0.1.13 // indirect
-	github.com/mattn/go-isatty v0.0.19 // indirect
+	github.com/mattn/go-isatty v0.0.20 // indirect
 	github.com/mattn/go-runewidth v0.0.15 // indirect
 	github.com/mitchellh/colorstring v0.0.0-20190213212951-d06e56a500db // indirect
 	github.com/pkg/errors v0.9.1 // indirect
@@ -45,8 +45,8 @@ require (
 	github.com/xhit/go-str2duration/v2 v2.1.0 // indirect
 	github.com/yusufpapurcu/wmi v1.2.3 // indirect
 	go.opencensus.io v0.24.0 // indirect
-	golang.org/x/net v0.17.0 // indirect
-	golang.org/x/sys v0.13.0 // indirect
-	golang.org/x/term v0.13.0 // indirect
+	golang.org/x/net v0.18.0 // indirect
+	golang.org/x/sys v0.14.0 // indirect
+	golang.org/x/term v0.14.0 // indirect
 	google.golang.org/protobuf v1.31.0 // indirect
 )

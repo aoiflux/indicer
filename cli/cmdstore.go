@@ -29,7 +29,7 @@ func StoreData(chonkSize int, dbpath, evipath string, key []byte, syncIndex, noI
 		return err
 	}
 
-	fmt.Println("Pre-store checks & indexing....")
+	fmt.Println("Pre-store checks....")
 	eviFile, err := initEvidenceFile(evipath, db)
 	if err != nil {
 		return err

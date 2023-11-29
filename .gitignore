@@ -23,3 +23,6 @@ go.work
 data/
 
 .vscode
+
+dues
+log

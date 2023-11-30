@@ -65,6 +65,11 @@ func GetFileHash(fileHandle *os.File) ([]byte, error) {
 		return nil, err
 	}
 
+	_, err = fileHandle.Seek(0, io.SeekStart)
+	if err != nil {
+		return nil, err
+	}
+
 	hash, err := getHash(fileHandle, info.Size(), true)
 	if err != nil {
 		return nil, err

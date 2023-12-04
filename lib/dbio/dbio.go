@@ -33,6 +33,10 @@ func ConnectDB(datadir string, key []byte) (*badger.DB, error) {
 	opts.CompactL0OnClose = true
 	opts.LmaxCompaction = true
 	opts.NumCompactors = opts.NumGoroutines
+	opts.BlockCacheSize = cacheLimit
+	opts.IndexCacheSize = cacheLimit
+	opts.ValueLogFileSize = 64 << 20
+	opts.ValueLogMaxEntries = uint32(opts.NumGoroutines)
 
 	return badger.Open(opts)
 }

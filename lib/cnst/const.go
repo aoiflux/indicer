@@ -105,7 +105,7 @@ func GetMaxThreadCount() int {
 	if MEMOPT {
 		return 1
 	}
-	return runtime.NumCPU() * 2
+	return runtime.NumCPU()
 }
 func GetCacheLimit() (int64, error) {
 	if MEMOPT {

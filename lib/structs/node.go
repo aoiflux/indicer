@@ -1,5 +1,6 @@
 package structs
 
 type ReverseRelation struct {
-	Value []byte `msgpack:"value"`
+	RevRelFileID []byte `msgpack:"rev_rel_file_id"`
+	Index        int64  `msgpack:"index"`
 }

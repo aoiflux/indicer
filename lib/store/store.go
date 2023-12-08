@@ -195,11 +195,11 @@ func processRel(index int64, fhash, chash []byte, db *badger.DB, batch *badger.W
 }
 func processRevRel(index int64, fhash, chash []byte, db *badger.DB, batch *badger.WriteBatch) error {
 	fhashStr := base64.StdEncoding.EncodeToString(fhash)
-	relVal := util.AppendToBytesSlice(cnst.RelationNamespace, fhashStr, cnst.DataSeperator, index)
+	revRelFileId := util.AppendToBytesSlice(cnst.RelationNamespace, fhashStr)
 	revRelKey := util.AppendToBytesSlice(cnst.ReverseRelationNamespace, chash)
 
 	revRelList, err := dbio.GetReverseRelationNode(revRelKey, db)
-	revRelNode := structs.ReverseRelation{Value: relVal}
+	revRelNode := structs.ReverseRelation{RevRelFileID: revRelFileId, Index: index}
 	if errors.Is(err, badger.ErrKeyNotFound) {
 		return dbio.SetReverseRelationNode(revRelKey, []structs.ReverseRelation{revRelNode}, batch)
 	}

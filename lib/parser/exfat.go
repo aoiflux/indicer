@@ -72,7 +72,7 @@ func IndexEXFAT(pfile structs.InputFile, idxChan chan error) {
 		} else {
 			idxmap[string(ihash)] = structs.NewIndexedFile(iname, istart, isize)
 		}
-		pfile.UpdateInternalObjects(ihash)
+		pfile.UpdateInternalObjects(istart, isize, ihash)
 
 		if flag {
 			bar.Add(1)

@@ -7,7 +7,6 @@ import (
 	"indicer/lib/dbio"
 	"indicer/lib/structs"
 	"indicer/lib/util"
-	"strconv"
 	"strings"
 
 	"github.com/dgraph-io/badger/v4"
@@ -24,20 +23,17 @@ func countRList(fhash []byte, idmap *structs.ConcMap, rim *structs.RimMap, near 
 	echan <- nil
 }
 func countEviFile(confidence float32, fhash []byte, idmap *structs.ConcMap, rim *structs.RimMap, rev structs.ReverseRelation, db *badger.DB) error {
-	if bytes.Contains(rev.Value, fhash) {
+	if bytes.Contains(rev.RevRelFileID, fhash) {
 		return nil
 	}
 
-	revhash := bytes.Split(rev.Value, []byte(cnst.RelationNamespace))[1]
+	revhash := bytes.Split(rev.RevRelFileID, []byte(cnst.RelationNamespace))[1]
 	eid, err := getIDFromHash(cnst.EviFileNamespace, string(revhash))
 	if err != nil {
 		return err
 	}
-	ridx, _, err := getIndicesFromHash(revhash)
-	if err != nil {
-		return err
-	}
-	if vs, ok := rim.Get(ridx); ok {
+
+	if vs, ok := rim.Get(rev.Index); ok {
 		for _, v := range vs {
 			idmap.Set(v, 1)
 		}
@@ -52,15 +48,15 @@ func countEviFile(confidence float32, fhash []byte, idmap *structs.ConcMap, rim 
 
 	if len(efile.InternalObjects) == 0 {
 		idmap.Set(string(eid), confidence)
-		rim.Set(ridx, string(eid))
+		rim.Set(rev.Index, string(eid))
 		return nil
 	}
-	return countPartiFile(confidence, ridx, fhash, eid, efile.InternalObjects, idmap, rim, db)
+	return countPartiFile(confidence, rev.Index, fhash, eid, efile.InternalObjects, idmap, rim, db)
 }
-func countPartiFile(confidence float32, ridx int64, fhash, eid []byte, phashes map[string]struct{}, idmap *structs.ConcMap, rim *structs.RimMap, db *badger.DB) error {
+func countPartiFile(confidence float32, ridx int64, fhash, eid []byte, phashes map[string]structs.InternalOffset, idmap *structs.ConcMap, rim *structs.RimMap, db *badger.DB) error {
 	var pindex int
-	for phash := range phashes {
-		pid, inRange, err := countFile(ridx, cnst.PartiFileNamespace, fhash, []byte(phash), db)
+	for phash, offset := range phashes {
+		pid, inRange, err := countFile(ridx, cnst.PartiFileNamespace, fhash, []byte(phash), offset, db)
 		if err != nil {
 			return err
 		}
@@ -95,10 +91,10 @@ func countPartiFile(confidence float32, ridx int64, fhash, eid []byte, phashes m
 	return nil
 }
 
-func countIdxFile(confidence float32, ridx int64, fhash, pid []byte, ihashes map[string]struct{}, idmap *structs.ConcMap, rim *structs.RimMap, db *badger.DB) error {
+func countIdxFile(confidence float32, ridx int64, fhash, pid []byte, ihashes map[string]structs.InternalOffset, idmap *structs.ConcMap, rim *structs.RimMap, db *badger.DB) error {
 	var iindex int
-	for ihash := range ihashes {
-		iid, inRange, err := countFile(ridx, cnst.IdxFileNamespace, fhash, []byte(ihash), db)
+	for ihash, offset := range ihashes {
+		iid, inRange, err := countFile(ridx, cnst.IdxFileNamespace, fhash, []byte(ihash), offset, db)
 		if err != nil {
 			return err
 		}
@@ -119,7 +115,7 @@ func countIdxFile(confidence float32, ridx int64, fhash, pid []byte, ihashes map
 
 	return nil
 }
-func countFile(ridx int64, namespace string, filter, fhash []byte, db *badger.DB) ([]byte, bool, error) {
+func countFile(ridx int64, namespace string, filter, fhash []byte, offset structs.InternalOffset, db *badger.DB) ([]byte, bool, error) {
 	if bytes.Contains(fhash, filter) {
 		return nil, false, nil
 	}
@@ -128,12 +124,8 @@ func countFile(ridx int64, namespace string, filter, fhash []byte, db *badger.DB
 	if err != nil {
 		return nil, false, err
 	}
-	start, end, err := getIndicesFromHash(fhash)
-	if err != nil {
-		return nil, false, err
-	}
 
-	inRange := isInRange(start, end, ridx)
+	inRange := isInRange(offset.Start, offset.End, ridx)
 	return id, inRange, nil
 }
 
@@ -145,25 +137,7 @@ func getIDFromHash(namespace, hashStr string) ([]byte, error) {
 	}
 	return util.AppendToBytesSlice(namespace, hash), nil
 }
-func getIndicesFromHash(hash []byte) (int64, int64, error) {
-	indices := bytes.Split(hash, []byte(cnst.DataSeperator))[1]
-	idxlist := bytes.Split(indices, []byte(cnst.RangeSeperator))
 
-	start, err := strconv.ParseInt(string(idxlist[0]), 10, 64)
-	if err != nil {
-		return cnst.IgnoreVar, cnst.IgnoreVar, err
-	}
-	if len(idxlist) == 1 {
-		return start, cnst.IgnoreVar, nil
-	}
-
-	end, err := strconv.ParseInt(string(idxlist[1]), 10, 64)
-	if err != nil {
-		return cnst.IgnoreVar, cnst.IgnoreVar, err
-	}
-
-	return start, end, nil
-}
 func isInRange(start, end, index int64) bool {
 	return index >= start && index <= end
 }

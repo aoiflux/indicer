@@ -55,7 +55,7 @@ func StoreData(chonkSize int, dbpath, evipath string, key []byte, syncIndex, noI
 					return err
 				}
 			}
-			eviFile.UpdateInternalObjects(phash)
+			eviFile.UpdateInternalObjects(partition.Start, partition.Size, phash)
 
 			ehash, err := eviFile.GetEncodedHash()
 			if err != nil {

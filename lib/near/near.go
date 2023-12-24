@@ -7,7 +7,6 @@ import (
 	"indicer/lib/dbio"
 	"indicer/lib/structs"
 	"indicer/lib/util"
-	"strings"
 
 	"github.com/dgraph-io/badger/v4"
 )
@@ -130,7 +129,6 @@ func countFile(ridx int64, namespace string, filter, fhash []byte, offset struct
 }
 
 func getIDFromHash(namespace, hashStr string) ([]byte, error) {
-	hashStr = strings.Split(hashStr, cnst.DataSeperator)[0]
 	hash, err := base64.StdEncoding.DecodeString(hashStr)
 	if err != nil {
 		return nil, err

@@ -94,7 +94,7 @@ func (i InputFile) GetNamespace() []byte {
 
 func (i *InputFile) UpdateInternalObjects(start, size int64, objectHash []byte) {
 	objHashStr := base64.StdEncoding.EncodeToString(objectHash)
-	end := start + size - 1
+	end := (start + size) - 1
 	i.internalObjects[objHashStr] = InternalOffset{start, end}
 }
 

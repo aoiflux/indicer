@@ -126,3 +126,50 @@ func GetMaxBatchCount() (int, error) {
 	batchCount := limit / uint64(ChonkSize)
 	return int(batchCount), nil
 }
+
+const GRAPH_START = `<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Artefact Relation Graph</title>
+    <script src="./vis.min.js"></script>
+    <style>
+        #nw {
+            width: 100%;
+            height: 100vh;
+            border: 1px solid lightgray;
+        }
+    </style>
+</head>
+
+<body>
+    <div id="nw"></div>
+    <script>
+        `
+const GRAPH_END = `
+        var container = document.getElementById("nw");
+        var data = {
+            nodes: nodes,
+            edges: edges
+        };
+        var options = {
+            edges: {
+                scaling: {
+                    min: 1,
+                    max: 5,
+                    label: {
+                        enabled: true,
+                        min: 10,
+                        max: 15
+                    }
+                },
+            }
+        };
+        var network = new vis.Network(container, data, options);
+    </script>
+</body>
+
+</html>
+`

@@ -61,7 +61,7 @@ func StoreData(chonkSize int, dbpath, evipath string, key []byte, syncIndex, noI
 			if err != nil {
 				return err
 			}
-			pname := string(util.AppendToBytesSlice(ehash, cnst.DataSeperator, cnst.PartitionIndexPrefix, index))
+			pname := string(util.AppendToBytesSlice(ehash, cnst.DataSeperator, eviFile.GetName(), "_", cnst.PartitionIndexPrefix, index))
 			pfile := structs.NewInputFile(
 				db,
 				eviFile.GetHandle(),

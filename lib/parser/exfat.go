@@ -50,6 +50,8 @@ func IndexEXFAT(pfile structs.InputFile, idxChan chan error) {
 	var entry libxfat.Entry
 	idxmap := make(map[string]structs.IndexedFile)
 	for index, entry = range indexableEntries {
+		indexableEntries = util.Reslice(indexableEntries, 0)
+
 		if !flag {
 			flag = checkChannel(idxChan)
 			if flag {
@@ -79,7 +81,7 @@ func IndexEXFAT(pfile structs.InputFile, idxChan chan error) {
 		}
 	}
 
-	err = storeIndexedFiles(idxmap, pfile.GetDB(), batch)
+	err = storeIndexedFiles(idxmap, pfile.GetDB(), batch, idxChan)
 	if err != nil {
 		idxChan <- err
 	}
@@ -124,8 +126,21 @@ func parsEXFAT(fhandle *os.File, size int64) []structs.PartitionFile {
 	return []structs.PartitionFile{partition}
 }
 
-func storeIndexedFiles(idxmap map[string]structs.IndexedFile, db *badger.DB, batch *badger.WriteBatch) error {
+func storeIndexedFiles(idxmap map[string]structs.IndexedFile, db *badger.DB, batch *badger.WriteBatch, idxChan chan error) error {
+	var pflag bool
+	total := int64(len(idxmap))
+	bar := progressbar.Default(total, "indexing files")
+	bar.Clear()
+
 	for ihash, newIdxfile := range idxmap {
+		delete(idxmap, ihash)
+		if !pflag {
+			pflag = checkChannel(idxChan)
+			if pflag {
+				bar.Set(1)
+			}
+		}
+
 		id := util.AppendToBytesSlice(cnst.IdxFileNamespace, ihash)
 		oldIdxFile, err := dbio.GetIndexedFile(id, db)
 		if errors.Is(err, badger.ErrKeyNotFound) {
@@ -172,6 +187,14 @@ func storeIndexedFiles(idxmap map[string]structs.IndexedFile, db *badger.DB, bat
 		if err != nil {
 			return err
 		}
+
+		if flag {
+			bar.Add(1)
+		}
+	}
+
+	if pflag {
+		bar.Finish()
 	}
 	return nil
 }

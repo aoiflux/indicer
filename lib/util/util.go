@@ -17,6 +17,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/aoiflux/libxfat"
 	"github.com/cheggaaa/pb/v3"
 	"github.com/dgraph-io/badger/v4"
 	"golang.org/x/crypto/sha3"
@@ -264,4 +265,13 @@ func GetArbitratyMapKey(kv map[string]struct{}) string {
 		break
 	}
 	return k
+}
+
+type slicer interface {
+	any | libxfat.Entry
+}
+
+func Reslice[T slicer](slice []T, index int) []T {
+	slice[index] = slice[len(slice)-1]
+	return slice[:len(slice)-1]
 }

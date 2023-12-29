@@ -136,6 +136,27 @@ func PingNode(key []byte, db *badger.DB) error {
 		return err
 	})
 }
+func GetChonkData(restoreIndex, start, size, dbstart int64, key []byte, db *badger.DB) ([]byte, error) {
+	end := start + size
+
+	data, err := GetChonkNode(key, db)
+	if err != nil {
+		return nil, err
+	}
+
+	if restoreIndex == dbstart {
+		actualStart := start - restoreIndex
+		data = data[actualStart:]
+	}
+	if size < int64(len(data)) {
+		data = data[:size]
+	} else if (restoreIndex + cnst.ChonkSize) > end {
+		actualEnd := end - restoreIndex
+		data = data[:actualEnd]
+	}
+
+	return data, nil
+}
 func GetChonkNode(key []byte, db *badger.DB) ([]byte, error) {
 	cfpath, err := GetNode(key, db)
 	if err != nil {

@@ -79,7 +79,7 @@ func (vg *viz) populateGraph(fid []byte, idmap *structs.ConcMap) error {
 }
 
 func (vg *viz) groupNodes(id []byte, isTarget bool, tonodes ...*cgraph.Node) (*cgraph.Node, error) {
-	names, err := getNames(id, vg.db)
+	names, err := GetNames(id, vg.db, true)
 	if err != nil {
 		return nil, err
 	}
@@ -144,15 +144,26 @@ func (vg *viz) groupNodes(id []byte, isTarget bool, tonodes ...*cgraph.Node) (*c
 	return idnode, nil
 }
 
-func getNames(id []byte, db *badger.DB) (map[string]struct{}, error) {
+func GetNames(id []byte, db *badger.DB, unique ...bool) (map[string]struct{}, error) {
+	var uniqueFlag bool
+	if len(unique) > 0 {
+		uniqueFlag = unique[0]
+	}
+
 	if bytes.HasPrefix(id, []byte(cnst.IdxFileNamespace)) {
 		ifile, err := dbio.GetIndexedFile(id, db)
-		return getUniqueNames(ifile.Names), err
+		if uniqueFlag {
+			return getUniqueNames(ifile.Names), err
+		}
+		return ifile.Names, err
 	}
 
 	if bytes.HasPrefix(id, []byte(cnst.PartiFileNamespace)) {
 		pfile, err := dbio.GetPartitionFile(id, db)
-		return getUniqueNames(pfile.Names), err
+		if uniqueFlag {
+			return getUniqueNames(pfile.Names), err
+		}
+		return pfile.Names, err
 	}
 
 	efile, err := dbio.GetEvidenceFile(id, db)
@@ -165,6 +176,7 @@ func getNames(id []byte, db *badger.DB) (map[string]struct{}, error) {
 func getUniqueNames(names map[string]struct{}) map[string]struct{} {
 	uniqueMap := make(map[string]struct{})
 	interimMap := make(map[string]string)
+
 	for name := range names {
 		split := strings.Split(name, cnst.DataSeperator)
 		val := split[len(split)-1]

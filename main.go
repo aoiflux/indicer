@@ -50,6 +50,9 @@ func main() {
 	cmdout := cmdnear.Command(cnst.SubCmdOut, "Finds NeAr objects & generates GReAt graph for file OUTside of the database")
 	outpath := cmdout.Arg(cnst.OperandFile, "Path to the file for which you need to run NeAr").String()
 
+	cmdsearch := app.Command(cnst.CmdSearch, "Search anything in DUES DB")
+	query := cmdsearch.Arg(cnst.OperandQuery, "Search query string").String()
+
 	cmdreset := app.Command(cnst.CmdReset, "Delete the database")
 
 	var err error
@@ -79,6 +82,8 @@ func main() {
 		err = cli.NearInData(*deep, *chonkSize, *dbpath, *inhash, key)
 	case cmdout.FullCommand():
 		err = cli.NearOutData(*chonkSize, *dbpath, *outpath, key)
+	case cmdsearch.FullCommand():
+		err = cli.SearchCmd(*chonkSize, *query, *dbpath, key)
 	case cmdreset.FullCommand():
 		err = cli.ResetData(*dbpath)
 	}

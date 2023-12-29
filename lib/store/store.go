@@ -153,7 +153,7 @@ func storeEvidenceData(infile structs.InputFile) error {
 
 	bar.Add64(cnst.ChonkSize)
 	bar.Finish()
-	return nil
+	return bar.Close()
 }
 func storeWorker(tio structs.ThreadIO) {
 	lostChonk := tio.MappedFile[tio.Index:tio.ChonkEnd]

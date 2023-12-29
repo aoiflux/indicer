@@ -70,6 +70,7 @@ const (
 	CmdReset   = "reset"
 	SubCmdIn   = "in"
 	SubCmdOut  = "out"
+	CmdSearch  = "search"
 
 	FlagDBPath               = "dbpath"
 	FlagDBPathShort          = 'd'
@@ -92,8 +93,9 @@ const (
 	FlagNoIndex              = "no-index"
 	FlagNoIndexShort         = 'n'
 
-	OperandFile = "FILE"
-	OperandHash = "HASH"
+	OperandFile  = "FILE"
+	OperandHash  = "HASH"
+	OperandQuery = "QUERY"
 )
 
 const IgnoreVar int64 = -1

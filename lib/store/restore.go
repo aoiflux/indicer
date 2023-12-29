@@ -144,5 +144,5 @@ func restoreData(meta structs.FileMeta, dst *os.File, db *badger.DB) error {
 
 	bar.Finish()
 	fmt.Println("Restored file with size: ", humanize.Bytes(uint64(meta.Size)))
-	return nil
+	return bar.Close()
 }

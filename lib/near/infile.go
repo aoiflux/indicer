@@ -7,6 +7,7 @@ import (
 	"indicer/lib/dbio"
 	"indicer/lib/structs"
 	"indicer/lib/util"
+	"strings"
 	"time"
 
 	"github.com/dgraph-io/badger/v4"
@@ -40,6 +41,11 @@ func NearInFile(fhash string, db *badger.DB, deep ...bool) error {
 	} else {
 		idmap, err = nearEvidenceFile(fid, db, isdeep)
 	}
+	if err != nil {
+		return err
+	}
+
+	err = updateConfidence(idmap, db)
 	if err != nil {
 		return err
 	}
@@ -150,6 +156,40 @@ func getNearFile(start, size int64, ehash, fid []byte, db *badger.DB, deep ...bo
 	return idmap, nil
 }
 
+func updateConfidence(idmap *structs.ConcMap, db *badger.DB) error {
+	var size int64
+	for id := range idmap.GetData() {
+		if strings.HasPrefix(id, cnst.IdxFileNamespace) {
+			ifile, err := dbio.GetIndexedFile([]byte(id), db)
+			if err != nil {
+				return err
+			}
+			size = ifile.Size
+		}
+		if strings.HasPrefix(id, cnst.PartiFileNamespace) {
+			pfile, err := dbio.GetPartitionFile([]byte(id), db)
+			if err != nil {
+				return err
+			}
+			size = pfile.Size
+		}
+		if strings.HasPrefix(id, cnst.EviFileNamespace) {
+			efile, err := dbio.GetEvidenceFile([]byte(id), db)
+			if err != nil {
+				return err
+			}
+			size = efile.Size
+		}
+
+		chonks := float64(size / cnst.ChonkSize)
+		confidence, _ := idmap.Get(id)
+		confidence = (confidence / chonks) * 100
+		idmap.Set(id, confidence, true)
+	}
+
+	return nil
+}
+
 // getNear function loops through entire file indexed in db
 // finds all the relation nodes, uses relation nodes to find
 // all the chonk --> rel reverse relation objects
@@ -187,7 +227,7 @@ func getNear(start, size int64, ehash []byte, db *badger.DB, deep ...bool) chan 
 			neargen.Confidence = 1
 
 			if len(revlist) < 2 && deep[0] {
-				var confidence float32
+				var confidence float64
 				revlist, confidence, err = partialMatch(chash, db)
 				if err != nil {
 					neargen.Err = err
@@ -204,16 +244,16 @@ func getNear(start, size int64, ehash []byte, db *badger.DB, deep ...bool) chan 
 	return neargenChan
 }
 
-func partialMatch(chash []byte, db *badger.DB) ([]structs.ReverseRelation, float32, error) {
+func partialMatch(chash []byte, db *badger.DB) ([]structs.ReverseRelation, float64, error) {
 	ckey := util.AppendToBytesSlice(cnst.ChonkNamespace, chash)
 	cdata, err := dbio.GetNode(ckey, db)
 	if err != nil {
-		return nil, float32(cnst.IgnoreVar), err
+		return nil, float64(cnst.IgnoreVar), err
 	}
 
 	pMatchKey, confidence, err := partialChonkMatch(cdata, db)
 	if err != nil {
-		return nil, float32(cnst.IgnoreVar), err
+		return nil, float64(cnst.IgnoreVar), err
 	}
 
 	phash := bytes.Split(pMatchKey, []byte(cnst.NamespaceSeperator))[1]

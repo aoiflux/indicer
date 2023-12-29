@@ -21,7 +21,7 @@ func countRList(fhash []byte, idmap *structs.ConcMap, rim *structs.RimMap, near 
 	}
 	echan <- nil
 }
-func countEviFile(confidence float32, fhash []byte, idmap *structs.ConcMap, rim *structs.RimMap, rev structs.ReverseRelation, db *badger.DB) error {
+func countEviFile(confidence float64, fhash []byte, idmap *structs.ConcMap, rim *structs.RimMap, rev structs.ReverseRelation, db *badger.DB) error {
 	if bytes.Contains(rev.RevRelFileID, fhash) {
 		return nil
 	}
@@ -52,7 +52,7 @@ func countEviFile(confidence float32, fhash []byte, idmap *structs.ConcMap, rim 
 	}
 	return countPartiFile(confidence, rev.Index, fhash, eid, efile.InternalObjects, idmap, rim, db)
 }
-func countPartiFile(confidence float32, ridx int64, fhash, eid []byte, phashes map[string]structs.InternalOffset, idmap *structs.ConcMap, rim *structs.RimMap, db *badger.DB) error {
+func countPartiFile(confidence float64, ridx int64, fhash, eid []byte, phashes map[string]structs.InternalOffset, idmap *structs.ConcMap, rim *structs.RimMap, db *badger.DB) error {
 	var pindex int
 	for phash, offset := range phashes {
 		pid, inRange, err := countFile(ridx, cnst.PartiFileNamespace, fhash, []byte(phash), offset, db)
@@ -90,7 +90,7 @@ func countPartiFile(confidence float32, ridx int64, fhash, eid []byte, phashes m
 	return nil
 }
 
-func countIdxFile(confidence float32, ridx int64, fhash, pid []byte, ihashes map[string]structs.InternalOffset, idmap *structs.ConcMap, rim *structs.RimMap, db *badger.DB) error {
+func countIdxFile(confidence float64, ridx int64, fhash, pid []byte, ihashes map[string]structs.InternalOffset, idmap *structs.ConcMap, rim *structs.RimMap, db *badger.DB) error {
 	var iindex int
 	for ihash, offset := range ihashes {
 		iid, inRange, err := countFile(ridx, cnst.IdxFileNamespace, fhash, []byte(ihash), offset, db)
@@ -140,8 +140,8 @@ func isInRange(start, end, index int64) bool {
 	return index >= start && index <= end
 }
 
-func partialChonkMatch(chonk []byte, db *badger.DB) ([]byte, float32, error) {
-	var confidence float32
+func partialChonkMatch(chonk []byte, db *badger.DB) ([]byte, float64, error) {
+	var confidence float64
 	var keyToReturn []byte
 
 	err := db.View(func(txn *badger.Txn) error {

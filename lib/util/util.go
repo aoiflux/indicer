@@ -162,7 +162,7 @@ func HashPassword(password string) []byte {
 	return hash[:]
 }
 
-func PartialMatchConfidence(s1, s2 []byte) float32 {
+func PartialMatchConfidence(s1, s2 []byte) float64 {
 	minLength := len(s1)
 	if len(s2) < minLength {
 		minLength = len(s2)
@@ -175,7 +175,7 @@ func PartialMatchConfidence(s1, s2 []byte) float32 {
 		}
 	}
 
-	return float32(similarCount) / float32(minLength)
+	return float64(similarCount) / float64(minLength)
 }
 
 func GetDBStartOffset(startIndex int64) int64 {

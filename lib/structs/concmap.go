@@ -6,27 +6,36 @@ import (
 
 type ConcMap struct {
 	mu   sync.Mutex
-	data map[string]float32
+	data map[string]float64
 }
 
 func NewConcMap() *ConcMap {
 	return &ConcMap{
-		data: make(map[string]float32),
+		data: make(map[string]float64),
 	}
 }
 
-func (c *ConcMap) Set(key string, _v float32) {
+func (c *ConcMap) Set(key string, _v float64, replace ...bool) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 
-	if v, ok := c.data[key]; ok {
+	v, ok := c.data[key]
+
+	if ok {
+		if len(replace) > 0 {
+			if replace[0] {
+				c.data[key] = _v
+				return
+			}
+		}
+
 		c.data[key] = v + _v
-	} else {
-		c.data[key] = _v
+		return
 	}
+	c.data[key] = _v
 }
 
-func (c *ConcMap) Get(key string) (float32, bool) {
+func (c *ConcMap) Get(key string) (float64, bool) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 
@@ -34,6 +43,6 @@ func (c *ConcMap) Get(key string) (float32, bool) {
 	return value, ok
 }
 
-func (c *ConcMap) GetData() map[string]float32 {
+func (c *ConcMap) GetData() map[string]float64 {
 	return c.data
 }

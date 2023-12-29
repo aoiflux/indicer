@@ -3,5 +3,5 @@ package structs
 type NearGen struct {
 	RevList    []ReverseRelation
 	Err        error
-	Confidence float32
+	Confidence float64
 }

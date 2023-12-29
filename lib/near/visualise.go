@@ -69,10 +69,10 @@ func (vg *viz) populateGraph(fid []byte, idmap *structs.ConcMap) error {
 		if err != nil {
 			return err
 		}
-		edge.SetLabel(fmt.Sprintf("related | confidence: %f", confidence))
+		edge.SetLabel(fmt.Sprintf("related | confidence: %f%%", confidence))
 		edge.SetLabelFontColor("blue")
 		edge.SetColor("blue")
-		edge.SetPenWidth(float64(confidence))
+		edge.SetPenWidth(confidence / 10)
 	}
 
 	return nil
@@ -109,7 +109,6 @@ func (vg *viz) groupNodes(id []byte, isTarget bool, tonodes ...*cgraph.Node) (*c
 				return nil, err
 			}
 			edge.SetLabel("alias")
-			edge.SetPenWidth(1)
 		}
 
 		for _, tonode := range tonodes {
@@ -118,7 +117,6 @@ func (vg *viz) groupNodes(id []byte, isTarget bool, tonodes ...*cgraph.Node) (*c
 				return nil, err
 			}
 			edge.SetLabel("child")
-			edge.SetPenWidth(1)
 		}
 
 		if len(split) > 1 {

@@ -1,11 +1,15 @@
 package cli
 
 import (
+	"indicer/lib/cnst"
 	"indicer/lib/search"
 	"strings"
 )
 
 func SearchCmd(chonkSize int, query, dbpath string, key []byte) error {
+	if len(query) < 2 {
+		return cnst.ErrSmallQuery
+	}
 	db, err := common(chonkSize, dbpath, key)
 	if err != nil {
 		return err

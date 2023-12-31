@@ -213,26 +213,6 @@ func subBytesChonk(fidStr string, query, chonk []byte) {
 	idmap.Set(fidStr, count)
 }
 
-// track count + location, takes too long to run
-// func subBytesChonk(cnum int64, fidStr string, query, chonk []byte) {
-// 	chonk = bytes.ToLower(chonk)
-// 	cindex := int64(bytes.Index(chonk, query))
-
-// 	var offset int64
-// 	for cindex != -1 {
-// 		chonk = chonk[cindex:]
-
-// 		cindex = (cnum * cnst.ChonkSize) + (cindex + offset)
-// 		if !idmap.GetLocOk(cindex) {
-// 			idmap.Set(fidStr, 1)
-// 			idmap.SetLoc(cindex)
-// 		}
-
-// 		offset = cindex
-// 		cindex = int64(bytes.Index(chonk, query))
-// 	}
-// }
-
 func searchReport(query string, db *badger.DB) error {
 	var report structs.SearchReport
 	report.Query = query

@@ -23,7 +23,6 @@ func (s *SeenChonkMap) GetOk(key []byte) bool {
 type SearchIDMap struct {
 	mu   sync.Mutex
 	data map[string]int
-	// loc  map[int64]struct{}
 }
 
 func NewSearchIDMap() *SearchIDMap {
@@ -41,15 +40,3 @@ func (s *SearchIDMap) Set(key string, _val int) {
 	s.data[key] = _val
 }
 func (s *SearchIDMap) GetData() map[string]int { return s.data }
-
-// func (s *SearchIDMap) SetLoc(key int64) {
-// 	s.mu.Lock()
-// 	defer s.mu.Unlock()
-// 	s.loc[key] = struct{}{}
-// }
-// func (s *SearchIDMap) GetLocOk(key int64) bool {
-// 	s.mu.Lock()
-// 	defer s.mu.Unlock()
-// 	_, ok := s.loc[key]
-// 	return ok
-// }

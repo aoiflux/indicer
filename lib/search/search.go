@@ -149,17 +149,27 @@ func searchChonk(sindex, dbstart, end int64, fid, query string, meta structs.Fil
 		return
 	}
 
-	ok1 := cmap.GetOk(s1key)
 	nxtidx := sindex + cnst.ChonkSize
-	if nxtidx >= end {
-		if !ok1 {
-			subBytesChonk(fid, []byte(query), state1)
+	qoffset := (len(state1) - 1) - (len(query) - 2)
+	qstate1 := state1[qoffset:]
+
+	if nxtidx < end {
+		if sindex == dbstart {
+			state1 = state1[:qoffset-1]
 		}
+		if sindex != dbstart {
+			state1 = state1[(len(query)-2)+1 : qoffset-1]
+		}
+	}
+	ok1 := cmap.GetOk(s1key)
+	if !ok1 {
+		subBytesChonk(fid, []byte(query), state1)
+		cmap.Set(s1key)
+	}
+
+	if nxtidx >= end {
 		echan <- nil
 		return
-	}
-	if !ok1 {
-		cmap.Set(s1key)
 	}
 
 	s2key, state2, err := getChonkState(nxtidx, dbstart, end, meta, db)
@@ -170,24 +180,15 @@ func searchChonk(sindex, dbstart, end int64, fid, query string, meta structs.Fil
 
 	ok2 := cmap.GetOk(s2key)
 	if ok1 && ok2 {
-		echan <- err
+		echan <- nil
 		return
 	}
 
-	if !ok2 {
-		cmap.Set(s2key)
-	}
-
-	qoffset := (len(state1) - 1) - (len(query) - 2)
-
-	// take last few bytes of state1, containing 1 byte less than query bytes
-	state1 = state1[qoffset:]
-
-	// take first few bytes of state1, containing 1 byte less than query bytes
+	qoffset = len(query) - 2
 	state2 = state2[:qoffset]
 
 	// at least one byte of query on either side is required for an overlap
-	qtate := append(state1, state2...)
+	qtate := append(qstate1, state2...)
 	subBytesChonk(fid, []byte(query), qtate)
 	echan <- nil
 }

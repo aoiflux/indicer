@@ -9,12 +9,7 @@ type ConcMap struct {
 	data map[string]float64
 }
 
-func NewConcMap() *ConcMap {
-	return &ConcMap{
-		data: make(map[string]float64),
-	}
-}
-
+func NewConcMap() *ConcMap { return &ConcMap{data: make(map[string]float64)} }
 func (c *ConcMap) Set(key string, _v float64, replace ...bool) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
@@ -34,7 +29,6 @@ func (c *ConcMap) Set(key string, _v float64, replace ...bool) {
 	}
 	c.data[key] = _v
 }
-
 func (c *ConcMap) Get(key string) (float64, bool) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
@@ -42,7 +36,4 @@ func (c *ConcMap) Get(key string) (float64, bool) {
 	value, ok := c.data[key]
 	return value, ok
 }
-
-func (c *ConcMap) GetData() map[string]float64 {
-	return c.data
-}
+func (c *ConcMap) GetData() map[string]float64 { return c.data }

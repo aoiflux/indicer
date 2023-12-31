@@ -129,7 +129,7 @@ func restoreData(meta structs.FileMeta, dst *os.File, db *badger.DB) error {
 		}
 
 		ckey := util.AppendToBytesSlice(cnst.ChonkNamespace, chash)
-		data, err := dbio.GetChonkData(restoreIndex, meta.Start, meta.Size, dbstart, ckey, db)
+		data, err := dbio.GetChonkData(restoreIndex, meta.Start, meta.Size, dbstart, end, ckey, db)
 		if err != nil {
 			return err
 		}

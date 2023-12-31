@@ -136,9 +136,7 @@ func PingNode(key []byte, db *badger.DB) error {
 		return err
 	})
 }
-func GetChonkData(restoreIndex, start, size, dbstart int64, key []byte, db *badger.DB) ([]byte, error) {
-	end := start + size
-
+func GetChonkData(restoreIndex, start, size, dbstart, end int64, key []byte, db *badger.DB) ([]byte, error) {
 	data, err := GetChonkNode(key, db)
 	if err != nil {
 		return nil, err

@@ -20,13 +20,13 @@ import (
 )
 
 var (
-	cmap  map[string]struct{}
-	idmap map[string]int
+	cmap  *structs.SeenChonkMap
+	idmap *structs.SearchIDMap
 )
 
 func init() {
-	cmap = make(map[string]struct{})
-	idmap = make(map[string]int)
+	cmap = structs.NewSeenChonkMap()
+	idmap = structs.NewSearchIDMap()
 }
 
 func Search(query string, db *badger.DB) error {
@@ -70,118 +70,141 @@ func searchFiles(namespace, query string, db *badger.DB) error {
 		it := txn.NewIterator(opts)
 		defer it.Close()
 
+		errChan := make(chan error)
+		var active int
+
 		prefix := []byte(namespace)
 		for it.Seek(prefix); it.ValidForPrefix(prefix); it.Next() {
+			if active > cnst.GetMaxThreadCount() {
+				active--
+				err := <-errChan
+				if err != nil {
+					return err
+				}
+			}
+
 			item := it.Item()
 			fid := item.KeyCopy(nil)
-			err := searchAllFiles(query, fid, db)
+			go searchAllFiles(query, fid, db, errChan)
+			active++
+		}
+
+		for active > 0 {
+			active--
+			err := <-errChan
 			if err != nil {
 				return err
 			}
 		}
-
 		return nil
 	})
 
 	return err
 }
 
-func searchAllFiles(query string, fid []byte, db *badger.DB) error {
+func searchAllFiles(query string, fid []byte, db *badger.DB, errChan chan error) {
 	meta, err := store.GetFileMeta(fid, db)
 	if err != nil {
-		return err
+		errChan <- err
 	}
-	return searchChonks(string(fid), query, meta, db)
+	errChan <- searchChonks(string(fid), query, meta, db)
 }
 
 func searchChonks(fidStr, query string, meta structs.FileMeta, db *badger.DB) error {
-	var state1, state2 []byte
-
 	var dbstart int64
 	if meta.Start > 0 {
 		dbstart = util.GetDBStartOffset(meta.Start)
 	}
 	end := meta.Start + meta.Size
 
-	var found bool
-	for searchIndex := dbstart; searchIndex < end; searchIndex += cnst.ChonkSize {
-		// get state 1
-		relKey := util.AppendToBytesSlice(cnst.RelationNamespace, meta.EviHash, cnst.DataSeperator, searchIndex)
-		chash, err := dbio.GetNode(relKey, db)
+	echan := make(chan error)
+	var active int
+	for sindex := dbstart; sindex < end; sindex += cnst.ChonkSize {
+		for active > cnst.GetMaxThreadCount() {
+			active--
+			err := <-echan
+			if err != nil {
+				return err
+			}
+		}
+		go searchChonk(sindex, dbstart, end, fidStr, query, meta, db, echan)
+		active++
+	}
+
+	for active > 0 {
+		active--
+		err := <-echan
 		if err != nil {
 			return err
 		}
-		ckey := util.AppendToBytesSlice(cnst.ChonkNamespace, chash)
-		if _, ok := cmap[string(ckey)]; ok {
-			continue
-		}
-
-		// state 1 search
-		state1, err = dbio.GetChonkData(searchIndex, meta.Start, meta.Size, dbstart, ckey, db)
-		if err != nil {
-			return err
-		}
-		found = subBytesChonk(fidStr, []byte(query), state1)
-		if found {
-			continue
-		}
-
-		if searchIndex+cnst.ChonkSize >= end {
-			continue
-		}
-
-		// get state 2
-		relKey = util.AppendToBytesSlice(cnst.RelationNamespace, meta.EviHash, cnst.DataSeperator, searchIndex+cnst.ChonkSize)
-		chash, err = dbio.GetNode(relKey, db)
-		if err != nil {
-			return err
-		}
-		ckey = util.AppendToBytesSlice(cnst.ChonkNamespace, chash)
-
-		// state 2 search
-		state2, err = dbio.GetChonkData(searchIndex+cnst.ChonkSize, meta.Start, meta.Size, dbstart, ckey, db)
-		if err != nil {
-			return err
-		}
-
-		found = subBytesChonk(fidStr, []byte(query), state2)
-		if found {
-			continue
-		}
-
-		if _, ok := cmap[string(ckey)]; ok {
-			continue
-		}
-
-		// state 1+2 search
-		bigState := append(state1, state2...)
-		subBytesChonk(fidStr, []byte(query), bigState)
 	}
 
 	return nil
 }
 
-func subBytesChonk(fidStr string, query, chonk []byte) bool {
-	chonk = bytes.ToLower(chonk)
-
-	if count := bytes.Count(chonk, query); count > 0 {
-		if val, ok := idmap[fidStr]; ok {
-			idmap[fidStr] = val + count
-			return true
-		}
-
-		idmap[fidStr] = count
-		return true
+func searchChonk(sindex, dbstart, end int64, fid, query string, meta structs.FileMeta, db *badger.DB, echan chan error) {
+	s1key, state1, err := getChonkState(sindex, dbstart, end, meta, db)
+	if err != nil {
+		echan <- err
+		return
 	}
 
-	return false
+	ok1 := cmap.GetOk(s1key)
+	nxtidx := sindex + cnst.ChonkSize
+	if nxtidx >= end {
+		if !ok1 {
+			cmap.Set(s1key)
+			subBytesChonk(fid, []byte(query), state1)
+		}
+		echan <- nil
+		return
+	}
+
+	s2key, state2, err := getChonkState(nxtidx, dbstart, end, meta, db)
+	if err != nil {
+		echan <- err
+		return
+	}
+
+	ok2 := cmap.GetOk(s2key)
+	if ok1 && ok2 {
+		echan <- err
+		return
+	}
+
+	if ok := cmap.GetOk(s2key); !ok {
+		cmap.Set(s2key)
+	}
+	bigState := append(state1, state2...)
+	subBytesChonk(fid, []byte(query), bigState)
+	echan <- nil
+}
+
+func getChonkState(searchIndex, dbstart, end int64, meta structs.FileMeta, db *badger.DB) ([]byte, []byte, error) {
+	relKey := util.AppendToBytesSlice(cnst.RelationNamespace, meta.EviHash, cnst.DataSeperator, searchIndex)
+	chash, err := dbio.GetNode(relKey, db)
+	if err != nil {
+		return nil, nil, err
+	}
+	ckey := util.AppendToBytesSlice(cnst.ChonkNamespace, chash)
+	state, err := dbio.GetChonkData(searchIndex, meta.Start, meta.Size, dbstart, end, ckey, db)
+	return ckey, state, err
+}
+
+func subBytesChonk(fidStr string, query, chonk []byte) {
+	chonk = bytes.ToLower(chonk)
+	count := bytes.Count(chonk, query)
+	if count <= 0 {
+		return
+	}
+	idmap.Set(fidStr, count)
 }
 
 func searchReport(query string, db *badger.DB) error {
 	var report structs.SearchReport
 	report.Query = query
 
-	for id, count := range idmap {
+	for id, count := range idmap.GetData() {
 		names, err := near.GetNames([]byte(id), db)
 		if err != nil {
 			return err

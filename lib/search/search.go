@@ -153,14 +153,18 @@ func searchChonk(sindex, dbstart, end int64, fid, query string, meta structs.Fil
 	qoffset := (len(state1) - 1) - (len(query) - 2)
 	qstate1 := state1[qoffset:]
 
+	if sindex > dbstart && nxtidx >= end {
+		state1 = state1[len(query)-1:]
+	}
 	if nxtidx < end {
 		if sindex == dbstart {
 			state1 = state1[:qoffset-1]
 		}
 		if sindex != dbstart {
-			state1 = state1[(len(query)-2)+1 : qoffset-1]
+			state1 = state1[len(query)-1 : qoffset-1]
 		}
 	}
+
 	ok1 := cmap.GetOk(s1key)
 	if !ok1 {
 		subBytesChonk(fid, []byte(query), state1)

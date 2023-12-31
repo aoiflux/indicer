@@ -211,14 +211,17 @@ func searchReport(query string, db *badger.DB) error {
 		}
 
 		hash := strings.Split(id, cnst.NamespaceSeperator)[1]
-		hashDate := []byte(hash)
-		hashStr := base64.StdEncoding.EncodeToString(hashDate)
-		report.Occurance.ArtefactHash = hashStr
-		report.Occurance.Count = count
+		hashData := []byte(hash)
+		hashStr := base64.StdEncoding.EncodeToString(hashData)
 
+		var occurance structs.OccuranceData
+		occurance.ArtefactHash = hashStr
+		occurance.Count = count
 		for name := range names {
-			report.Occurance.FileNames = append(report.Occurance.FileNames, name)
+			occurance.FileNames = append(occurance.FileNames, name)
 		}
+
+		report.Occurances = append(report.Occurances, occurance)
 	}
 
 	reportData, err := json.MarshalIndent(report, "", "\t")

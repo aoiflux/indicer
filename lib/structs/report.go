@@ -1,12 +1,12 @@
 package structs
 
 type SearchReport struct {
-	Query     string        `json:"query"`
-	Occurance OccuranceData `json:"occurance_data"`
+	Query      string          `json:"query"`
+	Occurances []OccuranceData `json:"occurances"`
 }
 
 type OccuranceData struct {
-	ArtefactHash string   `json:"artefact_hash"`
+	ArtefactHash string   `json:"artefact"`
 	Count        int      `json:"count"`
-	FileNames    []string `json:"file_names"`
+	FileNames    []string `json:"files"`
 }

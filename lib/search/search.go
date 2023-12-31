@@ -177,8 +177,18 @@ func searchChonk(sindex, dbstart, end int64, fid, query string, meta structs.Fil
 	if !ok2 {
 		cmap.Set(s2key)
 	}
-	bigState := append(state1, state2...)
-	subBytesChonk(fid, []byte(query), bigState)
+
+	qoffset := (len(state1) - 1) - (len(query) - 2)
+
+	// take last few bytes of state1, containing 1 byte less than query bytes
+	state1 = state1[qoffset:]
+
+	// take first few bytes of state1, containing 1 byte less than query bytes
+	state2 = state2[:qoffset]
+
+	// at least one byte of query on either side is required for an overlap
+	qtate := append(state1, state2...)
+	subBytesChonk(fid, []byte(query), qtate)
 	echan <- nil
 }
 
@@ -227,15 +237,6 @@ func searchReport(query string, db *badger.DB) error {
 	report.Query = query
 
 	for id, count := range idmap.GetData() {
-		meta, err := store.GetFileMeta([]byte(id), db)
-		if err != nil {
-			return err
-		}
-		chonks := meta.Size / cnst.ChonkSize
-		if chonks > 2 {
-			count /= 2
-		}
-
 		names, err := near.GetNames([]byte(id), db)
 		if err != nil {
 			return err

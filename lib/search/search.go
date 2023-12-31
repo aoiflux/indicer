@@ -153,11 +153,13 @@ func searchChonk(sindex, dbstart, end int64, fid, query string, meta structs.Fil
 	nxtidx := sindex + cnst.ChonkSize
 	if nxtidx >= end {
 		if !ok1 {
-			cmap.Set(s1key)
 			subBytesChonk(fid, []byte(query), state1)
 		}
 		echan <- nil
 		return
+	}
+	if !ok1 {
+		cmap.Set(s1key)
 	}
 
 	s2key, state2, err := getChonkState(nxtidx, dbstart, end, meta, db)
@@ -172,7 +174,7 @@ func searchChonk(sindex, dbstart, end int64, fid, query string, meta structs.Fil
 		return
 	}
 
-	if ok := cmap.GetOk(s2key); !ok {
+	if !ok2 {
 		cmap.Set(s2key)
 	}
 	bigState := append(state1, state2...)
@@ -200,11 +202,40 @@ func subBytesChonk(fidStr string, query, chonk []byte) {
 	idmap.Set(fidStr, count)
 }
 
+// track count + location, takes too long to run
+// func subBytesChonk(cnum int64, fidStr string, query, chonk []byte) {
+// 	chonk = bytes.ToLower(chonk)
+// 	cindex := int64(bytes.Index(chonk, query))
+
+// 	var offset int64
+// 	for cindex != -1 {
+// 		chonk = chonk[cindex:]
+
+// 		cindex = (cnum * cnst.ChonkSize) + (cindex + offset)
+// 		if !idmap.GetLocOk(cindex) {
+// 			idmap.Set(fidStr, 1)
+// 			idmap.SetLoc(cindex)
+// 		}
+
+// 		offset = cindex
+// 		cindex = int64(bytes.Index(chonk, query))
+// 	}
+// }
+
 func searchReport(query string, db *badger.DB) error {
 	var report structs.SearchReport
 	report.Query = query
 
 	for id, count := range idmap.GetData() {
+		meta, err := store.GetFileMeta([]byte(id), db)
+		if err != nil {
+			return err
+		}
+		chonks := meta.Size / cnst.ChonkSize
+		if chonks > 2 {
+			count /= 2
+		}
+
 		names, err := near.GetNames([]byte(id), db)
 		if err != nil {
 			return err

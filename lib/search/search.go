@@ -44,13 +44,13 @@ func Search(query string, db *badger.DB) error {
 	if err != nil {
 		return err
 	}
-	bar.Add(30)
+	bar.Add(50)
 
 	err = searchFiles(cnst.EviFileNamespace, query, db)
 	if err != nil {
 		return err
 	}
-	bar.Add(40)
+	bar.Add(20)
 
 	err = searchReport(query, db)
 	if err != nil {

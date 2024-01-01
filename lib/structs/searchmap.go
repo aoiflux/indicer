@@ -4,20 +4,20 @@ import "sync"
 
 type SeenChonkMap struct {
 	mu   sync.Mutex
-	data map[string]struct{}
+	data map[string]int
 }
 
-func NewSeenChonkMap() *SeenChonkMap { return &SeenChonkMap{data: make(map[string]struct{})} }
-func (s *SeenChonkMap) Set(key []byte) {
+func NewSeenChonkMap() *SeenChonkMap { return &SeenChonkMap{data: make(map[string]int)} }
+func (s *SeenChonkMap) Set(key []byte, val int) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	s.data[string(key)] = struct{}{}
+	s.data[string(key)] = val
 }
-func (s *SeenChonkMap) GetOk(key []byte) bool {
+func (s *SeenChonkMap) Get(key []byte) (int, bool) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	_, ok := s.data[string(key)]
-	return ok
+	val, ok := s.data[string(key)]
+	return val, ok
 }
 
 type SearchIDMap struct {

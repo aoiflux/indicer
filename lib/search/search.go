@@ -34,19 +34,19 @@ func Search(query string, db *badger.DB) error {
 
 	bar := progressbar.Default(4, "Searching....")
 
-	err := searchFiles(cnst.IdxFileNamespace, query, db)
-	if err != nil {
-		return err
-	}
+	// err := searchFiles(cnst.IdxFileNamespace, query, db)
+	// if err != nil {
+	// 	return err
+	// }
 	bar.Add(1)
 
-	err = searchFiles(cnst.PartiFileNamespace, query, db)
-	if err != nil {
-		return err
-	}
+	// err = searchFiles(cnst.PartiFileNamespace, query, db)
+	// if err != nil {
+	// 	return err
+	// }
 	bar.Add(1)
 
-	err = searchFiles(cnst.EviFileNamespace, query, db)
+	err := searchFiles(cnst.EviFileNamespace, query, db)
 	if err != nil {
 		return err
 	}
@@ -149,45 +149,30 @@ func searchChonk(sindex, dbstart, end int64, fid, query string, meta structs.Fil
 		return
 	}
 
+	val, ok := cmap.Get(s1key)
+	if ok && val > 0 {
+		idmap.Set(fid, val)
+	}
+	if !ok {
+		count := subBytesChonk(fid, []byte(query), state1)
+		cmap.Set(s1key, count)
+	}
+
 	nxtidx := sindex + cnst.ChonkSize
-	qoffset := (len(state1) - 1) - (len(query) - 2)
-	qstate1 := state1[qoffset:]
-
-	if sindex > dbstart && nxtidx >= end {
-		state1 = state1[len(query)-1:]
-	}
-	if nxtidx < end {
-		if sindex == dbstart {
-			state1 = state1[:qoffset-1]
-		}
-		if sindex != dbstart {
-			state1 = state1[len(query)-1 : qoffset-1]
-		}
-	}
-
-	ok1 := cmap.GetOk(s1key)
-	if !ok1 {
-		subBytesChonk(fid, []byte(query), state1)
-		cmap.Set(s1key)
-	}
-
 	if nxtidx >= end {
 		echan <- nil
 		return
 	}
 
-	s2key, state2, err := getChonkState(nxtidx, dbstart, end, meta, db)
+	_, state2, err := getChonkState(nxtidx, dbstart, end, meta, db)
 	if err != nil {
 		echan <- err
 		return
 	}
 
-	ok2 := cmap.GetOk(s2key)
-	if ok1 && ok2 {
-		echan <- nil
-		return
-	}
-
+	// state 1 and 2 overlap search
+	qoffset := (len(state1) - 1) - (len(query) - 2)
+	qstate1 := state1[qoffset:]
 	qoffset = len(query) - 2
 	state2 = state2[:qoffset]
 
@@ -208,13 +193,14 @@ func getChonkState(searchIndex, dbstart, end int64, meta structs.FileMeta, db *b
 	return ckey, state, err
 }
 
-func subBytesChonk(fidStr string, query, chonk []byte) {
+func subBytesChonk(fidStr string, query, chonk []byte) int {
 	chonk = bytes.ToLower(chonk)
 	count := bytes.Count(chonk, query)
 	if count <= 0 {
-		return
+		return count
 	}
 	idmap.Set(fidStr, count)
+	return count
 }
 
 func searchReport(query string, db *badger.DB) error {

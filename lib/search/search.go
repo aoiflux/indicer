@@ -32,31 +32,31 @@ func init() {
 func Search(query string, db *badger.DB) error {
 	start := time.Now()
 
-	bar := progressbar.Default(4, "Searching....")
+	bar := progressbar.Default(100, "Searching....")
 
-	// err := searchFiles(cnst.IdxFileNamespace, query, db)
-	// if err != nil {
-	// 	return err
-	// }
-	bar.Add(1)
-
-	// err = searchFiles(cnst.PartiFileNamespace, query, db)
-	// if err != nil {
-	// 	return err
-	// }
-	bar.Add(1)
-
-	err := searchFiles(cnst.EviFileNamespace, query, db)
+	err := searchFiles(cnst.IdxFileNamespace, query, db)
 	if err != nil {
 		return err
 	}
-	bar.Add(1)
+	bar.Add(20)
+
+	err = searchFiles(cnst.PartiFileNamespace, query, db)
+	if err != nil {
+		return err
+	}
+	bar.Add(30)
+
+	err = searchFiles(cnst.EviFileNamespace, query, db)
+	if err != nil {
+		return err
+	}
+	bar.Add(40)
 
 	err = searchReport(query, db)
 	if err != nil {
 		return err
 	}
-	bar.Add(1)
+	bar.Add(10)
 
 	bar.Finish()
 	fmt.Println("Done....", time.Since(start))

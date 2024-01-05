@@ -90,15 +90,15 @@ func GetIndexedFile(key []byte, db *badger.DB) (structs.IndexedFile, error) {
 	return indexedFile, err
 }
 
-func SetReverseRelationNode(key []byte, revRelNode []structs.ReverseRelation, batch *badger.WriteBatch) error {
+func SetReverseRelationNode(key []byte, revRelNode map[string]struct{}, batch *badger.WriteBatch) error {
 	data, err := msgpack.Marshal(revRelNode)
 	if err != nil {
 		return err
 	}
 	return SetBatchNode(key, data, batch)
 }
-func GetReverseRelationNode(key []byte, db *badger.DB) ([]structs.ReverseRelation, error) {
-	var reverseRelations []structs.ReverseRelation
+func GetReverseRelationNode(key []byte, db *badger.DB) (map[string]struct{}, error) {
+	var reverseRelations map[string]struct{}
 
 	data, err := GetNode(key, db)
 	if err != nil {
@@ -116,6 +116,7 @@ func SetBatchChonkNode(key, data []byte, db *badger.DB, batch *badger.WriteBatch
 	}
 	return SetBatchNode(key, cfpath, batch)
 }
+
 func SetBatchNode(key, data []byte, batch *badger.WriteBatch) error {
 	if !cnst.QUICKOPT {
 		data = cnst.ENCODER.EncodeAll(data, make([]byte, 0, len(data)))

@@ -72,7 +72,11 @@ func (vg *viz) populateGraph(fid []byte, idmap *structs.ConcMap) error {
 		edge.SetLabel(fmt.Sprintf("related | confidence: %f%%", confidence))
 		edge.SetLabelFontColor("blue")
 		edge.SetColor("blue")
-		edge.SetPenWidth(confidence / 10)
+		width := confidence / 10
+		if width < 0.5 {
+			width = 0.5
+		}
+		edge.SetPenWidth(width)
 	}
 
 	return nil

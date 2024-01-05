@@ -2,7 +2,6 @@ package store
 
 import (
 	"bytes"
-	"encoding/base64"
 	"errors"
 	"indicer/lib/cnst"
 	"indicer/lib/dbio"
@@ -160,17 +159,18 @@ func storeWorker(tio structs.ThreadIO) {
 	chash, err := util.GetChonkHash(lostChonk)
 	if err != nil {
 		tio.Err <- err
+		return
 	}
-
 	err = processChonk(lostChonk, chash, tio.DB, tio.Batch)
 	if err != nil {
 		tio.Err <- err
+		return
 	}
 	err = processRel(tio.Index, tio.FHash, chash, tio.DB, tio.Batch)
 	if err != nil {
 		tio.Err <- err
+		return
 	}
-
 	tio.Err <- processRevRel(tio.Index, tio.FHash, chash, tio.DB, tio.Batch)
 }
 func processChonk(cdata, chash []byte, db *badger.DB, batch *badger.WriteBatch) error {
@@ -194,16 +194,18 @@ func processRel(index int64, fhash, chash []byte, db *badger.DB, batch *badger.W
 	return err
 }
 func processRevRel(index int64, fhash, chash []byte, db *badger.DB, batch *badger.WriteBatch) error {
-	fhashStr := base64.StdEncoding.EncodeToString(fhash)
-	revRelFileId := util.AppendToBytesSlice(cnst.RelationNamespace, fhashStr)
-	revRelKey := util.AppendToBytesSlice(cnst.ReverseRelationNamespace, chash)
+	revRelKey := util.AppendToBytesSlice(cnst.ReverseRelationNamespace, chash, cnst.DataSeperator, index)
 
-	revRelList, err := dbio.GetReverseRelationNode(revRelKey, db)
-	revRelNode := structs.ReverseRelation{RevRelFileID: revRelFileId, Index: index}
+	revRelMap, err := dbio.GetReverseRelationNode(revRelKey, db)
 	if errors.Is(err, badger.ErrKeyNotFound) {
-		return dbio.SetReverseRelationNode(revRelKey, []structs.ReverseRelation{revRelNode}, batch)
+		revRelMap = make(map[string]struct{})
+		revRelMap[string(fhash)] = struct{}{}
+		return dbio.SetReverseRelationNode(revRelKey, revRelMap, batch)
+	}
+	if err != nil && err != badger.ErrKeyNotFound {
+		return err
 	}
 
-	revRelList = append(revRelList, revRelNode)
-	return dbio.SetReverseRelationNode(revRelKey, revRelList, batch)
+	revRelMap[string(fhash)] = struct{}{}
+	return dbio.SetReverseRelationNode(revRelKey, revRelMap, batch)
 }

@@ -35,7 +35,7 @@ func StoreData(chonkSize int, dbpath, evipath string, key []byte, syncIndex, noI
 		return err
 	}
 	err = store.EvidenceFilePreStoreCheck(eviFile)
-	if err != nil && err != badger.ErrKeyNotFound {
+	if err != nil && err != badger.ErrKeyNotFound && err != cnst.ErrIncompleteFile {
 		return err
 	}
 	if err == nil {

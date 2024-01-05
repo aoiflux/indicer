@@ -3,6 +3,7 @@ package store
 import (
 	"bytes"
 	"errors"
+	"fmt"
 	"indicer/lib/cnst"
 	"indicer/lib/dbio"
 	"indicer/lib/structs"
@@ -194,6 +195,10 @@ func processRel(index int64, fhash, chash []byte, db *badger.DB, batch *badger.W
 	return err
 }
 func processRevRel(index int64, fhash, chash []byte, db *badger.DB, batch *badger.WriteBatch) error {
+	if index == 0 {
+		fmt.Println("test")
+	}
+
 	revRelKey := util.AppendToBytesSlice(cnst.ReverseRelationNamespace, chash, cnst.DataSeperator, index)
 
 	revRelMap, err := dbio.GetReverseRelationNode(revRelKey, db)

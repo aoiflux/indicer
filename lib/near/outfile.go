@@ -13,7 +13,7 @@ import (
 )
 
 func NearOutFile(fpath string, db *badger.DB) error {
-	size, _, mappedFile, err := outfileSetup(fpath)
+	size, fhash, mappedFile, err := outfileSetup(fpath)
 	if err != nil {
 		return err
 	}
@@ -21,7 +21,7 @@ func NearOutFile(fpath string, db *badger.DB) error {
 
 	var count int64
 	for chonk := range getOutfileChonks(size, mappedFile) {
-		_, err := getParitalMatches(chonk, db)
+		_, err := getParitalMatches(fhash, chonk, db)
 		if err != nil {
 			return err
 		}
@@ -73,9 +73,9 @@ func getOutfileChonks(size int64, mappedFile mmap.MMap) chan []byte {
 	return chonk
 }
 
-func getParitalMatches(chonk []byte, db *badger.DB) ([]string, error) {
+func getParitalMatches(fhash, chonk []byte, db *badger.DB) ([]string, error) {
 	start := time.Now()
-	chash, count, err := partialChonkMatch(chonk, db)
+	chash, count, err := partialChonkMatch(fhash, chonk, db)
 	if err != nil {
 		return nil, err
 	}

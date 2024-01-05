@@ -229,7 +229,7 @@ func getNear(start, size int64, ehash []byte, db *badger.DB, deep bool) chan str
 			confidence = 1
 
 			if len(revmap) < 2 && deep {
-				revmap, confidence, err = partialMatch(chash, db)
+				revmap, confidence, err = partialMatch(nearIndex, ehash, chash, db)
 				if err != nil {
 					neargen.Err = err
 					neargenChan <- neargen
@@ -247,21 +247,19 @@ func getNear(start, size int64, ehash []byte, db *badger.DB, deep bool) chan str
 	return neargenChan
 }
 
-func partialMatch(chash []byte, db *badger.DB) (map[string]struct{}, float64, error) {
+func partialMatch(index int64, inhash, chash []byte, db *badger.DB) (map[string]struct{}, float64, error) {
 	ckey := util.AppendToBytesSlice(cnst.ChonkNamespace, chash)
 	cdata, err := dbio.GetNode(ckey, db)
 	if err != nil {
 		return nil, float64(cnst.IgnoreVar), err
 	}
 
-	pMatchKey, confidence, err := partialChonkMatch(cdata, db)
-	if err != nil {
+	partialMatchKey, confidence, err := partialChonkMatch(inhash, cdata, db)
+	if err != nil || confidence <= 0 {
 		return nil, float64(cnst.IgnoreVar), err
 	}
 
-	phash := bytes.Split(pMatchKey, []byte(cnst.NamespaceSeperator))[1]
-	revkey := util.AppendToBytesSlice(cnst.ReverseRelationNamespace, phash)
-	revmap, err := dbio.GetReverseRelationNode(revkey, db)
+	revmap, err := dbio.GetReverseRelationNode(partialMatchKey, db)
 	if err != nil {
 		return nil, float64(cnst.IgnoreVar), err
 	}

@@ -7,6 +7,7 @@ import (
 	"indicer/lib/dbio"
 	"indicer/lib/structs"
 	"indicer/lib/util"
+	"strconv"
 
 	"github.com/dgraph-io/badger/v4"
 )
@@ -123,7 +124,7 @@ func isInRange(start, end, index int64) bool {
 	return index >= start && index <= end
 }
 
-func partialChonkMatch(chonk []byte, db *badger.DB) ([]byte, float64, error) {
+func partialChonkMatch(inhash, chonk []byte, db *badger.DB) ([]byte, float64, error) {
 	var confidence float64
 	var keyToReturn []byte
 
@@ -133,27 +134,41 @@ func partialChonkMatch(chonk []byte, db *badger.DB) ([]byte, float64, error) {
 		it := txn.NewIterator(opts)
 		defer it.Close()
 
-		prefix := []byte(cnst.ChonkNamespace)
+		prefix := []byte(cnst.RelationNamespace)
 		for it.Seek(prefix); it.ValidForPrefix(prefix); it.Next() {
 			item := it.Item()
 			key := item.KeyCopy(nil)
-			v, err := item.ValueCopy(nil)
+			if bytes.Contains(key, inhash) {
+				continue
+			}
+
+			chash, err := item.ValueCopy(nil)
 			if err != nil {
 				return err
 			}
 
-			decoded, err := cnst.DECODER.DecodeAll(v, nil)
-			if err == nil {
-				v = decoded
+			chash, err = cnst.DECODER.DecodeAll(chash, nil)
+			if err != nil {
+				return err
 			}
 
-			tempCount := util.PartialMatchConfidence(chonk, v)
-			if tempCount == 1 {
+			temp, err := checkInChonk(chonk, chash, db)
+			if err != nil {
+				return err
+			}
+			if temp == 1 {
 				continue
 			}
-			if tempCount > confidence {
-				confidence = tempCount
-				keyToReturn = key
+			if temp > confidence {
+				confidence = temp
+
+				split := bytes.Split(key, []byte(cnst.DataSeperator))
+				idxstr := split[len(split)-1]
+				idx, err := strconv.ParseInt(string(idxstr), 10, 64)
+				if err != nil {
+					return err
+				}
+				keyToReturn = util.AppendToBytesSlice(cnst.ReverseRelationNamespace, chash, cnst.DataSeperator, idx)
 			}
 		}
 
@@ -161,4 +176,16 @@ func partialChonkMatch(chonk []byte, db *badger.DB) ([]byte, float64, error) {
 	})
 
 	return keyToReturn, confidence, err
+}
+
+func checkInChonk(testChonk, chash []byte, db *badger.DB) (float64, error) {
+	ckey := util.AppendToBytesSlice(cnst.ChonkNamespace, chash)
+
+	chonk, err := dbio.GetChonkNode(ckey, db)
+	if err != nil {
+		return float64(cnst.IgnoreVar), err
+	}
+
+	confidence := util.PartialMatchConfidence(testChonk, chonk)
+	return confidence, err
 }

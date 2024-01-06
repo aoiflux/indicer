@@ -13,15 +13,17 @@ import (
 )
 
 func countRList(inputHash []byte, idmap *structs.ConcMap, near structs.NearGen, db *badger.DB, echan chan error) {
-	for revhash := range near.RevMap {
-		if bytes.Equal(inputHash, []byte(revhash)) {
-			continue
-		}
+	for nearIndex, revlist := range near.RevMap {
+		for _, revhash := range revlist {
+			if bytes.Equal(inputHash, []byte(revhash)) {
+				continue
+			}
 
-		err := countEviFile(near.Index, near.Confidence, inputHash, []byte(revhash), idmap, db)
-		if err != nil {
-			echan <- err
-			return
+			err := countEviFile(nearIndex, near.Confidence, inputHash, []byte(revhash), idmap, db)
+			if err != nil {
+				echan <- err
+				return
+			}
 		}
 	}
 	echan <- nil

@@ -13,6 +13,7 @@ import (
 	"github.com/dgraph-io/badger/v4"
 	"github.com/fatih/color"
 	"github.com/schollz/progressbar/v3"
+	"github.com/vmihailenco/msgpack/v5"
 )
 
 func NearInFile(fhash string, db *badger.DB, deep ...bool) error {
@@ -194,6 +195,7 @@ func updateConfidence(idmap *structs.ConcMap, db *badger.DB) error {
 // all the chonk --> rel reverse relation objects
 func getNear(start, size int64, ehash []byte, db *badger.DB, deep bool) chan structs.NearGen {
 	neargenChan := make(chan structs.NearGen)
+	seenMap := make(map[int64]struct{})
 
 	var dbstart int64
 	if start > 0 {
@@ -209,6 +211,20 @@ func getNear(start, size int64, ehash []byte, db *badger.DB, deep bool) chan str
 		var confidence float64
 		for nearIndex := dbstart; nearIndex < end; nearIndex += cnst.ChonkSize {
 			relKey := util.AppendToBytesSlice(cnst.RelationNamespace, ehash, cnst.DataSeperator, nearIndex)
+			split := bytes.Split(relKey, []byte(cnst.DataSeperator))
+			idxstr := split[len(split)-1]
+			idx, err := util.GetNumber(string(idxstr))
+			if err != nil {
+				neargen.Err = err
+				neargenChan <- neargen
+				return
+			}
+			if _, ok := seenMap[idx]; ok {
+				continue
+			} else {
+				seenMap[idx] = struct{}{}
+			}
+
 			chash, err := dbio.GetNode(relKey, db)
 			if err != nil {
 				neargen.Err = err
@@ -237,9 +253,43 @@ func getNear(start, size int64, ehash []byte, db *badger.DB, deep bool) chan str
 				}
 			}
 
+			neargen.RevMap = make(map[int64][]string)
+			for revid := range revmap {
+				delete(revmap, revid)
+				revlist, ok := neargen.RevMap[nearIndex]
+				if !ok {
+					neargen.RevMap[nearIndex] = []string{revid}
+					continue
+				}
+				revlist = append(revlist, revid)
+				neargen.RevMap[nearIndex] = revlist
+			}
+
+			similarMap, err := getRevRelSameChashPrefix(revkey, db)
+			if err != nil {
+				neargen.Err = err
+				neargenChan <- neargen
+				return
+			}
+			for tempIndex, tempRevList := range similarMap {
+				if _, ok := seenMap[tempIndex]; ok {
+					continue
+				} else {
+					seenMap[tempIndex] = struct{}{}
+				}
+				if found := util.FindInStringSlice(tempRevList, string(ehash)); found != int(cnst.IgnoreVar) {
+					tempRevList = util.Reslice(tempRevList, found)
+				}
+				if len(tempRevList) < 1 {
+					continue
+				}
+				if _, ok := neargen.RevMap[tempIndex]; !ok {
+					neargen.RevMap[tempIndex] = tempRevList
+				}
+				delete(similarMap, tempIndex)
+			}
+
 			neargen.Confidence = confidence
-			neargen.Index = nearIndex
-			neargen.RevMap = revmap
 			neargenChan <- neargen
 		}
 	}()
@@ -265,4 +315,62 @@ func partialMatch(index int64, inhash, chash []byte, db *badger.DB) (map[string]
 	}
 
 	return revmap, confidence, nil
+}
+
+// getRevRelSameChashPrefix function will find all the relation keys with same chonk hash but different index
+// Same chonk can occur at different index locations in different files, to improve accuracy, all indices
+// from all files for the same chonk must be taken care of
+func getRevRelSameChashPrefix(revkey []byte, db *badger.DB) (map[int64][]string, error) {
+	split := bytes.Split(revkey, []byte(cnst.DataSeperator))
+	prefix := util.AppendToBytesSlice(split[0], cnst.DataSeperator, split[1])
+	similarMap := make(map[int64][]string)
+
+	err := db.View(func(txn *badger.Txn) error {
+		opts := badger.DefaultIteratorOptions
+		opts.PrefetchSize = 1000
+		it := txn.NewIterator(opts)
+		defer it.Close()
+
+		for it.Seek(prefix); it.ValidForPrefix(prefix); it.Next() {
+			item := it.Item()
+			revid := item.KeyCopy(nil)
+
+			data, err := item.ValueCopy(nil)
+			if err != nil {
+				return err
+			}
+
+			data, err = cnst.DECODER.DecodeAll(data, nil)
+			if err != nil {
+				return err
+			}
+
+			var tempRevMap map[string]struct{}
+			err = msgpack.Unmarshal(data, &tempRevMap)
+			if err != nil {
+				return err
+			}
+
+			split := bytes.Split(revid, []byte(cnst.DataSeperator))
+			idxstr := split[len(split)-1]
+			idx, err := util.GetNumber(string(idxstr))
+			if err != nil {
+				return err
+			}
+
+			for revid := range tempRevMap {
+				revlist, ok := similarMap[idx]
+				if !ok {
+					similarMap[idx] = []string{revid}
+					continue
+				}
+				revlist = append(revlist, revid)
+				similarMap[idx] = revlist
+			}
+		}
+
+		return nil
+	})
+
+	return similarMap, err
 }

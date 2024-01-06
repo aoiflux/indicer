@@ -1,8 +1,7 @@
 package structs
 
 type NearGen struct {
-	RevMap     map[string]struct{}
+	RevMap     map[int64][]string
 	Err        error
-	Index      int64
 	Confidence float64
 }

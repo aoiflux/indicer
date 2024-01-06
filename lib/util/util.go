@@ -13,6 +13,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strconv"
 	"strings"
 	"time"
@@ -274,4 +275,22 @@ type slicer interface {
 func Reslice[T slicer](slice []T, index int) []T {
 	slice[index] = slice[len(slice)-1]
 	return slice[:len(slice)-1]
+}
+
+func GetNumber(str string) (int64, error) {
+	reg, err := regexp.Compile("[^0-9]+")
+	if err != nil {
+		return cnst.IgnoreVar, err
+	}
+	str = reg.ReplaceAllString(str, "")
+	return strconv.ParseInt(str, 10, 64)
+}
+
+func FindInStringSlice(slice []string, val string) int {
+	for i, item := range slice {
+		if item == val {
+			return i
+		}
+	}
+	return int(cnst.IgnoreVar)
 }

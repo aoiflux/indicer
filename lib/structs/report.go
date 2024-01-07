@@ -1,8 +1,9 @@
 package structs
 
 type SearchReport struct {
-	Query      string          `json:"query"`
-	Occurances []OccuranceData `json:"occurances"`
+	Query            string          `json:"query"`
+	ExecutiveSummary string          `json:"executive_summary"`
+	Occurances       []OccuranceData `json:"occurances"`
 }
 
 type OccuranceData struct {

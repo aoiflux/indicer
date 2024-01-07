@@ -57,6 +57,7 @@ var (
 	ErrIncorrectOption        = errors.New("indicer near <in|out> <hash|file_path> [deep]\n\tUse option in to get NeAR of files inside the database, provide a hash string\n\tUse option out to get NeAR of files outside of the database, provide a path")
 	ErrNilBatch               = errors.New("call SetBatch first, batch is nil. cannot work with nil batch")
 	ErrSmallQuery             = errors.New("search query too small. query requires at least 2 characters")
+	ErrTooManySplits          = errors.New("too many splits: %v")
 )
 
 const (

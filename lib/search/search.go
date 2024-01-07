@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"encoding/base64"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"indicer/lib/cnst"
 	"indicer/lib/dbio"
@@ -206,6 +207,7 @@ func subBytesChonk(fidStr string, query, chonk []byte) int {
 func searchReport(query string, db *badger.DB) error {
 	var report structs.SearchReport
 	report.Query = query
+	seenMap := make(map[string][]string)
 
 	for id, count := range idmap.GetData() {
 		names, err := near.GetNames([]byte(id), db)
@@ -220,8 +222,26 @@ func searchReport(query string, db *badger.DB) error {
 		var occurance structs.OccuranceData
 		occurance.ArtefactHash = hashStr
 		occurance.Count = count
-		for name := range names {
-			occurance.FileNames = append(occurance.FileNames, name)
+		occurance.Disk = structs.NewDiskImage()
+		err = setOccuranceData(occurance.ArtefactHash, names, seenMap, &occurance, db)
+		if err != nil {
+			return err
+		}
+
+		if occurance.Disk.Partition.Indexed != nil {
+			if len(occurance.Disk.Partition.Indexed.IndexedFileNames) == 0 {
+				occurance.Disk.Partition.Indexed = nil
+			}
+		}
+		if occurance.Disk.Partition != nil {
+			if len(occurance.Disk.Partition.PartitionPartNames) == 0 {
+				occurance.Disk.Partition = nil
+			}
+		}
+		if occurance.Disk != nil {
+			if len(occurance.Disk.DiskImageNames) == 0 {
+				occurance.Disk = nil
+			}
 		}
 
 		report.Occurances = append(report.Occurances, occurance)
@@ -233,4 +253,135 @@ func searchReport(query string, db *badger.DB) error {
 	}
 
 	return os.WriteFile("report.json", reportData, os.ModePerm)
+}
+
+func setOccuranceData(artefactHash string, names map[string]struct{}, smap map[string][]string, o *structs.OccuranceData, db *badger.DB) error {
+	var idx int
+	sameOccurance := false
+	for name := range names {
+		if idx > 1 {
+			sameOccurance = true
+		}
+
+		split := strings.Split(name, cnst.DataSeperator)
+		splitlen := len(split)
+
+		switch splitlen {
+		case 1:
+			if len(o.FileNames) == 0 {
+				o.FileNames = []string{name}
+				continue
+			}
+
+			o.FileNames = append(o.FileNames, name)
+			continue
+		case 2:
+			o.Disk.Partition.Indexed.IndexedFileHash = o.ArtefactHash
+		case 3:
+			o.Disk.Partition.PartitionHash = o.ArtefactHash
+		default:
+			errstr := fmt.Sprintf(cnst.ErrTooManySplits.Error(), name)
+			return errors.New(errstr)
+		}
+
+		err := setDiskImageData(sameOccurance, artefactHash, split, smap, o, db)
+		if err != nil {
+			return err
+		}
+
+		idx++
+	}
+	return nil
+}
+
+func setDiskImageData(same bool, artefactHash string, nameSplit []string, smap map[string][]string, o *structs.OccuranceData, db *badger.DB) error {
+	var err error
+
+	splitlen := len(nameSplit)
+	name := nameSplit[splitlen-1]
+
+	switch splitlen {
+	case 3:
+		o.Disk.Partition.Indexed.IndexedFileHash = artefactHash
+		if len(o.Disk.Partition.Indexed.IndexedFileNames) == 0 {
+			o.Disk.Partition.Indexed.IndexedFileNames = []string{name}
+		} else {
+			o.Disk.Partition.Indexed.IndexedFileNames = append(o.Disk.Partition.Indexed.IndexedFileNames, name)
+		}
+
+		// set partition names
+		fhashStr := nameSplit[1]
+		o.Disk.Partition.PartitionHash = fhashStr
+		val, ok := smap[cnst.PartiFileNamespace+fhashStr]
+		if ok && !same {
+			o.Disk.Partition.PartitionPartNames = val
+		}
+		if !ok {
+			o.Disk.Partition.PartitionPartNames, err = getFileNames(cnst.PartiFileNamespace, fhashStr, db)
+			if err != nil {
+				return err
+			}
+			smap[cnst.PartiFileNamespace+fhashStr] = o.Disk.Partition.PartitionPartNames
+		}
+
+		// set disk image names
+		fhashStr = nameSplit[0]
+		o.Disk.DiskImageHash = fhashStr
+		val, ok = smap[cnst.EviFileNamespace+fhashStr]
+		if ok && !same {
+			o.Disk.DiskImageNames = val
+		}
+		if !ok {
+			o.Disk.DiskImageNames, err = getFileNames(cnst.EviFileNamespace, fhashStr, db)
+			if err != nil {
+				return err
+			}
+			smap[cnst.EviFileNamespace+fhashStr] = o.Disk.DiskImageNames
+		}
+	case 2:
+		o.Disk.Partition.PartitionHash = artefactHash
+		if len(o.Disk.Partition.PartitionPartNames) == 0 {
+			o.Disk.Partition.PartitionPartNames = []string{name}
+		} else {
+			o.Disk.Partition.PartitionPartNames = append(o.Disk.Partition.PartitionPartNames, name)
+		}
+
+		fhashStr := nameSplit[0]
+		o.Disk.DiskImageHash = fhashStr
+		val, ok := smap[cnst.EviFileNamespace+fhashStr]
+		if ok && !same {
+			o.Disk.DiskImageNames = val
+		}
+		if !ok {
+			o.Disk.DiskImageNames, err = getFileNames(cnst.EviFileNamespace, fhashStr, db)
+			if err != nil {
+				return err
+			}
+			smap[cnst.EviFileNamespace+fhashStr] = o.Disk.DiskImageNames
+		}
+	}
+
+	return err
+}
+
+func getFileNames(namespace, fhashStr string, db *badger.DB) ([]string, error) {
+	fhash, err := base64.StdEncoding.DecodeString(fhashStr)
+	if err != nil {
+		return nil, err
+	}
+
+	fid := util.AppendToBytesSlice(namespace, fhash)
+	nameMap, err := near.GetNames(fid, db)
+	if err != nil {
+		return nil, err
+	}
+
+	var names []string
+	for name := range nameMap {
+		split := strings.Split(name, cnst.DataSeperator)
+		name = split[len(split)-1]
+		names = append(names, name)
+	}
+
+	return names, nil
 }

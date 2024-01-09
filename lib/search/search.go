@@ -152,7 +152,7 @@ func searchChonk(sindex, dbstart, end int64, fid, query string, meta structs.Fil
 
 	count, ok := cmap.Get(s1key)
 	if !ok {
-		count = subBytesChonk(fid, []byte(query), state1)
+		count = subBytesChonk([]byte(query), state1)
 		cmap.Set(s1key, count)
 	}
 	if count > 0 {
@@ -179,7 +179,7 @@ func searchChonk(sindex, dbstart, end int64, fid, query string, meta structs.Fil
 
 	// at least one byte of query on either side is required for an overlap
 	qstate := append(qstate1, state2...)
-	count = subBytesChonk(fid, []byte(query), qstate)
+	count = subBytesChonk([]byte(query), qstate)
 	if count > 0 {
 		idmap.Set(fid, count)
 	}
@@ -197,7 +197,7 @@ func getChonkState(searchIndex, dbstart, end int64, meta structs.FileMeta, db *b
 	return ckey, state, err
 }
 
-func subBytesChonk(fidStr string, query, chonk []byte) int {
+func subBytesChonk(query, chonk []byte) int {
 	chonk = bytes.ToLower(chonk)
 	count := bytes.Count(chonk, query)
 	if count <= 0 {

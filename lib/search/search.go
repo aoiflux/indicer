@@ -209,7 +209,8 @@ func searchReport(query string, db *badger.DB) error {
 	report.Query = query
 	seenMap := make(map[string][]string)
 
-	var occuranceCount, fileCount int
+	var occuranceCount, fileCount, artefactCount int
+	artefactCount = len(idmap.GetData())
 
 	for id, count := range idmap.GetData() {
 		names, err := near.GetNames([]byte(id), db)
@@ -251,7 +252,7 @@ func searchReport(query string, db *badger.DB) error {
 		report.Occurances = append(report.Occurances, occurance)
 	}
 
-	report.ExecutiveSummary = fmt.Sprintf("%d occurrences of the key term '%s' were identified across %d digital artifacts during a comprehensive electronic examination. This finding presents avenues for further forensic analysis and legal evaluation.", occuranceCount, query, fileCount)
+	report.ExecutiveSummary = fmt.Sprintf("%d occurrences of the key term '%s' were identified across %d digital artifacs(%d files) during a comprehensive electronic examination. This finding presents avenues for further forensic analysis and legal evaluation.", occuranceCount, query, artefactCount, fileCount)
 
 	reportData, err := json.MarshalIndent(report, "", "\t")
 	if err != nil {

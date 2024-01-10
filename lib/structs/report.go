@@ -10,6 +10,7 @@ type OccuranceData struct {
 	ArtefactHash string     `json:"artefact"`
 	Count        int        `json:"count"`
 	FileNames    []string   `json:"files,omitempty"`
+	Matches      []string   `json:"matches"`
 	Disk         *DiskImage `json:"disk,omitempty"`
 }
 

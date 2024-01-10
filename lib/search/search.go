@@ -1,7 +1,6 @@
 package search
 
 import (
-	"bytes"
 	"encoding/base64"
 	"encoding/json"
 	"errors"
@@ -13,6 +12,8 @@ import (
 	"indicer/lib/structs"
 	"indicer/lib/util"
 	"os"
+	"regexp"
+	"slices"
 	"strings"
 	"time"
 
@@ -35,19 +36,24 @@ func Search(query string, db *badger.DB) error {
 
 	bar := progressbar.Default(100, "Searching....")
 
-	err := searchFiles(cnst.IdxFileNamespace, query, db)
+	re, err := regexp.Compile(query)
+	if err != nil {
+		return err
+	}
+
+	err = searchFiles(cnst.IdxFileNamespace, re, db)
 	if err != nil {
 		return err
 	}
 	bar.Add(20)
 
-	err = searchFiles(cnst.PartiFileNamespace, query, db)
+	err = searchFiles(cnst.PartiFileNamespace, re, db)
 	if err != nil {
 		return err
 	}
 	bar.Add(50)
 
-	err = searchFiles(cnst.EviFileNamespace, query, db)
+	err = searchFiles(cnst.EviFileNamespace, re, db)
 	if err != nil {
 		return err
 	}
@@ -64,7 +70,7 @@ func Search(query string, db *badger.DB) error {
 	return bar.Close()
 }
 
-func searchFiles(namespace, query string, db *badger.DB) error {
+func searchFiles(namespace string, re *regexp.Regexp, db *badger.DB) error {
 	err := db.View(func(txn *badger.Txn) error {
 		opts := badger.DefaultIteratorOptions
 		opts.PrefetchSize = 1000
@@ -86,7 +92,7 @@ func searchFiles(namespace, query string, db *badger.DB) error {
 
 			item := it.Item()
 			fid := item.KeyCopy(nil)
-			go searchAllFiles(query, fid, db, errChan)
+			go searchAllFiles(re, fid, db, errChan)
 			active++
 		}
 
@@ -103,15 +109,15 @@ func searchFiles(namespace, query string, db *badger.DB) error {
 	return err
 }
 
-func searchAllFiles(query string, fid []byte, db *badger.DB, errChan chan error) {
+func searchAllFiles(re *regexp.Regexp, fid []byte, db *badger.DB, errChan chan error) {
 	meta, err := store.GetFileMeta(fid, db)
 	if err != nil {
 		errChan <- err
 	}
-	errChan <- searchChonks(string(fid), query, meta, db)
+	errChan <- searchChonks(string(fid), re, meta, db)
 }
 
-func searchChonks(fidStr, query string, meta structs.FileMeta, db *badger.DB) error {
+func searchChonks(fidStr string, re *regexp.Regexp, meta structs.FileMeta, db *badger.DB) error {
 	var dbstart int64
 	if meta.Start > 0 {
 		dbstart = util.GetDBStartOffset(meta.Start)
@@ -128,7 +134,7 @@ func searchChonks(fidStr, query string, meta structs.FileMeta, db *badger.DB) er
 				return err
 			}
 		}
-		go searchChonk(sindex, dbstart, end, fidStr, query, meta, db, echan)
+		go searchChonk(sindex, dbstart, end, fidStr, re, meta, db, echan)
 		active++
 	}
 
@@ -143,67 +149,81 @@ func searchChonks(fidStr, query string, meta structs.FileMeta, db *badger.DB) er
 	return nil
 }
 
-func searchChonk(sindex, dbstart, end int64, fid, query string, meta structs.FileMeta, db *badger.DB, echan chan error) {
+func searchChonk(sindex, dbstart, end int64, fid string, re *regexp.Regexp, meta structs.FileMeta, db *badger.DB, echan chan error) {
+	nxtidx := sindex + cnst.ChonkSize
+	if (nxtidx >= end) && (sindex != dbstart) {
+		echan <- nil
+		return
+	}
+
 	s1key, state1, err := getChonkState(sindex, dbstart, end, meta, db)
 	if err != nil {
 		echan <- err
 		return
 	}
 
-	count, ok := cmap.Get(s1key)
-	if !ok {
-		count = subBytesChonk([]byte(query), state1)
-		cmap.Set(s1key, count)
-	}
-	if count > 0 {
-		idmap.Set(fid, count)
-	}
-
-	nxtidx := sindex + cnst.ChonkSize
-	if nxtidx >= end {
+	res, ok1 := cmap.Get(s1key)
+	if (nxtidx >= end) && (sindex == dbstart) {
+		if !ok1 {
+			res = regexSearchChonk(sindex, re, state1)
+			cmap.Set(s1key, res)
+		}
+		if res.Count > 0 {
+			idmap.Set(fid, res)
+		}
 		echan <- nil
 		return
 	}
 
-	_, state2, err := getChonkState(nxtidx, dbstart, end, meta, db)
+	s2key, state2, err := getChonkState(nxtidx, dbstart, end, meta, db)
 	if err != nil {
 		echan <- err
 		return
 	}
 
-	// state 1 and 2 overlap search
-	qoffset := (len(state1) - 1) - (len(query) - 2)
-	qstate1 := state1[qoffset:]
-	qoffset = len(query) - 2
-	state2 = state2[:qoffset]
-
-	// at least one byte of query on either side is required for an overlap
-	qstate := append(qstate1, state2...)
-	count = subBytesChonk([]byte(query), qstate)
-	if count > 0 {
-		idmap.Set(fid, count)
+	res, ok2 := cmap.Get(s2key)
+	if !ok1 || !ok2 {
+		state := append(state1, state2...)
+		res = regexSearchChonk(sindex, re, state)
 	}
+	if res.Count > 0 {
+		idmap.Set(fid, res)
+	}
+	if !ok1 {
+		cmap.Set(s1key, res)
+	}
+	if !ok2 {
+		cmap.Set(s2key, res)
+	}
+
 	echan <- nil
 }
 
-func getChonkState(searchIndex, dbstart, end int64, meta structs.FileMeta, db *badger.DB) ([]byte, []byte, error) {
-	relKey := util.AppendToBytesSlice(cnst.RelationNamespace, meta.EviHash, cnst.DataSeperator, searchIndex)
+func getChonkState(sindex, dbstart, end int64, meta structs.FileMeta, db *badger.DB) ([]byte, []byte, error) {
+	relKey := util.AppendToBytesSlice(cnst.RelationNamespace, meta.EviHash, cnst.DataSeperator, sindex)
 	chash, err := dbio.GetNode(relKey, db)
 	if err != nil {
 		return nil, nil, err
 	}
 	ckey := util.AppendToBytesSlice(cnst.ChonkNamespace, chash)
-	state, err := dbio.GetChonkData(searchIndex, meta.Start, meta.Size, dbstart, end, ckey, db)
+	state, err := dbio.GetChonkData(sindex, meta.Start, meta.Size, dbstart, end, ckey, db)
 	return ckey, state, err
 }
 
-func subBytesChonk(query, chonk []byte) int {
-	chonk = bytes.ToLower(chonk)
-	count := bytes.Count(chonk, query)
-	if count <= 0 {
-		return count
+func regexSearchChonk(sindex int64, re *regexp.Regexp, state []byte) structs.SearchResult {
+	matches := re.FindAllIndex(state, -1)
+	res := structs.SearchResult{Count: len(matches), Matches: make(map[int64]string)}
+
+	for _, match := range matches {
+		start := match[0]
+		end := match[1]
+		matchStr := string(state[start:end])
+
+		matchStart := sindex + int64(start)
+		res.Matches[matchStart] = matchStr
 	}
-	return count
+
+	return res
 }
 
 func searchReport(query string, db *badger.DB) error {
@@ -214,7 +234,7 @@ func searchReport(query string, db *badger.DB) error {
 	var occuranceCount, fileCount, artefactCount int
 	artefactCount = len(idmap.GetData())
 
-	for id, count := range idmap.GetData() {
+	for id, res := range idmap.GetData() {
 		names, err := near.GetNames([]byte(id), db)
 		if err != nil {
 			return err
@@ -226,7 +246,14 @@ func searchReport(query string, db *badger.DB) error {
 
 		var occurance structs.OccuranceData
 		occurance.ArtefactHash = hashStr
-		occurance.Count = count
+		occurance.Count = res.Count
+		for _, match := range res.Matches {
+			if slices.Contains(occurance.Matches, match) {
+				continue
+			}
+			occurance.Matches = append(occurance.Matches, match)
+		}
+
 		occurance.Disk = structs.NewDiskImage()
 		err = setOccuranceData(occurance.ArtefactHash, names, seenMap, &occurance, db)
 		if err != nil {
@@ -250,11 +277,11 @@ func searchReport(query string, db *badger.DB) error {
 		}
 
 		fileCount += len(names)
-		occuranceCount += count
+		occuranceCount += res.Count
 		report.Occurances = append(report.Occurances, occurance)
 	}
 
-	report.ExecutiveSummary = fmt.Sprintf("%d occurrences of the key term '%s' were identified across %d digital artifacs(%d files) during a comprehensive electronic examination. This finding presents avenues for further forensic analysis and legal evaluation.", occuranceCount, query, artefactCount, fileCount)
+	report.ExecutiveSummary = fmt.Sprintf("%d occurrences of the query `%s` were identified across %d digital artifacs(%d files) during a comprehensive electronic examination. This finding presents avenues for further forensic analysis and legal evaluation.", occuranceCount, query, artefactCount, fileCount)
 
 	reportData, err := json.MarshalIndent(report, "", "\t")
 	if err != nil {

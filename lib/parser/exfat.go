@@ -26,7 +26,7 @@ func IndexEXFAT(pfile structs.InputFile, idxChan chan error) {
 		idxChan <- err
 	}
 
-	indexableEntries, err := exfatdata.GetFullPathIndexableEntries(rootEntries, "/")
+	indexableEntries, err := exfatdata.GetIndexableEntries(rootEntries)
 	if err != nil {
 		idxChan <- err
 	}

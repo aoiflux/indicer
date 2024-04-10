@@ -9,6 +9,7 @@ import (
 	"encoding/base32"
 	"encoding/base64"
 	"fmt"
+	"hash"
 	"indicer/lib/cnst"
 	"io"
 	"os"
@@ -21,7 +22,6 @@ import (
 	"github.com/aoiflux/libxfat"
 	"github.com/cheggaaa/pb/v3"
 	"github.com/dgraph-io/badger/v4"
-	"golang.org/x/crypto/sha3"
 )
 
 func GetDBPath() (string, error) {
@@ -61,7 +61,7 @@ func SetChonkSize(chonkSize int) {
 	cnst.ChonkSize = int64(chonkSize) * cnst.KB
 }
 
-func GetFileHash(fileHandle *os.File) ([]byte, error) {
+func GetFileHash(fileHandle *os.File, hasher hash.Hash) ([]byte, error) {
 	info, err := os.Stat(fileHandle.Name())
 	if err != nil {
 		return nil, err
@@ -72,7 +72,7 @@ func GetFileHash(fileHandle *os.File) ([]byte, error) {
 		return nil, err
 	}
 
-	hash, err := getHash(fileHandle, info.Size(), true)
+	hash, err := getHash(fileHandle, hasher, info.Size(), true)
 	if err != nil {
 		return nil, err
 	}
@@ -81,13 +81,13 @@ func GetFileHash(fileHandle *os.File) ([]byte, error) {
 	return hash, err
 }
 
-func GetLogicalFileHash(fileHandle *os.File, start, size int64, showBar bool) ([]byte, error) {
+func GetLogicalFileHash(fileHandle *os.File, hasher hash.Hash, start, size int64, showBar bool) ([]byte, error) {
 	_, err := fileHandle.Seek(start, io.SeekStart)
 	if err != nil {
 		return nil, err
 	}
 
-	hash, err := getHash(fileHandle, size, showBar)
+	hash, err := getHash(fileHandle, hasher, size, showBar)
 	if err != nil {
 		return nil, err
 	}
@@ -96,9 +96,7 @@ func GetLogicalFileHash(fileHandle *os.File, start, size int64, showBar bool) ([
 	return hash, err
 }
 
-func getHash(fileHandle *os.File, size int64, showBar bool) ([]byte, error) {
-	hasher := sha3.New256()
-
+func getHash(fileHandle *os.File, hasher hash.Hash, size int64, showBar bool) ([]byte, error) {
 	var startTime time.Time
 	if showBar {
 		fmt.Println("Generating SHA3-256 hash ....")
@@ -124,8 +122,7 @@ func getHash(fileHandle *os.File, size int64, showBar bool) ([]byte, error) {
 	return hash, nil
 }
 
-func GetChonkHash(data []byte) ([]byte, error) {
-	hasher := sha3.New512()
+func GetChonkHash(data []byte, hasher hash.Hash) ([]byte, error) {
 	if _, err := hasher.Write(data); err != nil {
 		return nil, err
 	}

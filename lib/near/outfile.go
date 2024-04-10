@@ -10,7 +10,7 @@ import (
 
 	"github.com/dgraph-io/badger/v4"
 	"github.com/edsrzf/mmap-go"
-	"golang.org/x/crypto/sha3"
+	"github.com/zeebo/blake3"
 )
 
 func NearOutFile(fpath string, db *badger.DB) error {
@@ -44,7 +44,7 @@ func outfileSetup(fpath string) (int64, []byte, mmap.MMap, error) {
 		return -1, nil, nil, err
 	}
 
-	fhash, err := util.GetFileHash(fhandle, sha3.New256())
+	fhash, err := util.GetFileHash(fhandle, blake3.New())
 	if err != nil {
 		return -1, nil, nil, err
 	}

@@ -50,6 +50,8 @@ func StoreData(chonkSize int, dbpath, evidir string, key []byte, syncIndex, noIn
 }
 
 func StoreFolder(chonkSize int, evidir string, key []byte, syncIndex, noIndex bool, db *badger.DB) error {
+	start := time.Now()
+
 	err := filepath.Walk(evidir, func(path string, info fs.FileInfo, err error) error {
 		if err != nil {
 			return err
@@ -62,7 +64,13 @@ func StoreFolder(chonkSize int, evidir string, key []byte, syncIndex, noIndex bo
 		return StoreFile(chonkSize, path, key, syncIndex, noIndex, db)
 	})
 
-	return err
+	if err != nil {
+		return err
+	}
+
+	fmt.Println()
+	fmt.Println("Folder Store Time: ", time.Since(start))
+	return nil
 }
 
 func StoreFile(chonkSize int, evipath string, key []byte, syncIndex, noIndex bool, db *badger.DB) error {

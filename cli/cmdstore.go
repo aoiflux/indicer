@@ -9,6 +9,7 @@ import (
 	"indicer/lib/store"
 	"indicer/lib/structs"
 	"indicer/lib/util"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"time"
@@ -17,9 +18,7 @@ import (
 	"github.com/edsrzf/mmap-go"
 )
 
-func StoreData(chonkSize int, dbpath, evipath string, key []byte, syncIndex, noIndex bool) error {
-	start := time.Now()
-
+func StoreData(chonkSize int, dbpath, evidir string, key []byte, syncIndex, noIndex, folderStore bool) error {
 	db, err := common(chonkSize, dbpath, key)
 	if err != nil {
 		return err
@@ -27,6 +26,53 @@ func StoreData(chonkSize int, dbpath, evipath string, key []byte, syncIndex, noI
 	err = util.EnsureBlobPath(dbpath)
 	if err != nil {
 		return err
+	}
+
+	if folderStore {
+		fmt.Println("Storing Entire Folder")
+		err = StoreFolder(chonkSize, evidir, key, syncIndex, noIndex, db)
+		if err != nil {
+			return err
+		}
+	}
+
+	err = StoreFile(chonkSize, evidir, key, syncIndex, noIndex, db)
+	if err != nil {
+		return err
+	}
+
+	err = db.Close()
+	if err != nil {
+		return err
+	}
+	return nil
+}
+
+func StoreFolder(chonkSize int, evidir string, key []byte, syncIndex, noIndex bool, db *badger.DB) error {
+	err := filepath.Walk(evidir, func(path string, info fs.FileInfo, err error) error {
+		if err != nil {
+			return err
+		}
+
+		if info.IsDir() {
+			return nil
+		}
+
+		return StoreFile(chonkSize, path, key, syncIndex, noIndex, db)
+	})
+
+	return err
+}
+
+func StoreFile(chonkSize int, evipath string, key []byte, syncIndex, noIndex bool, db *badger.DB) error {
+	start := time.Now()
+
+	info, err := os.Stat(evipath)
+	if err != nil {
+		return err
+	}
+	if info.IsDir() {
+		return nil
 	}
 
 	fmt.Println("Pre-store checks....")
@@ -142,10 +188,6 @@ func StoreData(chonkSize int, dbpath, evipath string, key []byte, syncIndex, noI
 		return err
 	}
 	err = eviFile.GetHandle().Close()
-	if err != nil {
-		return err
-	}
-	err = eviFile.GetDB().Close()
 	if err != nil {
 		return err
 	}

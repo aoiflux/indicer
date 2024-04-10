@@ -94,6 +94,8 @@ const (
 	FlagSyncIndexShort       = 's'
 	FlagNoIndex              = "no-index"
 	FlagNoIndexShort         = 'n'
+	FlagStoreFolder          = "folder-store"
+	FlagStoreFolderShort     = 'F'
 
 	OperandFile  = "FILE"
 	OperandHash  = "HASH"

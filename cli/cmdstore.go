@@ -200,7 +200,7 @@ func StoreFile(chonkSize int, evipath string, key []byte, syncIndex, noIndex boo
 	if err != nil {
 		return err
 	}
-	fmt.Printf("\nStored in: %v\n", time.Since(start))
+	fmt.Printf("\nStored in: %v\n\n", time.Since(start))
 	return nil
 }
 

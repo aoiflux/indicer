@@ -19,7 +19,7 @@ import (
 	"golang.org/x/crypto/sha3"
 )
 
-func StoreData(chonkSize int, dbpath, evidir string, key []byte, syncIndex, noIndex, folderStore bool) error {
+func StoreData(chonkSize int, dbpath, evipath string, key []byte, syncIndex, noIndex bool) error {
 	db, err := common(chonkSize, dbpath, key)
 	if err != nil {
 		return err
@@ -29,15 +29,19 @@ func StoreData(chonkSize int, dbpath, evidir string, key []byte, syncIndex, noIn
 		return err
 	}
 
-	if folderStore {
+	finfo, err := os.Stat(evipath)
+	if err != nil {
+		return err
+	}
+
+	if finfo.IsDir() {
 		fmt.Println("Storing Entire Folder")
-		err = StoreFolder(chonkSize, evidir, key, syncIndex, noIndex, db)
+		err = StoreFolder(chonkSize, evipath, key, syncIndex, noIndex, db)
 		if err != nil {
 			return err
 		}
 	}
-
-	err = StoreFile(chonkSize, evidir, key, syncIndex, noIndex, db)
+	err = StoreFile(chonkSize, evipath, key, syncIndex, noIndex, db)
 	if err != nil {
 		return err
 	}

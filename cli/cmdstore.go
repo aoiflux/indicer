@@ -152,7 +152,8 @@ func StoreFile(chonkSize int, evipath string, key []byte, syncIndex, noIndex boo
 		}
 	}
 
-	fmt.Printf("\nSaving Evidence File\n")
+	eviname := filepath.Base(evipath)
+	fmt.Printf("\nSaving Evidence File: %s\n", eviname)
 	if !syncIndex && active > 0 {
 		fmt.Println("(indexer running async)")
 	}

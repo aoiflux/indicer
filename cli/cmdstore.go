@@ -20,7 +20,7 @@ import (
 )
 
 func StoreData(chonkSize int, dbpath, evipath string, key []byte, syncIndex, noIndex bool) error {
-	db, err := common(chonkSize, dbpath, key)
+	db, dbpath, err := common(chonkSize, dbpath, key)
 	if err != nil {
 		return err
 	}

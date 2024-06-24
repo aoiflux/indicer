@@ -5,7 +5,7 @@ import (
 )
 
 func ListData(chonkSize int, dbpath string, key []byte) error {
-	db, err := common(chonkSize, dbpath, key)
+	db, _, err := common(chonkSize, dbpath, key)
 	if err != nil {
 		return err
 	}

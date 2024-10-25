@@ -16,7 +16,7 @@ require (
 	github.com/schollz/progressbar/v3 v3.14.1
 	github.com/shirou/gopsutil/v3 v3.23.11
 	github.com/vmihailenco/msgpack/v5 v5.4.1
-	golang.org/x/crypto v0.17.0
+	golang.org/x/crypto v0.25.0
 )
 
 require (
@@ -47,9 +47,9 @@ require (
 	github.com/xhit/go-str2duration/v2 v2.1.0 // indirect
 	github.com/yusufpapurcu/wmi v1.2.3 // indirect
 	go.opencensus.io v0.24.0 // indirect
-	golang.org/x/image v0.15.0 // indirect
-	golang.org/x/net v0.19.0 // indirect
-	golang.org/x/sys v0.15.0 // indirect
-	golang.org/x/term v0.15.0 // indirect
+	golang.org/x/image v0.18.0 // indirect
+	golang.org/x/net v0.27.0 // indirect
+	golang.org/x/sys v0.22.0 // indirect
+	golang.org/x/term v0.22.0 // indirect
 	google.golang.org/protobuf v1.32.0 // indirect
 )

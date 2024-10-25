@@ -15,7 +15,7 @@ import (
 	"time"
 
 	"github.com/dgraph-io/badger/v4"
-	"github.com/edsrzf/mmap-go"
+
 	"golang.org/x/crypto/sha3"
 )
 
@@ -124,7 +124,6 @@ func StoreFile(chonkSize int, evipath string, key []byte, syncIndex, noIndex boo
 			pfile := structs.NewInputFile(
 				db,
 				eviFile.GetHandle(),
-				eviFile.GetMappedFile(),
 				pname,
 				cnst.PartiFileNamespace,
 				phash,
@@ -196,11 +195,6 @@ func StoreFile(chonkSize int, evipath string, key []byte, syncIndex, noIndex boo
 		return err
 	}
 
-	mappedFile := eviFile.GetMappedFile()
-	err = mappedFile.Unmap()
-	if err != nil {
-		return err
-	}
 	err = eviFile.GetHandle().Close()
 	if err != nil {
 		return err
@@ -227,15 +221,9 @@ func initEvidenceFile(evifilepath string, db *badger.DB) (structs.InputFile, err
 		return eviFile, err
 	}
 
-	mappedFile, err := mmap.Map(eviHandle, mmap.RDONLY, 0)
-	if err != nil {
-		return eviFile, err
-	}
-
 	eviFile = structs.NewInputFile(
 		db,
 		eviHandle,
-		mappedFile,
 		eviFileName,
 		cnst.EviFileNamespace,
 		eviFileHash,

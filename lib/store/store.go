@@ -110,7 +110,7 @@ func storeEvidenceData(infile structs.InputFile) error {
 	}
 
 	tio.Err = make(chan error, cnst.GetMaxThreadCount())
-	tio.MappedFile = infile.GetMappedFile()
+	tio.FileHandle = infile.GetHandle()
 
 	var active int
 	var buffsize int64
@@ -123,6 +123,7 @@ func storeEvidenceData(infile structs.InputFile) error {
 			buffsize = cnst.ChonkSize
 		}
 
+		tio.ChonkSize = buffsize
 		tio.ChonkEnd = tio.Index + buffsize
 		go storeWorker(tio)
 		active++
@@ -156,7 +157,13 @@ func storeEvidenceData(infile structs.InputFile) error {
 	return bar.Close()
 }
 func storeWorker(tio structs.ThreadIO) {
-	lostChonk := tio.MappedFile[tio.Index:tio.ChonkEnd]
+	lostChonk := make([]byte, tio.ChonkSize)
+	_, err := tio.FileHandle.ReadAt(lostChonk, tio.Index)
+	if err != nil {
+		tio.Err <- err
+		return
+	}
+
 	chash, err := util.GetChonkHash(lostChonk, sha3.New512())
 	if err != nil {
 		tio.Err <- err

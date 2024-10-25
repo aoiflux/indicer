@@ -9,7 +9,6 @@ require (
 	github.com/dgraph-io/badger/v4 v4.2.0
 	github.com/diskfs/go-diskfs v1.4.0
 	github.com/dustin/go-humanize v1.0.1
-	github.com/edsrzf/mmap-go v1.1.0
 	github.com/fatih/color v1.16.0
 	github.com/goccy/go-graphviz v0.1.2
 	github.com/klauspost/compress v1.17.4

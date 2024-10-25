@@ -45,7 +45,7 @@ func countEviFile(index int64, confidence float64, inputHash, revhash []byte, id
 func countPartiFile(confidence float64, ridx int64, inputHash, eid []byte, phashes map[string]structs.InternalOffset, idmap *structs.ConcMap, db *badger.DB) error {
 	var pindex int
 	for phash, offset := range phashes {
-		pid, inRange, err := countFile(ridx, cnst.PartiFileNamespace, inputHash, []byte(phash), offset, db)
+		pid, inRange, err := countFile(ridx, cnst.PartiFileNamespace, inputHash, []byte(phash), offset)
 		if err != nil {
 			return err
 		}
@@ -68,7 +68,7 @@ func countPartiFile(confidence float64, ridx int64, inputHash, eid []byte, phash
 			idmap.Set(string(pid), confidence)
 			continue
 		}
-		err = countIdxFile(confidence, ridx, inputHash, pid, pfile.InternalObjects, idmap, db)
+		err = countIdxFile(confidence, ridx, inputHash, pid, pfile.InternalObjects, idmap)
 		if err != nil {
 			return err
 		}
@@ -78,10 +78,10 @@ func countPartiFile(confidence float64, ridx int64, inputHash, eid []byte, phash
 	return nil
 }
 
-func countIdxFile(confidence float64, ridx int64, inputHash, pid []byte, ihashes map[string]structs.InternalOffset, idmap *structs.ConcMap, db *badger.DB) error {
+func countIdxFile(confidence float64, ridx int64, inputHash, pid []byte, ihashes map[string]structs.InternalOffset, idmap *structs.ConcMap) error {
 	var iindex int
 	for ihash, offset := range ihashes {
-		iid, inRange, err := countFile(ridx, cnst.IdxFileNamespace, inputHash, []byte(ihash), offset, db)
+		iid, inRange, err := countFile(ridx, cnst.IdxFileNamespace, inputHash, []byte(ihash), offset)
 		if err != nil {
 			return err
 		}
@@ -100,7 +100,7 @@ func countIdxFile(confidence float64, ridx int64, inputHash, pid []byte, ihashes
 
 	return nil
 }
-func countFile(ridx int64, namespace string, inputHash, fhash []byte, offset structs.InternalOffset, db *badger.DB) ([]byte, bool, error) {
+func countFile(ridx int64, namespace string, inputHash, fhash []byte, offset structs.InternalOffset) ([]byte, bool, error) {
 	if bytes.Equal(fhash, inputHash) {
 		return nil, false, nil
 	}

@@ -9,19 +9,18 @@ import (
 	"time"
 
 	"github.com/dgraph-io/badger/v4"
-	"github.com/edsrzf/mmap-go"
 	"golang.org/x/crypto/sha3"
 )
 
 func NearOutFile(fpath string, db *badger.DB) error {
-	size, fhash, mappedFile, err := outfileSetup(fpath)
+	size, fhash, fhandle, err := outfileSetup(fpath)
 	if err != nil {
 		return err
 	}
-	defer mappedFile.Unmap()
+	defer fhandle.Close()
 
 	var count int64
-	for chonk := range getOutfileChonks(size, mappedFile) {
+	for chonk := range getOutfileChonks(size, fhandle) {
 		_, err := getParitalMatches(fhash, chonk, db)
 		if err != nil {
 			return err
@@ -34,7 +33,7 @@ func NearOutFile(fpath string, db *badger.DB) error {
 	return nil
 }
 
-func outfileSetup(fpath string) (int64, []byte, mmap.MMap, error) {
+func outfileSetup(fpath string) (int64, []byte, *os.File, error) {
 	finfo, err := os.Stat(fpath)
 	if err != nil {
 		return -1, nil, nil, err
@@ -48,16 +47,10 @@ func outfileSetup(fpath string) (int64, []byte, mmap.MMap, error) {
 	if err != nil {
 		return -1, nil, nil, err
 	}
-
-	mappedFile, err := mmap.Map(fhandle, mmap.RDONLY, 0)
-	if err != nil {
-		return -1, nil, nil, err
-	}
-
-	return finfo.Size(), fhash, mappedFile, nil
+	return finfo.Size(), fhash, fhandle, nil
 }
 
-func getOutfileChonks(size int64, mappedFile mmap.MMap) chan []byte {
+func getOutfileChonks(size int64, fileHandle *os.File) chan []byte {
 	chonk := make(chan []byte)
 	go func() {
 		defer close(chonk)
@@ -68,7 +61,10 @@ func getOutfileChonks(size int64, mappedFile mmap.MMap) chan []byte {
 			} else {
 				buffSize = cnst.ChonkSize
 			}
-			chonk <- mappedFile[outindex : outindex+buffSize]
+			buff := make([]byte, buffSize)
+			// todo - handle error
+			fileHandle.ReadAt(buff, outindex)
+			chonk <- buff
 		}
 	}()
 	return chonk

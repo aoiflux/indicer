@@ -51,10 +51,10 @@ func NearInFile(fhash string, db *badger.DB, deep ...bool) error {
 		return err
 	}
 
-	err = visualise(fid, idmap, db)
-	if err != nil {
-		return err
-	}
+	// err = visualise(fid, idmap, db)
+	// if err != nil {
+	// 	return err
+	// }
 
 	fmt.Printf("Done.... %v\n", time.Since(start))
 	return nil

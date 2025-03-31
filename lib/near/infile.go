@@ -245,7 +245,7 @@ func getNear(start, size int64, ehash []byte, db *badger.DB, deep bool) chan str
 			confidence = 1
 
 			if len(revmap) < 2 && deep {
-				revmap, confidence, err = partialMatch(nearIndex, ehash, chash, db)
+				revmap, confidence, err = partialMatch(ehash, chash, db)
 				if err != nil {
 					neargen.Err = err
 					neargenChan <- neargen
@@ -297,7 +297,7 @@ func getNear(start, size int64, ehash []byte, db *badger.DB, deep bool) chan str
 	return neargenChan
 }
 
-func partialMatch(index int64, inhash, chash []byte, db *badger.DB) (map[string]struct{}, float64, error) {
+func partialMatch(inhash, chash []byte, db *badger.DB) (map[string]struct{}, float64, error) {
 	ckey := util.AppendToBytesSlice(cnst.ChonkNamespace, chash)
 	cdata, err := dbio.GetNode(ckey, db)
 	if err != nil {

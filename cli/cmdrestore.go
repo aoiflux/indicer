@@ -10,7 +10,7 @@ import (
 func RestoreData(chonkSize int, dbpath, rhash, rpath string, key []byte) error {
 	start := time.Now()
 
-	db, _, err := common(chonkSize, dbpath, key)
+	db, _, err := Common(chonkSize, dbpath, key)
 	if err != nil {
 		return err
 	}

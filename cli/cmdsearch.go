@@ -10,7 +10,7 @@ func SearchCmd(chonkSize int, query, dbpath string, key []byte) error {
 	if len(query) < 2 {
 		return cnst.ErrSmallQuery
 	}
-	db, _, err := common(chonkSize, dbpath, key)
+	db, _, err := Common(chonkSize, dbpath, key)
 	if err != nil {
 		return err
 	}

@@ -4,9 +4,12 @@ import (
 	"errors"
 	"runtime"
 
+	"github.com/dgraph-io/badger/v4"
 	"github.com/klauspost/compress/zstd"
 	"github.com/shirou/gopsutil/v3/mem"
 )
+
+const DefaultDBPath = "./data"
 
 const (
 	B  int64 = 1
@@ -19,7 +22,7 @@ const (
 const (
 	CacheLimit              = GB
 	SectorSize       uint64 = 512
-	DefaultChonkSize        = 256 * KB
+	DefaultChonkSize int64  = 256
 	KeySize                 = 32
 )
 
@@ -54,7 +57,7 @@ var (
 	ErrIncompatibleFile       = errors.New("unknown/incompatible file detected")
 	ErrIncompatibleFileSystem = errors.New("unknown file system")
 	ErrUnknownFileType        = errors.New("unknown file type. please try one of the following: evidence|partition|indexed")
-	ErrIncorrectOption        = errors.New("indicer near <in|out> <hash|file_path> [deep]\n\tUse option in to get NeAR of files inside the database, provide a hash string\n\tUse option out to get NeAR of files outside of the database, provide a path")
+	ErrIncorrectOption        = errors.New("duesver near <in|out> <hash|file_path> [deep]\n\tUse option in to get NeAR of files inside the database, provide a hash string\n\tUse option out to get NeAR of files outside of the database, provide a path")
 	ErrNilBatch               = errors.New("call SetBatch first, batch is nil. cannot work with nil batch")
 	ErrSmallQuery             = errors.New("search query too small. query requires at least 2 characters")
 	ErrTooManySplits          = errors.New("too many splits: %v")
@@ -104,6 +107,8 @@ const IgnoreVar int64 = -1
 
 var DECODER *zstd.Decoder
 var ENCODER *zstd.Encoder
+var DB *badger.DB
+var KEY []byte
 
 func GetMaxThreadCount() int {
 	if MEMOPT {

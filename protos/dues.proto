@@ -4,7 +4,7 @@ package dues;
 option go_package = "indicer/pb;pb";
 
 service DuesService {
-    rpc IsFileExists (IsFileExistsReq) returns (IsFileExistsRes);
+    rpc AppendIfExists (AppendIfExistsReq) returns (AppendIfExistsRes);
     rpc StreamFile (stream StreamFileReq) returns (StreamFileRes);
 
     rpc GetEviFiles (GetEviFilesReq) returns (GetEviFilesRes);
@@ -19,13 +19,13 @@ message BaseFile {
     map<string, int64> chunk_map = 2;
 }
 
-message IsFileExistsReq {
+message AppendIfExistsReq {
     string file_hash = 1;
     string file_path = 2;
 }
-message IsFileExistsRes {
-    bool is_exist = 1;
-    bool is_complete = 2;
+message AppendIfExistsRes {
+    bool exists = 1;
+    bool appended = 2;
     string err = 3;
 }
 message StreamFileMeta {

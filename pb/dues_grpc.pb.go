@@ -19,7 +19,7 @@ import (
 const _ = grpc.SupportPackageIsVersion9
 
 const (
-	DuesService_IsFileExists_FullMethodName      = "/dues.DuesService/IsFileExists"
+	DuesService_AppendIfExists_FullMethodName    = "/dues.DuesService/AppendIfExists"
 	DuesService_StreamFile_FullMethodName        = "/dues.DuesService/StreamFile"
 	DuesService_GetEviFiles_FullMethodName       = "/dues.DuesService/GetEviFiles"
 	DuesService_GetPartitionFiles_FullMethodName = "/dues.DuesService/GetPartitionFiles"
@@ -31,7 +31,7 @@ const (
 //
 // For semantics around ctx use and closing/ending streaming RPCs, please refer to https://pkg.go.dev/google.golang.org/grpc/?tab=doc#ClientConn.NewStream.
 type DuesServiceClient interface {
-	IsFileExists(ctx context.Context, in *IsFileExistsReq, opts ...grpc.CallOption) (*IsFileExistsRes, error)
+	AppendIfExists(ctx context.Context, in *AppendIfExistsReq, opts ...grpc.CallOption) (*AppendIfExistsRes, error)
 	StreamFile(ctx context.Context, opts ...grpc.CallOption) (grpc.ClientStreamingClient[StreamFileReq, StreamFileRes], error)
 	GetEviFiles(ctx context.Context, in *GetEviFilesReq, opts ...grpc.CallOption) (*GetEviFilesRes, error)
 	GetPartitionFiles(ctx context.Context, in *GetIndexedFilesReq, opts ...grpc.CallOption) (*GetPartitionFilesRes, error)
@@ -47,10 +47,10 @@ func NewDuesServiceClient(cc grpc.ClientConnInterface) DuesServiceClient {
 	return &duesServiceClient{cc}
 }
 
-func (c *duesServiceClient) IsFileExists(ctx context.Context, in *IsFileExistsReq, opts ...grpc.CallOption) (*IsFileExistsRes, error) {
+func (c *duesServiceClient) AppendIfExists(ctx context.Context, in *AppendIfExistsReq, opts ...grpc.CallOption) (*AppendIfExistsRes, error) {
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
-	out := new(IsFileExistsRes)
-	err := c.cc.Invoke(ctx, DuesService_IsFileExists_FullMethodName, in, out, cOpts...)
+	out := new(AppendIfExistsRes)
+	err := c.cc.Invoke(ctx, DuesService_AppendIfExists_FullMethodName, in, out, cOpts...)
 	if err != nil {
 		return nil, err
 	}
@@ -114,7 +114,7 @@ func (c *duesServiceClient) Search(ctx context.Context, in *SearchReq, opts ...g
 // All implementations must embed UnimplementedDuesServiceServer
 // for forward compatibility.
 type DuesServiceServer interface {
-	IsFileExists(context.Context, *IsFileExistsReq) (*IsFileExistsRes, error)
+	AppendIfExists(context.Context, *AppendIfExistsReq) (*AppendIfExistsRes, error)
 	StreamFile(grpc.ClientStreamingServer[StreamFileReq, StreamFileRes]) error
 	GetEviFiles(context.Context, *GetEviFilesReq) (*GetEviFilesRes, error)
 	GetPartitionFiles(context.Context, *GetIndexedFilesReq) (*GetPartitionFilesRes, error)
@@ -130,8 +130,8 @@ type DuesServiceServer interface {
 // pointer dereference when methods are called.
 type UnimplementedDuesServiceServer struct{}
 
-func (UnimplementedDuesServiceServer) IsFileExists(context.Context, *IsFileExistsReq) (*IsFileExistsRes, error) {
-	return nil, status.Errorf(codes.Unimplemented, "method IsFileExists not implemented")
+func (UnimplementedDuesServiceServer) AppendIfExists(context.Context, *AppendIfExistsReq) (*AppendIfExistsRes, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method AppendIfExists not implemented")
 }
 func (UnimplementedDuesServiceServer) StreamFile(grpc.ClientStreamingServer[StreamFileReq, StreamFileRes]) error {
 	return status.Errorf(codes.Unimplemented, "method StreamFile not implemented")
@@ -169,20 +169,20 @@ func RegisterDuesServiceServer(s grpc.ServiceRegistrar, srv DuesServiceServer) {
 	s.RegisterService(&DuesService_ServiceDesc, srv)
 }
 
-func _DuesService_IsFileExists_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
-	in := new(IsFileExistsReq)
+func _DuesService_AppendIfExists_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(AppendIfExistsReq)
 	if err := dec(in); err != nil {
 		return nil, err
 	}
 	if interceptor == nil {
-		return srv.(DuesServiceServer).IsFileExists(ctx, in)
+		return srv.(DuesServiceServer).AppendIfExists(ctx, in)
 	}
 	info := &grpc.UnaryServerInfo{
 		Server:     srv,
-		FullMethod: DuesService_IsFileExists_FullMethodName,
+		FullMethod: DuesService_AppendIfExists_FullMethodName,
 	}
 	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
-		return srv.(DuesServiceServer).IsFileExists(ctx, req.(*IsFileExistsReq))
+		return srv.(DuesServiceServer).AppendIfExists(ctx, req.(*AppendIfExistsReq))
 	}
 	return interceptor(ctx, in, info, handler)
 }
@@ -274,8 +274,8 @@ var DuesService_ServiceDesc = grpc.ServiceDesc{
 	HandlerType: (*DuesServiceServer)(nil),
 	Methods: []grpc.MethodDesc{
 		{
-			MethodName: "IsFileExists",
-			Handler:    _DuesService_IsFileExists_Handler,
+			MethodName: "AppendIfExists",
+			Handler:    _DuesService_AppendIfExists_Handler,
 		},
 		{
 			MethodName: "GetEviFiles",

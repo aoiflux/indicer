@@ -73,7 +73,7 @@ func (x *BaseFile) GetChunkMap() map[string]int64 {
 	return nil
 }
 
-type IsFileExistsReq struct {
+type AppendIfExistsReq struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
 	FileHash      string                 `protobuf:"bytes,1,opt,name=file_hash,json=fileHash,proto3" json:"file_hash,omitempty"`
 	FilePath      string                 `protobuf:"bytes,2,opt,name=file_path,json=filePath,proto3" json:"file_path,omitempty"`
@@ -81,20 +81,20 @@ type IsFileExistsReq struct {
 	sizeCache     protoimpl.SizeCache
 }
 
-func (x *IsFileExistsReq) Reset() {
-	*x = IsFileExistsReq{}
+func (x *AppendIfExistsReq) Reset() {
+	*x = AppendIfExistsReq{}
 	mi := &file_dues_proto_msgTypes[1]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
 
-func (x *IsFileExistsReq) String() string {
+func (x *AppendIfExistsReq) String() string {
 	return protoimpl.X.MessageStringOf(x)
 }
 
-func (*IsFileExistsReq) ProtoMessage() {}
+func (*AppendIfExistsReq) ProtoMessage() {}
 
-func (x *IsFileExistsReq) ProtoReflect() protoreflect.Message {
+func (x *AppendIfExistsReq) ProtoReflect() protoreflect.Message {
 	mi := &file_dues_proto_msgTypes[1]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
@@ -106,48 +106,48 @@ func (x *IsFileExistsReq) ProtoReflect() protoreflect.Message {
 	return mi.MessageOf(x)
 }
 
-// Deprecated: Use IsFileExistsReq.ProtoReflect.Descriptor instead.
-func (*IsFileExistsReq) Descriptor() ([]byte, []int) {
+// Deprecated: Use AppendIfExistsReq.ProtoReflect.Descriptor instead.
+func (*AppendIfExistsReq) Descriptor() ([]byte, []int) {
 	return file_dues_proto_rawDescGZIP(), []int{1}
 }
 
-func (x *IsFileExistsReq) GetFileHash() string {
+func (x *AppendIfExistsReq) GetFileHash() string {
 	if x != nil {
 		return x.FileHash
 	}
 	return ""
 }
 
-func (x *IsFileExistsReq) GetFilePath() string {
+func (x *AppendIfExistsReq) GetFilePath() string {
 	if x != nil {
 		return x.FilePath
 	}
 	return ""
 }
 
-type IsFileExistsRes struct {
+type AppendIfExistsRes struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
-	IsExist       bool                   `protobuf:"varint,1,opt,name=is_exist,json=isExist,proto3" json:"is_exist,omitempty"`
-	IsComplete    bool                   `protobuf:"varint,2,opt,name=is_complete,json=isComplete,proto3" json:"is_complete,omitempty"`
+	Exists        bool                   `protobuf:"varint,1,opt,name=exists,proto3" json:"exists,omitempty"`
+	Appended      bool                   `protobuf:"varint,2,opt,name=appended,proto3" json:"appended,omitempty"`
 	Err           string                 `protobuf:"bytes,3,opt,name=err,proto3" json:"err,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
 
-func (x *IsFileExistsRes) Reset() {
-	*x = IsFileExistsRes{}
+func (x *AppendIfExistsRes) Reset() {
+	*x = AppendIfExistsRes{}
 	mi := &file_dues_proto_msgTypes[2]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
 
-func (x *IsFileExistsRes) String() string {
+func (x *AppendIfExistsRes) String() string {
 	return protoimpl.X.MessageStringOf(x)
 }
 
-func (*IsFileExistsRes) ProtoMessage() {}
+func (*AppendIfExistsRes) ProtoMessage() {}
 
-func (x *IsFileExistsRes) ProtoReflect() protoreflect.Message {
+func (x *AppendIfExistsRes) ProtoReflect() protoreflect.Message {
 	mi := &file_dues_proto_msgTypes[2]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
@@ -159,26 +159,26 @@ func (x *IsFileExistsRes) ProtoReflect() protoreflect.Message {
 	return mi.MessageOf(x)
 }
 
-// Deprecated: Use IsFileExistsRes.ProtoReflect.Descriptor instead.
-func (*IsFileExistsRes) Descriptor() ([]byte, []int) {
+// Deprecated: Use AppendIfExistsRes.ProtoReflect.Descriptor instead.
+func (*AppendIfExistsRes) Descriptor() ([]byte, []int) {
 	return file_dues_proto_rawDescGZIP(), []int{2}
 }
 
-func (x *IsFileExistsRes) GetIsExist() bool {
+func (x *AppendIfExistsRes) GetExists() bool {
 	if x != nil {
-		return x.IsExist
+		return x.Exists
 	}
 	return false
 }
 
-func (x *IsFileExistsRes) GetIsComplete() bool {
+func (x *AppendIfExistsRes) GetAppended() bool {
 	if x != nil {
-		return x.IsComplete
+		return x.Appended
 	}
 	return false
 }
 
-func (x *IsFileExistsRes) GetErr() string {
+func (x *AppendIfExistsRes) GetErr() string {
 	if x != nil {
 		return x.Err
 	}
@@ -814,14 +814,13 @@ const file_dues_proto_rawDesc = "" +
 	"\tchunk_map\x18\x02 \x03(\v2\x1c.dues.BaseFile.ChunkMapEntryR\bchunkMap\x1a;\n" +
 	"\rChunkMapEntry\x12\x10\n" +
 	"\x03key\x18\x01 \x01(\tR\x03key\x12\x14\n" +
-	"\x05value\x18\x02 \x01(\x03R\x05value:\x028\x01\"K\n" +
-	"\x0fIsFileExistsReq\x12\x1b\n" +
+	"\x05value\x18\x02 \x01(\x03R\x05value:\x028\x01\"M\n" +
+	"\x11AppendIfExistsReq\x12\x1b\n" +
 	"\tfile_hash\x18\x01 \x01(\tR\bfileHash\x12\x1b\n" +
-	"\tfile_path\x18\x02 \x01(\tR\bfilePath\"_\n" +
-	"\x0fIsFileExistsRes\x12\x19\n" +
-	"\bis_exist\x18\x01 \x01(\bR\aisExist\x12\x1f\n" +
-	"\vis_complete\x18\x02 \x01(\bR\n" +
-	"isComplete\x12\x10\n" +
+	"\tfile_path\x18\x02 \x01(\tR\bfilePath\"Y\n" +
+	"\x11AppendIfExistsRes\x12\x16\n" +
+	"\x06exists\x18\x01 \x01(\bR\x06exists\x12\x1a\n" +
+	"\bappended\x18\x02 \x01(\bR\bappended\x12\x10\n" +
 	"\x03err\x18\x03 \x01(\tR\x03err\"\x84\x01\n" +
 	"\x0eStreamFileMeta\x12\x1b\n" +
 	"\tfile_path\x18\x01 \x01(\tR\bfilePath\x12\x1b\n" +
@@ -862,9 +861,9 @@ const file_dues_proto_rawDesc = "" +
 	"\x11keyword_count_map\x18\x03 \x03(\v2$.dues.SearchRes.KeywordCountMapEntryR\x0fkeywordCountMap\x1aB\n" +
 	"\x14KeywordCountMapEntry\x12\x10\n" +
 	"\x03key\x18\x01 \x01(\tR\x03key\x12\x14\n" +
-	"\x05value\x18\x02 \x01(\x03R\x05value:\x028\x012\xfe\x02\n" +
-	"\vDuesService\x12<\n" +
-	"\fIsFileExists\x12\x15.dues.IsFileExistsReq\x1a\x15.dues.IsFileExistsRes\x128\n" +
+	"\x05value\x18\x02 \x01(\x03R\x05value:\x028\x012\x84\x03\n" +
+	"\vDuesService\x12B\n" +
+	"\x0eAppendIfExists\x12\x17.dues.AppendIfExistsReq\x1a\x17.dues.AppendIfExistsRes\x128\n" +
 	"\n" +
 	"StreamFile\x12\x13.dues.StreamFileReq\x1a\x13.dues.StreamFileRes(\x01\x129\n" +
 	"\vGetEviFiles\x12\x14.dues.GetEviFilesReq\x1a\x14.dues.GetEviFilesRes\x12I\n" +
@@ -887,8 +886,8 @@ func file_dues_proto_rawDescGZIP() []byte {
 var file_dues_proto_msgTypes = make([]protoimpl.MessageInfo, 16)
 var file_dues_proto_goTypes = []any{
 	(*BaseFile)(nil),             // 0: dues.BaseFile
-	(*IsFileExistsReq)(nil),      // 1: dues.IsFileExistsReq
-	(*IsFileExistsRes)(nil),      // 2: dues.IsFileExistsRes
+	(*AppendIfExistsReq)(nil),    // 1: dues.AppendIfExistsReq
+	(*AppendIfExistsRes)(nil),    // 2: dues.AppendIfExistsRes
 	(*StreamFileMeta)(nil),       // 3: dues.StreamFileMeta
 	(*StreamFileReq)(nil),        // 4: dues.StreamFileReq
 	(*StreamFileRes)(nil),        // 5: dues.StreamFileRes
@@ -911,13 +910,13 @@ var file_dues_proto_depIdxs = []int32{
 	0,  // 4: dues.GetPartitionFilesRes.partition_file:type_name -> dues.BaseFile
 	0,  // 5: dues.GetIndexedFilesRes.indexed_file:type_name -> dues.BaseFile
 	15, // 6: dues.SearchRes.keyword_count_map:type_name -> dues.SearchRes.KeywordCountMapEntry
-	1,  // 7: dues.DuesService.IsFileExists:input_type -> dues.IsFileExistsReq
+	1,  // 7: dues.DuesService.AppendIfExists:input_type -> dues.AppendIfExistsReq
 	4,  // 8: dues.DuesService.StreamFile:input_type -> dues.StreamFileReq
 	6,  // 9: dues.DuesService.GetEviFiles:input_type -> dues.GetEviFilesReq
 	10, // 10: dues.DuesService.GetPartitionFiles:input_type -> dues.GetIndexedFilesReq
 	10, // 11: dues.DuesService.GetIndexedFiles:input_type -> dues.GetIndexedFilesReq
 	12, // 12: dues.DuesService.Search:input_type -> dues.SearchReq
-	2,  // 13: dues.DuesService.IsFileExists:output_type -> dues.IsFileExistsRes
+	2,  // 13: dues.DuesService.AppendIfExists:output_type -> dues.AppendIfExistsRes
 	5,  // 14: dues.DuesService.StreamFile:output_type -> dues.StreamFileRes
 	7,  // 15: dues.DuesService.GetEviFiles:output_type -> dues.GetEviFilesRes
 	9,  // 16: dues.DuesService.GetPartitionFiles:output_type -> dues.GetPartitionFilesRes

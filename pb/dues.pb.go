@@ -23,7 +23,7 @@ const (
 
 type BaseFile struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
-	FileName      string                 `protobuf:"bytes,1,opt,name=file_name,json=fileName,proto3" json:"file_name,omitempty"`
+	FilePath      string                 `protobuf:"bytes,1,opt,name=file_path,json=filePath,proto3" json:"file_path,omitempty"`
 	ChunkMap      map[string]int64       `protobuf:"bytes,2,rep,name=chunk_map,json=chunkMap,proto3" json:"chunk_map,omitempty" protobuf_key:"bytes,1,opt,name=key" protobuf_val:"varint,2,opt,name=value"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
@@ -59,9 +59,9 @@ func (*BaseFile) Descriptor() ([]byte, []int) {
 	return file_dues_proto_rawDescGZIP(), []int{0}
 }
 
-func (x *BaseFile) GetFileName() string {
+func (x *BaseFile) GetFilePath() string {
 	if x != nil {
-		return x.FileName
+		return x.FilePath
 	}
 	return ""
 }
@@ -810,7 +810,7 @@ const file_dues_proto_rawDesc = "" +
 	"\n" +
 	"dues.proto\x12\x04dues\"\x9f\x01\n" +
 	"\bBaseFile\x12\x1b\n" +
-	"\tfile_name\x18\x01 \x01(\tR\bfileName\x129\n" +
+	"\tfile_path\x18\x01 \x01(\tR\bfilePath\x129\n" +
 	"\tchunk_map\x18\x02 \x03(\v2\x1c.dues.BaseFile.ChunkMapEntryR\bchunkMap\x1a;\n" +
 	"\rChunkMapEntry\x12\x10\n" +
 	"\x03key\x18\x01 \x01(\tR\x03key\x12\x14\n" +

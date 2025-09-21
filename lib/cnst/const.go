@@ -9,6 +9,11 @@ import (
 	"github.com/shirou/gopsutil/v3/mem"
 )
 
+const (
+	FILE_EXISTS   = "EXISTS"
+	FILE_APPENDED = "APPENDED"
+)
+
 const DefaultDBPath = "./data"
 
 const (

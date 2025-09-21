@@ -30,7 +30,8 @@ func NewPartitionFile(name string, start, size int64, indexedFiles map[string]In
 
 type EvidenceFile struct {
 	PartitionFile
-	Completed bool `msgpack:"completed"`
+	EvidenceType string `msgpack:"evidence_type"`
+	Completed    bool   `msgpack:"completed"`
 }
 
 func NewEvidenceFile(name string, start, size int64, partitions map[string]InternalOffset) EvidenceFile {

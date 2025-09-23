@@ -5,7 +5,6 @@ import (
 	"indicer/lib/dbio"
 	"indicer/lib/structs"
 	"indicer/lib/util"
-	"log"
 
 	"github.com/dgraph-io/badger/v4"
 )
@@ -14,20 +13,12 @@ import (
 // this change may require a db rearchitecture
 // remember this while moving from kvdb only to specialised db model
 func CheckAndAppend(filePath, fileHash string, db *badger.DB) (string, error) {
-	eid := util.AppendToBytesSlice(cnst.EviFileNamespace, fileHash)
-	efile, err := dbio.GetEvidenceFile(eid, db)
+	efile, err := getEvidenceFile(filePath, fileHash, db)
 	if err != nil {
-		if err == badger.ErrKeyNotFound {
-			log.Printf("File [%s] not found", filePath)
-			return "", cnst.ErrFileNotFound
-		}
 		return "", err
 	}
-	if !efile.Completed {
-		log.Printf("File [%s] is incomplete", filePath)
-		return "", cnst.ErrFileNotFound
-	}
 
+	eid := util.AppendToBytesSlice(cnst.EviFileNamespace, fileHash)
 	return appendFile(eid, filePath, efile, db)
 }
 

@@ -15,6 +15,7 @@ const (
 )
 
 const DefaultDBPath = "./data"
+const UploadsDir = "./uploads"
 
 const (
 	B  int64 = 1

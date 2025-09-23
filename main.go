@@ -29,6 +29,9 @@ func main() {
 	lis, err := net.Listen("tcp", ":50051")
 	handle(err)
 
+	log.Println("Ensuring upload dir - ", cnst.UploadsDir)
+	ensureUploadDir()
+
 	log.Println("Connecting to DB")
 	cnst.KEY = util.HashPassword("")
 	db, _, err := cli.Common(int(cnst.DefaultChonkSize), cnst.DefaultDBPath, cnst.KEY)
@@ -49,6 +52,14 @@ func main() {
 	err = cnst.ENCODER.Close()
 	handle(err)
 	cnst.DECODER.Close()
+}
+
+func ensureUploadDir() error {
+	_, err := os.Stat(cnst.UploadsDir)
+	if os.IsNotExist(err) {
+		return os.MkdirAll(cnst.UploadsDir, os.ModeDir)
+	}
+	return nil
 }
 
 func handle(err error) {

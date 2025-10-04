@@ -12,14 +12,15 @@ import (
 // checkfile function should eventually be updated to check evi, parti, and indexed files
 // this change may require a db rearchitecture
 // remember this while moving from kvdb only to specialised db model
-func CheckAndAppend(filePath, fileHash string, db *badger.DB) (string, error) {
+func CheckAndAppend(filePath, fileHash string, db *badger.DB) (structs.EvidenceFile, string, error) {
 	efile, err := getEvidenceFile(filePath, fileHash, db)
 	if err != nil {
-		return "", err
+		return efile, "", err
 	}
 
 	eid := util.AppendToBytesSlice(cnst.EviFileNamespace, fileHash)
-	return appendFile(eid, filePath, efile, db)
+	appendded, err := appendFile(eid, filePath, efile, db)
+	return efile, appendded, err
 }
 
 func appendFile(eid []byte, filePath string, efile structs.EvidenceFile, db *badger.DB) (string, error) {

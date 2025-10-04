@@ -8,7 +8,7 @@ service DuesService {
     rpc StreamFile (stream StreamFileReq) returns (StreamFileRes);
 
     rpc GetEviFiles (GetEviFilesReq) returns (GetEviFilesRes);
-    rpc GetPartitionFiles (GetIndexedFilesReq) returns (GetPartitionFilesRes);
+    rpc GetPartitionFiles (GetPartitionFilesReq) returns (GetPartitionFilesRes);
     rpc GetIndexedFiles (GetIndexedFilesReq) returns (GetIndexedFilesRes);
 
     rpc Search (SearchReq) returns (SearchRes);
@@ -26,7 +26,8 @@ message AppendIfExistsReq {
 message AppendIfExistsRes {
     bool exists = 1;
     bool appended = 2;
-    string err = 3;
+    BaseFile evi_file = 3;
+    string err = 4;
 }
 message StreamFileMeta {
     string file_path = 1;

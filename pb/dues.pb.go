@@ -129,7 +129,8 @@ type AppendIfExistsRes struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
 	Exists        bool                   `protobuf:"varint,1,opt,name=exists,proto3" json:"exists,omitempty"`
 	Appended      bool                   `protobuf:"varint,2,opt,name=appended,proto3" json:"appended,omitempty"`
-	Err           string                 `protobuf:"bytes,3,opt,name=err,proto3" json:"err,omitempty"`
+	EviFile       *BaseFile              `protobuf:"bytes,3,opt,name=evi_file,json=eviFile,proto3" json:"evi_file,omitempty"`
+	Err           string                 `protobuf:"bytes,4,opt,name=err,proto3" json:"err,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -176,6 +177,13 @@ func (x *AppendIfExistsRes) GetAppended() bool {
 		return x.Appended
 	}
 	return false
+}
+
+func (x *AppendIfExistsRes) GetEviFile() *BaseFile {
+	if x != nil {
+		return x.EviFile
+	}
+	return nil
 }
 
 func (x *AppendIfExistsRes) GetErr() string {
@@ -817,11 +825,12 @@ const file_dues_proto_rawDesc = "" +
 	"\x05value\x18\x02 \x01(\x03R\x05value:\x028\x01\"M\n" +
 	"\x11AppendIfExistsReq\x12\x1b\n" +
 	"\tfile_hash\x18\x01 \x01(\tR\bfileHash\x12\x1b\n" +
-	"\tfile_path\x18\x02 \x01(\tR\bfilePath\"Y\n" +
+	"\tfile_path\x18\x02 \x01(\tR\bfilePath\"\x84\x01\n" +
 	"\x11AppendIfExistsRes\x12\x16\n" +
 	"\x06exists\x18\x01 \x01(\bR\x06exists\x12\x1a\n" +
-	"\bappended\x18\x02 \x01(\bR\bappended\x12\x10\n" +
-	"\x03err\x18\x03 \x01(\tR\x03err\"\x84\x01\n" +
+	"\bappended\x18\x02 \x01(\bR\bappended\x12)\n" +
+	"\bevi_file\x18\x03 \x01(\v2\x0e.dues.BaseFileR\aeviFile\x12\x10\n" +
+	"\x03err\x18\x04 \x01(\tR\x03err\"\x84\x01\n" +
 	"\x0eStreamFileMeta\x12\x1b\n" +
 	"\tfile_path\x18\x01 \x01(\tR\bfilePath\x12\x1b\n" +
 	"\tfile_size\x18\x02 \x01(\x03R\bfileSize\x12\x1b\n" +
@@ -861,13 +870,13 @@ const file_dues_proto_rawDesc = "" +
 	"\x11keyword_count_map\x18\x03 \x03(\v2$.dues.SearchRes.KeywordCountMapEntryR\x0fkeywordCountMap\x1aB\n" +
 	"\x14KeywordCountMapEntry\x12\x10\n" +
 	"\x03key\x18\x01 \x01(\tR\x03key\x12\x14\n" +
-	"\x05value\x18\x02 \x01(\x03R\x05value:\x028\x012\x84\x03\n" +
+	"\x05value\x18\x02 \x01(\x03R\x05value:\x028\x012\x86\x03\n" +
 	"\vDuesService\x12B\n" +
 	"\x0eAppendIfExists\x12\x17.dues.AppendIfExistsReq\x1a\x17.dues.AppendIfExistsRes\x128\n" +
 	"\n" +
 	"StreamFile\x12\x13.dues.StreamFileReq\x1a\x13.dues.StreamFileRes(\x01\x129\n" +
-	"\vGetEviFiles\x12\x14.dues.GetEviFilesReq\x1a\x14.dues.GetEviFilesRes\x12I\n" +
-	"\x11GetPartitionFiles\x12\x18.dues.GetIndexedFilesReq\x1a\x1a.dues.GetPartitionFilesRes\x12E\n" +
+	"\vGetEviFiles\x12\x14.dues.GetEviFilesReq\x1a\x14.dues.GetEviFilesRes\x12K\n" +
+	"\x11GetPartitionFiles\x12\x1a.dues.GetPartitionFilesReq\x1a\x1a.dues.GetPartitionFilesRes\x12E\n" +
 	"\x0fGetIndexedFiles\x12\x18.dues.GetIndexedFilesReq\x1a\x18.dues.GetIndexedFilesRes\x12*\n" +
 	"\x06Search\x12\x0f.dues.SearchReq\x1a\x0f.dues.SearchResB\x0fZ\rindicer/pb;pbb\x06proto3"
 
@@ -904,29 +913,30 @@ var file_dues_proto_goTypes = []any{
 }
 var file_dues_proto_depIdxs = []int32{
 	14, // 0: dues.BaseFile.chunk_map:type_name -> dues.BaseFile.ChunkMapEntry
-	3,  // 1: dues.StreamFileReq.file_meta:type_name -> dues.StreamFileMeta
-	0,  // 2: dues.StreamFileRes.evi_file:type_name -> dues.BaseFile
-	0,  // 3: dues.GetEviFilesRes.evi_file:type_name -> dues.BaseFile
-	0,  // 4: dues.GetPartitionFilesRes.partition_file:type_name -> dues.BaseFile
-	0,  // 5: dues.GetIndexedFilesRes.indexed_file:type_name -> dues.BaseFile
-	15, // 6: dues.SearchRes.keyword_count_map:type_name -> dues.SearchRes.KeywordCountMapEntry
-	1,  // 7: dues.DuesService.AppendIfExists:input_type -> dues.AppendIfExistsReq
-	4,  // 8: dues.DuesService.StreamFile:input_type -> dues.StreamFileReq
-	6,  // 9: dues.DuesService.GetEviFiles:input_type -> dues.GetEviFilesReq
-	10, // 10: dues.DuesService.GetPartitionFiles:input_type -> dues.GetIndexedFilesReq
-	10, // 11: dues.DuesService.GetIndexedFiles:input_type -> dues.GetIndexedFilesReq
-	12, // 12: dues.DuesService.Search:input_type -> dues.SearchReq
-	2,  // 13: dues.DuesService.AppendIfExists:output_type -> dues.AppendIfExistsRes
-	5,  // 14: dues.DuesService.StreamFile:output_type -> dues.StreamFileRes
-	7,  // 15: dues.DuesService.GetEviFiles:output_type -> dues.GetEviFilesRes
-	9,  // 16: dues.DuesService.GetPartitionFiles:output_type -> dues.GetPartitionFilesRes
-	11, // 17: dues.DuesService.GetIndexedFiles:output_type -> dues.GetIndexedFilesRes
-	13, // 18: dues.DuesService.Search:output_type -> dues.SearchRes
-	13, // [13:19] is the sub-list for method output_type
-	7,  // [7:13] is the sub-list for method input_type
-	7,  // [7:7] is the sub-list for extension type_name
-	7,  // [7:7] is the sub-list for extension extendee
-	0,  // [0:7] is the sub-list for field type_name
+	0,  // 1: dues.AppendIfExistsRes.evi_file:type_name -> dues.BaseFile
+	3,  // 2: dues.StreamFileReq.file_meta:type_name -> dues.StreamFileMeta
+	0,  // 3: dues.StreamFileRes.evi_file:type_name -> dues.BaseFile
+	0,  // 4: dues.GetEviFilesRes.evi_file:type_name -> dues.BaseFile
+	0,  // 5: dues.GetPartitionFilesRes.partition_file:type_name -> dues.BaseFile
+	0,  // 6: dues.GetIndexedFilesRes.indexed_file:type_name -> dues.BaseFile
+	15, // 7: dues.SearchRes.keyword_count_map:type_name -> dues.SearchRes.KeywordCountMapEntry
+	1,  // 8: dues.DuesService.AppendIfExists:input_type -> dues.AppendIfExistsReq
+	4,  // 9: dues.DuesService.StreamFile:input_type -> dues.StreamFileReq
+	6,  // 10: dues.DuesService.GetEviFiles:input_type -> dues.GetEviFilesReq
+	8,  // 11: dues.DuesService.GetPartitionFiles:input_type -> dues.GetPartitionFilesReq
+	10, // 12: dues.DuesService.GetIndexedFiles:input_type -> dues.GetIndexedFilesReq
+	12, // 13: dues.DuesService.Search:input_type -> dues.SearchReq
+	2,  // 14: dues.DuesService.AppendIfExists:output_type -> dues.AppendIfExistsRes
+	5,  // 15: dues.DuesService.StreamFile:output_type -> dues.StreamFileRes
+	7,  // 16: dues.DuesService.GetEviFiles:output_type -> dues.GetEviFilesRes
+	9,  // 17: dues.DuesService.GetPartitionFiles:output_type -> dues.GetPartitionFilesRes
+	11, // 18: dues.DuesService.GetIndexedFiles:output_type -> dues.GetIndexedFilesRes
+	13, // 19: dues.DuesService.Search:output_type -> dues.SearchRes
+	14, // [14:20] is the sub-list for method output_type
+	8,  // [8:14] is the sub-list for method input_type
+	8,  // [8:8] is the sub-list for extension type_name
+	8,  // [8:8] is the sub-list for extension extendee
+	0,  // [0:8] is the sub-list for field type_name
 }
 
 func init() { file_dues_proto_init() }

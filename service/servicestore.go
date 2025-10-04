@@ -22,18 +22,19 @@ func StoreStreamedFile(fname string) error {
 	return cli.StoreFile(int(cnst.DefaultChonkSize), fpath, key, false, false, cnst.DB)
 }
 
-func AddEvidenceMetadata(meta *pb.StreamFileMeta) error {
+func AddEvidenceMetadata(meta *pb.StreamFileMeta) (structs.EvidenceFile, error) {
 	efile, err := getEvidenceFile(meta.FilePath, meta.FileHash, cnst.DB)
 	if err != nil {
-		return err
+		return efile, err
 	}
 	efile.EvidenceType = meta.FileType
 
 	eid := util.AppendToBytesSlice(cnst.EviFileNamespace, meta.FileHash)
-	return dbio.SetFile(eid, efile, cnst.DB)
+	err = dbio.SetFile(eid, efile, cnst.DB)
+	return efile, err
 }
 
-func GetStreamedFileChunkMap(fileSize int64, fileHashStr string) (map[string]int64, error) {
+func GetEviFileChunkMap(fileSize int64, fileHashStr string) (map[string]int64, error) {
 	fileHash, err := base64.StdEncoding.DecodeString(fileHashStr)
 	if err != nil {
 		return nil, err

@@ -10,9 +10,17 @@ import (
 func (g *GrpcService) AppendIfExists(ctx context.Context, req *pb.AppendIfExistsReq) (*pb.AppendIfExistsRes, error) {
 	var res pb.AppendIfExistsRes
 
-	existence, err := service.CheckAndAppend(req.FilePath, req.FileHash, cnst.DB)
-	if err != nil {
-		if err == cnst.ErrFileNotFound {
+	efile, existence, chkApndErr := service.CheckAndAppend(req.FilePath, req.FileHash, cnst.DB)
+
+	chunkMap, chunkErr := service.GetEviFileChunkMap(efile.Size, req.FileHash)
+	if chunkErr != nil {
+		return nil, chunkErr
+	}
+	res.EviFile.FilePath = req.FilePath
+	res.EviFile.ChunkMap = chunkMap
+
+	if chkApndErr != nil {
+		if chkApndErr == cnst.ErrFileNotFound {
 			res.Appended = false
 			res.Exists = false
 			res.Err = ""
@@ -20,7 +28,7 @@ func (g *GrpcService) AppendIfExists(ctx context.Context, req *pb.AppendIfExists
 			return &res, nil
 		}
 
-		return nil, err
+		return nil, chkApndErr
 	}
 
 	if existence == cnst.FILE_APPENDED {

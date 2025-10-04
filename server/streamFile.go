@@ -34,11 +34,11 @@ func (g *GrpcService) StreamFile(stream grpc.ClientStreamingServer[pb.StreamFile
 	if err != nil {
 		return err
 	}
-	err = service.AddEvidenceMetadata(meta)
+	efile, err := service.AddEvidenceMetadata(meta)
 	if err != nil {
 		return err
 	}
-	chunkMap, err := service.GetStreamedFileChunkMap(meta.FileSize, meta.FileHash)
+	chunkMap, err := service.GetEviFileChunkMap(efile.Size, meta.FileHash)
 	if err != nil {
 		return err
 	}

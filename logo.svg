@@ -1,0 +1,73 @@
+<svg width="600" height="200" xmlns="http://www.w3.org/2000/svg">
+    <!-- Background -->
+    <defs>
+        <linearGradient id="bgGradient" x1="0%" y1="0%" x2="100%" y2="100%">
+            <stop offset="0%" style="stop-color:#1e3a8a;stop-opacity:1" />
+            <stop offset="100%" style="stop-color:#3b82f6;stop-opacity:1" />
+        </linearGradient>
+        <linearGradient id="diskGradient" x1="0%" y1="0%" x2="0%" y2="100%">
+            <stop offset="0%" style="stop-color:#60a5fa;stop-opacity:1" />
+            <stop offset="100%" style="stop-color:#2563eb;stop-opacity:1" />
+        </linearGradient>
+    </defs>
+
+    <!-- Background rectangle -->
+    <rect width="600" height="200" rx="10" fill="url(#bgGradient)" />
+
+    <!-- Database/Storage icon - cylinder stack -->
+    <g transform="translate(80, 60)">
+        <!-- Bottom disk -->
+        <ellipse cx="40" cy="70" rx="35" ry="12" fill="#1e40af" opacity="0.6" />
+        <rect x="5" y="60" width="70" height="20" fill="#1e40af" opacity="0.6" />
+        <ellipse cx="40" cy="60" rx="35" ry="12" fill="url(#diskGradient)" />
+
+        <!-- Middle disk -->
+        <ellipse cx="40" cy="50" rx="35" ry="12" fill="#1e40af" opacity="0.6" />
+        <rect x="5" y="40" width="70" height="20" fill="#1e40af" opacity="0.6" />
+        <ellipse cx="40" cy="40" rx="35" ry="12" fill="url(#diskGradient)" />
+
+        <!-- Top disk -->
+        <ellipse cx="40" cy="30" rx="35" ry="12" fill="#1e40af" opacity="0.6" />
+        <rect x="5" y="20" width="70" height="20" fill="#1e40af" opacity="0.6" />
+        <ellipse cx="40" cy="20" rx="35" ry="12" fill="url(#diskGradient)" />
+
+        <!-- Lock icon for security -->
+        <g transform="translate(25, 5)">
+            <rect x="8" y="8" width="14" height="10" rx="2" fill="#fbbf24" stroke="#f59e0b"
+                stroke-width="1" />
+            <path d="M 10 8 L 10 5 Q 10 2 15 2 Q 20 2 20 5 L 20 8" fill="none" stroke="#fbbf24"
+                stroke-width="2" />
+            <circle cx="15" cy="12" r="1.5" fill="#b45309" />
+        </g>
+    </g>
+
+    <!-- Text: DUES -->
+    <text x="200" y="100" font-family="Arial, sans-serif" font-size="56" font-weight="bold"
+        fill="#ffffff" text-anchor="start">
+        DUES
+    </text>
+
+    <!-- Subtitle -->
+    <text x="200" y="125" font-family="Arial, sans-serif" font-size="14" fill="#93c5fd"
+        text-anchor="start">
+        Deduplicated Unified Evidence Store
+    </text>
+
+    <!-- Version badge -->
+    <g transform="translate(200, 140)">
+        <rect width="60" height="20" rx="10" fill="#10b981" />
+        <text x="30" y="14" font-family="Arial, sans-serif" font-size="11" font-weight="bold"
+            fill="#ffffff" text-anchor="middle">
+            v3.4
+        </text>
+    </g>
+
+    <!-- Forensics icon - magnifying glass -->
+    <g transform="translate(540, 50)">
+        <circle cx="15" cy="15" r="12" fill="none" stroke="#60a5fa" stroke-width="2.5" />
+        <line x1="24" y1="24" x2="35" y2="35" stroke="#60a5fa" stroke-width="2.5"
+            stroke-linecap="round" />
+        <path d="M 10 15 L 12 17 L 18 11" fill="none" stroke="#10b981" stroke-width="2"
+            stroke-linecap="round" stroke-linejoin="round" />
+    </g>
+</svg>

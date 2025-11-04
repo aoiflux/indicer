@@ -1,5 +1,9 @@
 # DUES - Deduplicated Unified Evidence Store
 
+<p align="center">
+  <img src="logo.svg" alt="DUES Logo" width="600"/>
+</p>
+
 [![Go Version](https://img.shields.io/badge/Go-1.25-blue.svg)](https://golang.org)
 [![Version](https://img.shields.io/badge/version-3.4-green.svg)](https://github.com/aoiflux/indicer)
 [![License](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)

@@ -1,8 +1,10 @@
 package server
 
 import (
+	"encoding/base64"
 	"errors"
 	"indicer/lib/cnst"
+	"indicer/lib/util"
 	"indicer/pb"
 	"indicer/service"
 	"io"
@@ -48,6 +50,10 @@ func (g *GrpcService) StreamFile(stream grpc.ClientStreamingServer[pb.StreamFile
 	res.Err = ""
 	res.EviFile.FilePath = meta.FilePath
 	res.EviFile.ChunkMap = chunkMap
+
+	eid := util.AppendToBytesSlice(cnst.EviFileNamespace, meta.FileHash)
+	fileId := base64.StdEncoding.EncodeToString(eid)
+	res.EviFile.FileId = fileId
 
 	return stream.SendAndClose(&res)
 }

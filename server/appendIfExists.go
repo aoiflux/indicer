@@ -2,7 +2,9 @@ package server
 
 import (
 	"context"
+	"encoding/base64"
 	"indicer/lib/cnst"
+	"indicer/lib/util"
 	"indicer/pb"
 	"indicer/service"
 )
@@ -18,6 +20,10 @@ func (g *GrpcService) AppendIfExists(ctx context.Context, req *pb.AppendIfExists
 	}
 	res.EviFile.FilePath = req.FilePath
 	res.EviFile.ChunkMap = chunkMap
+
+	eid := util.AppendToBytesSlice(cnst.EviFileNamespace, req.FileHash)
+	fileId := base64.StdEncoding.EncodeToString(eid)
+	res.EviFile.FileId = fileId
 
 	if chkApndErr != nil {
 		if chkApndErr == cnst.ErrFileNotFound {

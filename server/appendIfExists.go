@@ -13,6 +13,13 @@ func (g *GrpcService) AppendIfExists(ctx context.Context, req *pb.AppendIfExists
 	var res pb.AppendIfExistsRes
 
 	efile, existence, chkApndErr := service.CheckAndAppend(req.FilePath, req.FileHash, cnst.DB)
+	if chkApndErr != nil {
+		if chkApndErr == cnst.ErrFileNotFound {
+			res.Exists = false
+			return &res, nil
+		}
+		return nil, chkApndErr
+	}
 
 	chunkMap, chunkErr := service.GetEviFileChunkMap(efile.Size, req.FileHash)
 	if chunkErr != nil {
@@ -21,21 +28,13 @@ func (g *GrpcService) AppendIfExists(ctx context.Context, req *pb.AppendIfExists
 	res.EviFile.FilePath = req.FilePath
 	res.EviFile.ChunkMap = chunkMap
 
-	eid := util.AppendToBytesSlice(cnst.EviFileNamespace, req.FileHash)
+	fileHash, err := base64.StdEncoding.DecodeString(req.FileHash)
+	if err != nil {
+		return nil, err
+	}
+	eid := util.AppendToBytesSlice(cnst.EviFileNamespace, fileHash)
 	fileId := base64.StdEncoding.EncodeToString(eid)
 	res.EviFile.FileId = fileId
-
-	if chkApndErr != nil {
-		if chkApndErr == cnst.ErrFileNotFound {
-			res.Appended = false
-			res.Exists = false
-			res.Err = ""
-
-			return &res, nil
-		}
-
-		return nil, chkApndErr
-	}
 
 	if existence == cnst.FILE_APPENDED {
 		res.Appended = true

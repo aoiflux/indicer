@@ -29,7 +29,12 @@ func AddEvidenceMetadata(meta *pb.StreamFileMeta) (structs.EvidenceFile, error) 
 	}
 	efile.EvidenceType = meta.FileType
 
-	eid := util.AppendToBytesSlice(cnst.EviFileNamespace, meta.FileHash)
+	fileHash, err := base64.StdEncoding.DecodeString(meta.FileHash)
+	if err != nil {
+		return efile, err
+	}
+	eid := util.AppendToBytesSlice(cnst.EviFileNamespace, fileHash)
+
 	err = dbio.SetFile(eid, efile, cnst.DB)
 	return efile, err
 }

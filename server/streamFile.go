@@ -28,11 +28,11 @@ func (g *GrpcService) StreamFile(stream grpc.ClientStreamingServer[pb.StreamFile
 		return errors.New("metadata not found - please try again")
 	}
 
-	fname, err := uploadFile(stream)
+	fpath, err := uploadFile(stream)
 	if err != nil {
 		return err
 	}
-	err = service.StoreStreamedFile(fname)
+	err = service.StoreStreamedFile(fpath)
 	if err != nil {
 		return err
 	}
@@ -48,12 +48,17 @@ func (g *GrpcService) StreamFile(stream grpc.ClientStreamingServer[pb.StreamFile
 	var res pb.StreamFileRes
 	res.Done = true
 	res.Err = ""
-	res.EviFile.FilePath = meta.FilePath
+	res.EviFile.FilePath = fpath
 	res.EviFile.ChunkMap = chunkMap
 
 	eid := util.AppendToBytesSlice(cnst.EviFileNamespace, meta.FileHash)
 	fileId := base64.StdEncoding.EncodeToString(eid)
 	res.EviFile.FileId = fileId
+
+	err = os.Remove(fpath)
+	if err != nil {
+		log.Printf("Warning: could not remove temp file %s: %v\n", fpath, err)
+	}
 
 	return stream.SendAndClose(&res)
 }
@@ -86,7 +91,7 @@ func uploadFile(stream grpc.ClientStreamingServer[pb.StreamFileReq, pb.StreamFil
 		return "", nil
 	}
 
-	log.Printf("Uploaded file to ")
+	log.Printf("Uploaded file to %s\n", fname)
 	return fname, nil
 }
 func getFileHandle() (*os.File, error) {

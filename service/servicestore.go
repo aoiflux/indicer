@@ -8,16 +8,9 @@ import (
 	"indicer/lib/structs"
 	"indicer/lib/util"
 	"indicer/pb"
-	"path/filepath"
 )
 
-func StoreStreamedFile(fname string) error {
-	fpath := filepath.Join(cnst.UploadsDir, fname)
-	fpath, err := filepath.Abs(fpath)
-	if err != nil {
-		return err
-	}
-
+func StoreStreamedFile(fpath string) error {
 	key := util.HashPassword("")
 	return cli.StoreFile(int(cnst.DefaultChonkSize), fpath, key, false, false, cnst.DB)
 }

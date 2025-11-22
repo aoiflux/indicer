@@ -24,7 +24,8 @@ const (
 type BaseFile struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
 	FilePath      string                 `protobuf:"bytes,1,opt,name=file_path,json=filePath,proto3" json:"file_path,omitempty"`
-	ChunkMap      map[string]int64       `protobuf:"bytes,2,rep,name=chunk_map,json=chunkMap,proto3" json:"chunk_map,omitempty" protobuf_key:"bytes,1,opt,name=key" protobuf_val:"varint,2,opt,name=value"`
+	FileId        string                 `protobuf:"bytes,2,opt,name=file_id,json=fileId,proto3" json:"file_id,omitempty"`
+	ChunkMap      map[string]int64       `protobuf:"bytes,3,rep,name=chunk_map,json=chunkMap,proto3" json:"chunk_map,omitempty" protobuf_key:"bytes,1,opt,name=key" protobuf_val:"varint,2,opt,name=value"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -62,6 +63,13 @@ func (*BaseFile) Descriptor() ([]byte, []int) {
 func (x *BaseFile) GetFilePath() string {
 	if x != nil {
 		return x.FilePath
+	}
+	return ""
+}
+
+func (x *BaseFile) GetFileId() string {
+	if x != nil {
+		return x.FileId
 	}
 	return ""
 }
@@ -499,27 +507,27 @@ func (x *GetEviFilesRes) GetEviFile() []*BaseFile {
 	return nil
 }
 
-type GetPartitionFilesReq struct {
+type GetPartiFilesReq struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
 	EviFileId     string                 `protobuf:"bytes,1,opt,name=evi_file_id,json=eviFileId,proto3" json:"evi_file_id,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
 
-func (x *GetPartitionFilesReq) Reset() {
-	*x = GetPartitionFilesReq{}
+func (x *GetPartiFilesReq) Reset() {
+	*x = GetPartiFilesReq{}
 	mi := &file_dues_proto_msgTypes[8]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
 
-func (x *GetPartitionFilesReq) String() string {
+func (x *GetPartiFilesReq) String() string {
 	return protoimpl.X.MessageStringOf(x)
 }
 
-func (*GetPartitionFilesReq) ProtoMessage() {}
+func (*GetPartiFilesReq) ProtoMessage() {}
 
-func (x *GetPartitionFilesReq) ProtoReflect() protoreflect.Message {
+func (x *GetPartiFilesReq) ProtoReflect() protoreflect.Message {
 	mi := &file_dues_proto_msgTypes[8]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
@@ -531,19 +539,19 @@ func (x *GetPartitionFilesReq) ProtoReflect() protoreflect.Message {
 	return mi.MessageOf(x)
 }
 
-// Deprecated: Use GetPartitionFilesReq.ProtoReflect.Descriptor instead.
-func (*GetPartitionFilesReq) Descriptor() ([]byte, []int) {
+// Deprecated: Use GetPartiFilesReq.ProtoReflect.Descriptor instead.
+func (*GetPartiFilesReq) Descriptor() ([]byte, []int) {
 	return file_dues_proto_rawDescGZIP(), []int{8}
 }
 
-func (x *GetPartitionFilesReq) GetEviFileId() string {
+func (x *GetPartiFilesReq) GetEviFileId() string {
 	if x != nil {
 		return x.EviFileId
 	}
 	return ""
 }
 
-type GetPartitionFilesRes struct {
+type GetPartiFilesRes struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
 	Done          bool                   `protobuf:"varint,1,opt,name=done,proto3" json:"done,omitempty"`
 	Err           string                 `protobuf:"bytes,2,opt,name=err,proto3" json:"err,omitempty"`
@@ -552,20 +560,20 @@ type GetPartitionFilesRes struct {
 	sizeCache     protoimpl.SizeCache
 }
 
-func (x *GetPartitionFilesRes) Reset() {
-	*x = GetPartitionFilesRes{}
+func (x *GetPartiFilesRes) Reset() {
+	*x = GetPartiFilesRes{}
 	mi := &file_dues_proto_msgTypes[9]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
 
-func (x *GetPartitionFilesRes) String() string {
+func (x *GetPartiFilesRes) String() string {
 	return protoimpl.X.MessageStringOf(x)
 }
 
-func (*GetPartitionFilesRes) ProtoMessage() {}
+func (*GetPartiFilesRes) ProtoMessage() {}
 
-func (x *GetPartitionFilesRes) ProtoReflect() protoreflect.Message {
+func (x *GetPartiFilesRes) ProtoReflect() protoreflect.Message {
 	mi := &file_dues_proto_msgTypes[9]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
@@ -577,53 +585,53 @@ func (x *GetPartitionFilesRes) ProtoReflect() protoreflect.Message {
 	return mi.MessageOf(x)
 }
 
-// Deprecated: Use GetPartitionFilesRes.ProtoReflect.Descriptor instead.
-func (*GetPartitionFilesRes) Descriptor() ([]byte, []int) {
+// Deprecated: Use GetPartiFilesRes.ProtoReflect.Descriptor instead.
+func (*GetPartiFilesRes) Descriptor() ([]byte, []int) {
 	return file_dues_proto_rawDescGZIP(), []int{9}
 }
 
-func (x *GetPartitionFilesRes) GetDone() bool {
+func (x *GetPartiFilesRes) GetDone() bool {
 	if x != nil {
 		return x.Done
 	}
 	return false
 }
 
-func (x *GetPartitionFilesRes) GetErr() string {
+func (x *GetPartiFilesRes) GetErr() string {
 	if x != nil {
 		return x.Err
 	}
 	return ""
 }
 
-func (x *GetPartitionFilesRes) GetPartitionFile() []*BaseFile {
+func (x *GetPartiFilesRes) GetPartitionFile() []*BaseFile {
 	if x != nil {
 		return x.PartitionFile
 	}
 	return nil
 }
 
-type GetIndexedFilesReq struct {
+type GetIdxFilesReq struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
 	PartiFileId   string                 `protobuf:"bytes,1,opt,name=parti_file_id,json=partiFileId,proto3" json:"parti_file_id,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
 
-func (x *GetIndexedFilesReq) Reset() {
-	*x = GetIndexedFilesReq{}
+func (x *GetIdxFilesReq) Reset() {
+	*x = GetIdxFilesReq{}
 	mi := &file_dues_proto_msgTypes[10]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
 
-func (x *GetIndexedFilesReq) String() string {
+func (x *GetIdxFilesReq) String() string {
 	return protoimpl.X.MessageStringOf(x)
 }
 
-func (*GetIndexedFilesReq) ProtoMessage() {}
+func (*GetIdxFilesReq) ProtoMessage() {}
 
-func (x *GetIndexedFilesReq) ProtoReflect() protoreflect.Message {
+func (x *GetIdxFilesReq) ProtoReflect() protoreflect.Message {
 	mi := &file_dues_proto_msgTypes[10]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
@@ -635,19 +643,19 @@ func (x *GetIndexedFilesReq) ProtoReflect() protoreflect.Message {
 	return mi.MessageOf(x)
 }
 
-// Deprecated: Use GetIndexedFilesReq.ProtoReflect.Descriptor instead.
-func (*GetIndexedFilesReq) Descriptor() ([]byte, []int) {
+// Deprecated: Use GetIdxFilesReq.ProtoReflect.Descriptor instead.
+func (*GetIdxFilesReq) Descriptor() ([]byte, []int) {
 	return file_dues_proto_rawDescGZIP(), []int{10}
 }
 
-func (x *GetIndexedFilesReq) GetPartiFileId() string {
+func (x *GetIdxFilesReq) GetPartiFileId() string {
 	if x != nil {
 		return x.PartiFileId
 	}
 	return ""
 }
 
-type GetIndexedFilesRes struct {
+type GetIdxFilesRes struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
 	Done          bool                   `protobuf:"varint,1,opt,name=done,proto3" json:"done,omitempty"`
 	Err           string                 `protobuf:"bytes,2,opt,name=err,proto3" json:"err,omitempty"`
@@ -656,20 +664,20 @@ type GetIndexedFilesRes struct {
 	sizeCache     protoimpl.SizeCache
 }
 
-func (x *GetIndexedFilesRes) Reset() {
-	*x = GetIndexedFilesRes{}
+func (x *GetIdxFilesRes) Reset() {
+	*x = GetIdxFilesRes{}
 	mi := &file_dues_proto_msgTypes[11]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
 
-func (x *GetIndexedFilesRes) String() string {
+func (x *GetIdxFilesRes) String() string {
 	return protoimpl.X.MessageStringOf(x)
 }
 
-func (*GetIndexedFilesRes) ProtoMessage() {}
+func (*GetIdxFilesRes) ProtoMessage() {}
 
-func (x *GetIndexedFilesRes) ProtoReflect() protoreflect.Message {
+func (x *GetIdxFilesRes) ProtoReflect() protoreflect.Message {
 	mi := &file_dues_proto_msgTypes[11]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
@@ -681,26 +689,26 @@ func (x *GetIndexedFilesRes) ProtoReflect() protoreflect.Message {
 	return mi.MessageOf(x)
 }
 
-// Deprecated: Use GetIndexedFilesRes.ProtoReflect.Descriptor instead.
-func (*GetIndexedFilesRes) Descriptor() ([]byte, []int) {
+// Deprecated: Use GetIdxFilesRes.ProtoReflect.Descriptor instead.
+func (*GetIdxFilesRes) Descriptor() ([]byte, []int) {
 	return file_dues_proto_rawDescGZIP(), []int{11}
 }
 
-func (x *GetIndexedFilesRes) GetDone() bool {
+func (x *GetIdxFilesRes) GetDone() bool {
 	if x != nil {
 		return x.Done
 	}
 	return false
 }
 
-func (x *GetIndexedFilesRes) GetErr() string {
+func (x *GetIdxFilesRes) GetErr() string {
 	if x != nil {
 		return x.Err
 	}
 	return ""
 }
 
-func (x *GetIndexedFilesRes) GetIndexedFile() []*BaseFile {
+func (x *GetIdxFilesRes) GetIndexedFile() []*BaseFile {
 	if x != nil {
 		return x.IndexedFile
 	}
@@ -816,10 +824,11 @@ var File_dues_proto protoreflect.FileDescriptor
 const file_dues_proto_rawDesc = "" +
 	"\n" +
 	"\n" +
-	"dues.proto\x12\x04dues\"\x9f\x01\n" +
+	"dues.proto\x12\x04dues\"\xb8\x01\n" +
 	"\bBaseFile\x12\x1b\n" +
-	"\tfile_path\x18\x01 \x01(\tR\bfilePath\x129\n" +
-	"\tchunk_map\x18\x02 \x03(\v2\x1c.dues.BaseFile.ChunkMapEntryR\bchunkMap\x1a;\n" +
+	"\tfile_path\x18\x01 \x01(\tR\bfilePath\x12\x17\n" +
+	"\afile_id\x18\x02 \x01(\tR\x06fileId\x129\n" +
+	"\tchunk_map\x18\x03 \x03(\v2\x1c.dues.BaseFile.ChunkMapEntryR\bchunkMap\x1a;\n" +
 	"\rChunkMapEntry\x12\x10\n" +
 	"\x03key\x18\x01 \x01(\tR\x03key\x12\x14\n" +
 	"\x05value\x18\x02 \x01(\x03R\x05value:\x028\x01\"M\n" +
@@ -848,16 +857,16 @@ const file_dues_proto_rawDesc = "" +
 	"\x0eGetEviFilesRes\x12\x12\n" +
 	"\x04done\x18\x01 \x01(\bR\x04done\x12\x10\n" +
 	"\x03err\x18\x02 \x01(\tR\x03err\x12)\n" +
-	"\bevi_file\x18\x03 \x03(\v2\x0e.dues.BaseFileR\aeviFile\"6\n" +
-	"\x14GetPartitionFilesReq\x12\x1e\n" +
-	"\vevi_file_id\x18\x01 \x01(\tR\teviFileId\"s\n" +
-	"\x14GetPartitionFilesRes\x12\x12\n" +
+	"\bevi_file\x18\x03 \x03(\v2\x0e.dues.BaseFileR\aeviFile\"2\n" +
+	"\x10GetPartiFilesReq\x12\x1e\n" +
+	"\vevi_file_id\x18\x01 \x01(\tR\teviFileId\"o\n" +
+	"\x10GetPartiFilesRes\x12\x12\n" +
 	"\x04done\x18\x01 \x01(\bR\x04done\x12\x10\n" +
 	"\x03err\x18\x02 \x01(\tR\x03err\x125\n" +
-	"\x0epartition_file\x18\x03 \x03(\v2\x0e.dues.BaseFileR\rpartitionFile\"8\n" +
-	"\x12GetIndexedFilesReq\x12\"\n" +
-	"\rparti_file_id\x18\x01 \x01(\tR\vpartiFileId\"m\n" +
-	"\x12GetIndexedFilesRes\x12\x12\n" +
+	"\x0epartition_file\x18\x03 \x03(\v2\x0e.dues.BaseFileR\rpartitionFile\"4\n" +
+	"\x0eGetIdxFilesReq\x12\"\n" +
+	"\rparti_file_id\x18\x01 \x01(\tR\vpartiFileId\"i\n" +
+	"\x0eGetIdxFilesRes\x12\x12\n" +
 	"\x04done\x18\x01 \x01(\bR\x04done\x12\x10\n" +
 	"\x03err\x18\x02 \x01(\tR\x03err\x121\n" +
 	"\findexed_file\x18\x03 \x03(\v2\x0e.dues.BaseFileR\vindexedFile\"%\n" +
@@ -870,14 +879,14 @@ const file_dues_proto_rawDesc = "" +
 	"\x11keyword_count_map\x18\x03 \x03(\v2$.dues.SearchRes.KeywordCountMapEntryR\x0fkeywordCountMap\x1aB\n" +
 	"\x14KeywordCountMapEntry\x12\x10\n" +
 	"\x03key\x18\x01 \x01(\tR\x03key\x12\x14\n" +
-	"\x05value\x18\x02 \x01(\x03R\x05value:\x028\x012\x86\x03\n" +
+	"\x05value\x18\x02 \x01(\x03R\x05value:\x028\x012\xee\x02\n" +
 	"\vDuesService\x12B\n" +
 	"\x0eAppendIfExists\x12\x17.dues.AppendIfExistsReq\x1a\x17.dues.AppendIfExistsRes\x128\n" +
 	"\n" +
 	"StreamFile\x12\x13.dues.StreamFileReq\x1a\x13.dues.StreamFileRes(\x01\x129\n" +
-	"\vGetEviFiles\x12\x14.dues.GetEviFilesReq\x1a\x14.dues.GetEviFilesRes\x12K\n" +
-	"\x11GetPartitionFiles\x12\x1a.dues.GetPartitionFilesReq\x1a\x1a.dues.GetPartitionFilesRes\x12E\n" +
-	"\x0fGetIndexedFiles\x12\x18.dues.GetIndexedFilesReq\x1a\x18.dues.GetIndexedFilesRes\x12*\n" +
+	"\vGetEviFiles\x12\x14.dues.GetEviFilesReq\x1a\x14.dues.GetEviFilesRes\x12?\n" +
+	"\rGetPartiFiles\x12\x16.dues.GetPartiFilesReq\x1a\x16.dues.GetPartiFilesRes\x129\n" +
+	"\vGetIdxFiles\x12\x14.dues.GetIdxFilesReq\x1a\x14.dues.GetIdxFilesRes\x12*\n" +
 	"\x06Search\x12\x0f.dues.SearchReq\x1a\x0f.dues.SearchResB\x0fZ\rindicer/pb;pbb\x06proto3"
 
 var (
@@ -894,22 +903,22 @@ func file_dues_proto_rawDescGZIP() []byte {
 
 var file_dues_proto_msgTypes = make([]protoimpl.MessageInfo, 16)
 var file_dues_proto_goTypes = []any{
-	(*BaseFile)(nil),             // 0: dues.BaseFile
-	(*AppendIfExistsReq)(nil),    // 1: dues.AppendIfExistsReq
-	(*AppendIfExistsRes)(nil),    // 2: dues.AppendIfExistsRes
-	(*StreamFileMeta)(nil),       // 3: dues.StreamFileMeta
-	(*StreamFileReq)(nil),        // 4: dues.StreamFileReq
-	(*StreamFileRes)(nil),        // 5: dues.StreamFileRes
-	(*GetEviFilesReq)(nil),       // 6: dues.GetEviFilesReq
-	(*GetEviFilesRes)(nil),       // 7: dues.GetEviFilesRes
-	(*GetPartitionFilesReq)(nil), // 8: dues.GetPartitionFilesReq
-	(*GetPartitionFilesRes)(nil), // 9: dues.GetPartitionFilesRes
-	(*GetIndexedFilesReq)(nil),   // 10: dues.GetIndexedFilesReq
-	(*GetIndexedFilesRes)(nil),   // 11: dues.GetIndexedFilesRes
-	(*SearchReq)(nil),            // 12: dues.SearchReq
-	(*SearchRes)(nil),            // 13: dues.SearchRes
-	nil,                          // 14: dues.BaseFile.ChunkMapEntry
-	nil,                          // 15: dues.SearchRes.KeywordCountMapEntry
+	(*BaseFile)(nil),          // 0: dues.BaseFile
+	(*AppendIfExistsReq)(nil), // 1: dues.AppendIfExistsReq
+	(*AppendIfExistsRes)(nil), // 2: dues.AppendIfExistsRes
+	(*StreamFileMeta)(nil),    // 3: dues.StreamFileMeta
+	(*StreamFileReq)(nil),     // 4: dues.StreamFileReq
+	(*StreamFileRes)(nil),     // 5: dues.StreamFileRes
+	(*GetEviFilesReq)(nil),    // 6: dues.GetEviFilesReq
+	(*GetEviFilesRes)(nil),    // 7: dues.GetEviFilesRes
+	(*GetPartiFilesReq)(nil),  // 8: dues.GetPartiFilesReq
+	(*GetPartiFilesRes)(nil),  // 9: dues.GetPartiFilesRes
+	(*GetIdxFilesReq)(nil),    // 10: dues.GetIdxFilesReq
+	(*GetIdxFilesRes)(nil),    // 11: dues.GetIdxFilesRes
+	(*SearchReq)(nil),         // 12: dues.SearchReq
+	(*SearchRes)(nil),         // 13: dues.SearchRes
+	nil,                       // 14: dues.BaseFile.ChunkMapEntry
+	nil,                       // 15: dues.SearchRes.KeywordCountMapEntry
 }
 var file_dues_proto_depIdxs = []int32{
 	14, // 0: dues.BaseFile.chunk_map:type_name -> dues.BaseFile.ChunkMapEntry
@@ -917,20 +926,20 @@ var file_dues_proto_depIdxs = []int32{
 	3,  // 2: dues.StreamFileReq.file_meta:type_name -> dues.StreamFileMeta
 	0,  // 3: dues.StreamFileRes.evi_file:type_name -> dues.BaseFile
 	0,  // 4: dues.GetEviFilesRes.evi_file:type_name -> dues.BaseFile
-	0,  // 5: dues.GetPartitionFilesRes.partition_file:type_name -> dues.BaseFile
-	0,  // 6: dues.GetIndexedFilesRes.indexed_file:type_name -> dues.BaseFile
+	0,  // 5: dues.GetPartiFilesRes.partition_file:type_name -> dues.BaseFile
+	0,  // 6: dues.GetIdxFilesRes.indexed_file:type_name -> dues.BaseFile
 	15, // 7: dues.SearchRes.keyword_count_map:type_name -> dues.SearchRes.KeywordCountMapEntry
 	1,  // 8: dues.DuesService.AppendIfExists:input_type -> dues.AppendIfExistsReq
 	4,  // 9: dues.DuesService.StreamFile:input_type -> dues.StreamFileReq
 	6,  // 10: dues.DuesService.GetEviFiles:input_type -> dues.GetEviFilesReq
-	8,  // 11: dues.DuesService.GetPartitionFiles:input_type -> dues.GetPartitionFilesReq
-	10, // 12: dues.DuesService.GetIndexedFiles:input_type -> dues.GetIndexedFilesReq
+	8,  // 11: dues.DuesService.GetPartiFiles:input_type -> dues.GetPartiFilesReq
+	10, // 12: dues.DuesService.GetIdxFiles:input_type -> dues.GetIdxFilesReq
 	12, // 13: dues.DuesService.Search:input_type -> dues.SearchReq
 	2,  // 14: dues.DuesService.AppendIfExists:output_type -> dues.AppendIfExistsRes
 	5,  // 15: dues.DuesService.StreamFile:output_type -> dues.StreamFileRes
 	7,  // 16: dues.DuesService.GetEviFiles:output_type -> dues.GetEviFilesRes
-	9,  // 17: dues.DuesService.GetPartitionFiles:output_type -> dues.GetPartitionFilesRes
-	11, // 18: dues.DuesService.GetIndexedFiles:output_type -> dues.GetIndexedFilesRes
+	9,  // 17: dues.DuesService.GetPartiFiles:output_type -> dues.GetPartiFilesRes
+	11, // 18: dues.DuesService.GetIdxFiles:output_type -> dues.GetIdxFilesRes
 	13, // 19: dues.DuesService.Search:output_type -> dues.SearchRes
 	14, // [14:20] is the sub-list for method output_type
 	8,  // [8:14] is the sub-list for method input_type

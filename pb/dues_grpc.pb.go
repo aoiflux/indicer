@@ -19,12 +19,12 @@ import (
 const _ = grpc.SupportPackageIsVersion9
 
 const (
-	DuesService_AppendIfExists_FullMethodName    = "/dues.DuesService/AppendIfExists"
-	DuesService_StreamFile_FullMethodName        = "/dues.DuesService/StreamFile"
-	DuesService_GetEviFiles_FullMethodName       = "/dues.DuesService/GetEviFiles"
-	DuesService_GetPartitionFiles_FullMethodName = "/dues.DuesService/GetPartitionFiles"
-	DuesService_GetIndexedFiles_FullMethodName   = "/dues.DuesService/GetIndexedFiles"
-	DuesService_Search_FullMethodName            = "/dues.DuesService/Search"
+	DuesService_AppendIfExists_FullMethodName = "/dues.DuesService/AppendIfExists"
+	DuesService_StreamFile_FullMethodName     = "/dues.DuesService/StreamFile"
+	DuesService_GetEviFiles_FullMethodName    = "/dues.DuesService/GetEviFiles"
+	DuesService_GetPartiFiles_FullMethodName  = "/dues.DuesService/GetPartiFiles"
+	DuesService_GetIdxFiles_FullMethodName    = "/dues.DuesService/GetIdxFiles"
+	DuesService_Search_FullMethodName         = "/dues.DuesService/Search"
 )
 
 // DuesServiceClient is the client API for DuesService service.
@@ -34,8 +34,8 @@ type DuesServiceClient interface {
 	AppendIfExists(ctx context.Context, in *AppendIfExistsReq, opts ...grpc.CallOption) (*AppendIfExistsRes, error)
 	StreamFile(ctx context.Context, opts ...grpc.CallOption) (grpc.ClientStreamingClient[StreamFileReq, StreamFileRes], error)
 	GetEviFiles(ctx context.Context, in *GetEviFilesReq, opts ...grpc.CallOption) (*GetEviFilesRes, error)
-	GetPartitionFiles(ctx context.Context, in *GetPartitionFilesReq, opts ...grpc.CallOption) (*GetPartitionFilesRes, error)
-	GetIndexedFiles(ctx context.Context, in *GetIndexedFilesReq, opts ...grpc.CallOption) (*GetIndexedFilesRes, error)
+	GetPartiFiles(ctx context.Context, in *GetPartiFilesReq, opts ...grpc.CallOption) (*GetPartiFilesRes, error)
+	GetIdxFiles(ctx context.Context, in *GetIdxFilesReq, opts ...grpc.CallOption) (*GetIdxFilesRes, error)
 	Search(ctx context.Context, in *SearchReq, opts ...grpc.CallOption) (*SearchRes, error)
 }
 
@@ -80,20 +80,20 @@ func (c *duesServiceClient) GetEviFiles(ctx context.Context, in *GetEviFilesReq,
 	return out, nil
 }
 
-func (c *duesServiceClient) GetPartitionFiles(ctx context.Context, in *GetPartitionFilesReq, opts ...grpc.CallOption) (*GetPartitionFilesRes, error) {
+func (c *duesServiceClient) GetPartiFiles(ctx context.Context, in *GetPartiFilesReq, opts ...grpc.CallOption) (*GetPartiFilesRes, error) {
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
-	out := new(GetPartitionFilesRes)
-	err := c.cc.Invoke(ctx, DuesService_GetPartitionFiles_FullMethodName, in, out, cOpts...)
+	out := new(GetPartiFilesRes)
+	err := c.cc.Invoke(ctx, DuesService_GetPartiFiles_FullMethodName, in, out, cOpts...)
 	if err != nil {
 		return nil, err
 	}
 	return out, nil
 }
 
-func (c *duesServiceClient) GetIndexedFiles(ctx context.Context, in *GetIndexedFilesReq, opts ...grpc.CallOption) (*GetIndexedFilesRes, error) {
+func (c *duesServiceClient) GetIdxFiles(ctx context.Context, in *GetIdxFilesReq, opts ...grpc.CallOption) (*GetIdxFilesRes, error) {
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
-	out := new(GetIndexedFilesRes)
-	err := c.cc.Invoke(ctx, DuesService_GetIndexedFiles_FullMethodName, in, out, cOpts...)
+	out := new(GetIdxFilesRes)
+	err := c.cc.Invoke(ctx, DuesService_GetIdxFiles_FullMethodName, in, out, cOpts...)
 	if err != nil {
 		return nil, err
 	}
@@ -117,8 +117,8 @@ type DuesServiceServer interface {
 	AppendIfExists(context.Context, *AppendIfExistsReq) (*AppendIfExistsRes, error)
 	StreamFile(grpc.ClientStreamingServer[StreamFileReq, StreamFileRes]) error
 	GetEviFiles(context.Context, *GetEviFilesReq) (*GetEviFilesRes, error)
-	GetPartitionFiles(context.Context, *GetPartitionFilesReq) (*GetPartitionFilesRes, error)
-	GetIndexedFiles(context.Context, *GetIndexedFilesReq) (*GetIndexedFilesRes, error)
+	GetPartiFiles(context.Context, *GetPartiFilesReq) (*GetPartiFilesRes, error)
+	GetIdxFiles(context.Context, *GetIdxFilesReq) (*GetIdxFilesRes, error)
 	Search(context.Context, *SearchReq) (*SearchRes, error)
 	mustEmbedUnimplementedDuesServiceServer()
 }
@@ -139,11 +139,11 @@ func (UnimplementedDuesServiceServer) StreamFile(grpc.ClientStreamingServer[Stre
 func (UnimplementedDuesServiceServer) GetEviFiles(context.Context, *GetEviFilesReq) (*GetEviFilesRes, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method GetEviFiles not implemented")
 }
-func (UnimplementedDuesServiceServer) GetPartitionFiles(context.Context, *GetPartitionFilesReq) (*GetPartitionFilesRes, error) {
-	return nil, status.Errorf(codes.Unimplemented, "method GetPartitionFiles not implemented")
+func (UnimplementedDuesServiceServer) GetPartiFiles(context.Context, *GetPartiFilesReq) (*GetPartiFilesRes, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method GetPartiFiles not implemented")
 }
-func (UnimplementedDuesServiceServer) GetIndexedFiles(context.Context, *GetIndexedFilesReq) (*GetIndexedFilesRes, error) {
-	return nil, status.Errorf(codes.Unimplemented, "method GetIndexedFiles not implemented")
+func (UnimplementedDuesServiceServer) GetIdxFiles(context.Context, *GetIdxFilesReq) (*GetIdxFilesRes, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method GetIdxFiles not implemented")
 }
 func (UnimplementedDuesServiceServer) Search(context.Context, *SearchReq) (*SearchRes, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method Search not implemented")
@@ -212,38 +212,38 @@ func _DuesService_GetEviFiles_Handler(srv interface{}, ctx context.Context, dec 
 	return interceptor(ctx, in, info, handler)
 }
 
-func _DuesService_GetPartitionFiles_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
-	in := new(GetPartitionFilesReq)
+func _DuesService_GetPartiFiles_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(GetPartiFilesReq)
 	if err := dec(in); err != nil {
 		return nil, err
 	}
 	if interceptor == nil {
-		return srv.(DuesServiceServer).GetPartitionFiles(ctx, in)
+		return srv.(DuesServiceServer).GetPartiFiles(ctx, in)
 	}
 	info := &grpc.UnaryServerInfo{
 		Server:     srv,
-		FullMethod: DuesService_GetPartitionFiles_FullMethodName,
+		FullMethod: DuesService_GetPartiFiles_FullMethodName,
 	}
 	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
-		return srv.(DuesServiceServer).GetPartitionFiles(ctx, req.(*GetPartitionFilesReq))
+		return srv.(DuesServiceServer).GetPartiFiles(ctx, req.(*GetPartiFilesReq))
 	}
 	return interceptor(ctx, in, info, handler)
 }
 
-func _DuesService_GetIndexedFiles_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
-	in := new(GetIndexedFilesReq)
+func _DuesService_GetIdxFiles_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(GetIdxFilesReq)
 	if err := dec(in); err != nil {
 		return nil, err
 	}
 	if interceptor == nil {
-		return srv.(DuesServiceServer).GetIndexedFiles(ctx, in)
+		return srv.(DuesServiceServer).GetIdxFiles(ctx, in)
 	}
 	info := &grpc.UnaryServerInfo{
 		Server:     srv,
-		FullMethod: DuesService_GetIndexedFiles_FullMethodName,
+		FullMethod: DuesService_GetIdxFiles_FullMethodName,
 	}
 	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
-		return srv.(DuesServiceServer).GetIndexedFiles(ctx, req.(*GetIndexedFilesReq))
+		return srv.(DuesServiceServer).GetIdxFiles(ctx, req.(*GetIdxFilesReq))
 	}
 	return interceptor(ctx, in, info, handler)
 }
@@ -282,12 +282,12 @@ var DuesService_ServiceDesc = grpc.ServiceDesc{
 			Handler:    _DuesService_GetEviFiles_Handler,
 		},
 		{
-			MethodName: "GetPartitionFiles",
-			Handler:    _DuesService_GetPartitionFiles_Handler,
+			MethodName: "GetPartiFiles",
+			Handler:    _DuesService_GetPartiFiles_Handler,
 		},
 		{
-			MethodName: "GetIndexedFiles",
-			Handler:    _DuesService_GetIndexedFiles_Handler,
+			MethodName: "GetIdxFiles",
+			Handler:    _DuesService_GetIdxFiles_Handler,
 		},
 		{
 			MethodName: "Search",

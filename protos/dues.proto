@@ -8,15 +8,16 @@ service DuesService {
     rpc StreamFile (stream StreamFileReq) returns (StreamFileRes);
 
     rpc GetEviFiles (GetEviFilesReq) returns (GetEviFilesRes);
-    rpc GetPartitionFiles (GetPartitionFilesReq) returns (GetPartitionFilesRes);
-    rpc GetIndexedFiles (GetIndexedFilesReq) returns (GetIndexedFilesRes);
+    rpc GetPartiFiles (GetPartiFilesReq) returns (GetPartiFilesRes);
+    rpc GetIdxFiles (GetIdxFilesReq) returns (GetIdxFilesRes);
 
     rpc Search (SearchReq) returns (SearchRes);
 }
 
 message BaseFile {
     string file_path = 1;
-    map<string, int64> chunk_map = 2;
+    string file_id = 2;
+    map<string, int64> chunk_map = 3;
 }
 
 message AppendIfExistsReq {
@@ -53,18 +54,18 @@ message GetEviFilesRes {
     string err = 2;
     repeated BaseFile evi_file = 3;
 }
-message GetPartitionFilesReq {
+message GetPartiFilesReq {
     string evi_file_id = 1;
 }
-message GetPartitionFilesRes {
+message GetPartiFilesRes {
     bool done  = 1;
     string err = 2;
     repeated BaseFile partition_file = 3;
 }
-message GetIndexedFilesReq {
+message GetIdxFilesReq {
     string parti_file_id = 1;
 }
-message GetIndexedFilesRes {
+message GetIdxFilesRes {
     bool done  = 1;
     string err = 2;
     repeated BaseFile indexed_file = 3;

@@ -25,8 +25,10 @@ func (g *GrpcService) AppendIfExists(ctx context.Context, req *pb.AppendIfExists
 	if chunkErr != nil {
 		return nil, chunkErr
 	}
-	res.EviFile.FilePath = req.FilePath
-	res.EviFile.ChunkMap = chunkMap
+
+	var eviFile pb.BaseFile
+	eviFile.FilePath = req.FilePath
+	eviFile.ChunkMap = chunkMap
 
 	fileHash, err := base64.StdEncoding.DecodeString(req.FileHash)
 	if err != nil {
@@ -34,11 +36,13 @@ func (g *GrpcService) AppendIfExists(ctx context.Context, req *pb.AppendIfExists
 	}
 	eid := util.AppendToBytesSlice(cnst.EviFileNamespace, fileHash)
 	fileId := base64.StdEncoding.EncodeToString(eid)
-	res.EviFile.FileId = fileId
+	eviFile.FileId = fileId
 
 	if existence == cnst.FILE_APPENDED {
 		res.Appended = true
 	}
 	res.Exists = true
+
+	res.EviFile = &eviFile
 	return &res, nil
 }

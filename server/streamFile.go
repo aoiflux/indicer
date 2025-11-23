@@ -48,18 +48,25 @@ func (g *GrpcService) StreamFile(stream grpc.ClientStreamingServer[pb.StreamFile
 	var res pb.StreamFileRes
 	res.Done = true
 	res.Err = ""
-	res.EviFile.FilePath = fpath
-	res.EviFile.ChunkMap = chunkMap
 
-	eid := util.AppendToBytesSlice(cnst.EviFileNamespace, meta.FileHash)
+	var eviFile pb.BaseFile
+	eviFile.FilePath = meta.FilePath
+	eviFile.ChunkMap = chunkMap
+
+	fileHash, err := base64.StdEncoding.DecodeString(meta.FileHash)
+	if err != nil {
+		return err
+	}
+	eid := util.AppendToBytesSlice(cnst.EviFileNamespace, fileHash)
 	fileId := base64.StdEncoding.EncodeToString(eid)
-	res.EviFile.FileId = fileId
+	eviFile.FileId = fileId
 
 	err = os.Remove(fpath)
 	if err != nil {
 		log.Printf("Warning: could not remove temp file %s: %v\n", fpath, err)
 	}
 
+	res.EviFile = &eviFile
 	return stream.SendAndClose(&res)
 }
 

@@ -1,0 +1,82 @@
+syntax = "proto3";
+
+package dues;
+option go_package = "indicer/pb;pb";
+
+service DuesService {
+    rpc AppendIfExists (AppendIfExistsReq) returns (AppendIfExistsRes);
+    rpc StreamFile (stream StreamFileReq) returns (StreamFileRes);
+
+    rpc GetEviFiles (GetEviFilesReq) returns (GetEviFilesRes);
+    rpc GetPartiFiles (GetPartiFilesReq) returns (GetPartiFilesRes);
+    rpc GetIdxFiles (GetIdxFilesReq) returns (GetIdxFilesRes);
+
+    rpc Search (SearchReq) returns (SearchRes);
+}
+
+message BaseFile {
+    string file_path = 1;
+    string file_id = 2;
+    map<string, int64> chunk_map = 3;
+}
+
+message AppendIfExistsReq {
+    string file_hash = 1;
+    string file_path = 2;
+}
+message AppendIfExistsRes {
+    bool exists = 1;
+    bool appended = 2;
+    BaseFile evi_file = 3;
+    string err = 4;
+}
+message StreamFileMeta {
+    string file_path = 1;
+    int64 file_size = 2;
+    string file_type = 3; // disk image type (windows_exfat, linux_ext4, something else)
+    string file_hash = 4;
+}
+message StreamFileReq {
+    oneof payload {
+        bytes file = 1;
+        StreamFileMeta file_meta = 2;
+    }
+}
+message StreamFileRes {
+    bool done  = 1;
+    string err = 2;
+    BaseFile evi_file = 3;
+}
+
+message GetEviFilesReq {}
+message GetEviFilesRes {
+    bool done  = 1;
+    string err = 2;
+    repeated BaseFile evi_file = 3;
+}
+message GetPartiFilesReq {
+    string evi_file_id = 1;
+}
+message GetPartiFilesRes {
+    bool done  = 1;
+    string err = 2;
+    repeated BaseFile partition_file = 3;
+}
+message GetIdxFilesReq {
+    string parti_file_id = 1;
+}
+message GetIdxFilesRes {
+    bool done  = 1;
+    string err = 2;
+    repeated BaseFile indexed_file = 3;
+}
+
+
+message SearchReq {
+    string keyword = 1;
+}
+message SearchRes {
+    string err = 1;
+    int64 total_count = 2;
+    map<string, int64> keyword_count_map = 3;
+}

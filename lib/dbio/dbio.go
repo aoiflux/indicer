@@ -110,7 +110,7 @@ func GetReverseRelationNode(key []byte, db *badger.DB) (map[string]struct{}, err
 }
 
 func SetBatchChonkNode(key, data []byte, db *badger.DB, batch *badger.WriteBatch) error {
-	cfpath, err := fio.WriteChonk(db.Opts().Dir, data, db.Opts().EncryptionKey)
+	cfpath, err := fio.WriteChonk(db.Opts().Dir, data, key, db.Opts().EncryptionKey)
 	if err != nil {
 		return err
 	}

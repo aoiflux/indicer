@@ -1,13 +1,15 @@
 package fio
 
 import (
+	"crypto/sha3"
+	"encoding/base64"
 	"indicer/lib/cnst"
 	"indicer/lib/util"
 	"os"
 	"path/filepath"
 )
 
-func WriteChonk(dbpath string, data, key []byte) ([]byte, error) {
+func WriteChonk(dbpath string, data, ckey, key []byte) ([]byte, error) {
 	var err error
 	if !cnst.QUICKOPT {
 		data = cnst.ENCODER.EncodeAll(data, make([]byte, 0, len(data)))
@@ -16,7 +18,12 @@ func WriteChonk(dbpath string, data, key []byte) ([]byte, error) {
 			return nil, err
 		}
 	}
-	cfname := util.GetRandomName(cnst.FileNameLen) + cnst.BLOBEXT
+
+	ckhash, err := util.GetChonkHash(ckey, sha3.New512())
+	if err != nil {
+		return nil, err
+	}
+	cfname := base64.RawURLEncoding.EncodeToString(ckhash) + cnst.BLOBEXT
 	cfpath := filepath.Join(dbpath, cnst.BLOBSDIR, cfname)
 	err = os.WriteFile(cfpath, data, os.ModePerm)
 	return []byte(cfpath), err

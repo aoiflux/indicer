@@ -22,7 +22,7 @@ func getEvidenceFile(filePath, fileHashStr string, db *badger.DB) (structs.Evide
 	efile, err = dbio.GetEvidenceFile(eid, db)
 	if err != nil {
 		if err == badger.ErrKeyNotFound {
-			log.Printf("File [%s] not found", filePath)
+			log.Printf("File [%s] not found in DB. Proceeding with dedup function.", filePath)
 			return efile, cnst.ErrFileNotFound
 		}
 		return efile, err

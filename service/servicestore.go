@@ -43,5 +43,5 @@ func GetEviFileChunkMap(fileSize int64, fileHashStr string) (map[string]int64, e
 	meta.Size = fileSize
 	meta.Start = 0
 
-	return getChunkMap(meta, cnst.DB)
+	return getChonkMap(meta, cnst.DB)
 }

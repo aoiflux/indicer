@@ -34,7 +34,7 @@ func getEvidenceFile(filePath, fileHashStr string, db *badger.DB) (structs.Evide
 	return efile, nil
 }
 
-func getChunkMap(meta structs.FileMeta, db *badger.DB) (map[string]int64, error) {
+func getChonkMap(meta structs.FileMeta, db *badger.DB) (map[string]int64, error) {
 	var dbstart int64
 	if meta.Start > 0 {
 		dbstart = util.GetDBStartOffset(meta.Start)
@@ -50,13 +50,13 @@ func getChunkMap(meta structs.FileMeta, db *badger.DB) (map[string]int64, error)
 		}
 
 		ckey := util.AppendToBytesSlice(cnst.ChonkNamespace, chash)
-		data, err := dbio.GetChonkData(restoreIndex, meta.Start, meta.Size, dbstart, end, ckey, db)
+		csize, err := dbio.GetChonkSize(restoreIndex, meta.Start, meta.Size, dbstart, end, ckey, db)
 		if err != nil {
 			return nil, err
 		}
 
 		chashStr := base64.StdEncoding.EncodeToString(chash)
-		chunkMap[chashStr] = int64(len(data))
+		chunkMap[chashStr] = csize
 	}
 
 	return chunkMap, nil

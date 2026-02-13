@@ -156,6 +156,19 @@ func GetChonkData(restoreIndex, start, size, dbstart, end int64, key []byte, db 
 
 	return data, nil
 }
+func GetChonkSize(restoreIndex, start, size, dbstart, end int64, key []byte, db *badger.DB) (int64, error) {
+	data, err := GetChonkData(restoreIndex, start, size, dbstart, end, key, db)
+	if err != nil {
+		return -1, err
+	}
+
+	data = cnst.ENCODER.EncodeAll(data, make([]byte, 0, len(data)))
+	data, err = util.SealAES(db.Opts().EncryptionKey, data)
+	if err != nil {
+		return -1, err
+	}
+	return int64(len(data)), nil
+}
 func GetChonkNode(key []byte, db *badger.DB) ([]byte, error) {
 	cfpath, err := GetNode(key, db)
 	if err != nil {

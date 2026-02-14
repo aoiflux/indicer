@@ -25,7 +25,8 @@ type BaseFile struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
 	FilePath      string                 `protobuf:"bytes,1,opt,name=file_path,json=filePath,proto3" json:"file_path,omitempty"`
 	FileId        string                 `protobuf:"bytes,2,opt,name=file_id,json=fileId,proto3" json:"file_id,omitempty"`
-	ChunkMap      map[string]int64       `protobuf:"bytes,3,rep,name=chunk_map,json=chunkMap,proto3" json:"chunk_map,omitempty" protobuf_key:"bytes,1,opt,name=key" protobuf_val:"varint,2,opt,name=value"`
+	FileSize      int64                  `protobuf:"varint,3,opt,name=file_size,json=fileSize,proto3" json:"file_size,omitempty"`
+	ChunkMap      map[string]int64       `protobuf:"bytes,4,rep,name=chunk_map,json=chunkMap,proto3" json:"chunk_map,omitempty" protobuf_key:"bytes,1,opt,name=key" protobuf_val:"varint,2,opt,name=value"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -72,6 +73,13 @@ func (x *BaseFile) GetFileId() string {
 		return x.FileId
 	}
 	return ""
+}
+
+func (x *BaseFile) GetFileSize() int64 {
+	if x != nil {
+		return x.FileSize
+	}
+	return 0
 }
 
 func (x *BaseFile) GetChunkMap() map[string]int64 {
@@ -204,9 +212,8 @@ func (x *AppendIfExistsRes) GetErr() string {
 type StreamFileMeta struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
 	FilePath      string                 `protobuf:"bytes,1,opt,name=file_path,json=filePath,proto3" json:"file_path,omitempty"`
-	FileSize      int64                  `protobuf:"varint,2,opt,name=file_size,json=fileSize,proto3" json:"file_size,omitempty"`
-	FileType      string                 `protobuf:"bytes,3,opt,name=file_type,json=fileType,proto3" json:"file_type,omitempty"` // disk image type (windows_exfat, linux_ext4, something else)
-	FileHash      string                 `protobuf:"bytes,4,opt,name=file_hash,json=fileHash,proto3" json:"file_hash,omitempty"`
+	FileType      string                 `protobuf:"bytes,2,opt,name=file_type,json=fileType,proto3" json:"file_type,omitempty"` // disk image type (windows_exfat, linux_ext4, something else)
+	FileHash      string                 `protobuf:"bytes,3,opt,name=file_hash,json=fileHash,proto3" json:"file_hash,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -246,13 +253,6 @@ func (x *StreamFileMeta) GetFilePath() string {
 		return x.FilePath
 	}
 	return ""
-}
-
-func (x *StreamFileMeta) GetFileSize() int64 {
-	if x != nil {
-		return x.FileSize
-	}
-	return 0
 }
 
 func (x *StreamFileMeta) GetFileType() string {
@@ -824,11 +824,12 @@ var File_dues_proto protoreflect.FileDescriptor
 const file_dues_proto_rawDesc = "" +
 	"\n" +
 	"\n" +
-	"dues.proto\x12\x04dues\"\xb8\x01\n" +
+	"dues.proto\x12\x04dues\"\xd5\x01\n" +
 	"\bBaseFile\x12\x1b\n" +
 	"\tfile_path\x18\x01 \x01(\tR\bfilePath\x12\x17\n" +
-	"\afile_id\x18\x02 \x01(\tR\x06fileId\x129\n" +
-	"\tchunk_map\x18\x03 \x03(\v2\x1c.dues.BaseFile.ChunkMapEntryR\bchunkMap\x1a;\n" +
+	"\afile_id\x18\x02 \x01(\tR\x06fileId\x12\x1b\n" +
+	"\tfile_size\x18\x03 \x01(\x03R\bfileSize\x129\n" +
+	"\tchunk_map\x18\x04 \x03(\v2\x1c.dues.BaseFile.ChunkMapEntryR\bchunkMap\x1a;\n" +
 	"\rChunkMapEntry\x12\x10\n" +
 	"\x03key\x18\x01 \x01(\tR\x03key\x12\x14\n" +
 	"\x05value\x18\x02 \x01(\x03R\x05value:\x028\x01\"M\n" +
@@ -839,12 +840,11 @@ const file_dues_proto_rawDesc = "" +
 	"\x06exists\x18\x01 \x01(\bR\x06exists\x12\x1a\n" +
 	"\bappended\x18\x02 \x01(\bR\bappended\x12)\n" +
 	"\bevi_file\x18\x03 \x01(\v2\x0e.dues.BaseFileR\aeviFile\x12\x10\n" +
-	"\x03err\x18\x04 \x01(\tR\x03err\"\x84\x01\n" +
+	"\x03err\x18\x04 \x01(\tR\x03err\"g\n" +
 	"\x0eStreamFileMeta\x12\x1b\n" +
 	"\tfile_path\x18\x01 \x01(\tR\bfilePath\x12\x1b\n" +
-	"\tfile_size\x18\x02 \x01(\x03R\bfileSize\x12\x1b\n" +
-	"\tfile_type\x18\x03 \x01(\tR\bfileType\x12\x1b\n" +
-	"\tfile_hash\x18\x04 \x01(\tR\bfileHash\"e\n" +
+	"\tfile_type\x18\x02 \x01(\tR\bfileType\x12\x1b\n" +
+	"\tfile_hash\x18\x03 \x01(\tR\bfileHash\"e\n" +
 	"\rStreamFileReq\x12\x14\n" +
 	"\x04file\x18\x01 \x01(\fH\x00R\x04file\x123\n" +
 	"\tfile_meta\x18\x02 \x01(\v2\x14.dues.StreamFileMetaH\x00R\bfileMetaB\t\n" +

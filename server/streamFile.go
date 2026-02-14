@@ -27,6 +27,9 @@ func (g *GrpcService) StreamFile(stream grpc.ClientStreamingServer[pb.StreamFile
 		log.Println("Expected metadata with file")
 		return errors.New("metadata not found - please try again")
 	}
+	if meta.FileHash == "" {
+		return cnst.ErrHashNotFound
+	}
 
 	fpath, err := uploadFile(stream)
 	if err != nil {
@@ -52,6 +55,7 @@ func (g *GrpcService) StreamFile(stream grpc.ClientStreamingServer[pb.StreamFile
 	var eviFile pb.BaseFile
 	eviFile.FilePath = meta.FilePath
 	eviFile.ChunkMap = chunkMap
+	eviFile.FileSize = efile.Size
 
 	fileHash, err := base64.StdEncoding.DecodeString(meta.FileHash)
 	if err != nil {

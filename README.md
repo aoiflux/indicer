@@ -3,7 +3,7 @@
 ### generate go files out of proto file
 
 ```sh
-protoc -Iprotos --go_out=.\pb --go_opt=module=indicer/pb  --go-grpc_out=.\pb --go-grpc_opt=module=indicer/pb .\protos\dues.proto
+protoc --go_out=../pb --go_opt=paths=source_relative --connect-go_out=../pb --connect-go_opt=paths=source_relative dues.proto
 
 ```
 

@@ -26,6 +26,7 @@ const (
 var ChonkSize = DefaultChonkSize
 var MEMOPT bool
 var QUICKOPT bool
+var CONTAINERMODE bool
 
 const (
 	EviFileNamespace         = "E|||:"
@@ -43,6 +44,7 @@ const (
 const (
 	BLOBSDIR    = "BLOBS"
 	BLOBEXT     = ".blob"
+	BLOBZSTEXT  = ".blob.zst"
 	FileNameLen = 25
 )
 
@@ -90,6 +92,8 @@ const (
 	FlagLowResourceShort     = 'l'
 	FlagFastMode             = "quick"
 	FlagFastModeShort        = 'q'
+	FlagContainerMode        = "container"
+	FlagContainerModeShort   = 'x'
 	FlagSyncIndex            = "sync"
 	FlagSyncIndexShort       = 's'
 	FlagNoIndex              = "no-index"

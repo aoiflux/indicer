@@ -2,10 +2,13 @@ package dbio
 
 import (
 	"encoding/base64"
+	"fmt"
 	"indicer/lib/cnst"
 	"indicer/lib/fio"
 	"indicer/lib/structs"
 	"indicer/lib/util"
+	"strconv"
+	"strings"
 	"time"
 
 	"github.com/dgraph-io/badger/v4"
@@ -109,7 +112,19 @@ func GetReverseRelationNode(key []byte, db *badger.DB) (map[string]struct{}, err
 	return reverseRelations, err
 }
 
-func SetBatchChonkNode(key, data []byte, db *badger.DB, batch *badger.WriteBatch) error {
+func SetBatchChonkNode(key, data []byte, db *badger.DB, batch *badger.WriteBatch, containerMgr *fio.ContainerManager) error {
+	if containerMgr != nil {
+		// Container mode: pack chunks into containers
+		containerPath, offset, size, err := containerMgr.WriteChunkToContainer(data, key, db.Opts().EncryptionKey)
+		if err != nil {
+			return err
+		}
+		// Store metadata in format: "path|offset|size"
+		metadata := []byte(fmt.Sprintf("%s|%d|%d", containerPath, offset, size))
+		return SetBatchNode(key, metadata, batch)
+	}
+
+	// Original mode: one file per chunk
 	cfpath, err := fio.WriteChonk(db.Opts().Dir, data, key, db.Opts().EncryptionKey)
 	if err != nil {
 		return err
@@ -157,11 +172,29 @@ func GetChonkData(restoreIndex, start, size, dbstart, end int64, key []byte, db 
 	return data, nil
 }
 func GetChonkNode(key []byte, db *badger.DB) ([]byte, error) {
-	cfpath, err := GetNode(key, db)
+	metadata, err := GetNode(key, db)
 	if err != nil {
 		return nil, err
 	}
-	return fio.ReadChonk(cfpath, db.Opts().EncryptionKey)
+
+	// Parse metadata: "path|offset|size"
+	parts := strings.Split(string(metadata), "|")
+	if len(parts) != 3 {
+		// Fallback to old format (direct file path) for backward compatibility
+		return fio.ReadChonk(metadata, db.Opts().EncryptionKey)
+	}
+
+	containerPath := parts[0]
+	offset, err := strconv.ParseInt(parts[1], 10, 64)
+	if err != nil {
+		return nil, fmt.Errorf("failed to parse offset: %w", err)
+	}
+	size, err := strconv.ParseInt(parts[2], 10, 64)
+	if err != nil {
+		return nil, fmt.Errorf("failed to parse size: %w", err)
+	}
+
+	return fio.ReadChunkFromContainer(containerPath, offset, size, db.Opts().EncryptionKey)
 }
 func GetNode(key []byte, db *badger.DB) ([]byte, error) {
 	var data []byte

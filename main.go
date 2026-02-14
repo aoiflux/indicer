@@ -24,12 +24,13 @@ func init() {
 
 func main() {
 	app := kingpin.New("DUES", "Deduplicated Unified Evidence Store")
+	app.Version("DUES v3.5")
 	dbpath := app.Flag(cnst.FlagDBPath, "Custom path for DUES database").Short(cnst.FlagDBPathShort).String()
 	pwd := app.Flag(cnst.FlagPassword, "Password for the DUES database").Short(cnst.FlagPasswordShort).String()
 	chonkSize := app.Flag(cnst.FlagChonkSize, "Custom chunk size(KB) to be used for dedup").Short(cnst.FlagChonkSizeShort).Default("256").Int()
 	memopt := app.Flag(cnst.FlagLowResource, "Low resource use mode, foregoes performance in favour of utilising less memory, cpu, and energy").Short(cnst.FlagLowResourceShort).Default("false").Bool()
 	QUICKOPT := app.Flag(cnst.FlagFastMode, "Quick mode, forgoes encryption, intra-chunk & overall db compression in favour of higher throughput").Short(cnst.FlagFastModeShort).Default("false").Bool()
-	app.Version("DUES v3.4")
+	containerMode := app.Flag(cnst.FlagContainerMode, "Use container-based storage (packs multiple chunks into 1GB containers)").Short(cnst.FlagContainerModeShort).Default("false").Bool()
 
 	cmdstore := app.Command(cnst.CmdStore, "Store file in database")
 	evipath := cmdstore.Arg(cnst.OperandFile, "Path of file that must be saved").Required().String()
@@ -60,6 +61,7 @@ func main() {
 	parsed := kingpin.MustParse(app.Parse(os.Args[1:]))
 	cnst.MEMOPT = *memopt
 	cnst.QUICKOPT = *QUICKOPT
+	cnst.CONTAINERMODE = *containerMode
 	key := util.HashPassword(*pwd)
 
 	if cnst.MEMOPT {
@@ -69,6 +71,9 @@ func main() {
 	}
 	if cnst.QUICKOPT {
 		color.Magenta("🛫 quick mode enabled 🛬")
+	}
+	if cnst.CONTAINERMODE {
+		color.Yellow("📦 container mode enabled 📦")
 	}
 
 	switch parsed {

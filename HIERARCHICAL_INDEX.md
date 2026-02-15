@@ -58,14 +58,14 @@ indicer store -x -h file.dd
 ```
 Chunk Hash (64 bytes SHA3-512)
          ↓
-Convert to hex string (128 characters)
+Take first byte (hash[0])
          ↓
-Example: 4a7f2e3c1b9f8d2e5a0c4f3b6e1d9a2c...
+Example: 0x4a
          ↓
-Based on FULL hash (collision-free)
+Block ID = 4a (hex)
 ```
 
-**Distribution**: Uses full 64-byte SHA3-512 hash, ensuring virtually zero collisions
+**Distribution**: Uses only the first byte of the SHA3-512 hash, giving 256 block IDs
 
 ### Block Metadata File Format
 
@@ -115,7 +115,7 @@ Try DB lookup (backward compat)
   │
   ├─ Found → Parse and return
   │
-  └─ Not Found → Open block file (using full hash)
+    └─ Not Found → Open block file (using block ID)
                     ↓
               Sequential scan for hash
                     ↓
@@ -191,6 +191,18 @@ return readChunkFromContainer(containerPath, offset, size)
 ```
 
 ## Performance Characteristics
+
+### Complexity Comparison (Normal vs Hierarchical)
+
+| Operation                       | Normal Index (DB per chunk) | Hierarchical Index (block files) |
+|---------------------------------|------------------------------|----------------------------------|
+| Store metadata (per chunk)      | O(1) DB write                | O(1) append to in-memory block   |
+| Flush metadata                  | O(1) DB write                | O(n) write per block (n=chunks/block) |
+| Lookup metadata (hit)           | O(1) DB get                  | O(n) sequential scan in block    |
+| Lookup metadata (miss)          | O(1) DB get                  | O(n) sequential scan in block    |
+| Metadata space per chunk        | O(1) in DB                   | O(1) in block file               |
+| Metadata space in DB (total)    | O(N)                         | O(0)                             |
+| Metadata space in files (total) | O(0)                         | O(N)                             |
 
 ### Write Performance
 

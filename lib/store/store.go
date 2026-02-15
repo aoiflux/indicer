@@ -5,6 +5,7 @@ import (
 	"errors"
 	"indicer/lib/cnst"
 	"indicer/lib/dbio"
+	"indicer/lib/fio"
 	"indicer/lib/structs"
 	"indicer/lib/util"
 
@@ -103,6 +104,25 @@ func storeEvidenceData(infile structs.InputFile) error {
 	tio.FHash = infile.GetHash()
 	tio.DB = infile.GetDB()
 
+	// Create container manager only if container mode is enabled
+	if cnst.CONTAINERMODE {
+		containerMgr := fio.NewContainerManager(infile.GetDB().Opts().Dir)
+		defer containerMgr.Close()
+		tio.ContainerMgr = containerMgr
+
+		// Create block manager if hierarchical index is enabled
+		if cnst.HIERARCHICALINDEX {
+			blockMgr := fio.NewBlockManager(infile.GetDB().Opts().Dir, containerMgr)
+			defer blockMgr.Close()
+			tio.BlockMgr = blockMgr
+		} else {
+			tio.BlockMgr = nil
+		}
+	} else {
+		tio.ContainerMgr = nil
+		tio.BlockMgr = nil
+	}
+
 	var err error
 	tio.Batch, err = util.InitBatch(infile.GetDB())
 	if err != nil {
@@ -162,7 +182,7 @@ func storeWorker(tio structs.ThreadIO) {
 		tio.Err <- err
 		return
 	}
-	err = processChonk(lostChonk, chash, tio.DB, tio.Batch)
+	err = processChonk(lostChonk, chash, tio.DB, tio.Batch, tio.ContainerMgr, tio.BlockMgr)
 	if err != nil {
 		tio.Err <- err
 		return
@@ -174,12 +194,12 @@ func storeWorker(tio structs.ThreadIO) {
 	}
 	tio.Err <- processRevRel(tio.Index, tio.FHash, chash, tio.DB, tio.Batch)
 }
-func processChonk(cdata, chash []byte, db *badger.DB, batch *badger.WriteBatch) error {
+func processChonk(cdata, chash []byte, db *badger.DB, batch *badger.WriteBatch, containerMgr *fio.ContainerManager, blockMgr *fio.BlockManager) error {
 	ckey := util.AppendToBytesSlice(cnst.ChonkNamespace, chash)
 
 	err := dbio.PingNode(ckey, db)
 	if errors.Is(err, badger.ErrKeyNotFound) {
-		return dbio.SetBatchChonkNode(ckey, cdata, db, batch)
+		return dbio.SetBatchChonkNode(ckey, cdata, db, batch, containerMgr, blockMgr)
 	}
 
 	return err

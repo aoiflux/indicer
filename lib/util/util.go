@@ -40,7 +40,10 @@ func GetDBPath() (string, error) {
 	}
 
 	dbpath := filepath.Join(fullpath, dbdir)
-	err = os.MkdirAll(dbpath, os.ModeDir)
+	err = os.MkdirAll(dbpath, 0x700)
+	if err != nil {
+		return "", err
+	}
 
 	return dbpath, err
 }

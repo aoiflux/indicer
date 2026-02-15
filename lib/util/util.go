@@ -15,14 +15,33 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"runtime"
 	"strconv"
 	"strings"
+	"syscall"
 	"time"
 
 	"github.com/aoiflux/libxfat"
 	"github.com/cheggaaa/pb/v3"
 	"github.com/dgraph-io/badger/v4"
 )
+
+func HideDotPrefixFiles(path string) error {
+	// On Windows, mark the folder as hidden if its name starts with a dot
+	if runtime.GOOS == "windows" {
+		basename := filepath.Base(path)
+		if strings.HasPrefix(basename, ".") {
+			// Set FILE_ATTRIBUTE_HIDDEN (0x02) on Windows
+			unicodePath, err := syscall.UTF16PtrFromString(path)
+			if err != nil {
+				return err
+			}
+			return syscall.SetFileAttributes(unicodePath, syscall.FILE_ATTRIBUTE_HIDDEN)
+		}
+	}
+	// On Unix-like systems, files/folders starting with a dot are automatically hidden
+	return nil
+}
 
 func GetDBPath() (string, error) {
 	const dbdir = ".dues"
@@ -41,7 +60,11 @@ func GetDBPath() (string, error) {
 
 	dbpath := filepath.Join(fullpath, dbdir)
 	err = os.MkdirAll(dbpath, os.ModeDir)
+	if err != nil {
+		return "", err
+	}
 
+	err = HideDotPrefixFiles(dbpath)
 	return dbpath, err
 }
 

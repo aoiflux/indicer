@@ -109,8 +109,18 @@ func storeEvidenceData(infile structs.InputFile) error {
 		containerMgr := fio.NewContainerManager(infile.GetDB().Opts().Dir)
 		defer containerMgr.Close()
 		tio.ContainerMgr = containerMgr
+
+		// Create block manager if hierarchical index is enabled
+		if cnst.HIERARCHICALINDEX {
+			blockMgr := fio.NewBlockManager(infile.GetDB().Opts().Dir, containerMgr)
+			defer blockMgr.Close()
+			tio.BlockMgr = blockMgr
+		} else {
+			tio.BlockMgr = nil
+		}
 	} else {
 		tio.ContainerMgr = nil
+		tio.BlockMgr = nil
 	}
 
 	var err error
@@ -172,7 +182,7 @@ func storeWorker(tio structs.ThreadIO) {
 		tio.Err <- err
 		return
 	}
-	err = processChonk(lostChonk, chash, tio.DB, tio.Batch, tio.ContainerMgr)
+	err = processChonk(lostChonk, chash, tio.DB, tio.Batch, tio.ContainerMgr, tio.BlockMgr)
 	if err != nil {
 		tio.Err <- err
 		return
@@ -184,12 +194,12 @@ func storeWorker(tio structs.ThreadIO) {
 	}
 	tio.Err <- processRevRel(tio.Index, tio.FHash, chash, tio.DB, tio.Batch)
 }
-func processChonk(cdata, chash []byte, db *badger.DB, batch *badger.WriteBatch, containerMgr *fio.ContainerManager) error {
+func processChonk(cdata, chash []byte, db *badger.DB, batch *badger.WriteBatch, containerMgr *fio.ContainerManager, blockMgr *fio.BlockManager) error {
 	ckey := util.AppendToBytesSlice(cnst.ChonkNamespace, chash)
 
 	err := dbio.PingNode(ckey, db)
 	if errors.Is(err, badger.ErrKeyNotFound) {
-		return dbio.SetBatchChonkNode(ckey, cdata, db, batch, containerMgr)
+		return dbio.SetBatchChonkNode(ckey, cdata, db, batch, containerMgr, blockMgr)
 	}
 
 	return err

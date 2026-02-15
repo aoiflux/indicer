@@ -112,14 +112,21 @@ func GetReverseRelationNode(key []byte, db *badger.DB) (map[string]struct{}, err
 	return reverseRelations, err
 }
 
-func SetBatchChonkNode(key, data []byte, db *badger.DB, batch *badger.WriteBatch, containerMgr *fio.ContainerManager) error {
+func SetBatchChonkNode(key, data []byte, db *badger.DB, batch *badger.WriteBatch, containerMgr *fio.ContainerManager, blockMgr *fio.BlockManager) error {
 	if containerMgr != nil {
 		// Container mode: pack chunks into containers
 		containerPath, offset, size, err := containerMgr.WriteChunkToContainer(data, key, db.Opts().EncryptionKey)
 		if err != nil {
 			return err
 		}
-		// Store metadata in format: "path|offset|size"
+
+		// If hierarchical mode, add to block manager instead of DB
+		if blockMgr != nil {
+			// Hierarchical mode: store in block index
+			return blockMgr.AddChunkMetadata(key, containerPath, offset, size)
+		}
+
+		// Regular container mode: store metadata in DB
 		metadata := []byte(fmt.Sprintf("%s|%d|%d", containerPath, offset, size))
 		return SetBatchNode(key, metadata, batch)
 	}
@@ -172,26 +179,35 @@ func GetChonkData(restoreIndex, start, size, dbstart, end int64, key []byte, db 
 	return data, nil
 }
 func GetChonkNode(key []byte, db *badger.DB) ([]byte, error) {
+	// Try to get from database first (backward compatibility or non-hierarchical mode)
 	metadata, err := GetNode(key, db)
-	if err != nil {
-		return nil, err
+	if err == nil {
+		// Found in DB, parse and return
+		// Parse metadata: "path|offset|size"
+		parts := strings.Split(string(metadata), "|")
+		if len(parts) != 3 {
+			// Fallback to old format (direct file path) for backward compatibility
+			return fio.ReadChonk(metadata, db.Opts().EncryptionKey)
+		}
+
+		containerPath := parts[0]
+		offset, err := strconv.ParseInt(parts[1], 10, 64)
+		if err != nil {
+			return nil, fmt.Errorf("failed to parse offset: %w", err)
+		}
+		size, err := strconv.ParseInt(parts[2], 10, 64)
+		if err != nil {
+			return nil, fmt.Errorf("failed to parse size: %w", err)
+		}
+
+		return fio.ReadChunkFromContainer(containerPath, offset, size, db.Opts().EncryptionKey)
 	}
 
-	// Parse metadata: "path|offset|size"
-	parts := strings.Split(string(metadata), "|")
-	if len(parts) != 3 {
-		// Fallback to old format (direct file path) for backward compatibility
-		return fio.ReadChonk(metadata, db.Opts().EncryptionKey)
-	}
-
-	containerPath := parts[0]
-	offset, err := strconv.ParseInt(parts[1], 10, 64)
+	// Not found in DB, try hierarchical block index
+	blockMgr := fio.NewBlockManager(db.Opts().Dir, nil)
+	containerPath, offset, size, err := blockMgr.GetChunkMetadata(key)
 	if err != nil {
-		return nil, fmt.Errorf("failed to parse offset: %w", err)
-	}
-	size, err := strconv.ParseInt(parts[2], 10, 64)
-	if err != nil {
-		return nil, fmt.Errorf("failed to parse size: %w", err)
+		return nil, fmt.Errorf("chunk not found in DB or block index: %w", err)
 	}
 
 	return fio.ReadChunkFromContainer(containerPath, offset, size, db.Opts().EncryptionKey)

@@ -16,4 +16,5 @@ type ThreadIO struct {
 	Batch        *badger.WriteBatch
 	Err          chan error
 	ContainerMgr *fio.ContainerManager
+	BlockMgr     *fio.BlockManager
 }

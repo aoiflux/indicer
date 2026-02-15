@@ -31,6 +31,7 @@ func main() {
 	memopt := app.Flag(cnst.FlagLowResource, "Low resource use mode, foregoes performance in favour of utilising less memory, cpu, and energy").Short(cnst.FlagLowResourceShort).Default("false").Bool()
 	QUICKOPT := app.Flag(cnst.FlagFastMode, "Quick mode, forgoes encryption, intra-chunk & overall db compression in favour of higher throughput").Short(cnst.FlagFastModeShort).Default("false").Bool()
 	containerMode := app.Flag(cnst.FlagContainerMode, "Use container-based storage (packs multiple chunks into 1GB containers)").Short(cnst.FlagContainerModeShort).Default("false").Bool()
+	hierarchicalIndex := app.Flag(cnst.FlagHierarchicalIndex, "Use hierarchical block index (groups 1000 chunks per block, requires container mode)").Short(cnst.FlagHierarchicalShort).Default("false").Bool()
 
 	cmdstore := app.Command(cnst.CmdStore, "Store file in database")
 	evipath := cmdstore.Arg(cnst.OperandFile, "Path of file that must be saved").Required().String()
@@ -62,6 +63,14 @@ func main() {
 	cnst.MEMOPT = *memopt
 	cnst.QUICKOPT = *QUICKOPT
 	cnst.CONTAINERMODE = *containerMode
+	cnst.HIERARCHICALINDEX = *hierarchicalIndex
+
+	// Hierarchical index requires container mode
+	if cnst.HIERARCHICALINDEX && !cnst.CONTAINERMODE {
+		color.Red("⚠️  Hierarchical index requires container mode. Enabling container mode automatically.")
+		cnst.CONTAINERMODE = true
+	}
+
 	key := util.HashPassword(*pwd)
 
 	if cnst.MEMOPT {
@@ -74,6 +83,9 @@ func main() {
 	}
 	if cnst.CONTAINERMODE {
 		color.Yellow("📦 container mode enabled 📦")
+	}
+	if cnst.HIERARCHICALINDEX {
+		color.Magenta("🏛 hierarchical index enabled (2-level lookup) 🏛")
 	}
 
 	switch parsed {

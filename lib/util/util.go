@@ -15,7 +15,6 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
-	"runtime"
 	"strconv"
 	"strings"
 	"time"
@@ -23,34 +22,7 @@ import (
 	"github.com/aoiflux/libxfat"
 	"github.com/cheggaaa/pb/v3"
 	"github.com/dgraph-io/badger/v4"
-	"golang.org/x/sys/windows"
 )
-
-func HideDotPrefixFiles(path string) error {
-	if runtime.GOOS != "windows" {
-		return nil
-	}
-
-	path = filepath.Clean(path)
-	basename := filepath.Base(path)
-
-	if !strings.HasPrefix(basename, ".") {
-		return nil
-	}
-
-	p, err := windows.UTF16PtrFromString(path)
-	if err != nil {
-		return err
-	}
-
-	attrs, err := windows.GetFileAttributes(p)
-	if err != nil {
-		return err
-	}
-
-	// Add hidden bit
-	return windows.SetFileAttributes(p, attrs|windows.FILE_ATTRIBUTE_HIDDEN)
-}
 
 func GetDBPath() (string, error) {
 	const dbdir = ".dues"
@@ -73,7 +45,6 @@ func GetDBPath() (string, error) {
 		return "", err
 	}
 
-	err = HideDotPrefixFiles(dbpath)
 	return dbpath, err
 }
 

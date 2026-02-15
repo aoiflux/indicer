@@ -18,29 +18,38 @@ import (
 	"runtime"
 	"strconv"
 	"strings"
-	"syscall"
 	"time"
 
 	"github.com/aoiflux/libxfat"
 	"github.com/cheggaaa/pb/v3"
 	"github.com/dgraph-io/badger/v4"
+	"golang.org/x/sys/windows"
 )
 
 func HideDotPrefixFiles(path string) error {
-	// On Windows, mark the folder as hidden if its name starts with a dot
-	if runtime.GOOS == "windows" {
-		basename := filepath.Base(path)
-		if strings.HasPrefix(basename, ".") {
-			// Set FILE_ATTRIBUTE_HIDDEN (0x02) on Windows
-			unicodePath, err := syscall.UTF16PtrFromString(path)
-			if err != nil {
-				return err
-			}
-			return syscall.SetFileAttributes(unicodePath, syscall.FILE_ATTRIBUTE_HIDDEN)
-		}
+	if runtime.GOOS != "windows" {
+		return nil
 	}
-	// On Unix-like systems, files/folders starting with a dot are automatically hidden
-	return nil
+
+	path = filepath.Clean(path)
+	basename := filepath.Base(path)
+
+	if !strings.HasPrefix(basename, ".") {
+		return nil
+	}
+
+	p, err := windows.UTF16PtrFromString(path)
+	if err != nil {
+		return err
+	}
+
+	attrs, err := windows.GetFileAttributes(p)
+	if err != nil {
+		return err
+	}
+
+	// Add hidden bit
+	return windows.SetFileAttributes(p, attrs|windows.FILE_ATTRIBUTE_HIDDEN)
 }
 
 func GetDBPath() (string, error) {
@@ -59,7 +68,7 @@ func GetDBPath() (string, error) {
 	}
 
 	dbpath := filepath.Join(fullpath, dbdir)
-	err = os.MkdirAll(dbpath, os.ModeDir)
+	err = os.MkdirAll(dbpath, 0x700)
 	if err != nil {
 		return "", err
 	}

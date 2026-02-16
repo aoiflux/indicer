@@ -76,7 +76,7 @@ func main() {
 	if cnst.MEMOPT {
 		color.Green("🍃 running in LOW RESOURCE mode 🍃")
 	} else {
-		color.Cyan("⚡ running in HIGH PERFORMANCE mode ⚡")
+		color.Cyan("⚡ running in HIGH PERFORMANCE mode (CPU x2 workers) ⚡")
 	}
 	if cnst.QUICKOPT {
 		color.Magenta("🛫 quick mode enabled 🛬")

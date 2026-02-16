@@ -27,8 +27,8 @@ DUES is a powerful digital forensics tool designed for storing, analyzing, and s
 
 ### Performance Modes
 
-- **High Performance Mode** (default): Utilizes maximum system resources for speed
-- **Low Resource Mode** (`-l`): Optimized for systems with limited memory/CPU
+- **High Performance Mode** (default): Utilizes CPU × 2 worker threads for maximum throughput (ideal for I/O-bound operations)
+- **Low Resource Mode** (`-l`): Single-threaded operation optimized for systems with limited memory/CPU
 - **Quick Mode** (`-q`): Bypasses encryption and compression for maximum throughput
 
 ## Installation

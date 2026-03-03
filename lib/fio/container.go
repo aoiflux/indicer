@@ -28,6 +28,7 @@ Performance:
 import (
 	"crypto/sha3"
 	"encoding/base64"
+	"errors"
 	"fmt"
 	"indicer/lib/cnst"
 	"indicer/lib/util"
@@ -35,6 +36,9 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
+
+	"github.com/klauspost/compress/zstd"
 )
 
 const MaxContainerSize = 1 * cnst.GB // 1GB max per container file
@@ -42,7 +46,6 @@ const MaxContainerSize = 1 * cnst.GB // 1GB max per container file
 // WriteRequest represents a lock-free write request
 type WriteRequest struct {
 	data       []byte
-	ckey       []byte
 	key        []byte
 	responseCh chan WriteResponse
 }
@@ -63,8 +66,10 @@ type ContainerManager struct {
 	dbpath           string
 	containerIndex   int
 	writeQueue       chan *WriteRequest // Lock-free write queue
-	shutdownCh       chan struct{}      // Signal to stop writer goroutine
 	writerDone       chan struct{}      // Signal writer goroutine finished
+	acceptMu         sync.RWMutex
+	closed           bool
+	closeOnce        sync.Once
 }
 
 // NewContainerManager creates a new container manager with lock-free writer
@@ -73,7 +78,6 @@ func NewContainerManager(dbpath string) *ContainerManager {
 		dbpath:         dbpath,
 		containerIndex: 0,
 		writeQueue:     make(chan *WriteRequest, 1000), // Buffered channel for batching
-		shutdownCh:     make(chan struct{}),
 		writerDone:     make(chan struct{}),
 	}
 
@@ -85,16 +89,24 @@ func NewContainerManager(dbpath string) *ContainerManager {
 
 // WriteChunkToContainer writes a chunk to a container file using lock-free queue
 func (cm *ContainerManager) WriteChunkToContainer(data, ckey, key []byte) (containerPath string, offset int64, size int64, err error) {
+	_ = ckey // reserved for future metadata/indexing use
+
 	// Create write request with response channel
 	req := &WriteRequest{
 		data:       data,
-		ckey:       ckey,
 		key:        key,
 		responseCh: make(chan WriteResponse, 1),
 	}
 
-	// Send to lock-free queue (non-blocking enqueue)
+	cm.acceptMu.RLock()
+	if cm.closed {
+		cm.acceptMu.RUnlock()
+		return "", 0, 0, errors.New("container manager is closed")
+	}
+
+	// Send to lock-free queue
 	cm.writeQueue <- req
+	cm.acceptMu.RUnlock()
 
 	// Wait for response from writer goroutine
 	resp := <-req.responseCh
@@ -107,34 +119,22 @@ func (cm *ContainerManager) WriteChunkToContainer(data, ckey, key []byte) (conta
 func (cm *ContainerManager) writerLoop() {
 	defer close(cm.writerDone)
 
-	for {
-		select {
-		case req := <-cm.writeQueue:
-			// Process write request
-			path, offset, size, err := cm.doWrite(req.data, req.ckey, req.key)
+	for req := range cm.writeQueue {
+		// Process write request
+		path, offset, size, err := cm.doWrite(req.data, req.key)
 
-			// Send response back to caller
-			req.responseCh <- WriteResponse{
-				containerPath: path,
-				offset:        offset,
-				size:          size,
-				err:           err,
-			}
-
-		case <-cm.shutdownCh:
-			// Drain remaining requests before shutting down
-			for len(cm.writeQueue) > 0 {
-				req := <-cm.writeQueue
-				path, offset, size, err := cm.doWrite(req.data, req.ckey, req.key)
-				req.responseCh <- WriteResponse{path, offset, size, err}
-			}
-			return
+		// Send response back to caller
+		req.responseCh <- WriteResponse{
+			containerPath: path,
+			offset:        offset,
+			size:          size,
+			err:           err,
 		}
 	}
 }
 
 // doWrite performs the actual write operation (called only by writer goroutine)
-func (cm *ContainerManager) doWrite(data, ckey, key []byte) (containerPath string, offset int64, size int64, err error) {
+func (cm *ContainerManager) doWrite(data, key []byte) (containerPath string, offset int64, size int64, err error) {
 	// Encrypt and compress data
 	var processedData []byte
 	if !cnst.QUICKOPT {
@@ -162,6 +162,9 @@ func (cm *ContainerManager) doWrite(data, ckey, key []byte) (containerPath strin
 	if err != nil {
 		return "", 0, 0, err
 	}
+	if n != len(processedData) {
+		return "", 0, 0, io.ErrShortWrite
+	}
 
 	// Record current position
 	containerPath = cm.currentContainer
@@ -178,8 +181,12 @@ func (cm *ContainerManager) doWrite(data, ckey, key []byte) (containerPath strin
 func (cm *ContainerManager) createNewContainer() error {
 	// Close and compress previous container if open
 	if cm.currentFile != nil {
-		cm.currentFile.Sync()
-		cm.currentFile.Close()
+		if err := cm.currentFile.Sync(); err != nil {
+			return err
+		}
+		if err := cm.currentFile.Close(); err != nil {
+			return err
+		}
 
 		// Compress the previous container
 		if err := cm.compressContainer(cm.currentContainer); err != nil {
@@ -218,26 +225,36 @@ func (cm *ContainerManager) createNewContainer() error {
 
 // Close gracefully shuts down the writer goroutine and closes the container
 func (cm *ContainerManager) Close() error {
-	// Signal writer goroutine to shutdown
-	close(cm.shutdownCh)
+	var closeErr error
+	cm.closeOnce.Do(func() {
+		cm.acceptMu.Lock()
+		cm.closed = true
+		close(cm.writeQueue)
+		cm.acceptMu.Unlock()
 
-	// Wait for writer goroutine to finish
-	<-cm.writerDone
+		// Wait for writer goroutine to finish pending writes
+		<-cm.writerDone
 
-	// Close remaining resources
-	if cm.currentFile != nil {
-		cm.currentFile.Sync()
-		err := cm.currentFile.Close()
-		if err != nil {
-			return err
+		// Close remaining resources
+		if cm.currentFile != nil {
+			if err := cm.currentFile.Sync(); err != nil {
+				closeErr = err
+				return
+			}
+			if err := cm.currentFile.Close(); err != nil {
+				closeErr = err
+				return
+			}
+
+			// Compress the final container
+			if err := cm.compressContainer(cm.currentContainer); err != nil {
+				closeErr = fmt.Errorf("failed to compress final container: %w", err)
+				return
+			}
 		}
+	})
 
-		// Compress the final container
-		if err := cm.compressContainer(cm.currentContainer); err != nil {
-			return fmt.Errorf("failed to compress final container: %w", err)
-		}
-	}
-	return nil
+	return closeErr
 }
 
 // compressContainer compresses a container file using zstd
@@ -256,35 +273,64 @@ func (cm *ContainerManager) compressContainer(containerPath string) error {
 	if err != nil {
 		return err
 	}
-	defer srcFile.Close()
 
-	// Create compressed file
+	// Create compressed file (temp + rename for safer replacement)
 	compressedPath := strings.TrimSuffix(containerPath, cnst.BLOBEXT) + cnst.BLOBZSTEXT
-	dstFile, err := os.Create(compressedPath)
+	tempCompressedPath := compressedPath + ".tmp"
+	dstFile, err := os.Create(tempCompressedPath)
 	if err != nil {
-		return err
-	}
-	defer dstFile.Close()
-
-	// Read entire file
-	data, err := io.ReadAll(srcFile)
-	if err != nil {
+		srcFile.Close()
 		return err
 	}
 
-	// Compress data
-	compressed := cnst.ENCODER.EncodeAll(data, make([]byte, 0, len(data)))
-
-	// Write compressed data
-	_, err = dstFile.Write(compressed)
+	encoder, err := zstd.NewWriter(dstFile, zstd.WithEncoderLevel(zstd.EncoderLevel(zstd.SpeedBestCompression)))
 	if err != nil {
+		dstFile.Close()
+		srcFile.Close()
+		os.Remove(tempCompressedPath)
 		return err
 	}
 
-	// Sync and close
-	dstFile.Sync()
-	dstFile.Close()
-	srcFile.Close()
+	if _, err = io.Copy(encoder, srcFile); err != nil {
+		encoder.Close()
+		dstFile.Close()
+		srcFile.Close()
+		os.Remove(tempCompressedPath)
+		return err
+	}
+	if err = encoder.Close(); err != nil {
+		dstFile.Close()
+		srcFile.Close()
+		os.Remove(tempCompressedPath)
+		return err
+	}
+
+	// Sync output file
+	if err = dstFile.Sync(); err != nil {
+		dstFile.Close()
+		srcFile.Close()
+		os.Remove(tempCompressedPath)
+		return err
+	}
+	if err = dstFile.Close(); err != nil {
+		srcFile.Close()
+		os.Remove(tempCompressedPath)
+		return err
+	}
+	if err = srcFile.Close(); err != nil {
+		os.Remove(tempCompressedPath)
+		return err
+	}
+
+	// Replace any stale compressed target and atomically move temp into place.
+	if err = os.Remove(compressedPath); err != nil && !os.IsNotExist(err) {
+		os.Remove(tempCompressedPath)
+		return err
+	}
+	if err = os.Rename(tempCompressedPath, compressedPath); err != nil {
+		os.Remove(tempCompressedPath)
+		return err
+	}
 
 	// Remove original uncompressed file
 	err = os.Remove(containerPath)
@@ -300,57 +346,49 @@ func (cm *ContainerManager) compressContainer(containerPath string) error {
 	return nil
 }
 
+func resolveContainerPath(containerPath string) string {
+	if strings.HasSuffix(containerPath, cnst.BLOBZSTEXT) {
+		return containerPath
+	}
+	if _, err := os.Stat(containerPath); os.IsNotExist(err) {
+		compressedPath := strings.TrimSuffix(containerPath, cnst.BLOBEXT) + cnst.BLOBZSTEXT
+		if _, err := os.Stat(compressedPath); err == nil {
+			return compressedPath
+		}
+	}
+	return containerPath
+}
+
 // ReadChunkFromContainer reads a chunk from a container file at the specified offset
 func ReadChunkFromContainer(containerPath string, offset, size int64, key []byte) ([]byte, error) {
-	var fileData []byte
+	if size < 0 || offset < 0 {
+		return nil, fmt.Errorf("invalid offset/size: offset=%d size=%d", offset, size)
+	}
 
-	// Check if container is compressed
+	containerPath = resolveContainerPath(containerPath)
+
+	encoded := make([]byte, size)
+
 	if strings.HasSuffix(containerPath, cnst.BLOBZSTEXT) {
-		// Read and decompress the entire container
-		file, err := os.Open(containerPath)
+		encodedData, err := readFromCompressedContainer(containerPath, offset, size)
 		if err != nil {
 			return nil, err
 		}
-		defer file.Close()
-
-		compressedData, err := io.ReadAll(file)
-		if err != nil {
-			return nil, err
-		}
-
-		// Decompress
-		fileData, err = cnst.DECODER.DecodeAll(compressedData, nil)
-		if err != nil {
-			return nil, fmt.Errorf("failed to decompress container: %w", err)
-		}
+		copy(encoded, encodedData)
 	} else {
-		// Try compressed extension if uncompressed doesn't exist
-		if _, err := os.Stat(containerPath); os.IsNotExist(err) {
-			compressedPath := strings.TrimSuffix(containerPath, cnst.BLOBEXT) + cnst.BLOBZSTEXT
-			if _, err := os.Stat(compressedPath); err == nil {
-				// Found compressed version, use it
-				return ReadChunkFromContainer(compressedPath, offset, size, key)
-			}
-		}
-
-		// Read uncompressed container
 		file, err := os.Open(containerPath)
 		if err != nil {
 			return nil, err
 		}
 		defer file.Close()
 
-		fileData, err = io.ReadAll(file)
-		if err != nil {
+		if _, err = file.ReadAt(encoded, offset); err != nil {
+			if errors.Is(err, io.EOF) {
+				return nil, fmt.Errorf("offset %d + size %d exceeds container size", offset, size)
+			}
 			return nil, err
 		}
 	}
-
-	// Extract chunk at offset
-	if offset+size > int64(len(fileData)) {
-		return nil, fmt.Errorf("offset %d + size %d exceeds container size %d", offset, size, len(fileData))
-	}
-	encoded := fileData[offset : offset+size]
 
 	// Decrypt and decompress
 	var data []byte

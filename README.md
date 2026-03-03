@@ -178,6 +178,11 @@ dues reset -d C:\forensics\case1
 
 ## Architecture
 
+Detailed implementation notes:
+- [Container Manager (Current Implementation)](CONTAINER_MANAGER_CURRENT.md)
+- [Container Mode Low-Level Design](CONTAINER_MODE_LLD.md)
+- [Hierarchical Block Index](HIERARCHICAL_INDEX.md)
+
 ### Storage Model
 
 DUES uses a hierarchical storage model:

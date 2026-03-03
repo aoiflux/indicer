@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"indicer/lib/cnst"
 	"indicer/lib/dbio"
+	"indicer/lib/fio"
 	"indicer/lib/structs"
 	"indicer/lib/util"
 	"os"
@@ -114,6 +115,19 @@ func getEvidenceFileMeta(fid []byte, db *badger.DB) (structs.FileMeta, error) {
 }
 
 func restoreData(meta structs.FileMeta, dst *os.File, db *badger.DB) error {
+	// Configure cache size based on available memory (25% of available, max 4GB)
+	if cacheSize, err := cnst.GetCacheLimit(); err == nil {
+		// GetCacheLimit returns 25% of available memory
+		maxCache := int64(4 * cnst.GB)
+		if cacheSize > maxCache {
+			cacheSize = maxCache
+		}
+		fio.SetContainerReadCacheSize(cacheSize)
+	}
+
+	fio.EnableContainerReadCache()
+	defer fio.DisableContainerReadCache()
+
 	var dbstart int64
 	if meta.Start > 0 {
 		dbstart = util.GetDBStartOffset(meta.Start)

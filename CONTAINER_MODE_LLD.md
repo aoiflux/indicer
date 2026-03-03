@@ -119,6 +119,91 @@ Container Mode is an optimization for the indicer deduplication system that redu
 └─────────────┘        └──────────────┘       └─────────────┘
 ```
 
+### Sequence Diagrams (Current Code)
+
+The following diagrams reflect the **current** implementation in `lib/fio/container.go` (queue-close draining, idempotent close, streaming container compression).
+
+#### A) Store path (new chunk in container mode)
+
+```mermaid
+sequenceDiagram
+   participant W as storeWorker goroutine
+   participant D as dbio.SetBatchChonkNode
+   participant C as ContainerManager.WriteChunkToContainer
+   participant Q as writeQueue (chan *WriteRequest)
+   participant L as writerLoop goroutine
+   participant F as current .blob file
+   participant B as badger WriteBatch
+
+   W->>D: processChonk(cdata, chash)
+   D->>C: WriteChunkToContainer(data, ckey, encKey)
+   C->>Q: enqueue WriteRequest{data,key,responseCh}
+   L->>Q: dequeue request
+   L->>L: doWrite(data,key)
+   alt QUICKOPT disabled
+      L->>L: zstd EncodeAll(data)
+      L->>L: AES Seal(encoded,key)
+   else QUICKOPT enabled
+      L->>L: processedData = data
+   end
+   alt first write OR container full
+      L->>L: createNewContainer()
+   end
+   L->>F: append processedData
+   L-->>C: WriteResponse{path,offset,size}
+   C-->>D: (containerPath,offset,size)
+   D->>B: SetBatchNode(ckey, "path|offset|size")
+```
+
+#### B) Close path (graceful drain + finalize)
+
+```mermaid
+sequenceDiagram
+   participant S as storeEvidenceData defer
+   participant C as ContainerManager.Close
+   participant Q as writeQueue
+   participant L as writerLoop
+   participant F as current .blob
+   participant Z as .blob.zst output
+
+   S->>C: Close()
+   C->>C: closeOnce.Do(...)
+   C->>C: acceptMu.Lock + closed=true
+   C->>Q: close(writeQueue)
+   C->>C: acceptMu.Unlock
+   L->>Q: range drain remaining requests
+   L-->>C: close(writerDone) when queue exhausted
+   C->>F: Sync + Close
+   C->>Z: compressContainer(streaming zstd)
+   C->>F: Remove original .blob
+```
+
+#### C) Restore path (read by metadata)
+
+```mermaid
+sequenceDiagram
+   participant R as dbio.GetChonkNode
+   participant C as fio.ReadChunkFromContainer
+   participant F as container file
+   participant D as decoder/decryptor
+
+   R->>R: Parse metadata "path|offset|size"
+   R->>C: ReadChunkFromContainer(path,offset,size,key)
+   alt path missing and .blob.zst exists
+      C->>C: switch to .blob.zst
+   end
+   alt .blob.zst
+      C->>F: stream decode + skip offset + read size
+   else .blob
+      C->>F: ReadAt(offset,size)
+   end
+   alt QUICKOPT disabled
+      C->>D: UnsealAES(encoded,key)
+      C->>D: zstd DecodeAll(decrypted)
+   end
+   C-->>R: raw chunk bytes
+```
+
 ---
 
 ## Components

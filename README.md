@@ -27,8 +27,8 @@ DUES is a powerful digital forensics tool designed for storing, analyzing, and s
 
 ### Performance Modes
 
-- **High Performance Mode** (default): Utilizes maximum system resources for speed
-- **Low Resource Mode** (`-l`): Optimized for systems with limited memory/CPU
+- **High Performance Mode** (default): Utilizes CPU × 2 worker threads for maximum throughput (ideal for I/O-bound operations)
+- **Low Resource Mode** (`-l`): Single-threaded operation optimized for systems with limited memory/CPU
 - **Quick Mode** (`-q`): Bypasses encryption and compression for maximum throughput
 
 ## Installation
@@ -177,6 +177,11 @@ dues reset -d C:\forensics\case1
 | `--deep` | `-e` | Enable partial chunk matching | `false` |
 
 ## Architecture
+
+Detailed implementation notes:
+- [Container Manager (Current Implementation)](CONTAINER_MANAGER_CURRENT.md)
+- [Container Mode Low-Level Design](CONTAINER_MODE_LLD.md)
+- [Hierarchical Block Index](HIERARCHICAL_INDEX.md)
 
 ### Storage Model
 

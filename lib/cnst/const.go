@@ -116,7 +116,10 @@ func GetMaxThreadCount() int {
 	if MEMOPT {
 		return 1
 	}
-	return runtime.NumCPU()
+	// High performance mode (default): Use CPU * 2 workers
+	// This maximizes throughput since workers are I/O-bound
+	// (waiting on file writes, DB operations, compression, etc.)
+	return runtime.NumCPU() * 2
 }
 func GetCacheLimit() (int64, error) {
 	if MEMOPT {

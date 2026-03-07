@@ -97,7 +97,8 @@ func evidenceFilePreflight(infile structs.InputFile) (structs.EvidenceFile, erro
 	err = dbio.SetFile(infile.GetID(), evidenceFile, infile.GetDB())
 	return evidenceFile, err
 }
-func storeEvidenceData(infile structs.InputFile) error {
+func storeEvidenceData(infile structs.InputFile) (err error) {
+
 	bar := progressbar.DefaultBytes(infile.GetSize())
 
 	var tio structs.ThreadIO
@@ -107,13 +108,21 @@ func storeEvidenceData(infile structs.InputFile) error {
 	// Create container manager only if container mode is enabled
 	if cnst.CONTAINERMODE {
 		containerMgr := fio.NewContainerManager(infile.GetDB().Opts().Dir)
-		defer containerMgr.Close()
+		defer func() {
+			if closeErr := containerMgr.Close(); closeErr != nil && err == nil {
+				err = closeErr
+			}
+		}()
 		tio.ContainerMgr = containerMgr
 
 		// Create block manager if hierarchical index is enabled
 		if cnst.HIERARCHICALINDEX {
 			blockMgr := fio.NewBlockManager(infile.GetDB().Opts().Dir, containerMgr)
-			defer blockMgr.Close()
+			defer func() {
+				if closeErr := blockMgr.Close(); closeErr != nil && err == nil {
+					err = closeErr
+				}
+			}()
 			tio.BlockMgr = blockMgr
 		} else {
 			tio.BlockMgr = nil
@@ -123,7 +132,6 @@ func storeEvidenceData(infile structs.InputFile) error {
 		tio.BlockMgr = nil
 	}
 
-	var err error
 	tio.Batch, err = util.InitBatch(infile.GetDB())
 	if err != nil {
 		return err
@@ -148,9 +156,9 @@ func storeEvidenceData(infile structs.InputFile) error {
 		active++
 
 		if active > cnst.GetMaxThreadCount() {
-			err := <-tio.Err
-			if err != nil {
-				return err
+			workerErr := <-tio.Err
+			if workerErr != nil {
+				return workerErr
 			}
 			active--
 			bar.Add64(buffsize)
@@ -158,9 +166,9 @@ func storeEvidenceData(infile structs.InputFile) error {
 	}
 
 	for active > 0 {
-		err := <-tio.Err
-		if err != nil {
-			return err
+		workerErr := <-tio.Err
+		if workerErr != nil {
+			return workerErr
 		}
 		active--
 		bar.Add64(cnst.ChonkSize)
@@ -173,7 +181,8 @@ func storeEvidenceData(infile structs.InputFile) error {
 
 	bar.Add64(cnst.ChonkSize)
 	bar.Finish()
-	return bar.Close()
+	err = bar.Close()
+	return err
 }
 func storeWorker(tio structs.ThreadIO) {
 	lostChonk := tio.MappedFile[tio.Index:tio.ChonkEnd]

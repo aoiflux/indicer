@@ -3,19 +3,21 @@ package api
 import (
 	"context"
 	"errors"
+	"fmt"
 	"indicer/cli"
 	"indicer/lib/cnst"
 	"indicer/lib/server"
 	"indicer/lib/util"
 	"indicer/pb/pbconnect"
-	"log"
 	"net/http"
 	"os"
 	"os/signal"
+	"strings"
 	"syscall"
 	"time"
 
 	"connectrpc.com/connect"
+	"github.com/fatih/color"
 	"golang.org/x/net/http2"
 	"golang.org/x/net/http2/h2c"
 )
@@ -25,19 +27,30 @@ const PORT = "50051"
 func Server(chonkSize int, dbpath string, key []byte) error {
 	var err error
 
-	log.Println("Ensuring upload dir - ", cnst.UploadsDir)
-	ensureUploadDir()
+	printInfoBox("DUES Server", []string{
+		"Booting server runtime",
+		"Protocol: Connect + gRPC + gRPC-Web",
+		fmt.Sprintf("Port: %s", PORT),
+	})
 
-	log.Println("Connecting to DB")
+	if err = ensureUploadDir(); err != nil {
+		printErrorBox("Server startup failed", []string{fmt.Sprintf("Failed to prepare uploads dir: %v", err)})
+		return err
+	}
+	printSuccessBox("Startup check", []string{fmt.Sprintf("Uploads dir ready: %s", cnst.UploadsDir)})
+
 	cnst.DB, _, err = cli.Common(chonkSize, dbpath, key)
 	if err != nil {
+		printErrorBox("Server startup failed", []string{fmt.Sprintf("Database connection failed: %v", err)})
 		return err
 	}
 	defer cnst.DB.Close()
 	err = util.EnsureBlobPath(cnst.DefaultDBPath)
 	if err != nil {
+		printErrorBox("Server startup failed", []string{fmt.Sprintf("Blob path check failed: %v", err)})
 		return err
 	}
+	printSuccessBox("Database ready", []string{fmt.Sprintf("DB path: %s", cnst.DefaultDBPath)})
 
 	// Create Connect handler (supports gRPC, gRPC-Web, and Connect protocols)
 	mux := http.NewServeMux()
@@ -64,27 +77,36 @@ func Server(chonkSize int, dbpath string, key []byte) error {
 	// Start Connect HTTP server in a goroutine
 	serveErr := make(chan error, 1)
 	go func() {
-		log.Printf("Connect server running at :%s (supports gRPC, gRPC-Web, and Connect protocols)\n", PORT)
 		if err := httpServer.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
 			serveErr <- err
 			return
 		}
 		serveErr <- nil
 	}()
+	printSuccessBox("Server online", []string{
+		fmt.Sprintf("Listening on 0.0.0.0:%s", PORT),
+		"Health endpoint: GET /",
+		"Service path: /dues.DuesService/*",
+		"Press Ctrl+C to stop gracefully",
+	})
 
 	// Set up signal handling for graceful shutdown
 	sigs := make(chan os.Signal, 1)
 	signal.Notify(sigs, os.Interrupt, syscall.SIGTERM)
+	defer signal.Stop(sigs)
+
+	var serveRuntimeErr error
 
 	select {
 	case sig := <-sigs:
-		log.Printf("Received signal %v, initiating graceful shutdown...", sig)
-	case err := <-serveErr:
-		if err != nil {
-			log.Printf("Connect server exited with error: %v", err)
-		} else {
-			log.Printf("Connect server exited")
+		printWarnBox("Shutdown requested", []string{fmt.Sprintf("Signal received: %v", sig)})
+	case serveRuntimeErr = <-serveErr:
+		if serveRuntimeErr != nil {
+			printErrorBox("Server exited because of error", []string{serveRuntimeErr.Error()})
+			return serveRuntimeErr
 		}
+		printWarnBox("Server exited", []string{"Server stopped without shutdown signal"})
+		return nil
 	}
 
 	// Graceful shutdown
@@ -92,23 +114,69 @@ func Server(chonkSize int, dbpath string, key []byte) error {
 	defer cancel()
 
 	// Shutdown Connect server
-	log.Println("Shutting down Connect server...")
+	printInfoBox("Graceful shutdown", []string{"Stopping HTTP server"})
 	if err := httpServer.Shutdown(ctx); err != nil {
-		log.Printf("Error shutting down server: %v", err)
+		printErrorBox("Server shutdown failed", []string{err.Error()})
+		return err
 	}
 
 	// Wait for server goroutine to finish
-	<-serveErr
-	log.Println("Server stopped gracefully")
+	serveRuntimeErr = <-serveErr
+	if serveRuntimeErr != nil {
+		printErrorBox("Server exited because of error", []string{serveRuntimeErr.Error()})
+		return serveRuntimeErr
+	}
+	printSuccessBox("Server exit (graceful)", []string{"All listeners closed cleanly"})
 
 	// Cleanup resources
 	err = cnst.ENCODER.Close()
 	if err != nil {
+		printErrorBox("Cleanup failed", []string{fmt.Sprintf("Encoder close failed: %v", err)})
 		return err
 	}
 	cnst.DECODER.Close()
+	printSuccessBox("Cleanup complete", []string{"Encoder/decoder resources released"})
 
 	return err
+}
+
+func printInfoBox(title string, lines []string) {
+	printBox(title, lines, color.New(color.FgCyan, color.Bold))
+}
+
+func printSuccessBox(title string, lines []string) {
+	printBox(title, lines, color.New(color.FgGreen, color.Bold))
+}
+
+func printWarnBox(title string, lines []string) {
+	printBox(title, lines, color.New(color.FgYellow, color.Bold))
+}
+
+func printErrorBox(title string, lines []string) {
+	printBox(title, lines, color.New(color.FgRed, color.Bold))
+}
+
+func printBox(title string, lines []string, titleColor *color.Color) {
+	maxWidth := len(title)
+	for _, line := range lines {
+		if len(line) > maxWidth {
+			maxWidth = len(line)
+		}
+	}
+
+	top := "+" + strings.Repeat("-", maxWidth+2) + "+"
+	bottom := top
+
+	titleColor.Println(top)
+	titleColor.Printf("| %-*s |\n", maxWidth, title)
+	titleColor.Println(top)
+
+	lineColor := color.New(color.Reset)
+	for _, line := range lines {
+		lineColor.Printf("| %-*s |\n", maxWidth, line)
+	}
+	titleColor.Println(bottom)
+	fmt.Println()
 }
 
 func corsMiddleware(next http.Handler) http.Handler {

@@ -10,7 +10,7 @@ import (
 	"github.com/fatih/color"
 )
 
-func common(chonkSize int, dbpath string, key []byte) (*badger.DB, string, error) {
+func Common(chonkSize int, dbpath string, key []byte) (*badger.DB, string, error) {
 	var err error
 	if dbpath == "" {
 		dbpath, err = util.GetDBPath()

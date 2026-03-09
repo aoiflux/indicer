@@ -4,8 +4,16 @@ import (
 	"errors"
 	"runtime"
 
+	"github.com/dgraph-io/badger/v4"
 	"github.com/klauspost/compress/zstd"
 	"github.com/shirou/gopsutil/v3/mem"
+)
+
+const (
+	FILE_EXISTS   = "EXISTS"
+	FILE_APPENDED = "APPENDED"
+	DefaultDBPath = "./data"
+	UploadsDir    = "./uploads"
 )
 
 const (
@@ -28,6 +36,7 @@ var MEMOPT bool
 var QUICKOPT bool
 var CONTAINERMODE bool
 var HIERARCHICALINDEX bool
+var DB *badger.DB
 
 const (
 	EviFileNamespace         = "E|||:"
@@ -76,6 +85,7 @@ const (
 	SubCmdIn   = "in"
 	SubCmdOut  = "out"
 	CmdSearch  = "search"
+	CmdServer  = "server"
 
 	FlagDBPath               = "dbpath"
 	FlagDBPathShort          = 'd'

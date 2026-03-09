@@ -5,7 +5,7 @@ import (
 )
 
 func NearInData(deep bool, chonkSize int, dbpath, inhash string, key []byte) error {
-	db, _, err := common(chonkSize, dbpath, key)
+	db, _, err := Common(chonkSize, dbpath, key)
 	if err != nil {
 		return err
 	}
@@ -13,7 +13,7 @@ func NearInData(deep bool, chonkSize int, dbpath, inhash string, key []byte) err
 }
 
 func NearOutData(chonkSize int, dbpath, outpath string, key []byte) error {
-	db, _, err := common(chonkSize, dbpath, key)
+	db, _, err := Common(chonkSize, dbpath, key)
 	if err != nil {
 		return err
 	}

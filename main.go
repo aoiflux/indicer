@@ -25,7 +25,7 @@ func init() {
 
 func main() {
 	app := kingpin.New("DUES", "Deduplicated Unified Evidence Store")
-	app.Version("DUES v3.6")
+	app.Version("DUES v0.36")
 	dbpath := app.Flag(cnst.FlagDBPath, "Custom path for DUES database").Short(cnst.FlagDBPathShort).String()
 	pwd := app.Flag(cnst.FlagPassword, "Password for the DUES database").Short(cnst.FlagPasswordShort).String()
 	chonkSize := app.Flag(cnst.FlagChonkSize, "Custom chunk size(KB) to be used for dedup").Short(cnst.FlagChonkSizeShort).Default("256").Int()

@@ -1,0 +1,52 @@
+package server
+
+import (
+	"context"
+	"encoding/base64"
+	"indicer/lib/cnst"
+	"indicer/lib/service"
+	"indicer/lib/util"
+	"indicer/pb"
+)
+
+func (g *GrpcService) AppendIfExists(ctx context.Context, req *pb.AppendIfExistsReq) (*pb.AppendIfExistsRes, error) {
+	if req.FileHash == "" {
+		return nil, cnst.ErrHashNotFound
+	}
+
+	var res pb.AppendIfExistsRes
+	efile, existence, chkApndErr := service.CheckAndAppend(req.FilePath, req.FileHash, cnst.DB)
+	if chkApndErr != nil {
+		if chkApndErr == cnst.ErrFileNotFound {
+			res.Exists = false
+			return &res, nil
+		}
+		return nil, chkApndErr
+	}
+
+	chunkMap, chunkErr := service.GetEviFileChunkMap(efile.Size, req.FileHash)
+	if chunkErr != nil {
+		return nil, chunkErr
+	}
+
+	var eviFile pb.BaseFile
+	eviFile.FilePath = req.FilePath
+	eviFile.ChunkMap = chunkMap
+	eviFile.FileSize = efile.Size
+
+	fileHash, err := base64.StdEncoding.DecodeString(req.FileHash)
+	if err != nil {
+		return nil, err
+	}
+	eid := util.AppendToBytesSlice(cnst.EviFileNamespace, fileHash)
+	fileId := base64.StdEncoding.EncodeToString(eid)
+	eviFile.FileId = fileId
+
+	if existence == cnst.FILE_APPENDED {
+		res.Appended = true
+	}
+	res.Exists = true
+
+	res.EviFile = &eviFile
+	return &res, nil
+}

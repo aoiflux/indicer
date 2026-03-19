@@ -13,7 +13,7 @@ const (
 	FILE_EXISTS   = "EXISTS"
 	FILE_APPENDED = "APPENDED"
 	DefaultDBPath = "./data"
-	UploadsDir    = "./uploads"
+	UploadsDir    = "uploads"
 )
 
 const (

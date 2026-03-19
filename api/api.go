@@ -12,6 +12,7 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"path/filepath"
 	"strings"
 	"syscall"
 	"time"
@@ -27,30 +28,36 @@ const PORT = "50051"
 func Server(chonkSize int, dbpath string, key []byte) error {
 	var err error
 
+	cnst.DB, dbpath, err = cli.Common(chonkSize, dbpath, key)
+	if err != nil {
+		printErrorBox("Server startup failed", []string{fmt.Sprintf("Database connection failed: %v", err)})
+		return err
+	}
+	defer cnst.DB.Close()
+	dbpath, err = filepath.Abs(dbpath)
+	if err != nil {
+		return err
+	}
+
+	err = util.EnsureBlobPath(dbpath)
+	if err != nil {
+		printErrorBox("Server startup failed", []string{fmt.Sprintf("Blob path check failed: %v", err)})
+		return err
+	}
+	printSuccessBox("Database ready", []string{fmt.Sprintf("DB path: %s", dbpath)})
+	uploadsDir := filepath.Join(dbpath, cnst.UploadsDir)
+
 	printInfoBox("DUES Server", []string{
 		"Booting server runtime",
 		"Protocol: Connect + gRPC + gRPC-Web",
 		fmt.Sprintf("Port: %s", PORT),
 	})
 
-	if err = ensureUploadDir(); err != nil {
+	if err = ensureUploadDir(uploadsDir); err != nil {
 		printErrorBox("Server startup failed", []string{fmt.Sprintf("Failed to prepare uploads dir: %v", err)})
 		return err
 	}
-	printSuccessBox("Startup check", []string{fmt.Sprintf("Uploads dir ready: %s", cnst.UploadsDir)})
-
-	cnst.DB, _, err = cli.Common(chonkSize, dbpath, key)
-	if err != nil {
-		printErrorBox("Server startup failed", []string{fmt.Sprintf("Database connection failed: %v", err)})
-		return err
-	}
-	defer cnst.DB.Close()
-	err = util.EnsureBlobPath(cnst.DefaultDBPath)
-	if err != nil {
-		printErrorBox("Server startup failed", []string{fmt.Sprintf("Blob path check failed: %v", err)})
-		return err
-	}
-	printSuccessBox("Database ready", []string{fmt.Sprintf("DB path: %s", cnst.DefaultDBPath)})
+	printSuccessBox("Startup check", []string{fmt.Sprintf("Uploads dir ready: %s", uploadsDir)})
 
 	// Create Connect handler (supports gRPC, gRPC-Web, and Connect protocols)
 	mux := http.NewServeMux()
@@ -218,10 +225,10 @@ func corsInterceptor() connect.UnaryInterceptorFunc {
 	}
 }
 
-func ensureUploadDir() error {
-	_, err := os.Stat(cnst.UploadsDir)
+func ensureUploadDir(uploadsDir string) error {
+	_, err := os.Stat(uploadsDir)
 	if os.IsNotExist(err) {
-		return os.MkdirAll(cnst.UploadsDir, os.ModeDir)
+		return os.MkdirAll(uploadsDir, os.ModeDir)
 	}
 	return nil
 }

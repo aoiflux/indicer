@@ -43,7 +43,7 @@ func (g *GrpcService) StreamFile(stream grpc.ClientStreamingServer[pb.StreamFile
 	if err != nil {
 		return err
 	}
-	chunkMap, err := service.GetEviFileChunkMap(efile.Size, meta.FileHash)
+	chunkMap, err := service.GetFileChunkMap(efile.Size, meta.FileHash)
 	if err != nil {
 		return err
 	}

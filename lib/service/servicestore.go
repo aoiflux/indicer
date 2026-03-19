@@ -31,17 +31,3 @@ func AddEvidenceMetadata(meta *pb.StreamFileMeta) (structs.EvidenceFile, error) 
 	err = dbio.SetFile(eid, efile, cnst.DB)
 	return efile, err
 }
-
-func GetEviFileChunkMap(fileSize int64, fileHashStr string) (map[string]int64, error) {
-	fileHash, err := base64.StdEncoding.DecodeString(fileHashStr)
-	if err != nil {
-		return nil, err
-	}
-
-	var meta structs.FileMeta
-	meta.EviHash = fileHash
-	meta.Size = fileSize
-	meta.Start = 0
-
-	return getChonkMap(meta, cnst.DB)
-}

@@ -172,7 +172,10 @@ func printVersionInfo() {
 	fmt.Println("  - Restore by hash")
 	fmt.Println("  - Search indexed content and metadata")
 	fmt.Println("  - Run NeAR similarity checks")
-	fmt.Println("  - Serve via gRPC/Web mode")
+
+	printHelpSection("Experimental Features")
+	fmt.Println("  - Rich TUI")
+	fmt.Println("  - Server via gRPC/Web mode")
 
 	printHelpSection("Quick Start")
 	fmt.Println("  dues store FILE")

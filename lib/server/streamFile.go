@@ -12,6 +12,7 @@ import (
 	"os"
 	"path/filepath"
 
+	"github.com/dgraph-io/badger/v4"
 	"github.com/google/uuid"
 	"google.golang.org/grpc"
 )
@@ -75,7 +76,7 @@ func (g *GrpcService) StreamFile(stream grpc.ClientStreamingServer[pb.StreamFile
 }
 
 func uploadFile(stream grpc.ClientStreamingServer[pb.StreamFileReq, pb.StreamFileRes]) (string, error) {
-	fh, err := getFileHandle()
+	fh, err := getFileHandle(cnst.DB)
 	if err != nil {
 		return "", err
 	}
@@ -105,13 +106,14 @@ func uploadFile(stream grpc.ClientStreamingServer[pb.StreamFileReq, pb.StreamFil
 	log.Printf("Uploaded file to %s\n", fname)
 	return fname, nil
 }
-func getFileHandle() (*os.File, error) {
+func getFileHandle(db *badger.DB) (*os.File, error) {
 	fid, err := uuid.NewV7()
 	if err != nil {
 		return nil, err
 	}
 
-	fpath := filepath.Join(cnst.UploadsDir, fid.String())
+	upladsDir := filepath.Join(db.Opts().Dir, cnst.UploadsDir)
+	fpath := filepath.Join(upladsDir, fid.String())
 	fpath, err = filepath.Abs(fpath)
 	if err != nil {
 		return nil, err

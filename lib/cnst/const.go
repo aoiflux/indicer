@@ -106,7 +106,7 @@ const (
 	FlagContainerMode        = "container"
 	FlagContainerModeShort   = 'x'
 	FlagHierarchicalIndex    = "hierarchical"
-	FlagHierarchicalShort    = 'h'
+	FlagHierarchicalShort    = 'i'
 	FlagSyncIndex            = "sync"
 	FlagSyncIndexShort       = 's'
 	FlagNoIndex              = "no-index"

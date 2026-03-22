@@ -77,15 +77,17 @@ const (
 )
 
 const (
-	CmdStore   = "store"
-	CmdList    = "list"
-	CmdRestore = "restore"
-	CmdNear    = "near"
-	CmdReset   = "reset"
-	SubCmdIn   = "in"
-	SubCmdOut  = "out"
-	CmdSearch  = "search"
-	CmdServer  = "server"
+	CmdTui      = "tui"
+	CmdStore    = "store"
+	CmdList     = "list"
+	CmdRestore  = "restore"
+	CmdNear     = "near"
+	CmdReset    = "reset"
+	SubCmdIn    = "in"
+	SubCmdOut   = "out"
+	CmdSearch   = "search"
+	CmdServer   = "server"
+	CmdVeresion = "version"
 
 	FlagDBPath               = "dbpath"
 	FlagDBPathShort          = 'd'

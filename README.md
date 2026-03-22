@@ -21,7 +21,7 @@ DUES is a powerful digital forensics tool designed for storing, analyzing, and s
 - **Compression**: Zstandard compression with configurable levels for optimal storage efficiency
 - **Partition Detection**: Automatically detects and parses disk image partitions (MBR, exFAT)
 - **File System Indexing**: Indexes files within disk images for granular analysis
-- **Near Duplicate Detection (NeAr)**: Identifies files with similar content using advanced chunk matching algorithms
+- **Near Duplicate Detection (NeAR)**: Identifies files with similar content using advanced chunk matching algorithms
 - **Full-Text Search**: Fast content search across all stored artifacts with detailed reporting
 - **Graph Visualization**: Generates interactive HTML graphs (GReAt) showing file relationships
 
@@ -121,7 +121,7 @@ Search generates a detailed JSON report (`report.json`) with:
 - Hierarchical file relationships (disk image → partition → indexed files)
 - Executive summary for reporting
 
-#### Near Duplicate Analysis (NeAr)
+#### Near Duplicate Analysis (NeAR)
 
 Find files with similar content:
 
@@ -223,7 +223,7 @@ Data is organized into separate namespaces:
 ### Incident Response
 
 - Quick triage with search functionality
-- Identify related files using NeAr analysis
+- Identify related files using NeAR analysis
 - Secure evidence storage with encryption
 - Low-resource mode for field deployment
 
@@ -306,7 +306,7 @@ Key libraries used:
 ## Version History
 
 **v3.5** (Current)
-- Enhanced NeAr analysis with partial chunk matching
+- Enhanced NeAR analysis with partial chunk matching
 - Improved search reporting with executive summaries
 - Performance optimizations for low-resource environments
 - Container mode to pack chunks into 1GB BLOBs

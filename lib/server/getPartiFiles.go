@@ -17,8 +17,12 @@ func (g *GrpcService) GetPartiFiles(ctx context.Context, req *pb.GetPartiFilesRe
 	if req.EviFileId == "" {
 		return nil, cnst.ErrHashNotFound
 	}
+	eviFileId, err := base64.StdEncoding.DecodeString(req.EviFileId)
+	if err != nil {
+		return nil, err
+	}
 
-	eviFile, err := dbio.GetEvidenceFile([]byte(req.EviFileId), cnst.DB)
+	eviFile, err := dbio.GetEvidenceFile(eviFileId, cnst.DB)
 	if err != nil {
 		return nil, err
 	}

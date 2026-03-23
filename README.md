@@ -5,7 +5,7 @@
 </p>
 
 [![Go Version](https://img.shields.io/badge/Go-1.25-blue.svg)](https://golang.org)
-[![Version](https://img.shields.io/badge/version-3.5-green.svg)](https://github.com/aoiflux/indicer)
+[![Version](https://img.shields.io/badge/version-0.37-green.svg)](https://github.com/aoiflux/indicer)
 [![License](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 
 DUES is a powerful digital forensics tool designed for storing, analyzing, and searching disk images and files with advanced deduplication, encryption, and relationship analysis capabilities. It's specifically built for forensic examiners who need to efficiently manage and analyze large volumes of digital evidence.

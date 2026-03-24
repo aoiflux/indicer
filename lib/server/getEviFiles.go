@@ -48,32 +48,32 @@ func getBaseFiles(prefix string, db *badger.DB) ([]*pb.BaseFile, error) {
 				v = decoded
 			}
 
-			var evidata structs.EvidenceFile
-			err = msgpack.Unmarshal(v, &evidata)
+			var eviFile structs.EvidenceFile
+			err = msgpack.Unmarshal(v, &eviFile)
 			if err != nil {
 				return err
 			}
 
-			if !evidata.Completed {
+			if !eviFile.Completed {
 				continue
 			}
 
 			ehash := bytes.Split(id, eviPrefix)[1]
-			chunkMap, err := service.GetFileChunkMap(evidata.Size, ehash)
+			chunkMap, err := service.GetFileChunkMap(eviFile.Start, eviFile.Size, ehash)
 			if err != nil {
 				return err
 			}
 
 			idstr := base64.StdEncoding.EncodeToString(id)
-			for name := range evidata.Names {
-				var eviFile pb.BaseFile
+			for name := range eviFile.Names {
+				var baseFile pb.BaseFile
 
-				eviFile.FileId = idstr
-				eviFile.FilePath = name
-				eviFile.FileSize = evidata.Size
-				eviFile.ChunkMap = chunkMap
+				baseFile.FileId = idstr
+				baseFile.FilePath = name
+				baseFile.FileSize = eviFile.Size
+				baseFile.ChunkMap = chunkMap
 
-				eviList = append(eviList, &eviFile)
+				eviList = append(eviList, &baseFile)
 			}
 		}
 

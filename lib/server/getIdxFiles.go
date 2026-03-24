@@ -61,7 +61,7 @@ func getIdxFiles(idxMap map[string]structs.InternalOffset, db *badger.DB) ([]*pb
 			return nil, err
 		}
 
-		chunkMap, err := service.GetFileChunkMap(idxfile.Size, ehash)
+		chunkMap, err := service.GetFileChunkMap(idxfile.Start, idxfile.Size, ehash)
 		if err != nil {
 			return nil, err
 		}

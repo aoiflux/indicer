@@ -60,7 +60,7 @@ func getPartiFiles(partiMap map[string]structs.InternalOffset, db *badger.DB) ([
 			return nil, err
 		}
 
-		chunkMap, err := service.GetFileChunkMap(partiFile.Size, ehash)
+		chunkMap, err := service.GetFileChunkMap(partiFile.Start, partiFile.Size, ehash)
 		if err != nil {
 			return nil, err
 		}

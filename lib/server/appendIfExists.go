@@ -28,7 +28,7 @@ func (g *GrpcService) AppendIfExists(ctx context.Context, req *pb.AppendIfExists
 	if err != nil {
 		return nil, err
 	}
-	chunkMap, chunkErr := service.GetFileChunkMap(efile.Size, fhash)
+	chunkMap, chunkErr := service.GetFileChunkMap(efile.Start, efile.Size, fhash)
 	if chunkErr != nil {
 		return nil, chunkErr
 	}

@@ -56,7 +56,7 @@ func getIndexedFileMeta(fid []byte, db *badger.DB) (structs.FileMeta, error) {
 	if err != nil {
 		return meta, err
 	}
-	ehash, err := getLogicalFileEviHash(ifile.Names, db)
+	ehash, err := GetLogicalFileEviHash(ifile.Names, db)
 	if err != nil {
 		return meta, err
 	}
@@ -73,7 +73,7 @@ func getPartitionFileMeta(fid []byte, db *badger.DB) (structs.FileMeta, error) {
 	if err != nil {
 		return meta, err
 	}
-	ehash, err := getLogicalFileEviHash(pfile.Names, db)
+	ehash, err := GetLogicalFileEviHash(pfile.Names, db)
 	if err != nil {
 		return meta, err
 	}
@@ -83,7 +83,7 @@ func getPartitionFileMeta(fid []byte, db *badger.DB) (structs.FileMeta, error) {
 	meta.Size = pfile.Size
 	return meta, nil
 }
-func getLogicalFileEviHash(names map[string]struct{}, db *badger.DB) ([]byte, error) {
+func GetLogicalFileEviHash(names map[string]struct{}, db *badger.DB) ([]byte, error) {
 	name := util.GetArbitratyMapKey(names)
 	ehash, err := util.GetEvidenceFileHash(name)
 	if err != nil {

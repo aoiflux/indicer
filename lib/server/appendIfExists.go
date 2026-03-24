@@ -24,7 +24,11 @@ func (g *GrpcService) AppendIfExists(ctx context.Context, req *pb.AppendIfExists
 		return nil, chkApndErr
 	}
 
-	chunkMap, chunkErr := service.GetFileChunkMap(efile.Size, req.FileHash)
+	fhash, err := base64.StdEncoding.DecodeString(req.FileHash)
+	if err != nil {
+		return nil, err
+	}
+	chunkMap, chunkErr := service.GetFileChunkMap(efile.Size, fhash)
 	if chunkErr != nil {
 		return nil, chunkErr
 	}

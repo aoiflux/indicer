@@ -31,7 +31,6 @@ func getBaseFiles(prefix string, db *badger.DB) ([]*pb.BaseFile, error) {
 
 	err := db.View(func(txn *badger.Txn) error {
 		opts := badger.DefaultIteratorOptions
-		opts.PrefetchSize = 1000
 		it := txn.NewIterator(opts)
 		defer it.Close()
 
@@ -59,9 +58,8 @@ func getBaseFiles(prefix string, db *badger.DB) ([]*pb.BaseFile, error) {
 				continue
 			}
 
-			evihash := bytes.Split(id, eviPrefix)[1]
-			eviHashStr := base64.StdEncoding.EncodeToString(evihash)
-			chunkMap, err := service.GetFileChunkMap(evidata.Size, eviHashStr)
+			ehash := bytes.Split(id, eviPrefix)[1]
+			chunkMap, err := service.GetFileChunkMap(evidata.Size, ehash)
 			if err != nil {
 				return err
 			}

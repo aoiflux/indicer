@@ -6,9 +6,11 @@ import (
 	"indicer/lib/cnst"
 	"indicer/lib/dbio"
 	"indicer/lib/service"
+	"indicer/lib/store"
 	"indicer/lib/structs"
 	"indicer/lib/util"
 	"indicer/pb"
+	"strings"
 
 	"github.com/dgraph-io/badger/v4"
 )
@@ -53,7 +55,12 @@ func getPartiFiles(partiMap map[string]structs.InternalOffset, db *badger.DB) ([
 			return nil, err
 		}
 
-		chunkMap, err := service.GetFileChunkMap(partiFile.Size, phash)
+		ehash, err := store.GetLogicalFileEviHash(partiFile.Names, db)
+		if err != nil {
+			return nil, err
+		}
+
+		chunkMap, err := service.GetFileChunkMap(partiFile.Size, ehash)
 		if err != nil {
 			return nil, err
 		}
@@ -61,6 +68,10 @@ func getPartiFiles(partiMap map[string]structs.InternalOffset, db *badger.DB) ([
 		for name := range partiFile.Names {
 			var baseFile pb.BaseFile
 			baseFile.FileId = base64.StdEncoding.EncodeToString(pid)
+
+			split := strings.Split(name, cnst.DataSeperator)
+			name = split[len(split)-1]
+
 			baseFile.FilePath = name
 			baseFile.FileSize = partiFile.Size
 			baseFile.ChunkMap = chunkMap

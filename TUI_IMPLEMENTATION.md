@@ -1,153 +1,110 @@
-# DUES Rich TUI Implementation
+# DUES TUI Implementation (Bubble Tea v2)
 
 ## Overview
-A comprehensive, interactive Terminal User Interface (TUI) for DUES has been implemented using **Bubble Tea** framework with **Lip Gloss** for styling.
 
-## What's New
+DUES TUI is implemented on Bubble Tea v2 and organized as a state-driven app with one focused model per operation.
 
-### New Command
-- **`dues tui`** - Launch the interactive TUI interface with a beautiful, menu-driven experience
+Current module versions in `go.mod`:
 
-### Dependencies Added
-- `github.com/charmbracelet/bubbletea` - Modern TUI framework
-- `github.com/charmbracelet/bubbles` - Pre-built UI components (list, textinput, spinner)
-- `github.com/charmbracelet/lipgloss` - Terminal styling and layout
+- `charm.land/bubbletea/v2`
+- `charm.land/bubbles/v2`
+- `charm.land/lipgloss/v2`
 
-## Architecture
+## Entry and Integration
 
-### TUI Package Structure (`/tui/`)
+- CLI command: `dues tui`
+- Entry path: `main.go` -> `cli.TUICmd(...)` -> `tui.RunTUI(...)`
+- `cli.TUICmd` creates action callbacks and opens a shared DB session.
+- Operational stdout/stderr noise is suppressed via `runQuiet(...)` so the TUI remains clean.
 
-#### `app.go` - Main Application Model
-- Core Bubble Tea model with state management
-- Handles transitions between different screens
-- Menu system for selecting operations
-- Fullscreen responsive interface
+## Bubble Tea v2 Architecture
 
-#### `styles.go` - Styling and Themes
-- Cohesive color scheme (magenta, cyan, green, etc.)
-- Reusable style definitions for consistent UI
-- Helper functions for common layout patterns
-- Professional dark theme
+### Why v2 matters here
 
-#### Component Files
-Each operation has its own dedicated model for clean separation:
+- Import path is `charm.land/.../v2` for Tea, Bubbles, and Lip Gloss.
+- Views are returned through `tea.View` and wrapped with `tea.NewView(...)` where needed.
+- The app runs in alternate screen mode (`AltScreen = true`) for full-screen TUI behavior.
+- Message-driven async commands are used for long-running operations to keep UI responsive.
 
-**`store.go`** - File Storage Screen
-- Input field for file path
-- Toggle options for sync index and no-index
-- Visual feedback for operation status
+### Root model
 
-**`list.go`** - Database File Listing
-- Async loading with spinner animation
-- Formatted table display of stored files
-- Dynamic error/empty state handling
+`tui/app.go` defines a root `Model` with:
 
-**`search.go`** - Content Search Screen
-- Query input field
-- Real-time result display
-- Interactive search interface
+- Window size tracking (`tea.WindowSizeMsg` handling).
+- App states (`StateMenu`, `StateStore`, `StateList`, `StateSearch`, `StateRestore`, `StateNear`, `StateReset`).
+- One submodel instance per workflow.
+- Responsive layout via `applyWindowSize()`.
 
-**`restore.go`** - File Restore Screen
-- Hash and restore path inputs
-- Tab navigation between fields
-- Visual button selection
+The root `View()` returns `tea.View` and sets `AltScreen = true`.
 
-**`near.go`** - NeAR Analysis Screen
-- Mode selection (in-database or external file)
-- Deep scan toggle option
-- Clean UI for similarity analysis
+### Submodels
 
-**`reset.go`** - Database Reset Screen
-- Confirmation dialog with warnings
-- Destructive operation protection
-- Clear Yes/No choice interface
+- `tui/store.go`: path input, sync/no-index toggles, "store another?" loop.
+- `tui/list.go`: async load with spinner, selection, restore shortcut, clipboard copy.
+- `tui/search.go`: query input and async search trigger.
+- `tui/restore.go`: hash/path input and "restore another?" loop.
+- `tui/near.go`: `in/out` mode selection, input, deep toggle.
+- `tui/reset.go`: destructive confirmation with completion state.
 
-## Features
+All models use `Update(msg tea.Msg)` with command-returned completion messages (for example `storeCompletedMsg`, `searchCompletedMsg`) to keep long operations non-blocking.
 
-### User Experience
-- ✅ **Responsive Design** - Adapts to terminal window size
-- ✅ **Keyboard Navigation** - Full arrow key support, Tab for field navigation
-- ✅ **Status Indicators** - Loading spinners, success/error messages
-- ✅ **Color-Coded Output** - Intuitive visual feedback
-- ✅ **Menu-Driven** - Easy command selection with descriptions
-- ✅ **Modal Navigation** - ESC to return to menu from any screen
+## Input and Navigation Behavior
 
-### Keyboard Shortcuts
-- `↑/↓` - Navigate menu items
-- `Tab` - Switch between input fields
-- `Enter` - Select menu item or confirm action
-- `ESC` - Return to main menu
-- `q` - Quit (from menu)
-- `ctrl+c` - Force exit from any screen
-- `d` - Toggle deep scan (NeAR screen)
+Global behavior in root model:
 
-### Visual Features
-- Professional color theme with high contrast
-- Rounded borders and structured layouts
-- Emoji icons for quick visual identification
-- Help text on every screen
-- Database path and chunk size display on main menu
+- `ctrl+c`: quit immediately.
+- `q`: quit from menu; acts like back/escape on most child screens.
+- `esc`: return to menu and reinitialize submodels.
+- `enter` on menu: open selected flow.
 
-## Integration
+Per-screen highlights:
 
-### CLI Integration
-The TUI is seamlessly integrated with the existing kingpin CLI:
-- Added as a top-level command: `dues tui`
-- Inherits global flags (--dbpath, --password, --chonksize, etc.)
-- Compatible with existing database configuration
+- List screen supports `up/down` selection, `c` copy hash, `r`/`enter` restore selected item.
+- NeAR screen supports `d` deep toggle while focused on input step.
+- Store and Restore screens support continue-in-loop prompts after success.
 
-### Maintenance
-- Skips banner output in TUI mode (clean interface)
-- Proper initialization and cleanup of terminal
-- Supports all database modes (container, hierarchical, etc.)
+## Styling System
 
-## Usage
+`tui/styles.go` centralizes Lip Gloss styles:
 
-### Launch the TUI
-```bash
-dues tui
-```
+- Shared border/title/help/input/button styles.
+- Consistent color palette across screens.
+- `CenterBox` and `Section` helpers for composition.
 
-### With Custom Database Path
-```bash
-dues tui --dbpath /path/to/db --password mypass
-```
+## Data/Action Wiring
 
-### With Custom Chunk Size
-```bash
-dues tui --chonksize 512
-```
+`tui.Actions` (in `tui/app.go`) decouples UI from implementation:
 
-## Code Quality
-- **Clean Architecture** - Each screen is an independent model
-- **Reusable Components** - Shared style system across all screens
-- **Type Safety** - Strong typing with proper Go interfaces
-- **Error Handling** - Comprehensive error states and messages
+- `Store`
+- `Search`
+- `Restore`
+- `NearIn`
+- `NearOut`
+- `Reset`
 
-## Future Enhancement Possibilities
-1. **Progress Indicators** - Real-time progress bars for long operations
-2. **Help Modal** - Interactive help system within TUI
-3. **Keyboard Macros** - Custom key bindings
-4. **Theme Selection** - Multiple color scheme options
-5. **File Browser** - File picker component for path selection
-6. **Results Export** - Export search/analysis results
-7. **Database Statistics** - Real-time DB stats dashboard
-8. **History** - Command history and recent operations
+Each function is injected from `cli/cmdtui.go` and delegates to existing core logic (`store`, `search`, `near`, DB reset), so CLI and TUI share the same backend behavior.
 
-## Files Modified
-- ✅ `go.mod` - Added Bubble Tea dependencies
-- ✅ `main.go` - Added TUI command routing
-- ✅ `cli/cmdtui.go` - Created TUI CLI handler
+## Operational Notes
 
-## Files Created
-- ✅ `tui/app.go` - Main application model
-- ✅ `tui/styles.go` - Styling system
-- ✅ `tui/store.go` - Store operation screen
-- ✅ `tui/list.go` - List operation screen
-- ✅ `tui/search.go` - Search operation screen
-- ✅ `tui/restore.go` - Restore operation screen
-- ✅ `tui/near.go` - NeAR analysis screen
-- ✅ `tui/reset.go` - Reset operation screen
+- TUI inherits global flags (`--dbpath`, `--password`, `--chonksize`, `--low`, `--quick`, `--container`, `--hierarchical`).
+- Reset in TUI clears DB content and recreates the blobs directory.
+- Search from TUI runs the same search backend and emits `report.json` in working directory.
+- NeAR flows emit graph/report artifacts consistent with CLI usage.
 
-## Status
-✅ **Successfully Implemented** - The TUI is fully functional and ready for use!
+## Current Behavior Guarantees
+
+- Pressing `esc` from an active flow returns to the main menu and resets that flow model state.
+- The list screen only shows completed evidence entries.
+- The list screen restore action writes to auto-generated `restored_<hash>.bin` by default.
+- Reset flow recreates blob storage directory after DB drop, so the app can continue in the same session.
+
+## File Map
+
+- `tui/app.go`: root state machine and routing.
+- `tui/styles.go`: shared style primitives.
+- `tui/store.go`: store form and execution loop.
+- `tui/list.go`: DB list, hash copy, and restore shortcut.
+- `tui/search.go`: search form and execution.
+- `tui/restore.go`: restore form and execution loop.
+- `tui/near.go`: in/out mode and deep scan toggle.
+- `tui/reset.go`: reset confirmation flow.

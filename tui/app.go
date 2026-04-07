@@ -30,7 +30,7 @@ type Model struct {
 }
 
 type Actions struct {
-	Store   func(filePath string, syncIndex bool, noIndex bool) error
+	Store   func(filePath string, syncIndex bool, noIndex bool, hashAlgo string) error
 	Search  func(query string) error
 	Restore func(hash string, restorePath string) error
 	NearIn  func(hash string, deep bool) error

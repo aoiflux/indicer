@@ -3,6 +3,8 @@ package tui
 import (
 	"strings"
 
+	"indicer/lib/cnst"
+
 	"charm.land/bubbles/v2/textinput"
 	tea "charm.land/bubbletea/v2"
 	"charm.land/lipgloss/v2"
@@ -20,19 +22,20 @@ type storeBackToMenuMsg struct {
 type StoreModel struct {
 	fileInput    textinput.Model
 	db           *badger.DB
-	storeFn      func(filePath string, syncIndex bool, noIndex bool) error
+	storeFn      func(filePath string, syncIndex bool, noIndex bool, hashAlgo string) error
 	width        int
 	height       int
 	status       string
 	syncIndex    bool
 	noIndex      bool
+	hashAlgo     string // cnst.SHA3 or cnst.BLAKE3
 	focusedField int
 	running      bool
 	askAnother   bool
 	askChoice    int // 0 = Yes, 1 = No
 }
 
-func NewStoreModel(db *badger.DB, storeFn func(filePath string, syncIndex bool, noIndex bool) error) *StoreModel {
+func NewStoreModel(db *badger.DB, storeFn func(filePath string, syncIndex bool, noIndex bool, hashAlgo string) error) *StoreModel {
 	fileInput := textinput.New()
 	fileInput.Placeholder = "Enter file path..."
 	fileInput.Focus()
@@ -43,6 +46,7 @@ func NewStoreModel(db *badger.DB, storeFn func(filePath string, syncIndex bool, 
 		storeFn:   storeFn,
 		width:     80,
 		height:    24,
+		hashAlgo:  cnst.SHA3,
 	}
 }
 
@@ -108,7 +112,7 @@ func (m StoreModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		case "ctrl+c", "esc":
 			return m, tea.Quit
 		case "tab":
-			m.focusedField = (m.focusedField + 1) % 5
+			m.focusedField = (m.focusedField + 1) % 6
 			if m.focusedField == 0 {
 				m.fileInput.Focus()
 			} else {
@@ -127,6 +131,12 @@ func (m StoreModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					m.syncIndex = false
 				}
 			case 3:
+				if m.hashAlgo == cnst.SHA3 {
+					m.hashAlgo = cnst.BLAKE3
+				} else {
+					m.hashAlgo = cnst.SHA3
+				}
+			case 4:
 				if m.running {
 					return m, nil
 				}
@@ -143,8 +153,8 @@ func (m StoreModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 				m.status = "Storing file... please wait"
 				m.running = true
-				return m, runStoreCmd(m.storeFn, path, m.syncIndex, m.noIndex)
-			case 4:
+				return m, runStoreCmd(m.storeFn, path, m.syncIndex, m.noIndex, m.hashAlgo)
+			case 5:
 				return m, tea.Quit
 			}
 		}
@@ -165,9 +175,9 @@ func continueStoreFlow() tea.Cmd {
 
 type storeContinueMsg struct{}
 
-func runStoreCmd(storeFn func(filePath string, syncIndex bool, noIndex bool) error, filePath string, syncIndex bool, noIndex bool) tea.Cmd {
+func runStoreCmd(storeFn func(filePath string, syncIndex bool, noIndex bool, hashAlgo string) error, filePath string, syncIndex bool, noIndex bool, hashAlgo string) tea.Cmd {
 	return func() tea.Msg {
-		err := storeFn(filePath, syncIndex, noIndex)
+		err := storeFn(filePath, syncIndex, noIndex, hashAlgo)
 		return storeCompletedMsg{err: err}
 	}
 }
@@ -204,14 +214,31 @@ func (m StoreModel) View() tea.View {
 		noIndexLabel = SelectedItemStyle.Render(noIndexLabel)
 	}
 
-	options := lipgloss.JoinVertical(lipgloss.Left, syncLabel, noIndexLabel)
+	sha3Badge := lipgloss.NewStyle().Foreground(lipgloss.Color("42")).Bold(true).Render("SHA3")
+	blake3Badge := lipgloss.NewStyle().Foreground(lipgloss.Color("214")).Bold(true).Render("BLAKE3")
+	var hashLabel string
+	if m.hashAlgo == cnst.BLAKE3 {
+		hashLabel = "Hash Algo: " + blake3Badge + lipgloss.NewStyle().Foreground(lipgloss.Color("240")).Render(" (SHA3)")
+	} else {
+		hashLabel = "Hash Algo: " + sha3Badge + lipgloss.NewStyle().Foreground(lipgloss.Color("240")).Render(" (BLAKE3)")
+	}
+	if m.focusedField == 3 {
+		hashLabel = SelectedItemStyle.Render("Hash Algo:") + " " + func() string {
+			if m.hashAlgo == cnst.BLAKE3 {
+				return blake3Badge + lipgloss.NewStyle().Foreground(lipgloss.Color("240")).Render(" (SHA3)")
+			}
+			return sha3Badge + lipgloss.NewStyle().Foreground(lipgloss.Color("240")).Render(" (BLAKE3)")
+		}()
+	}
+
+	options := lipgloss.JoinVertical(lipgloss.Left, syncLabel, noIndexLabel, hashLabel)
 
 	storeBtn := ButtonStyle.Render("Store")
-	if m.focusedField == 3 {
+	if m.focusedField == 4 {
 		storeBtn = ButtonSelectedStyle.Render("Store")
 	}
 	cancelBtn := ButtonStyle.Render("Cancel")
-	if m.focusedField == 4 {
+	if m.focusedField == 5 {
 		cancelBtn = ButtonSelectedStyle.Render("Cancel")
 	}
 

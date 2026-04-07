@@ -56,6 +56,7 @@ func main() {
 	rhash := cmdrestore.Arg(cnst.OperandHash, "Hash of file that must be restoed").String()
 
 	cmdlist := app.Command(cnst.CmdList, "List all the saved files in the database")
+	cmdstats := app.Command(cnst.CmdStats, "Show database statistics")
 
 	cmdnear := app.Command(cnst.CmdNear, "Get NeAR file objects")
 	cmdin := cmdnear.Command(cnst.SubCmdIn, "Finds NeAR objects & generates GReAt graph for file INside of the database")
@@ -124,6 +125,8 @@ func main() {
 		err = cli.RestoreData(*chonkSize, *dbpath, *rhash, *rpath, key)
 	case cmdlist.FullCommand():
 		err = cli.ListData(*chonkSize, *dbpath, key)
+	case cmdstats.FullCommand():
+		err = cli.StatsData(*chonkSize, *dbpath, key)
 	case cmdin.FullCommand():
 		err = cli.NearInData(*deep, *chonkSize, *dbpath, *inhash, key)
 	case cmdout.FullCommand():

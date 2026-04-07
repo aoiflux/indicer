@@ -86,6 +86,7 @@ const (
 	CmdTui      = "tui"
 	CmdStore    = "store"
 	CmdList     = "list"
+	CmdStats    = "stats"
 	CmdRestore  = "restore"
 	CmdNear     = "near"
 	CmdReset    = "reset"

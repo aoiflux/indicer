@@ -24,6 +24,7 @@ type Model struct {
 	restoreModel *RestoreModel
 	nearModel    *NearModel
 	resetModel   *ResetModel
+	statsModel   *StatsModel
 	menuStatus   string
 	err          error
 	prevState    State
@@ -48,6 +49,7 @@ const (
 	StateSearch
 	StateNear
 	StateReset
+	StateStats
 	StateLoading
 	StateError
 	StateSuccess
@@ -111,6 +113,11 @@ func NewModel(db *badger.DB, actions Actions) *Model {
 			description: "Delete the entire database",
 			action:      StateReset,
 		},
+		Item{
+			title:       "📊 Statistics",
+			description: "Show database statistics",
+			action:      StateStats,
+		},
 	}
 
 	const defaultWidth = 80
@@ -133,6 +140,7 @@ func NewModel(db *badger.DB, actions Actions) *Model {
 		restoreModel: NewRestoreModel(db, actions.Restore),
 		nearModel:    NewNearModel(db, actions.NearIn, actions.NearOut),
 		resetModel:   NewResetModel(db, actions.Reset),
+		statsModel:   NewStatsModel(db),
 	}
 }
 
@@ -162,6 +170,11 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.resetModel = NewResetModel(m.db, m.actions.Reset)
 		m.applyWindowSize()
 		return m, nil
+	case statsBackToMenuMsg:
+		m.state = StateMenu
+		m.statsModel = NewStatsModel(m.db)
+		m.applyWindowSize()
+		return m, nil
 	case tea.KeyMsg:
 		switch msg.String() {
 		case "ctrl+c":
@@ -189,6 +202,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.restoreModel = NewRestoreModel(m.db, m.actions.Restore)
 				m.nearModel = NewNearModel(m.db, m.actions.NearIn, m.actions.NearOut)
 				m.resetModel = NewResetModel(m.db, m.actions.Reset)
+				m.statsModel = NewStatsModel(m.db)
 				m.applyWindowSize()
 				return m, nil
 			}
@@ -205,6 +219,8 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					return m, m.listModel.Init()
 				case StateNear:
 					return m, m.nearModel.Init()
+				case StateStats:
+					return m, m.statsModel.Init()
 				default:
 					// Avoid key carry-over into child screen on the same Enter press.
 					return m, nil
@@ -257,6 +273,12 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.resetModel = &model
 		}
 		cmd = updateCmd
+	case StateStats:
+		updated, updateCmd := m.statsModel.Update(msg)
+		if model, ok := updated.(StatsModel); ok {
+			m.statsModel = &model
+		}
+		cmd = updateCmd
 	}
 
 	return m, cmd
@@ -284,6 +306,7 @@ func (m *Model) applyWindowSize() {
 	m.restoreModel.Resize(m.width, m.height)
 	m.nearModel.Resize(m.width, m.height)
 	m.resetModel.Resize(m.width, m.height)
+	m.statsModel.Resize(m.width, m.height)
 }
 
 func (m Model) View() tea.View {
@@ -303,6 +326,8 @@ func (m Model) View() tea.View {
 		v = m.nearModel.View()
 	case StateReset:
 		v = m.resetModel.View()
+	case StateStats:
+		v = m.statsModel.View()
 	case StateError:
 		v = tea.NewView(m.viewError())
 	case StateSuccess:

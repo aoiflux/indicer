@@ -49,6 +49,7 @@ func main() {
 	evipath := cmdstore.Arg(cnst.OperandFile, "Path of file that must be saved").Required().String()
 	syncIndex := cmdstore.Flag(cnst.FlagSyncIndex, "Run file indexer synchronously, this will block dedup").Short(cnst.FlagSyncIndexShort).Default("false").Bool()
 	noIndex := cmdstore.Flag(cnst.FlagNoIndex, "Don't run indexer").Short(cnst.FlagNoIndexShort).Default("false").Bool()
+	hashAlgo := cmdstore.Flag(cnst.FlagHashAlgo, "Hashing algorithm to use [sha3|blake3] (default: SHA3)").Short(cnst.FlagHashAlgoShort).Default("sha3").String()
 
 	cmdrestore := app.Command(cnst.CmdRestore, "Restore file from database")
 	rpath := cmdrestore.Flag(cnst.FlagRestoreFilePath, "Path for restoring the file").Short(cnst.FlagRestoreFilePathShort).Default("restored").String()
@@ -84,6 +85,7 @@ func main() {
 	cnst.QUICKOPT = *QUICKOPT
 	cnst.CONTAINERMODE = *containerMode
 	cnst.HIERARCHICALINDEX = *hierarchicalIndex
+	cnst.HASHALGO = *hashAlgo
 
 	// Hierarchical index requires container mode
 	if cnst.HIERARCHICALINDEX && !cnst.CONTAINERMODE {
@@ -309,7 +311,7 @@ func printRootHelp() {
 
 func printStoreHelp() {
 	printHelpHeader("store")
-	fmt.Println("Usage: dues store FILE [--sync|-s] [--no-index|-n] [global options]")
+	fmt.Println("Usage: dues store FILE [--sync|-s] [--no-index|-n] [--hash-algo|-g [sha3|blake3]] [global options]")
 	fmt.Println("Stores a file in the DUES database using chunk-level deduplication.")
 	printExamples(
 		"dues store E01-image.dd",

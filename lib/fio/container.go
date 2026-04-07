@@ -26,7 +26,6 @@ Performance:
 */
 
 import (
-	"crypto/sha3"
 	"encoding/base64"
 	"errors"
 	"fmt"
@@ -196,7 +195,7 @@ func (cm *ContainerManager) createNewContainer() error {
 
 	// Generate unique container filename
 	cm.containerIndex++
-	ckhash, err := util.GetChonkHash([]byte(fmt.Sprintf("container_%d", cm.containerIndex)), sha3.New512())
+	ckhash, err := util.GetChonkHash([]byte(fmt.Sprintf("container_%d", cm.containerIndex)), cnst.GetHashAlgo())
 	if err != nil {
 		return err
 	}

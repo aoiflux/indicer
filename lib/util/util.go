@@ -102,7 +102,7 @@ func GetLogicalFileHash(fileHandle *os.File, hasher hash.Hash, start, size int64
 func getHash(fileHandle *os.File, hasher hash.Hash, size int64, showBar bool) ([]byte, error) {
 	var startTime time.Time
 	if showBar {
-		fmt.Println("Generating SHA3-256 hash ....")
+		fmt.Printf("Generating %s hash ....\n", strings.ToUpper(cnst.HASHALGO))
 		startTime = time.Now()
 	}
 

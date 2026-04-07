@@ -1,12 +1,15 @@
 package cnst
 
 import (
+	"crypto/sha3"
 	"errors"
+	"hash"
 	"runtime"
 
 	"github.com/dgraph-io/badger/v4"
 	"github.com/klauspost/compress/zstd"
 	"github.com/shirou/gopsutil/v3/mem"
+	"github.com/zeebo/blake3"
 )
 
 const (
@@ -14,6 +17,8 @@ const (
 	FILE_APPENDED = "APPENDED"
 	DefaultDBPath = "./data"
 	UploadsDir    = "uploads"
+	SHA3          = "sha3"
+	BLAKE3        = "blake3"
 )
 
 const (
@@ -31,6 +36,7 @@ const (
 	KeySize                 = 32
 )
 
+var HASHALGO string
 var ChonkSize = DefaultChonkSize
 var MEMOPT bool
 var QUICKOPT bool
@@ -113,6 +119,8 @@ const (
 	FlagSyncIndexShort       = 's'
 	FlagNoIndex              = "no-index"
 	FlagNoIndexShort         = 'n'
+	FlagHashAlgo             = "hash-algo"
+	FlagHashAlgoShort        = 'g'
 
 	OperandFile  = "FILE"
 	OperandHash  = "HASH"
@@ -123,6 +131,30 @@ const IgnoreVar int64 = -1
 
 var DECODER *zstd.Decoder
 var ENCODER *zstd.Encoder
+
+func GetHashAlgo(bigFile ...bool) hash.Hash {
+	flag := false
+	if len(bigFile) > 0 {
+		flag = bigFile[0]
+	}
+
+	var hasher hash.Hash
+	switch HASHALGO {
+	case SHA3:
+		if flag {
+			hasher = sha3.New256()
+		}
+		hasher = sha3.New512()
+	case BLAKE3:
+		hasher = blake3.New()
+	default:
+		if flag {
+			hasher = sha3.New256()
+		}
+		hasher = sha3.New512()
+	}
+	return hasher
+}
 
 func GetMaxThreadCount() int {
 	if MEMOPT {

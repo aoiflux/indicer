@@ -5,317 +5,175 @@
 </p>
 
 [![Go Version](https://img.shields.io/badge/Go-1.25-blue.svg)](https://golang.org)
-[![Version](https://img.shields.io/badge/version-3.5-green.svg)](https://github.com/aoiflux/indicer)
+[![Version](https://img.shields.io/badge/version-0.37-green.svg)](https://github.com/aoiflux/indicer)
 [![License](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 
-DUES is a powerful digital forensics tool designed for storing, analyzing, and searching disk images and files with advanced deduplication, encryption, and relationship analysis capabilities. It's specifically built for forensic examiners who need to efficiently manage and analyze large volumes of digital evidence.
+DUES is a digital forensics data platform for ingesting, deduplicating, indexing, searching, restoring, and comparing large evidence sets.
 
-**Patent Information**: This software has led to two derivative inventions protected by patents **567877** and **556272** registered at the Indian Patent Office.
+Patent information: this software has led to two derivative inventions protected by patents 567877 and 556272 registered at the Indian Patent Office.
 
-## Features
+## Feature Highlights
 
-### Core Capabilities
-
-- **Chunk-based Deduplication**: Efficiently stores files by breaking them into chunks (default 256KB) and deduplicating at the chunk level
-- **Encrypted Storage**: Optional AES encryption with password protection for secure evidence storage
-- **Compression**: Zstandard compression with configurable levels for optimal storage efficiency
-- **Partition Detection**: Automatically detects and parses disk image partitions (MBR, exFAT)
-- **File System Indexing**: Indexes files within disk images for granular analysis
-- **Near Duplicate Detection (NeAr)**: Identifies files with similar content using advanced chunk matching algorithms
-- **Full-Text Search**: Fast content search across all stored artifacts with detailed reporting
-- **Graph Visualization**: Generates interactive HTML graphs (GReAt) showing file relationships
-
-### Performance Modes
-
-- **High Performance Mode** (default): Utilizes CPU × 2 worker threads for maximum throughput (ideal for I/O-bound operations)
-- **Low Resource Mode** (`-l`): Single-threaded operation optimized for systems with limited memory/CPU
-- **Quick Mode** (`-q`): Bypasses encryption and compression for maximum throughput
+- Chunk-level deduplication with SHA3-256 integrity checks.
+- Optional password-based encryption for stored chunks and metadata.
+- Zstandard-backed compression.
+- Partition-aware indexing for supported images and filesystems.
+- Full-text search with report generation (`report.json`).
+- NeAR (near-duplicate analysis) for files inside (`near in`) and outside (`near out`) the DB.
+- Graph generation for similarity analysis (`graph.html`).
+- Container mode for blob packing (`--container`).
+- Hierarchical block index mode (`--hierarchical`, auto-enables container mode).
+- Rich interactive TUI command (`dues tui`) built on Bubble Tea v2.
+- Connect/gRPC/gRPC-Web server mode (`dues server`) with CORS support.
 
 ## Installation
 
 ### Prerequisites
 
-- Go 1.25 or higher
+- Go 1.25+
 - Windows, Linux, or macOS
 
-### Build from Source
+### Build
 
 ```bash
 git clone https://github.com/aoiflux/indicer.git
 cd indicer
-go build -o dues.exe
+go build -o dues.exe .
 ```
 
-## Usage
-
-### Basic Commands
-
-#### Store Evidence Files
-
-Store a single file or entire directory:
+## Quick Start
 
 ```powershell
-# Store a disk image
-dues store evidence.dd
+# Store evidence
+dues store E01-image.dd
 
-# Store with custom database path
-dues store -d C:\forensics\case1 evidence.dd
-
-# Store with encryption
-dues store -p mypassword evidence.dd
-
-# Store entire folder
-dues store -d C:\forensics\db evidence_folder\
-
-# Store without indexing
-dues store -n evidence.dd
-
-# Synchronous indexing (blocking)
-dues store -s evidence.dd
-```
-
-#### List Stored Files
-
-View all files in the database:
-
-```powershell
+# List stored entries
 dues list
 
-# With password-protected database
-dues list -p mypassword -d C:\forensics\case1
-```
+# Search indexed content/metadata
+dues search "invoice"
 
-#### Restore Files
-
-Extract files from the database:
-
-```powershell
 # Restore by hash
-dues restore <file_hash>
+dues restore <hash> --filepath restored.bin
 
-# Restore to specific location
-dues restore -f C:\output\restored_file <file_hash>
+# NeAR analysis from DB entry
+dues near in <hash>
 
-# With password
-dues restore -p mypassword <file_hash>
+# Launch interactive TUI
+dues tui
 ```
 
-#### Search Content
+## Commands
 
-Search for text across all stored artifacts:
+### Core
 
-```powershell
-# Basic search
-dues search "search term"
+- `dues store FILE`: Store one file or recursively store a directory.
+- `dues list`: List completed evidence entries in the database.
+- `dues restore HASH`: Restore a stored file by hash.
+- `dues search QUERY`: Run search and emit `report.json`.
+- `dues near in HASH`: Find similar files for a stored object.
+- `dues near out FILE`: Compare an external file against DB objects.
+- `dues reset`: Delete database after confirmation.
 
-# Search in password-protected database
-dues search -p mypassword "confidential"
+### Extended
 
-# Custom database path
-dues search -d C:\forensics\case1 "evidence"
-```
+- `dues tui`: Launch Bubble Tea v2 based interactive terminal UI.
+- `dues server`: Start Connect + gRPC + gRPC-Web API server on port `50051`.
+- `dues version`: Show version details and capability highlights.
 
-Search generates a detailed JSON report (`report.json`) with:
-- Total occurrences found
-- Files containing the search term
-- Hierarchical file relationships (disk image → partition → indexed files)
-- Executive summary for reporting
-
-#### Near Duplicate Analysis (NeAr)
-
-Find files with similar content:
-
-```powershell
-# Analyze file inside database
-dues near in <file_hash>
-
-# Deep analysis (partial chunk matching)
-dues near in -e <file_hash>
-```
-
-Generates an interactive HTML graph (`graph.html`) visualizing file relationships.
-
-#### Database Management
-
-```powershell
-# Reset/delete database
-dues reset
-
-# Custom database path
-dues reset -d C:\forensics\case1
-```
-
-### Command-Line Options
-
-#### Global Flags
+## Global Flags
 
 | Flag | Short | Description | Default |
 |------|-------|-------------|---------|
-| `--dbpath` | `-d` | Custom path for DUES database | `./dues_db` |
-| `--password` | `-p` | Password for database encryption | None |
-| `--chonksize` | `-c` | Chunk size in KB for deduplication | `256` |
-| `--low` | `-l` | Low resource mode | `false` |
-| `--quick` | `-q` | Quick mode (no encryption/compression) | `false` |
+| `--dbpath` | `-d` | Database path | `~/.dues` |
+| `--password` | `-p` | Password for DB encryption | none |
+| `--chonksize` | `-c` | Chunk size in KB | `256` |
+| `--low` | `-l` | Low-resource mode | `false` |
+| `--quick` | `-q` | Throughput-first mode (less protection/compression) | `false` |
+| `--container` | `-x` | Container blob storage mode | `false` |
+| `--hierarchical` | `-i` | Hierarchical block index mode | `false` |
 
-#### Store Command Flags
+If `--hierarchical` is set without `--container`, DUES enables container mode automatically.
+
+## Command Flags
+
+### store
 
 | Flag | Short | Description | Default |
 |------|-------|-------------|---------|
 | `--sync` | `-s` | Run indexer synchronously | `false` |
-| `--no-index` | `-n` | Skip file indexing | `false` |
+| `--no-index` | `-n` | Skip indexing | `false` |
 
-#### Restore Command Flags
+### restore
 
 | Flag | Short | Description | Default |
 |------|-------|-------------|---------|
-| `--filepath` | `-f` | Output path for restored file | `restored` |
+| `--filepath` | `-f` | Output restore path | `restored` |
 
-#### Near Command Flags
+### near in
 
 | Flag | Short | Description | Default |
 |------|-------|-------------|---------|
 | `--deep` | `-e` | Enable partial chunk matching | `false` |
 
-## Architecture
+## TUI (Bubble Tea v2)
 
-Detailed implementation notes:
+DUES TUI now uses:
+
+- `charm.land/bubbletea/v2`
+- `charm.land/bubbles/v2`
+- `charm.land/lipgloss/v2`
+
+From the menu you can run Store, List, Search, Restore, NeAR, and Reset flows in one interactive session. See:
+
+- [TUI Quickstart](TUI_QUICKSTART.md)
+- [TUI Implementation Notes](TUI_IMPLEMENTATION.md)
+
+## Server Mode
+
+`dues server` starts a service that supports Connect, gRPC, and gRPC-Web:
+
+- Port: `50051`
+- Health endpoint: `GET /`
+- Service path: `/dues.DuesService/*`
+- Upload staging folder: `<dbpath>/uploads`
+
+## Storage and Indexing Notes
+
+High-level model:
+
+```text
+Evidence File
+  -> Partitions
+    -> Indexed Files
+      -> Chunk Relations
+```
+
+Namespaces used internally:
+
+- `E|||:` evidence files
+- `P|||:` partition files
+- `I|||:` indexed files
+- `C|||:` chunks
+- `R|||:` chunk -> file relations
+- `Я|||:` file -> chunk reverse relations
+
+## Architecture Docs
+
 - [Container Manager (Current Implementation)](CONTAINER_MANAGER_CURRENT.md)
-- [Container Mode Low-Level Design](CONTAINER_MODE_LLD.md)
+- [Container Mode LLD](CONTAINER_MODE_LLD.md)
 - [Hierarchical Block Index](HIERARCHICAL_INDEX.md)
 
-### Storage Model
+## Output Artifacts
 
-DUES uses a hierarchical storage model:
-
-```
-Evidence File (Disk Image)
-  └── Partitions (p0, p1, p2, ...)
-      └── Indexed Files (files within partition)
-```
-
-### Namespaces
-
-Data is organized into separate namespaces:
-
-- `E|||:` - Evidence files (disk images)
-- `P|||:` - Partition files
-- `I|||:` - Indexed files (files within partitions)
-- `C|||:` - Chunks (deduplicated data blocks)
-- `R|||:` - Relations (chunk → file mapping)
-- `Я|||:` - Reverse relations (file → chunk mapping)
-
-### Database Technology
-
-- **BadgerDB**: High-performance key-value store
-- **Memory-mapped I/O**: Efficient file reading
-- **Zstandard Compression**: Fast compression/decompression
-- **SHA3-256**: Cryptographic hashing for integrity
-
-## Use Cases
-
-### Digital Forensics
-
-- Store large disk images efficiently with deduplication
-- Search across multiple evidence files simultaneously
-- Track file provenance through partition hierarchy
-- Identify near-duplicate files for timeline analysis
-
-### Incident Response
-
-- Quick triage with search functionality
-- Identify related files using NeAr analysis
-- Secure evidence storage with encryption
-- Low-resource mode for field deployment
-
-### E-Discovery
-
-- Full-text search across document collections
-- Generate detailed search reports with file locations
-- Track document relationships through graph visualization
-
-## Performance Considerations
-
-### Chunk Size
-
-- Smaller chunks (64KB-128KB): Better deduplication, slower processing
-- Larger chunks (256KB-512KB): Faster processing, less deduplication
-- Default 256KB balances both concerns
-
-### Resource Modes
-
-**High Performance** (default):
-- Uses all available CPU cores
-- Allocates up to 25% of available RAM for caching
-- Parallel processing of chunks
-
-**Low Resource** (`-l`):
-- Single-threaded processing
-- 64KB cache limit
-- Reduced batch sizes
-- Lower energy consumption
-
-**Quick Mode** (`-q`):
-- Skips encryption
-- Minimal compression
-- No inter-chunk compression
-- Maximum throughput for time-critical operations
-
-## Output Files
-
-- `report.json` - Search results with detailed occurrence data
-- `graph.html` - Interactive relationship graph (requires vis.min.js)
-- `BLOBS/*.blob` - Deduplicated chunk data storage
-
-## Dependencies
-
-Key libraries used:
-
-- `github.com/dgraph-io/badger/v4` - Embedded database
-- `github.com/klauspost/compress` - Zstandard compression
-- `github.com/alecthomas/kingpin/v2` - CLI framework
-- `golang.org/x/crypto` - Cryptographic operations
-- `github.com/aoiflux/libxfat` - exFAT parsing
-- `github.com/diskfs/go-diskfs` - Disk/partition parsing
-
-## Best Practices
-
-1. **Use encryption** for sensitive evidence: Always use `-p` flag with a strong password
-2. **Choose appropriate chunk size**: Smaller for better deduplication, larger for speed
-3. **Index selectively**: Use `-n` flag to skip indexing for non-disk-image files
-4. **Regular database backups**: DUES database contains all evidence metadata
-5. **Deep analysis sparingly**: Use `-e` flag only when needed (computationally expensive)
-
-## Troubleshooting
-
-### Common Issues
-
-**Out of memory errors**:
-- Use `-l` flag for low resource mode
-- Increase chunk size with `-c 512` or higher
-
-**Slow performance**:
-- Disable indexing with `-n` if not needed
-- Use quick mode `-q` for non-encrypted storage
-- Increase chunk size for large files
-
-**Database corruption**:
-- Ensure database is properly closed after operations
-- Use password consistently across operations
-- Avoid concurrent access from multiple processes
-
-## Version History
-
-**v3.5** (Current)
-- Enhanced NeAr analysis with partial chunk matching
-- Improved search reporting with executive summaries
-- Performance optimizations for low-resource environments
-- Container mode to pack chunks into 1GB BLOBs
-- Hierarchical block index that stores chunk metadata in block files
+- `report.json`: Search output with matches and summary.
+- `graph.html`: Relationship graph output from NeAR workflows.
+- `BLOBS/*.blob`: Deduplicated chunk/container data.
 
 ## License
 
-This project is licensed under the MIT License - see the LICENSE file for details.
+MIT. See [LICENSE](LICENSE).
 
 ## Contributing
 
-Contributions are welcome! Please feel free to submit pull requests or open issues for bugs and feature requests.
+Issues and pull requests are welcome.

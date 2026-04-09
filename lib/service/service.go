@@ -11,6 +11,14 @@ import (
 	"github.com/dgraph-io/badger/v4"
 )
 
+func GetFileChunkMap(fileStart, fileSize int64, fileHash []byte) (map[string]int64, error) {
+	var meta structs.FileMeta
+	meta.EviHash = fileHash
+	meta.Size = fileSize
+	meta.Start = fileStart
+	return getChonkMap(meta, cnst.DB)
+}
+
 func getEvidenceFile(filePath, fileHashStr string, db *badger.DB) (structs.EvidenceFile, error) {
 	var efile structs.EvidenceFile
 	fileHash, err := base64.StdEncoding.DecodeString(fileHashStr)

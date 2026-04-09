@@ -16,7 +16,7 @@ import (
 
 	"github.com/dgraph-io/badger/v4"
 	"github.com/edsrzf/mmap-go"
-	"golang.org/x/crypto/sha3"
+	"github.com/zeebo/blake3"
 )
 
 func StoreData(chonkSize int, dbpath, evipath string, key []byte, syncIndex, noIndex bool) error {
@@ -109,7 +109,7 @@ func StoreFile(chonkSize int, evipath string, key []byte, syncIndex, noIndex boo
 		for index, partition := range partitions {
 			phash := eviFile.GetHash()
 			if partition.Start != 0 && partition.Size != eviFile.GetSize() {
-				phash, err = util.GetLogicalFileHash(eviFile.GetHandle(), sha3.New256(), partition.Start, partition.Size, true)
+				phash, err = util.GetLogicalFileHash(eviFile.GetHandle(), blake3.New(), partition.Start, partition.Size, true)
 				if err != nil {
 					return err
 				}
@@ -222,7 +222,8 @@ func initEvidenceFile(evifilepath string, db *badger.DB) (structs.InputFile, err
 		return eviFile, err
 	}
 	eviFileName := filepath.Base(evifilepath)
-	eviFileHash, err := util.GetFileHash(eviHandle, sha3.New256())
+
+	eviFileHash, err := util.GetFileHash(eviHandle, cnst.GetHashAlgo(true))
 	if err != nil {
 		return eviFile, err
 	}

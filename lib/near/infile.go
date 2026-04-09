@@ -32,7 +32,7 @@ func NearInFile(fhash string, db *badger.DB, deep ...bool) error {
 		isdeep = deep[0]
 	}
 	if isdeep {
-		color.Red("DEEP option selected. NeAr calculation may take a long time.")
+		color.Red("DEEP option selected. NeAR calculation may take a long time.")
 	}
 
 	if bytes.HasPrefix(fid, []byte(cnst.IdxFileNamespace)) {

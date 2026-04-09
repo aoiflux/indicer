@@ -11,7 +11,6 @@ import (
 
 	"github.com/dgraph-io/badger/v4"
 	"github.com/schollz/progressbar/v3"
-	"golang.org/x/crypto/sha3"
 )
 
 func Store(infile structs.InputFile, errchan chan error) {
@@ -186,7 +185,7 @@ func storeEvidenceData(infile structs.InputFile) (err error) {
 }
 func storeWorker(tio structs.ThreadIO) {
 	lostChonk := tio.MappedFile[tio.Index:tio.ChonkEnd]
-	chash, err := util.GetChonkHash(lostChonk, sha3.New512())
+	chash, err := util.GetChonkHash(lostChonk, cnst.GetHashAlgo())
 	if err != nil {
 		tio.Err <- err
 		return

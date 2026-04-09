@@ -1,7 +1,6 @@
 package fio
 
 import (
-	"crypto/sha3"
 	"encoding/base64"
 	"indicer/lib/cnst"
 	"indicer/lib/util"
@@ -19,7 +18,7 @@ func WriteChonk(dbpath string, data, ckey, key []byte) ([]byte, error) {
 		}
 	}
 
-	ckhash, err := util.GetChonkHash(ckey, sha3.New512())
+	ckhash, err := util.GetChonkHash(ckey, cnst.GetHashAlgo())
 	if err != nil {
 		return nil, err
 	}

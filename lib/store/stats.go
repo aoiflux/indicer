@@ -1,0 +1,249 @@
+package store
+
+import (
+	"fmt"
+	"os"
+	"path/filepath"
+	"strings"
+
+	"indicer/lib/cnst"
+	"indicer/lib/structs"
+
+	"github.com/dgraph-io/badger/v4"
+	"github.com/dustin/go-humanize"
+	"github.com/fatih/color"
+	"github.com/vmihailenco/msgpack/v5"
+)
+
+type DBStats struct {
+	TotalFiles        int64
+	CompletedFiles    int64
+	TotalLogicalSize  int64
+	TotalPartitions   int64
+	TotalIndexedFiles int64
+	UniqueChunks      int64
+	TotalChunkRefs    int64
+	SharedChunks      int64 // chunk positions referenced by more than 1 file
+	OnDiskBytes       int64
+}
+
+func Stats(db *badger.DB) error {
+	s, err := gatherStats(db)
+	if err != nil {
+		return err
+	}
+	printStats(s)
+	return nil
+}
+
+func GatherStats(db *badger.DB) (*DBStats, error) {
+	return gatherStats(db)
+}
+
+func gatherStats(db *badger.DB) (*DBStats, error) {
+	s := &DBStats{}
+
+	err := db.View(func(txn *badger.Txn) error {
+		valOpts := badger.DefaultIteratorOptions
+		valOpts.PrefetchSize = 1000
+
+		keyOpts := badger.DefaultIteratorOptions
+		keyOpts.PrefetchValues = false
+		keyOpts.PrefetchSize = 1000
+
+		// --- Evidence files (need values to get size + completed flag) ---
+		eviPrefix := []byte(cnst.EviFileNamespace)
+		it := txn.NewIterator(valOpts)
+		for it.Seek(eviPrefix); it.ValidForPrefix(eviPrefix); it.Next() {
+			v, err := it.Item().ValueCopy(nil)
+			if err != nil {
+				it.Close()
+				return err
+			}
+			if dec, err := cnst.DECODER.DecodeAll(v, nil); err == nil {
+				v = dec
+			}
+			var ef structs.EvidenceFile
+			if err := msgpack.Unmarshal(v, &ef); err != nil {
+				it.Close()
+				return err
+			}
+			s.TotalFiles++
+			if ef.Completed {
+				s.CompletedFiles++
+				s.TotalLogicalSize += ef.Size
+			}
+		}
+		it.Close()
+
+		// --- Partitions (keys only) ---
+		partiPrefix := []byte(cnst.PartiFileNamespace)
+		it = txn.NewIterator(keyOpts)
+		for it.Seek(partiPrefix); it.ValidForPrefix(partiPrefix); it.Next() {
+			s.TotalPartitions++
+		}
+		it.Close()
+
+		// --- Indexed files (keys only) ---
+		idxPrefix := []byte(cnst.IdxFileNamespace)
+		it = txn.NewIterator(keyOpts)
+		for it.Seek(idxPrefix); it.ValidForPrefix(idxPrefix); it.Next() {
+			s.TotalIndexedFiles++
+		}
+		it.Close()
+
+		// --- Unique chunks (keys only) ---
+		chonkPrefix := []byte(cnst.ChonkNamespace)
+		it = txn.NewIterator(keyOpts)
+		for it.Seek(chonkPrefix); it.ValidForPrefix(chonkPrefix); it.Next() {
+			s.UniqueChunks++
+		}
+		it.Close()
+
+		// --- Total chunk references / file→chunk mappings (keys only) ---
+		relPrefix := []byte(cnst.RelationNamespace)
+		it = txn.NewIterator(keyOpts)
+		for it.Seek(relPrefix); it.ValidForPrefix(relPrefix); it.Next() {
+			s.TotalChunkRefs++
+		}
+		it.Close()
+
+		// --- Shared chunks: rev-rel entries referenced by more than 1 file ---
+		revRelPrefix := []byte(cnst.ReverseRelationNamespace)
+		it = txn.NewIterator(valOpts)
+		for it.Seek(revRelPrefix); it.ValidForPrefix(revRelPrefix); it.Next() {
+			v, err := it.Item().ValueCopy(nil)
+			if err != nil {
+				it.Close()
+				return err
+			}
+			if dec, err := cnst.DECODER.DecodeAll(v, nil); err == nil {
+				v = dec
+			}
+			var m map[string]struct{}
+			if err := msgpack.Unmarshal(v, &m); err == nil && len(m) > 1 {
+				s.SharedChunks++
+			}
+		}
+		it.Close()
+
+		return nil
+	})
+	if err != nil {
+		return nil, err
+	}
+
+	s.OnDiskBytes = calcBlobDirBytes(db.Opts().Dir)
+	return s, nil
+}
+
+func calcBlobDirBytes(dbDir string) int64 {
+	var total int64
+	blobsDir := filepath.Join(dbDir, cnst.BLOBSDIR)
+	_ = filepath.Walk(blobsDir, func(_ string, info os.FileInfo, err error) error {
+		if err == nil && !info.IsDir() {
+			total += info.Size()
+		}
+		return nil
+	})
+	return total
+}
+
+func printStats(s *DBStats) {
+	sep := strings.Repeat("─", 46)
+	dim := color.New(color.FgHiBlack)
+	sectionHdr := color.New(color.FgMagenta, color.Bold)
+	lbl := color.New(color.FgWhite)
+	val := color.New(color.FgYellow, color.Bold)
+	good := color.New(color.FgGreen, color.Bold)
+	warn := color.New(color.FgRed)
+
+	statRow := func(label string, formatted string, c *color.Color) {
+		lbl.Printf("    %-30s", label+":")
+		c.Println(formatted)
+	}
+
+	color.New(color.FgCyan, color.Bold).Println()
+	color.New(color.FgCyan, color.Bold).Println("  ╔══════════════════════════════════════════════╗")
+	color.New(color.FgCyan, color.Bold).Println("  ║       DUES  Database  Statistics             ║")
+	color.New(color.FgCyan, color.Bold).Println("  ╚══════════════════════════════════════════════╝")
+
+	// ── FILES ──────────────────────────────────────────────────────────────
+	fmt.Println()
+	sectionHdr.Println("  FILES")
+	fmt.Println("  ", dim.Sprint(sep))
+
+	statRow("Total files", humanize.Comma(s.TotalFiles), val)
+	statRow("Completed", humanize.Comma(s.CompletedFiles), good)
+	if inc := s.TotalFiles - s.CompletedFiles; inc > 0 {
+		statRow("Incomplete", humanize.Comma(inc), warn)
+	}
+	statRow("Total logical size", humanize.Bytes(uint64(s.TotalLogicalSize)), val)
+	if s.CompletedFiles > 0 {
+		avg := uint64(s.TotalLogicalSize) / uint64(s.CompletedFiles)
+		statRow("Avg file size", humanize.Bytes(avg), val)
+	}
+
+	// ── CHUNKS ─────────────────────────────────────────────────────────────
+	fmt.Println()
+	sectionHdr.Println("  CHUNKS")
+	fmt.Println("  ", dim.Sprint(sep))
+
+	statRow("Unique chunks stored", humanize.Comma(s.UniqueChunks), val)
+	statRow("Total chunk references", humanize.Comma(s.TotalChunkRefs), val)
+	if s.CompletedFiles > 0 {
+		avgChunks := float64(s.TotalChunkRefs) / float64(s.CompletedFiles)
+		statRow("Avg chunks per file", fmt.Sprintf("%.1f", avgChunks), val)
+	}
+	if s.TotalChunkRefs > 0 && s.TotalLogicalSize > 0 {
+		avgSize := uint64(s.TotalLogicalSize) / uint64(s.TotalChunkRefs)
+		statRow("Avg chunk size", humanize.Bytes(avgSize), val)
+	}
+	statRow("Configured chunk size", humanize.Bytes(uint64(cnst.ChonkSize)), dim)
+
+	if s.SharedChunks > 0 {
+		statRow("Chunks shared across files", humanize.Comma(s.SharedChunks), good)
+	} else {
+		statRow("Chunks shared across files", "0 (no cross-file duplicates)", dim)
+	}
+
+	deduped := s.TotalChunkRefs - s.UniqueChunks
+	if deduped > 0 {
+		statRow("Duplicate refs avoided", humanize.Comma(deduped), good)
+		if s.TotalChunkRefs > 0 {
+			dedupPct := float64(deduped) / float64(s.TotalChunkRefs) * 100
+			statRow("Dedup hit rate", fmt.Sprintf("%.1f%%", dedupPct), good)
+		}
+	} else {
+		statRow("Duplicate refs avoided", "0 (no shared chunks yet)", dim)
+	}
+
+	// ── STRUCTURE ──────────────────────────────────────────────────────────
+	fmt.Println()
+	sectionHdr.Println("  STRUCTURE")
+	fmt.Println("  ", dim.Sprint(sep))
+
+	statRow("Partition files", humanize.Comma(s.TotalPartitions), val)
+	statRow("Indexed FS objects", humanize.Comma(s.TotalIndexedFiles), val)
+
+	// ── STORAGE ────────────────────────────────────────────────────────────
+	fmt.Println()
+	sectionHdr.Println("  STORAGE")
+	fmt.Println("  ", dim.Sprint(sep))
+
+	statRow("Logical size", humanize.Bytes(uint64(s.TotalLogicalSize)), val)
+	statRow("On-disk size (blobs)", humanize.Bytes(uint64(s.OnDiskBytes)), val)
+
+	if s.TotalLogicalSize > 0 && s.OnDiskBytes > 0 {
+		if s.OnDiskBytes < s.TotalLogicalSize {
+			saved := s.TotalLogicalSize - s.OnDiskBytes
+			pct := float64(saved) / float64(s.TotalLogicalSize) * 100
+			statRow("Space saved", fmt.Sprintf("%s (%.1f%%)", humanize.Bytes(uint64(saved)), pct), good)
+		} else {
+			ratio := float64(s.OnDiskBytes) / float64(s.TotalLogicalSize)
+			statRow("Storage overhead", fmt.Sprintf("%.2fx (encrypted+compressed)", ratio), dim)
+		}
+	}
+
+	fmt.Println()
+}

@@ -139,22 +139,20 @@ func GetHashAlgo(bigFile ...bool) hash.Hash {
 		flag = bigFile[0]
 	}
 
-	var hasher hash.Hash
 	switch HASHALGO {
 	case SHA3:
 		if flag {
-			hasher = sha3.New256()
+			return sha3.New256()
 		}
-		hasher = sha3.New512()
+		return sha3.New512()
 	case BLAKE3:
-		hasher = blake3.New()
-	default:
-		if flag {
-			hasher = sha3.New256()
-		}
-		hasher = sha3.New512()
+		return blake3.New()
 	}
-	return hasher
+
+	if flag {
+		return sha3.New256()
+	}
+	return sha3.New512()
 }
 
 func GetMaxThreadCount() int {

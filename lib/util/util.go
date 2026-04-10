@@ -102,7 +102,7 @@ func GetLogicalFileHash(fileHandle *os.File, hasher hash.Hash, start, size int64
 func getHash(fileHandle *os.File, hasher hash.Hash, size int64, showBar bool) ([]byte, error) {
 	var startTime time.Time
 	if showBar {
-		fmt.Printf("Generating %s hash ....\n", strings.ToUpper(cnst.HASHALGO))
+		fmt.Printf("Generating %s hash ....\n", cnst.HASHALGO)
 		startTime = time.Now()
 	}
 
@@ -158,8 +158,8 @@ func AppendToBytesSlice(args ...interface{}) []byte {
 	return buffer.Bytes()
 }
 
-func HashPassword(password string) []byte {
-	hash := sha256.Sum256([]byte(password))
+func HashPassword(password string, hasher hash.Hash) []byte {
+	hash := hasher.Sum([]byte(password))
 	return hash[:]
 }
 

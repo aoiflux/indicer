@@ -86,7 +86,7 @@ func main() {
 	cnst.QUICKOPT = *QUICKOPT
 	cnst.CONTAINERMODE = *containerMode
 	cnst.HIERARCHICALINDEX = *hierarchicalIndex
-	cnst.HASHALGO = *hashAlgo
+	cnst.HASHALGO = strings.ToUpper(*hashAlgo)
 
 	// Hierarchical index requires container mode
 	if cnst.HIERARCHICALINDEX && !cnst.CONTAINERMODE {
@@ -94,7 +94,7 @@ func main() {
 		cnst.CONTAINERMODE = true
 	}
 
-	key := util.HashPassword(*pwd)
+	key := util.HashPassword(*pwd, cnst.GetHashAlgo())
 
 	// Skip banner for TUI mode
 	if parsed != cmdtui.FullCommand() && parsed != cmdversion.FullCommand() {

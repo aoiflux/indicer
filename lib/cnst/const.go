@@ -17,8 +17,8 @@ const (
 	FILE_APPENDED = "APPENDED"
 	DefaultDBPath = "./data"
 	UploadsDir    = "uploads"
-	SHA3          = "sha3"
-	BLAKE3        = "blake3"
+	SHA3          = "SHA3"
+	BLAKE3        = "BLAKE3"
 )
 
 const (

@@ -11,7 +11,7 @@ import (
 )
 
 func StoreStreamedFile(fpath string) error {
-	key := util.HashPassword("")
+	key := util.HashPassword("", cnst.GetHashAlgo())
 	return cli.StoreFile(int(cnst.DefaultChonkSize), fpath, key, false, false, cnst.DB)
 }
 

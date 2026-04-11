@@ -6,6 +6,7 @@ import (
 	"crypto/cipher"
 	"crypto/rand"
 	"crypto/sha256"
+	"crypto/sha3"
 	"encoding/base32"
 	"encoding/base64"
 	"fmt"
@@ -158,7 +159,8 @@ func AppendToBytesSlice(args ...interface{}) []byte {
 	return buffer.Bytes()
 }
 
-func HashPassword(password string, hasher hash.Hash) []byte {
+func HashPassword(password string) []byte {
+	hasher := sha3.New256()
 	hash := hasher.Sum([]byte(password))
 	return hash[:]
 }

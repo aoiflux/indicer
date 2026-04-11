@@ -86,7 +86,7 @@ func main() {
 	cnst.QUICKOPT = *QUICKOPT
 	cnst.CONTAINERMODE = *containerMode
 	cnst.HIERARCHICALINDEX = *hierarchicalIndex
-	cnst.HASHALGO = *hashAlgo
+	cnst.HASHALGO = strings.ToUpper(*hashAlgo)
 
 	// Hierarchical index requires container mode
 	if cnst.HIERARCHICALINDEX && !cnst.CONTAINERMODE {

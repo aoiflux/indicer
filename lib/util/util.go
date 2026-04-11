@@ -6,6 +6,7 @@ import (
 	"crypto/cipher"
 	"crypto/rand"
 	"crypto/sha256"
+	"crypto/sha3"
 	"encoding/base32"
 	"encoding/base64"
 	"fmt"
@@ -102,7 +103,7 @@ func GetLogicalFileHash(fileHandle *os.File, hasher hash.Hash, start, size int64
 func getHash(fileHandle *os.File, hasher hash.Hash, size int64, showBar bool) ([]byte, error) {
 	var startTime time.Time
 	if showBar {
-		fmt.Printf("Generating %s hash ....\n", strings.ToUpper(cnst.HASHALGO))
+		fmt.Printf("Generating %s hash ....\n", cnst.HASHALGO)
 		startTime = time.Now()
 	}
 
@@ -159,7 +160,8 @@ func AppendToBytesSlice(args ...interface{}) []byte {
 }
 
 func HashPassword(password string) []byte {
-	hash := sha256.Sum256([]byte(password))
+	hasher := sha3.New256()
+	hash := hasher.Sum([]byte(password))
 	return hash[:]
 }
 

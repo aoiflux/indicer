@@ -120,6 +120,13 @@ func SetBatchChonkSignature(chash []byte, signature uint64, batch *badger.WriteB
 	return SetBatchNode(key, data, batch)
 }
 
+func SetChonkSignature(chash []byte, signature uint64, db *badger.DB) error {
+	key := util.AppendToBytesSlice(cnst.ChonkSimhashNamespace, chash)
+	data := make([]byte, 8)
+	binary.BigEndian.PutUint64(data, signature)
+	return SetNode(key, data, db)
+}
+
 func GetChonkSignature(chash []byte, db *badger.DB) (uint64, error) {
 	key := util.AppendToBytesSlice(cnst.ChonkSimhashNamespace, chash)
 	data, err := GetNode(key, db)

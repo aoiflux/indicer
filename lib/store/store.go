@@ -99,6 +99,13 @@ func evidenceFilePreflight(infile structs.InputFile) (structs.EvidenceFile, erro
 func storeEvidenceData(infile structs.InputFile) (err error) {
 
 	bar := progressbar.DefaultBytes(infile.GetSize())
+	simhashWriter := newSimhashAsyncWriter(infile.GetDB(), cnst.GetMaxThreadCount())
+	defer func() {
+		simhashErr := simhashWriter.wait()
+		if err == nil && simhashErr != nil {
+			err = simhashErr
+		}
+	}()
 
 	var tio structs.ThreadIO
 	tio.FHash = infile.GetHash()
@@ -151,7 +158,7 @@ func storeEvidenceData(infile structs.InputFile) (err error) {
 		}
 
 		tio.ChonkEnd = tio.Index + buffsize
-		go storeWorker(tio)
+		go storeWorker(tio, simhashWriter)
 		active++
 
 		if active > cnst.GetMaxThreadCount() {
@@ -183,14 +190,14 @@ func storeEvidenceData(infile structs.InputFile) (err error) {
 	err = bar.Close()
 	return err
 }
-func storeWorker(tio structs.ThreadIO) {
+func storeWorker(tio structs.ThreadIO, simhashWriter *simhashAsyncWriter) {
 	lostChonk := tio.MappedFile[tio.Index:tio.ChonkEnd]
 	chash, err := util.GetChonkHash(lostChonk, cnst.GetHashAlgo())
 	if err != nil {
 		tio.Err <- err
 		return
 	}
-	err = processChonk(lostChonk, chash, tio.DB, tio.Batch, tio.ContainerMgr, tio.BlockMgr)
+	err = processChonk(lostChonk, chash, tio.DB, tio.Batch, tio.ContainerMgr, tio.BlockMgr, simhashWriter)
 	if err != nil {
 		tio.Err <- err
 		return
@@ -202,15 +209,11 @@ func storeWorker(tio structs.ThreadIO) {
 	}
 	tio.Err <- processRevRel(tio.Index, tio.FHash, chash, tio.DB, tio.Batch)
 }
-func processChonk(cdata, chash []byte, db *badger.DB, batch *badger.WriteBatch, containerMgr *fio.ContainerManager, blockMgr *fio.BlockManager) error {
+func processChonk(cdata, chash []byte, db *badger.DB, batch *badger.WriteBatch, containerMgr *fio.ContainerManager, blockMgr *fio.BlockManager, simhashWriter *simhashAsyncWriter) error {
 	sigKey := util.AppendToBytesSlice(cnst.ChonkSimhashNamespace, chash)
 	err := dbio.PingNode(sigKey, db)
 	if errors.Is(err, badger.ErrKeyNotFound) {
-		sig := util.ChunkSimHash64(cdata)
-		err = dbio.SetBatchChonkSignature(chash, sig, batch)
-		if err != nil {
-			return err
-		}
+		simhashWriter.enqueue(cdata, chash)
 	} else if err != nil {
 		return err
 	}
@@ -224,6 +227,7 @@ func processChonk(cdata, chash []byte, db *badger.DB, batch *badger.WriteBatch, 
 
 	return err
 }
+
 func processRel(index int64, fhash, chash []byte, db *badger.DB, batch *badger.WriteBatch) error {
 	relKey := util.AppendToBytesSlice(cnst.RelationNamespace, fhash, cnst.DataSeperator, index)
 

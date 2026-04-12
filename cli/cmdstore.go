@@ -108,7 +108,7 @@ func StoreFile(chonkSize int, evipath string, key []byte, syncIndex, noIndex boo
 		for index, partition := range partitions {
 			phash := eviFile.GetHash()
 			if partition.Start != 0 && partition.Size != eviFile.GetSize() {
-				phash, err = util.GetLogicalFileHash(eviFile.GetHandle(), cnst.GetHashAlgo(), partition.Start, partition.Size, true)
+				phash, err = util.GetLogicalFileHash(eviFile.GetHandle(), cnst.GetHashAlgo(true), partition.Start, partition.Size, true)
 				if err != nil {
 					return err
 				}

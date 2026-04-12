@@ -56,6 +56,8 @@ type nearReportMatch struct {
 	Rank                       int              `json:"rank"`
 	ID                         string           `json:"id"`
 	Type                       string           `json:"type"`
+	ExactMatch                 bool             `json:"exact_match"`
+	MatchMethod                string           `json:"match_method,omitempty"`
 	HashBase64                 string           `json:"hash_base64"`
 	Names                      []string         `json:"names,omitempty"`
 	Start                      int64            `json:"start"`
@@ -94,10 +96,21 @@ var nearChunkContribStore = struct {
 	data: make(map[string][]nearChunkContribution),
 }
 
+var nearExactMatchStore = struct {
+	mu   sync.Mutex
+	data map[string]struct{}
+}{
+	data: make(map[string]struct{}),
+}
+
 func resetNearChunkContributions() {
 	nearChunkContribStore.mu.Lock()
 	defer nearChunkContribStore.mu.Unlock()
 	nearChunkContribStore.data = make(map[string][]nearChunkContribution)
+
+	nearExactMatchStore.mu.Lock()
+	defer nearExactMatchStore.mu.Unlock()
+	nearExactMatchStore.data = make(map[string]struct{})
 }
 
 func addNearChunkContribution(id string, contribution nearChunkContribution) {
@@ -115,6 +128,19 @@ func getNearChunkContributions(id string) []nearChunkContribution {
 	return out
 }
 
+func addNearExactMatchID(id string) {
+	nearExactMatchStore.mu.Lock()
+	defer nearExactMatchStore.mu.Unlock()
+	nearExactMatchStore.data[id] = struct{}{}
+}
+
+func isNearExactMatchID(id string) bool {
+	nearExactMatchStore.mu.Lock()
+	defer nearExactMatchStore.mu.Unlock()
+	_, ok := nearExactMatchStore.data[id]
+	return ok
+}
+
 func NearInFile(fhash string, db *badger.DB, deep ...bool) error {
 	fmt.Println("Finding NeAR artefacts & generating Artefact Relation Graph")
 	start := time.Now()
@@ -124,6 +150,7 @@ func NearInFile(fhash string, db *badger.DB, deep ...bool) error {
 	if err != nil {
 		return err
 	}
+	addNearExactMatchID(string(fid))
 
 	var idmap *structs.ConcMap
 
@@ -150,6 +177,7 @@ func NearInFile(fhash string, db *badger.DB, deep ...bool) error {
 	if err != nil {
 		return err
 	}
+	idmap.Set(string(fid), 100, true)
 
 	reportPath, err := writeNearJSONReport(fid, fhash, idmap, isdeep, time.Since(start), db)
 	if err != nil {
@@ -199,6 +227,9 @@ func writeNearJSONReportWithInput(input nearReportInput, idmap *structs.ConcMap,
 	}
 
 	sort.Slice(report.Matches, func(i, j int) bool {
+		if report.Matches[i].ExactMatch != report.Matches[j].ExactMatch {
+			return report.Matches[i].ExactMatch
+		}
 		if report.Matches[i].WeightedChunkConfidenceSum != report.Matches[j].WeightedChunkConfidenceSum {
 			return report.Matches[i].WeightedChunkConfidenceSum > report.Matches[j].WeightedChunkConfidenceSum
 		}
@@ -287,6 +318,11 @@ func buildNearReportMatch(id []byte, confidence float64, db *badger.DB) (nearRep
 		ConfidencePercent: confidence,
 	}
 
+	if isNearExactMatchID(string(id)) {
+		match.ExactMatch = true
+		match.MatchMethod = "exact-file-hash"
+	}
+
 	chunkContrib := getNearChunkContributions(string(id))
 	sort.Slice(chunkContrib, func(i, j int) bool {
 		if chunkContrib[i].Index == chunkContrib[j].Index {
@@ -310,6 +346,9 @@ func buildNearReportMatch(id []byte, confidence float64, db *badger.DB) (nearRep
 			match.DeepMatchCount++
 		} else {
 			match.ShallowMatchCount++
+		}
+		if match.MatchMethod == "" {
+			match.MatchMethod = c.Method
 		}
 	}
 	match.ChunkMatchCount = len(match.MatchingChunks)

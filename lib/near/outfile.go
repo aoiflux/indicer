@@ -40,6 +40,9 @@ func NearOutFile(fpath string, db *badger.DB, deep ...bool) error {
 	if err != nil {
 		return err
 	}
+	if hasExact {
+		addNearExactMatchID(string(exactID))
+	}
 	if hasExact && !explainExact {
 		idmap.Set(string(exactID), 100, true)
 

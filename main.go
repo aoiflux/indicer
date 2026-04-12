@@ -49,7 +49,7 @@ func main() {
 	evipath := cmdstore.Arg(cnst.OperandFile, "Path of file that must be saved").Required().String()
 	syncIndex := cmdstore.Flag(cnst.FlagSyncIndex, "Run file indexer synchronously, this will block dedup").Short(cnst.FlagSyncIndexShort).Default("false").Bool()
 	noIndex := cmdstore.Flag(cnst.FlagNoIndex, "Don't run indexer").Short(cnst.FlagNoIndexShort).Default("false").Bool()
-	hashAlgo := cmdstore.Flag(cnst.FlagHashAlgo, "Hashing algorithm to use [sha3|blake3] (default: SHA3)").Short(cnst.FlagHashAlgoShort).Default("sha3").String()
+	hashAlgo := cmdstore.Flag(cnst.FlagHashAlgo, "Hashing algorithm to use [sha3|blake3] (default: BLAKE3)").Short(cnst.FlagHashAlgoShort).Default("blake3").String()
 
 	cmdrestore := app.Command(cnst.CmdRestore, "Restore file from database")
 	rpath := cmdrestore.Flag(cnst.FlagRestoreFilePath, "Path for restoring the file").Short(cnst.FlagRestoreFilePathShort).Default("restored").String()
@@ -90,7 +90,7 @@ func main() {
 	cnst.HIERARCHICALINDEX = *hierarchicalIndex
 	cnst.HASHALGO = strings.ToUpper(*hashAlgo)
 	if cnst.HASHALGO == "" {
-		cnst.HASHALGO = cnst.SHA3
+		cnst.HASHALGO = cnst.BLAKE3
 	}
 
 	// Hierarchical index requires container mode

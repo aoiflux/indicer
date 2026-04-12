@@ -16,7 +16,6 @@ import (
 
 	"github.com/dgraph-io/badger/v4"
 	"github.com/edsrzf/mmap-go"
-	"github.com/zeebo/blake3"
 )
 
 func StoreData(chonkSize int, dbpath, evipath string, key []byte, syncIndex, noIndex bool) error {
@@ -109,7 +108,7 @@ func StoreFile(chonkSize int, evipath string, key []byte, syncIndex, noIndex boo
 		for index, partition := range partitions {
 			phash := eviFile.GetHash()
 			if partition.Start != 0 && partition.Size != eviFile.GetSize() {
-				phash, err = util.GetLogicalFileHash(eviFile.GetHandle(), blake3.New(), partition.Start, partition.Size, true)
+				phash, err = util.GetLogicalFileHash(eviFile.GetHandle(), cnst.GetHashAlgo(), partition.Start, partition.Size, true)
 				if err != nil {
 					return err
 				}

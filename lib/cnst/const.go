@@ -36,7 +36,7 @@ const (
 	KeySize                 = 32
 )
 
-var HASHALGO = SHA3
+var HASHALGO = BLAKE3
 var ChonkSize = DefaultChonkSize
 var MEMOPT bool
 var QUICKOPT bool
@@ -152,10 +152,7 @@ func GetHashAlgo(bigFile ...bool) hash.Hash {
 		return blake3.New()
 	}
 
-	if flag {
-		return sha3.New256()
-	}
-	return sha3.New512()
+	return blake3.New()
 }
 
 func GetMaxThreadCount() int {

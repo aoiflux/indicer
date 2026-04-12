@@ -46,7 +46,7 @@ func NewStoreModel(db *badger.DB, storeFn func(filePath string, syncIndex bool, 
 		storeFn:   storeFn,
 		width:     80,
 		height:    24,
-		hashAlgo:  cnst.SHA3,
+		hashAlgo:  cnst.BLAKE3,
 	}
 }
 

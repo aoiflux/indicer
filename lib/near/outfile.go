@@ -141,7 +141,7 @@ func outfileSetup(fpath string) (int64, []byte, mmap.MMap, error) {
 		return -1, nil, nil, err
 	}
 
-	fhash, err := util.GetFileHash(fhandle, cnst.GetHashAlgo())
+	fhash, err := util.GetFileHash(fhandle, cnst.GetHashAlgo(true))
 	if err != nil {
 		return -1, nil, nil, err
 	}

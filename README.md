@@ -5,7 +5,7 @@
 </p>
 
 [![Go Version](https://img.shields.io/badge/Go-1.25-blue.svg)](https://golang.org)
-[![Version](https://img.shields.io/badge/version-0.37-green.svg)](https://github.com/aoiflux/indicer)
+[![Version](https://img.shields.io/badge/version-0.38-green.svg)](https://github.com/aoiflux/indicer)
 [![License](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 
 DUES is a digital forensics data platform for ingesting, deduplicating, indexing, searching, restoring, and comparing large evidence sets.

@@ -15,8 +15,8 @@ import (
 )
 
 const (
-	duesVersion  = "0.37"
-	duesCodename = "<starfruit> spacebar"
+	duesVersion  = "0.38"
+	duesCodename = "<jackfruit> spacebar"
 )
 
 func init() {

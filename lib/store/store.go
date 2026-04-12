@@ -203,9 +203,21 @@ func storeWorker(tio structs.ThreadIO) {
 	tio.Err <- processRevRel(tio.Index, tio.FHash, chash, tio.DB, tio.Batch)
 }
 func processChonk(cdata, chash []byte, db *badger.DB, batch *badger.WriteBatch, containerMgr *fio.ContainerManager, blockMgr *fio.BlockManager) error {
+	sigKey := util.AppendToBytesSlice(cnst.ChonkSimhashNamespace, chash)
+	err := dbio.PingNode(sigKey, db)
+	if errors.Is(err, badger.ErrKeyNotFound) {
+		sig := util.ChunkSimHash64(cdata)
+		err = dbio.SetBatchChonkSignature(chash, sig, batch)
+		if err != nil {
+			return err
+		}
+	} else if err != nil {
+		return err
+	}
+
 	ckey := util.AppendToBytesSlice(cnst.ChonkNamespace, chash)
 
-	err := dbio.PingNode(ckey, db)
+	err = dbio.PingNode(ckey, db)
 	if errors.Is(err, badger.ErrKeyNotFound) {
 		return dbio.SetBatchChonkNode(ckey, cdata, db, batch, containerMgr, blockMgr)
 	}

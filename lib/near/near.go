@@ -3,6 +3,7 @@ package near
 import (
 	"bytes"
 	"encoding/base64"
+	"errors"
 	"indicer/lib/cnst"
 	"indicer/lib/dbio"
 	"indicer/lib/structs"
@@ -19,7 +20,7 @@ func countRList(inputHash []byte, idmap *structs.ConcMap, near structs.NearGen, 
 				continue
 			}
 
-			err := countEviFile(nearIndex, near.Confidence, inputHash, []byte(revhash), idmap, db)
+			err := countEviFile(nearIndex, near.Confidence, near.MatchMethod, inputHash, []byte(revhash), idmap, db)
 			if err != nil {
 				echan <- err
 				return
@@ -28,7 +29,7 @@ func countRList(inputHash []byte, idmap *structs.ConcMap, near structs.NearGen, 
 	}
 	echan <- nil
 }
-func countEviFile(index int64, confidence float64, inputHash, revhash []byte, idmap *structs.ConcMap, db *badger.DB) error {
+func countEviFile(index int64, confidence float64, method string, inputHash, revhash []byte, idmap *structs.ConcMap, db *badger.DB) error {
 	eid := util.AppendToBytesSlice(cnst.EviFileNamespace, revhash)
 	efile, err := dbio.GetEvidenceFile(eid, db)
 	if err != nil {
@@ -38,25 +39,23 @@ func countEviFile(index int64, confidence float64, inputHash, revhash []byte, id
 
 	if len(efile.InternalObjects) == 0 {
 		idmap.Set(string(eid), confidence)
+		addNearChunkContribution(string(eid), nearChunkContribution{Index: index, Confidence: confidence, Method: method})
 		return nil
 	}
-	return countPartiFile(confidence, index, inputHash, eid, efile.InternalObjects, idmap, db)
+	return countPartiFile(confidence, index, method, inputHash, eid, efile.InternalObjects, idmap, db)
 }
-func countPartiFile(confidence float64, ridx int64, inputHash, eid []byte, phashes map[string]structs.InternalOffset, idmap *structs.ConcMap, db *badger.DB) error {
-	var pindex int
+func countPartiFile(confidence float64, ridx int64, method string, inputHash, eid []byte, phashes map[string]structs.InternalOffset, idmap *structs.ConcMap, db *badger.DB) error {
+	foundInRange := false
 	for phash, offset := range phashes {
 		pid, inRange, err := countFile(ridx, cnst.PartiFileNamespace, inputHash, []byte(phash), offset, db)
 		if err != nil {
 			return err
 		}
 
-		if !inRange && pindex == len(phashes)-1 {
-			idmap.Set(string(eid), confidence)
-			break
-		}
 		if !inRange {
 			continue
 		}
+		foundInRange = true
 
 		pfile, err := dbio.GetPartitionFile(pid, db)
 		if err != nil {
@@ -66,36 +65,43 @@ func countPartiFile(confidence float64, ridx int64, inputHash, eid []byte, phash
 
 		if len(pfile.InternalObjects) == 0 {
 			idmap.Set(string(pid), confidence)
+			addNearChunkContribution(string(pid), nearChunkContribution{Index: ridx, Confidence: confidence, Method: method})
 			continue
 		}
-		err = countIdxFile(confidence, ridx, inputHash, pid, pfile.InternalObjects, idmap, db)
+		err = countIdxFile(confidence, ridx, method, inputHash, pid, pfile.InternalObjects, idmap, db)
 		if err != nil {
 			return err
 		}
-		pindex++
+	}
+
+	if !foundInRange {
+		idmap.Set(string(eid), confidence)
+		addNearChunkContribution(string(eid), nearChunkContribution{Index: ridx, Confidence: confidence, Method: method})
 	}
 
 	return nil
 }
 
-func countIdxFile(confidence float64, ridx int64, inputHash, pid []byte, ihashes map[string]structs.InternalOffset, idmap *structs.ConcMap, db *badger.DB) error {
-	var iindex int
+func countIdxFile(confidence float64, ridx int64, method string, inputHash, pid []byte, ihashes map[string]structs.InternalOffset, idmap *structs.ConcMap, db *badger.DB) error {
+	foundInRange := false
 	for ihash, offset := range ihashes {
 		iid, inRange, err := countFile(ridx, cnst.IdxFileNamespace, inputHash, []byte(ihash), offset, db)
 		if err != nil {
 			return err
 		}
 
-		if !inRange && iindex == len(ihashes)-1 {
-			idmap.Set(string(pid), confidence)
-			break
-		}
 		if !inRange {
 			continue
 		}
+		foundInRange = true
 
 		idmap.Set(string(iid), confidence)
-		iindex++
+		addNearChunkContribution(string(iid), nearChunkContribution{Index: ridx, Confidence: confidence, Method: method})
+	}
+
+	if !foundInRange {
+		idmap.Set(string(pid), confidence)
+		addNearChunkContribution(string(pid), nearChunkContribution{Index: ridx, Confidence: confidence, Method: method})
 	}
 
 	return nil
@@ -107,7 +113,7 @@ func countFile(ridx int64, namespace string, inputHash, fhash []byte, offset str
 
 	id, err := getIDFromHash(namespace, string(fhash))
 	if err != nil {
-		return nil, false, nil
+		return nil, false, err
 	}
 
 	inRange := isInRange(offset.Start, offset.End, ridx)
@@ -126,9 +132,10 @@ func isInRange(start, end, index int64) bool {
 	return index >= start && index <= end
 }
 
-func partialChonkMatch(inhash, chonk []byte, db *badger.DB) ([]byte, float64, error) {
+func partialChonkMatch(inhash []byte, inputSig uint64, db *badger.DB) ([]byte, float64, error) {
 	var confidence float64
 	var keyToReturn []byte
+	sigCache := make(map[string]uint64)
 
 	err := db.View(func(txn *badger.Txn) error {
 		opts := badger.DefaultIteratorOptions
@@ -154,12 +161,12 @@ func partialChonkMatch(inhash, chonk []byte, db *badger.DB) ([]byte, float64, er
 				return err
 			}
 
-			temp, err := checkInChonk(chonk, chash, db)
+			temp, err := checkInSignature(inputSig, chash, sigCache, db)
+			if errors.Is(err, badger.ErrKeyNotFound) {
+				continue
+			}
 			if err != nil {
 				return err
-			}
-			if temp == 1 {
-				continue
 			}
 			if temp > confidence {
 				confidence = temp
@@ -180,14 +187,18 @@ func partialChonkMatch(inhash, chonk []byte, db *badger.DB) ([]byte, float64, er
 	return keyToReturn, confidence, err
 }
 
-func checkInChonk(testChonk, chash []byte, db *badger.DB) (float64, error) {
-	ckey := util.AppendToBytesSlice(cnst.ChonkNamespace, chash)
-
-	chonk, err := dbio.GetChonkNode(ckey, db)
-	if err != nil {
-		return float64(cnst.IgnoreVar), err
+func checkInSignature(inputSig uint64, chash []byte, cache map[string]uint64, db *badger.DB) (float64, error) {
+	key := string(chash)
+	candidateSig, ok := cache[key]
+	if !ok {
+		var err error
+		candidateSig, err = dbio.GetChonkSignature(chash, db)
+		if err != nil {
+			return float64(cnst.IgnoreVar), err
+		}
+		cache[key] = candidateSig
 	}
 
-	confidence := util.PartialMatchConfidence(testChonk, chonk)
-	return confidence, err
+	confidence := util.HammingSimilarity64(inputSig, candidateSig)
+	return confidence, nil
 }

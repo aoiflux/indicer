@@ -64,6 +64,8 @@ func main() {
 	inhash := cmdin.Arg(cnst.OperandHash, "Hash of the file in DUES DB for which you need to run NeAR").String()
 
 	cmdout := cmdnear.Command(cnst.SubCmdOut, "Finds NeAR objects & generates GReAt graph for file OUTside of the database")
+	outDeep := cmdout.Flag(cnst.FlagDeep, "Enable/Disable partial chunk match").Short(cnst.FlagDeepShort).Default("false").Bool()
+	outExplainExact := cmdout.Flag(cnst.FlagExplainExact, "Force chunk-level drilldown even when an exact file hash match exists").Short(cnst.FlagExplainExactShort).Default("false").Bool()
 	outpath := cmdout.Arg(cnst.OperandFile, "Path to the file for which you need to run NeAR").String()
 
 	cmdsearch := app.Command(cnst.CmdSearch, "Search anything in DUES DB")
@@ -87,6 +89,9 @@ func main() {
 	cnst.CONTAINERMODE = *containerMode
 	cnst.HIERARCHICALINDEX = *hierarchicalIndex
 	cnst.HASHALGO = strings.ToUpper(*hashAlgo)
+	if cnst.HASHALGO == "" {
+		cnst.HASHALGO = cnst.SHA3
+	}
 
 	// Hierarchical index requires container mode
 	if cnst.HIERARCHICALINDEX && !cnst.CONTAINERMODE {
@@ -130,7 +135,7 @@ func main() {
 	case cmdin.FullCommand():
 		err = cli.NearInData(*deep, *chonkSize, *dbpath, *inhash, key)
 	case cmdout.FullCommand():
-		err = cli.NearOutData(*chonkSize, *dbpath, *outpath, key)
+		err = cli.NearOutData(*outDeep, *outExplainExact, *chonkSize, *dbpath, *outpath, key)
 	case cmdsearch.FullCommand():
 		err = cli.SearchCmd(*chonkSize, *query, *dbpath, key)
 	case cmdreset.FullCommand():

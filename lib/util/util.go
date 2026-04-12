@@ -11,8 +11,10 @@ import (
 	"encoding/base64"
 	"fmt"
 	"hash"
+	"hash/fnv"
 	"indicer/lib/cnst"
 	"io"
+	"math/bits"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -166,19 +168,67 @@ func HashPassword(password string) []byte {
 }
 
 func PartialMatchConfidence(s1, s2 []byte) float64 {
+	if len(s1) == 0 || len(s2) == 0 {
+		return 0
+	}
+
 	minLength := len(s1)
 	if len(s2) < minLength {
 		minLength = len(s2)
 	}
+	if minLength == 0 {
+		return 0
+	}
 
-	similarCount := 0
+	var matchedBits int
 	for i := 0; i < minLength; i++ {
-		if s1[i] == s2[i] {
-			similarCount++
+		x := s1[i] ^ s2[i]
+		matchedBits += 8 - bits.OnesCount8(x)
+	}
+
+	totalBits := minLength * 8
+	return float64(matchedBits) / float64(totalBits)
+}
+
+func ChunkSimHash64(data []byte) uint64 {
+	if len(data) == 0 {
+		return 0
+	}
+
+	window := 4
+	if len(data) < window {
+		window = len(data)
+	}
+
+	weights := [64]int{}
+	hasher := fnv.New64a()
+	for i := 0; i+window <= len(data); i++ {
+		hasher.Reset()
+		_, _ = hasher.Write(data[i : i+window])
+		h := hasher.Sum64()
+
+		for bit := 0; bit < 64; bit++ {
+			if (h & (uint64(1) << bit)) != 0 {
+				weights[bit]++
+			} else {
+				weights[bit]--
+			}
 		}
 	}
 
-	return float64(similarCount) / float64(minLength)
+	var sig uint64
+	for bit := 0; bit < 64; bit++ {
+		if weights[bit] >= 0 {
+			sig |= uint64(1) << bit
+		}
+	}
+
+	return sig
+}
+
+func HammingSimilarity64(a, b uint64) float64 {
+	distance := bits.OnesCount64(a ^ b)
+	return float64(64-distance) / 64
 }
 
 func GetDBStartOffset(startIndex int64) int64 {

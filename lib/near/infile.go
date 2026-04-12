@@ -2,12 +2,19 @@ package near
 
 import (
 	"bytes"
+	"encoding/base64"
+	"encoding/json"
+	"errors"
 	"fmt"
 	"indicer/lib/cnst"
 	"indicer/lib/dbio"
 	"indicer/lib/structs"
 	"indicer/lib/util"
+	"os"
+	"path/filepath"
+	"sort"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/dgraph-io/badger/v4"
@@ -16,9 +23,102 @@ import (
 	"github.com/vmihailenco/msgpack/v5"
 )
 
+const minDeepPartialConfidence = 0.75
+const shallowExactRankWeight = 1.35
+const deepSimhashRankWeight = 1.00
+
+type nearJSONReport struct {
+	GeneratedAt string            `json:"generated_at"`
+	DurationMs  int64             `json:"duration_ms"`
+	DeepMode    bool              `json:"deep_mode"`
+	Input       nearReportInput   `json:"input"`
+	Summary     nearReportSummary `json:"summary"`
+	Matches     []nearReportMatch `json:"matches"`
+}
+
+type nearReportInput struct {
+	QueryHashBase64 string   `json:"query_hash_base64"`
+	QueryID         string   `json:"query_id"`
+	QueryType       string   `json:"query_type"`
+	QueryNames      []string `json:"query_names,omitempty"`
+	ExactFileMatch  bool     `json:"exact_file_match,omitempty"`
+	ExplainExact    bool     `json:"explain_exact,omitempty"`
+}
+
+type nearReportSummary struct {
+	TotalMatches int `json:"total_matches"`
+	Evidence     int `json:"evidence_matches"`
+	Partition    int `json:"partition_matches"`
+	Indexed      int `json:"indexed_matches"`
+}
+
+type nearReportMatch struct {
+	Rank                       int              `json:"rank"`
+	ID                         string           `json:"id"`
+	Type                       string           `json:"type"`
+	HashBase64                 string           `json:"hash_base64"`
+	Names                      []string         `json:"names,omitempty"`
+	Start                      int64            `json:"start"`
+	End                        int64            `json:"end"`
+	Size                       int64            `json:"size"`
+	Confidence                 float64          `json:"confidence"`
+	ConfidencePercent          float64          `json:"confidence_percent"`
+	InternalObjectSize         int              `json:"internal_object_size"`
+	ChunkMatchCount            int              `json:"chunk_match_count"`
+	DeepMatchCount             int              `json:"deep_match_count"`
+	ShallowMatchCount          int              `json:"shallow_match_count"`
+	ChunkConfidenceSum         float64          `json:"chunk_confidence_sum"`
+	ChunkConfidenceAvg         float64          `json:"chunk_confidence_avg"`
+	WeightedChunkConfidenceSum float64          `json:"weighted_chunk_confidence_sum"`
+	WeightedChunkConfidenceAvg float64          `json:"weighted_chunk_confidence_avg"`
+	MatchingChunks             []nearChunkMatch `json:"matching_chunks,omitempty"`
+}
+
+type nearChunkMatch struct {
+	Index             int64   `json:"index"`
+	Method            string  `json:"method"`
+	Confidence        float64 `json:"confidence"`
+	ConfidencePercent float64 `json:"confidence_percent"`
+}
+
+type nearChunkContribution struct {
+	Index      int64
+	Confidence float64
+	Method     string
+}
+
+var nearChunkContribStore = struct {
+	mu   sync.Mutex
+	data map[string][]nearChunkContribution
+}{
+	data: make(map[string][]nearChunkContribution),
+}
+
+func resetNearChunkContributions() {
+	nearChunkContribStore.mu.Lock()
+	defer nearChunkContribStore.mu.Unlock()
+	nearChunkContribStore.data = make(map[string][]nearChunkContribution)
+}
+
+func addNearChunkContribution(id string, contribution nearChunkContribution) {
+	nearChunkContribStore.mu.Lock()
+	defer nearChunkContribStore.mu.Unlock()
+	nearChunkContribStore.data[id] = append(nearChunkContribStore.data[id], contribution)
+}
+
+func getNearChunkContributions(id string) []nearChunkContribution {
+	nearChunkContribStore.mu.Lock()
+	defer nearChunkContribStore.mu.Unlock()
+	values := nearChunkContribStore.data[id]
+	out := make([]nearChunkContribution, len(values))
+	copy(out, values)
+	return out
+}
+
 func NearInFile(fhash string, db *badger.DB, deep ...bool) error {
 	fmt.Println("Finding NeAR artefacts & generating Artefact Relation Graph")
 	start := time.Now()
+	resetNearChunkContributions()
 
 	fid, err := dbio.GuessFileType(fhash, db)
 	if err != nil {
@@ -51,6 +151,12 @@ func NearInFile(fhash string, db *badger.DB, deep ...bool) error {
 		return err
 	}
 
+	reportPath, err := writeNearJSONReport(fid, fhash, idmap, isdeep, time.Since(start), db)
+	if err != nil {
+		return err
+	}
+	fmt.Printf("NeAR report generated: %s\n", reportPath)
+
 	// err = visualise(fid, idmap, db)
 	// if err != nil {
 	// 	return err
@@ -58,6 +164,236 @@ func NearInFile(fhash string, db *badger.DB, deep ...bool) error {
 
 	fmt.Printf("Done.... %v\n", time.Since(start))
 	return nil
+}
+
+func writeNearJSONReport(fid []byte, queryHash string, idmap *structs.ConcMap, deep bool, runtime time.Duration, db *badger.DB) (string, error) {
+	queryNames, err := getNearInputNames(fid, db)
+	if err != nil {
+		return "", err
+	}
+	input := nearReportInput{
+		QueryHashBase64: queryHash,
+		QueryID:         base64.StdEncoding.EncodeToString(fid),
+		QueryType:       nearFileType(fid),
+		QueryNames:      queryNames,
+	}
+
+	return writeNearJSONReportWithInput(input, idmap, deep, runtime, db)
+}
+
+func writeNearJSONReportWithInput(input nearReportInput, idmap *structs.ConcMap, deep bool, runtime time.Duration, db *badger.DB) (string, error) {
+	report := nearJSONReport{
+		GeneratedAt: time.Now().Format(time.RFC3339),
+		DurationMs:  runtime.Milliseconds(),
+		DeepMode:    deep,
+		Input:       input,
+		Matches:     make([]nearReportMatch, 0),
+	}
+
+	for id, confidence := range idmap.GetData() {
+		match, err := buildNearReportMatch([]byte(id), confidence, db)
+		if err != nil {
+			return "", err
+		}
+		report.Matches = append(report.Matches, match)
+	}
+
+	sort.Slice(report.Matches, func(i, j int) bool {
+		if report.Matches[i].WeightedChunkConfidenceSum != report.Matches[j].WeightedChunkConfidenceSum {
+			return report.Matches[i].WeightedChunkConfidenceSum > report.Matches[j].WeightedChunkConfidenceSum
+		}
+		if report.Matches[i].ChunkMatchCount != report.Matches[j].ChunkMatchCount {
+			return report.Matches[i].ChunkMatchCount > report.Matches[j].ChunkMatchCount
+		}
+		if report.Matches[i].WeightedChunkConfidenceAvg != report.Matches[j].WeightedChunkConfidenceAvg {
+			return report.Matches[i].WeightedChunkConfidenceAvg > report.Matches[j].WeightedChunkConfidenceAvg
+		}
+		if report.Matches[i].ChunkConfidenceAvg != report.Matches[j].ChunkConfidenceAvg {
+			return report.Matches[i].ChunkConfidenceAvg > report.Matches[j].ChunkConfidenceAvg
+		}
+		if report.Matches[i].ChunkConfidenceSum != report.Matches[j].ChunkConfidenceSum {
+			return report.Matches[i].ChunkConfidenceSum > report.Matches[j].ChunkConfidenceSum
+		}
+		if report.Matches[i].Confidence != report.Matches[j].Confidence {
+			return report.Matches[i].Confidence > report.Matches[j].Confidence
+		}
+		return report.Matches[i].Size > report.Matches[j].Size
+	})
+
+	for i := range report.Matches {
+		report.Matches[i].Rank = i + 1
+		report.Summary.TotalMatches++
+		switch report.Matches[i].Type {
+		case "evidence":
+			report.Summary.Evidence++
+		case "partition":
+			report.Summary.Partition++
+		case "indexed":
+			report.Summary.Indexed++
+		}
+	}
+
+	body, err := json.MarshalIndent(report, "", "  ")
+	if err != nil {
+		return "", err
+	}
+
+	fname := "near_report.json"
+	cwd, err := os.Getwd()
+	if err != nil {
+		return "", err
+	}
+	reportPath := filepath.Join(cwd, fname)
+
+	err = os.WriteFile(reportPath, body, 0o644)
+	if err != nil {
+		return "", err
+	}
+
+	return reportPath, nil
+}
+
+func getNearInputNames(fid []byte, db *badger.DB) ([]string, error) {
+	switch {
+	case bytes.HasPrefix(fid, []byte(cnst.IdxFileNamespace)):
+		ifile, err := dbio.GetIndexedFile(fid, db)
+		if err != nil {
+			return nil, err
+		}
+		return mapKeysSorted(ifile.Names), nil
+	case bytes.HasPrefix(fid, []byte(cnst.PartiFileNamespace)):
+		pfile, err := dbio.GetPartitionFile(fid, db)
+		if err != nil {
+			return nil, err
+		}
+		return mapKeysSorted(pfile.Names), nil
+	case bytes.HasPrefix(fid, []byte(cnst.EviFileNamespace)):
+		efile, err := dbio.GetEvidenceFile(fid, db)
+		if err != nil {
+			return nil, err
+		}
+		return mapKeysSorted(efile.Names), nil
+	default:
+		return nil, nil
+	}
+}
+
+func buildNearReportMatch(id []byte, confidence float64, db *badger.DB) (nearReportMatch, error) {
+	match := nearReportMatch{
+		ID:                base64.StdEncoding.EncodeToString(id),
+		Type:              nearFileType(id),
+		HashBase64:        getHashFromID(id),
+		Confidence:        confidence / 100,
+		ConfidencePercent: confidence,
+	}
+
+	chunkContrib := getNearChunkContributions(string(id))
+	sort.Slice(chunkContrib, func(i, j int) bool {
+		if chunkContrib[i].Index == chunkContrib[j].Index {
+			return chunkContrib[i].Method < chunkContrib[j].Method
+		}
+		return chunkContrib[i].Index < chunkContrib[j].Index
+	})
+
+	match.MatchingChunks = make([]nearChunkMatch, 0, len(chunkContrib))
+	for _, c := range chunkContrib {
+		entry := nearChunkMatch{
+			Index:             c.Index,
+			Method:            c.Method,
+			Confidence:        c.Confidence,
+			ConfidencePercent: c.Confidence * 100,
+		}
+		match.MatchingChunks = append(match.MatchingChunks, entry)
+		match.ChunkConfidenceSum += c.Confidence
+		match.WeightedChunkConfidenceSum += c.Confidence * getChunkMethodRankWeight(c.Method)
+		if strings.HasPrefix(c.Method, "deep") {
+			match.DeepMatchCount++
+		} else {
+			match.ShallowMatchCount++
+		}
+	}
+	match.ChunkMatchCount = len(match.MatchingChunks)
+	if match.ChunkMatchCount > 0 {
+		match.ChunkConfidenceAvg = match.ChunkConfidenceSum / float64(match.ChunkMatchCount)
+		match.WeightedChunkConfidenceAvg = match.WeightedChunkConfidenceSum / float64(match.ChunkMatchCount)
+	}
+
+	switch {
+	case bytes.HasPrefix(id, []byte(cnst.IdxFileNamespace)):
+		ifile, err := dbio.GetIndexedFile(id, db)
+		if err != nil {
+			return match, err
+		}
+		match.Names = mapKeysSorted(ifile.Names)
+		match.Start = ifile.Start
+		match.Size = ifile.Size
+		match.End = ifile.Start + ifile.Size
+	case bytes.HasPrefix(id, []byte(cnst.PartiFileNamespace)):
+		pfile, err := dbio.GetPartitionFile(id, db)
+		if err != nil {
+			return match, err
+		}
+		match.Names = mapKeysSorted(pfile.Names)
+		match.Start = pfile.Start
+		match.Size = pfile.Size
+		match.End = pfile.Start + pfile.Size
+		match.InternalObjectSize = len(pfile.InternalObjects)
+	case bytes.HasPrefix(id, []byte(cnst.EviFileNamespace)):
+		efile, err := dbio.GetEvidenceFile(id, db)
+		if err != nil {
+			return match, err
+		}
+		match.Names = mapKeysSorted(efile.Names)
+		match.Start = efile.Start
+		match.Size = efile.Size
+		match.End = efile.Start + efile.Size
+		match.InternalObjectSize = len(efile.InternalObjects)
+	}
+
+	return match, nil
+}
+
+func mapKeysSorted(kv map[string]struct{}) []string {
+	out := make([]string, 0, len(kv))
+	for key := range kv {
+		split := strings.Split(key, cnst.DataSeperator)
+		key = split[len(split)-1]
+		out = append(out, key)
+	}
+	sort.Strings(out)
+	return out
+}
+
+func getHashFromID(id []byte) string {
+	split := bytes.SplitN(id, []byte(cnst.NamespaceSeperator), 2)
+	if len(split) != 2 {
+		return ""
+	}
+	return base64.StdEncoding.EncodeToString(split[1])
+}
+
+func getChunkMethodRankWeight(method string) float64 {
+	switch method {
+	case "shallow-exact":
+		return shallowExactRankWeight
+	case "deep-simhash":
+		return deepSimhashRankWeight
+	default:
+		return 1
+	}
+}
+
+func nearFileType(id []byte) string {
+	switch {
+	case bytes.HasPrefix(id, []byte(cnst.EviFileNamespace)):
+		return "evidence"
+	case bytes.HasPrefix(id, []byte(cnst.PartiFileNamespace)):
+		return "partition"
+	case bytes.HasPrefix(id, []byte(cnst.IdxFileNamespace)):
+		return "indexed"
+	default:
+		return "unknown"
+	}
 }
 
 func nearIndexFile(fid []byte, db *badger.DB, deep ...bool) (*structs.ConcMap, error) {
@@ -124,9 +460,10 @@ func getNearFile(start, size int64, ehash, fid []byte, db *badger.DB, deep ...bo
 	}
 
 	for near := range getNear(start, size, ehash, db, isdeep) {
-		if active > cnst.GetMaxThreadCount() {
-			if <-echan != nil {
-				return nil, <-echan
+		if active >= cnst.GetMaxThreadCount() {
+			err := <-echan
+			if err != nil {
+				return nil, err
 			}
 			bar.Add64(cnst.ChonkSize)
 			active--
@@ -135,7 +472,7 @@ func getNearFile(start, size int64, ehash, fid []byte, db *badger.DB, deep ...bo
 		if near.Err != nil {
 			return nil, near.Err
 		}
-		if len(near.RevMap) == 1 {
+		if len(near.RevMap) == 0 {
 			continue
 		}
 
@@ -144,8 +481,9 @@ func getNearFile(start, size int64, ehash, fid []byte, db *badger.DB, deep ...bo
 	}
 
 	for active > 0 {
-		if <-echan != nil {
-			return nil, <-echan
+		err := <-echan
+		if err != nil {
+			return nil, err
 		}
 		bar.Add64(cnst.ChonkSize)
 		active--
@@ -181,7 +519,10 @@ func updateConfidence(idmap *structs.ConcMap, db *badger.DB) error {
 			size = efile.Size
 		}
 
-		chonks := float64(size / cnst.ChonkSize)
+		chonks := float64((size + cnst.ChonkSize - 1) / cnst.ChonkSize)
+		if chonks <= 0 {
+			continue
+		}
 		confidence, _ := idmap.Get(id)
 		confidence = (confidence / chonks) * 100
 		idmap.Set(id, confidence, true)
@@ -243,6 +584,7 @@ func getNear(start, size int64, ehash []byte, db *badger.DB, deep bool) chan str
 				continue
 			}
 			confidence = 1
+			matchMethod := "shallow-exact"
 
 			if len(revmap) < 2 && deep {
 				revmap, confidence, err = partialMatch(ehash, chash, db)
@@ -251,6 +593,10 @@ func getNear(start, size int64, ehash []byte, db *badger.DB, deep bool) chan str
 					neargenChan <- neargen
 					return
 				}
+				if len(revmap) == 0 {
+					continue
+				}
+				matchMethod = "deep-simhash"
 			}
 
 			neargen.RevMap = make(map[int64][]string)
@@ -290,6 +636,7 @@ func getNear(start, size int64, ehash []byte, db *badger.DB, deep bool) chan str
 			}
 
 			neargen.Confidence = confidence
+			neargen.MatchMethod = matchMethod
 			neargenChan <- neargen
 		}
 	}()
@@ -298,14 +645,16 @@ func getNear(start, size int64, ehash []byte, db *badger.DB, deep bool) chan str
 }
 
 func partialMatch(inhash, chash []byte, db *badger.DB) (map[string]struct{}, float64, error) {
-	ckey := util.AppendToBytesSlice(cnst.ChonkNamespace, chash)
-	cdata, err := dbio.GetNode(ckey, db)
+	inputSig, err := dbio.GetChonkSignature(chash, db)
+	if errors.Is(err, badger.ErrKeyNotFound) {
+		return nil, float64(cnst.IgnoreVar), nil
+	}
 	if err != nil {
 		return nil, float64(cnst.IgnoreVar), err
 	}
 
-	partialMatchKey, confidence, err := partialChonkMatch(inhash, cdata, db)
-	if err != nil || confidence <= 0 {
+	partialMatchKey, confidence, err := partialChonkMatch(inhash, inputSig, db)
+	if err != nil || confidence < minDeepPartialConfidence {
 		return nil, float64(cnst.IgnoreVar), err
 	}
 

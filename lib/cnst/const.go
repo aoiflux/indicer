@@ -36,7 +36,7 @@ const (
 	KeySize                 = 32
 )
 
-var HASHALGO string
+var HASHALGO = SHA3
 var ChonkSize = DefaultChonkSize
 var MEMOPT bool
 var QUICKOPT bool
@@ -51,6 +51,7 @@ const (
 	RelationNamespace        = "R|||:"
 	ReverseRelationNamespace = "Я|||:"
 	ChonkNamespace           = "C|||:"
+	ChonkSimhashNamespace    = "S|||:"
 	NamespaceSeperator       = "|||:"
 	RangeSeperator           = "-"
 	DataSeperator            = "|||"
@@ -122,6 +123,8 @@ const (
 	FlagNoIndexShort         = 'n'
 	FlagHashAlgo             = "hash-algo"
 	FlagHashAlgoShort        = 'g'
+	FlagExplainExact         = "explain-exact"
+	FlagExplainExactShort    = 't'
 
 	OperandFile  = "FILE"
 	OperandHash  = "HASH"

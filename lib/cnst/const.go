@@ -52,6 +52,7 @@ const (
 	ReverseRelationNamespace = "Я|||:"
 	ChonkNamespace           = "C|||:"
 	ChonkSimhashNamespace    = "S|||:"
+	FileSimhashNamespace     = "F|||:"
 	NamespaceSeperator       = "|||:"
 	RangeSeperator           = "-"
 	DataSeperator            = "|||"
@@ -91,6 +92,9 @@ const (
 	CmdRestore  = "restore"
 	CmdNear     = "near"
 	CmdReset    = "reset"
+	CmdPurge    = "purge"
+	CmdDelete   = "delete"
+	CmdDestroy  = "destroy"
 	SubCmdIn    = "in"
 	SubCmdOut   = "out"
 	CmdSearch   = "search"
@@ -125,6 +129,10 @@ const (
 	FlagHashAlgoShort        = 'g'
 	FlagExplainExact         = "explain-exact"
 	FlagExplainExactShort    = 't'
+	FlagAdvancedDeep         = "advanced-deep"
+	FlagAdvancedDeepShort    = 'a'
+	FlagTopK                 = "top-k"
+	FlagTopKShort            = 'k'
 
 	OperandFile  = "FILE"
 	OperandHash  = "HASH"

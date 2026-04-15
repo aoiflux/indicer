@@ -47,7 +47,7 @@ func countEviFile(index int64, confidence float64, method string, inputHash, rev
 func countPartiFile(confidence float64, ridx int64, method string, inputHash, eid []byte, phashes map[string]structs.InternalOffset, idmap *structs.ConcMap, db *badger.DB) error {
 	foundInRange := false
 	for phash, offset := range phashes {
-		pid, inRange, err := countFile(ridx, cnst.PartiFileNamespace, inputHash, []byte(phash), offset, db)
+		pid, inRange, err := countFile(ridx, cnst.PartiFileNamespace, inputHash, []byte(phash), offset)
 		if err != nil {
 			return err
 		}
@@ -68,7 +68,7 @@ func countPartiFile(confidence float64, ridx int64, method string, inputHash, ei
 			addNearChunkContribution(string(pid), nearChunkContribution{Index: ridx, Confidence: confidence, Method: method})
 			continue
 		}
-		err = countIdxFile(confidence, ridx, method, inputHash, pid, pfile.InternalObjects, idmap, db)
+		err = countIdxFile(confidence, ridx, method, inputHash, pid, pfile.InternalObjects, idmap)
 		if err != nil {
 			return err
 		}
@@ -82,10 +82,10 @@ func countPartiFile(confidence float64, ridx int64, method string, inputHash, ei
 	return nil
 }
 
-func countIdxFile(confidence float64, ridx int64, method string, inputHash, pid []byte, ihashes map[string]structs.InternalOffset, idmap *structs.ConcMap, db *badger.DB) error {
+func countIdxFile(confidence float64, ridx int64, method string, inputHash, pid []byte, ihashes map[string]structs.InternalOffset, idmap *structs.ConcMap) error {
 	foundInRange := false
 	for ihash, offset := range ihashes {
-		iid, inRange, err := countFile(ridx, cnst.IdxFileNamespace, inputHash, []byte(ihash), offset, db)
+		iid, inRange, err := countFile(ridx, cnst.IdxFileNamespace, inputHash, []byte(ihash), offset)
 		if err != nil {
 			return err
 		}
@@ -106,7 +106,7 @@ func countIdxFile(confidence float64, ridx int64, method string, inputHash, pid 
 
 	return nil
 }
-func countFile(ridx int64, namespace string, inputHash, fhash []byte, offset structs.InternalOffset, db *badger.DB) ([]byte, bool, error) {
+func countFile(ridx int64, namespace string, inputHash, fhash []byte, offset structs.InternalOffset) ([]byte, bool, error) {
 	if bytes.Equal(fhash, inputHash) {
 		return nil, false, nil
 	}

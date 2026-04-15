@@ -61,18 +61,22 @@ func main() {
 	cmdnear := app.Command(cnst.CmdNear, "Get NeAR file objects")
 	cmdin := cmdnear.Command(cnst.SubCmdIn, "Finds NeAR objects & generates GReAt graph for file INside of the database")
 	deep := cmdin.Flag(cnst.FlagDeep, "Enable/Disable partial chunk match").Short(cnst.FlagDeepShort).Default("false").Bool()
+	inVerify := cmdin.Flag(cnst.FlagAdvancedDeep, "Phase 2: full-file SimHash re-ranking of top K candidates").Short(cnst.FlagAdvancedDeepShort).Default("false").Bool()
+	inTopK := cmdin.Flag(cnst.FlagTopK, "Top K candidates for Phase 2 re-ranking (0 = auto-select based on available resources)").Short(cnst.FlagTopKShort).Default("0").Int()
 	inhash := cmdin.Arg(cnst.OperandHash, "Hash of the file in DUES DB for which you need to run NeAR").String()
 
 	cmdout := cmdnear.Command(cnst.SubCmdOut, "Finds NeAR objects & generates GReAt graph for file OUTside of the database")
 	outDeep := cmdout.Flag(cnst.FlagDeep, "Enable/Disable partial chunk match").Short(cnst.FlagDeepShort).Default("false").Bool()
 	outExplainExact := cmdout.Flag(cnst.FlagExplainExact, "Force chunk-level drilldown even when an exact file hash match exists").Short(cnst.FlagExplainExactShort).Default("false").Bool()
+	outVerify := cmdout.Flag(cnst.FlagAdvancedDeep, "Phase 2: full-file SimHash re-ranking of top K candidates").Short(cnst.FlagAdvancedDeepShort).Default("false").Bool()
+	outTopK := cmdout.Flag(cnst.FlagTopK, "Top K candidates for Phase 2 re-ranking (0 = auto-select based on available resources)").Short(cnst.FlagTopKShort).Default("0").Int()
 	outpath := cmdout.Arg(cnst.OperandFile, "Path to the file for which you need to run NeAR").String()
 
 	cmdsearch := app.Command(cnst.CmdSearch, "Search anything in DUES DB")
 	query := cmdsearch.Arg(cnst.OperandQuery, "Search query string").String()
 
 	apiserver := app.Command(cnst.CmdServer, "Run gRPC / Web combined DUES server")
-	cmdreset := app.Command(cnst.CmdReset, "Delete the database")
+	cmdreset := app.Command(cnst.CmdReset, "Delete the database").Alias(cnst.CmdPurge).Alias(cnst.CmdDelete).Alias(cnst.CmdDestroy)
 
 	var err error
 
@@ -133,9 +137,9 @@ func main() {
 	case cmdstats.FullCommand():
 		err = cli.StatsData(*chonkSize, *dbpath, key)
 	case cmdin.FullCommand():
-		err = cli.NearInData(*deep, *chonkSize, *dbpath, *inhash, key)
+		err = cli.NearInData(*deep, *inVerify, *inTopK, *chonkSize, *dbpath, *inhash, key)
 	case cmdout.FullCommand():
-		err = cli.NearOutData(*outDeep, *outExplainExact, *chonkSize, *dbpath, *outpath, key)
+		err = cli.NearOutData(*outDeep, *outExplainExact, *outVerify, *outTopK, *chonkSize, *dbpath, *outpath, key)
 	case cmdsearch.FullCommand():
 		err = cli.SearchCmd(*chonkSize, *query, *dbpath, key)
 	case cmdreset.FullCommand():
@@ -253,6 +257,8 @@ func printHelpForPath(path []string) {
 		printRestoreHelp()
 	case cnst.CmdList:
 		printListHelp()
+	case cnst.CmdStats:
+		printStatsHelp()
 	case cnst.CmdSearch:
 		printSearchHelp()
 	case cnst.CmdServer:
@@ -292,15 +298,16 @@ func printRootHelp() {
 	fmt.Printf("  %s, %s   Hierarchical index (requires container mode)\n", cmd("--hierarchical"), cmd("-i"))
 
 	printHelpSection("Commands")
-	fmt.Printf("  %s    Launch interactive TUI interface\n", cmd(cnst.CmdTui))
-	fmt.Printf("  %s    Store file in database\n", cmd(cnst.CmdStore))
-	fmt.Printf("  %s  Restore file from database\n", cmd(cnst.CmdRestore))
-	fmt.Printf("  %s     List saved files\n", cmd(cnst.CmdList))
-	fmt.Printf("  %s     Search metadata/content index\n", cmd(cnst.CmdSearch))
-	fmt.Printf("  %s       Find NeAR file objects\n", cmd(cnst.CmdNear))
-	fmt.Printf("  %s     Run gRPC/Web server\n", cmd(cnst.CmdServer))
-	fmt.Printf("  %s      Delete database\n", cmd(cnst.CmdReset))
-	fmt.Printf("  %s    Show version details\n", cmd(cnst.CmdVeresion))
+	fmt.Printf("  %-20s %s\n", cmd(cnst.CmdTui), "Launch interactive TUI interface")
+	fmt.Printf("  %-20s %s\n", cmd(cnst.CmdStore), "Store file in database")
+	fmt.Printf("  %-20s %s\n", cmd(cnst.CmdRestore), "Restore file from database")
+	fmt.Printf("  %-20s %s\n", cmd(cnst.CmdList), "List saved files")
+	fmt.Printf("  %-20s %s\n", cmd(cnst.CmdSearch), "Search metadata/content index")
+	fmt.Printf("  %-20s %s\n", cmd(cnst.CmdNear), "Find NeAR file objects")
+	fmt.Printf("  %-20s %s\n", cmd(cnst.CmdServer), "Run gRPC/Web server")
+	fmt.Printf("  %-20s %s\n", cmd(cnst.CmdReset), "Delete database")
+	fmt.Printf("  %-20s %s\n", cmd(cnst.CmdVeresion), "Show version details")
+	fmt.Printf("  %-20s %s\n", cmd(cnst.CmdStats), "Show stats about data")
 
 	printHelpSection("Command-Level Help")
 	fmt.Println("  Root help and command help are both available.")
@@ -349,6 +356,24 @@ func printListHelp() {
 	)
 }
 
+func printStatsHelp() {
+	printHelpHeader("stats")
+	fmt.Println("Usage: dues stats [global options]")
+	fmt.Println("Displays statistics about the DUES database.")
+	fmt.Println()
+	printHelpSection("Output includes")
+	fmt.Println("  Total / completed evidence files")
+	fmt.Println("  Total partitions and indexed files")
+	fmt.Println("  Total logical size (sum of all stored file sizes)")
+	fmt.Println("  Unique chunks vs total chunk references")
+	fmt.Println("  Shared chunks (referenced by more than one file)")
+	fmt.Println("  On-disk bytes and deduplication ratio")
+	printExamples(
+		"dues stats",
+		"dues stats --dbpath ./caseA",
+	)
+}
+
 func printSearchHelp() {
 	printHelpHeader("search")
 	fmt.Println("Usage: dues search QUERY [global options]")
@@ -362,31 +387,85 @@ func printSearchHelp() {
 func printNearHelp() {
 	printHelpHeader("near")
 	fmt.Println("Usage: dues near <in|out> ... [global options]")
-	fmt.Println("Finds NeAR file objects.")
+	fmt.Println("Finds NeAR (Near Artefact Relation) file objects and generates a similarity report.")
+	fmt.Println()
+	fmt.Println("  near in   — query file is already stored in the DUES database (identified by hash)")
+	fmt.Println("  near out  — query file is on disk outside the database (identified by path)")
+	fmt.Println()
+	fmt.Println("Both sub-commands produce a near_report.json with a ranked list of matching artefacts.")
+	fmt.Println("Each match includes an overall_relatedness score that combines all active phases.")
+	fmt.Println()
 	fmt.Println("Try: dues help near in")
 	fmt.Println("Try: dues help near out")
 	printExamples(
 		"dues near in <hash>",
+		"dues near in <hash> --deep --advanced-deep",
 		"dues near out ./suspect.bin",
+		"dues near out ./suspect.bin --deep --advanced-deep",
 	)
 }
 
 func printNearInHelp() {
+	cmd := color.New(color.FgBlue, color.Bold).SprintFunc()
 	printHelpHeader("near in")
-	fmt.Println("Usage: dues near in HASH [--deep|-e] [global options]")
-	fmt.Println("Finds NeAR objects for files inside the DUES database.")
+	fmt.Println("Usage: dues near in HASH [--deep|-e] [--advanced-deep|-a] [--top-k|-k N] [global options]")
+	fmt.Println()
+	fmt.Println("Finds NeAR objects for a file already stored in the DUES database.")
+	fmt.Println("Produces near_report.json with ranked matches and an overall_relatedness score per match.")
+
+	printHelpSection("Options")
+	fmt.Printf("  %s, %s   Phase 1: enable partial chunk SimHash matching (slower, finds more candidates)\n", cmd("--deep"), cmd("-e"))
+	fmt.Printf("  %s, %s   Phase 2: full-file SimHash re-ranking of top-K candidates\n", cmd("--advanced-deep"), cmd("-a"))
+	fmt.Printf("              Eliminates chunk-alignment noise from Phase 1 scores.\n")
+	fmt.Printf("              Results are cached in the DB (F|||: namespace) — subsequent runs are O(1).\n")
+	fmt.Printf("  %s, %s      Number of candidates for Phase 2 (default 0 = auto-select)\n", cmd("--top-k"), cmd("-k"))
+	fmt.Printf("              Auto-selection scales with available memory × CPU threads, bounded [5, 100].\n")
+
+	printHelpSection("Report Fields (per match)")
+	fmt.Println("  overall_relatedness       Single score [0.0–1.0] combining all active phases")
+	fmt.Println("  overall_relatedness_pct   Same value as a percentage")
+	fmt.Println("  relatedness_basis         Which signals were used: exact | phase1 | phase1+phase2")
+	fmt.Println("  phase1_deviation_estimate Fraction of chunk comparisons affected by edge-alignment noise")
+	fmt.Println("  phase2_file_similarity    Full-file SimHash similarity (only present when --advanced-deep used)")
+
 	printExamples(
 		"dues near in <hash>",
 		"dues near in <hash> --deep",
+		"dues near in <hash> --deep --advanced-deep",
+		"dues near in <hash> --deep --advanced-deep --top-k 20",
 	)
 }
 
 func printNearOutHelp() {
+	cmd := color.New(color.FgBlue, color.Bold).SprintFunc()
 	printHelpHeader("near out")
-	fmt.Println("Usage: dues near out FILE [global options]")
-	fmt.Println("Finds NeAR objects for files outside the DUES database.")
+	fmt.Println("Usage: dues near out FILE [--deep|-e] [--explain-exact|-t] [--advanced-deep|-a] [--top-k|-k N] [global options]")
+	fmt.Println()
+	fmt.Println("Finds NeAR objects for a file on disk that is outside the DUES database.")
+	fmt.Println("Produces near_report.json with ranked matches and an overall_relatedness score per match.")
+
+	printHelpSection("Options")
+	fmt.Printf("  %s, %s   Phase 1: enable partial chunk SimHash matching (slower, finds more candidates)\n", cmd("--deep"), cmd("-e"))
+	fmt.Printf("  %s, %s   Force chunk drilldown even when an exact file hash match exists\n", cmd("--explain-exact"), cmd("-t"))
+	fmt.Printf("  %s, %s   Phase 2: full-file SimHash re-ranking of top-K candidates\n", cmd("--advanced-deep"), cmd("-a"))
+	fmt.Printf("              Eliminates chunk-alignment noise from Phase 1 scores.\n")
+	fmt.Printf("              Note: the query file is external, so its signature is computed fresh each run.\n")
+	fmt.Printf("              Candidate signatures are cached in the DB and reused on subsequent runs.\n")
+	fmt.Printf("  %s, %s      Number of candidates for Phase 2 (default 0 = auto-select)\n", cmd("--top-k"), cmd("-k"))
+	fmt.Printf("              Auto-selection scales with available memory × CPU threads, bounded [5, 100].\n")
+
+	printHelpSection("Report Fields (per match)")
+	fmt.Println("  overall_relatedness       Single score [0.0–1.0] combining all active phases")
+	fmt.Println("  overall_relatedness_pct   Same value as a percentage")
+	fmt.Println("  relatedness_basis         Which signals were used: exact | phase1 | phase1+phase2")
+	fmt.Println("  phase1_deviation_estimate Fraction of chunk comparisons affected by edge-alignment noise")
+	fmt.Println("  phase2_file_similarity    Full-file SimHash similarity (only present when --advanced-deep used)")
+
 	printExamples(
 		"dues near out ./unknown.bin",
+		"dues near out ./unknown.bin --deep",
+		"dues near out ./unknown.bin --deep --advanced-deep",
+		"dues near out ./unknown.bin --deep --advanced-deep --top-k 20",
 		"dues near out ./unknown.bin --dbpath ./caseA",
 	)
 }

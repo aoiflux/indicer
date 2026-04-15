@@ -16,7 +16,7 @@ import (
 	"github.com/edsrzf/mmap-go"
 )
 
-func NearOutFile(fpath string, db *badger.DB, deep ...bool) error {
+func NearOutFile(fpath string, db *badger.DB, deep, explainExact, verify bool, topK int) error {
 	start := time.Now()
 	resetNearChunkContributions()
 
@@ -27,13 +27,15 @@ func NearOutFile(fpath string, db *badger.DB, deep ...bool) error {
 	defer mappedFile.Unmap()
 
 	idmap := structs.NewConcMap()
-	deepEnabled := false
-	if len(deep) > 0 {
-		deepEnabled = deep[0]
-	}
-	explainExact := false
-	if len(deep) > 1 {
-		explainExact = deep[1]
+	deepEnabled := deep
+
+	// Phase 2 query signature: compute full-file SimHash from the mmap'd file.
+	// Cost is O(file_size) with O(1) memory; done once before chunk processing.
+	var vcfg verifyConfig
+	if verify {
+		acc := newFileSimHashAccumulator()
+		acc.write(mappedFile[:size])
+		vcfg = verifyConfig{enabled: true, topK: topK, querySig: acc.finalize(), isOutfile: true}
 	}
 
 	exactID, hasExact, err := getExactOutMatchID(fhash, db)
@@ -55,7 +57,7 @@ func NearOutFile(fpath string, db *badger.DB, deep ...bool) error {
 			ExplainExact:    false,
 		}
 
-		reportPath, err := writeNearJSONReportWithInput(input, idmap, deepEnabled, time.Since(start), db)
+		reportPath, err := writeNearJSONReportWithInput(input, idmap, deepEnabled, time.Since(start), db, verifyConfig{})
 		if err != nil {
 			return err
 		}
@@ -104,7 +106,7 @@ func NearOutFile(fpath string, db *badger.DB, deep ...bool) error {
 		ExplainExact:    explainExact,
 	}
 
-	reportPath, err := writeNearJSONReportWithInput(input, idmap, deepEnabled, time.Since(start), db)
+	reportPath, err := writeNearJSONReportWithInput(input, idmap, deepEnabled, time.Since(start), db, vcfg)
 	if err != nil {
 		return err
 	}

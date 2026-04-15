@@ -87,12 +87,12 @@ func TUICmd(chonkSize int, dbpath string, key []byte) error {
 		},
 		NearIn: func(hash string, deep bool) error {
 			return runQuiet(func() error {
-				return near.NearInFile(hash, db, deep)
+				return near.NearInFile(hash, db, deep, false, 0)
 			})
 		},
 		NearOut: func(filePath string) error {
 			return runQuiet(func() error {
-				return near.NearOutFile(filePath, db)
+				return near.NearOutFile(filePath, db, false, false, false, 0)
 			})
 		},
 		Reset: func() error {

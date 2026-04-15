@@ -1,6 +1,7 @@
 package dbio
 
 import (
+	"bytes"
 	"encoding/base64"
 	"encoding/binary"
 	"fmt"
@@ -139,6 +140,30 @@ func GetChonkSignature(chash []byte, db *badger.DB) (uint64, error) {
 	return binary.BigEndian.Uint64(data), nil
 }
 
+// SetFileSimhash stores the full-file Phase 2 SimHash for fid so that subsequent
+// --advanced-deep runs can skip re-streaming all chunk bytes.
+// Key: F|||: + fid  (fid already carries its own namespace prefix, e.g. E|||:…)
+func SetFileSimhash(fid []byte, sig uint64, db *badger.DB) error {
+	key := util.AppendToBytesSlice(cnst.FileSimhashNamespace, fid)
+	data := make([]byte, 8)
+	binary.BigEndian.PutUint64(data, sig)
+	return SetNode(key, data, db)
+}
+
+// GetFileSimhash retrieves the cached full-file Phase 2 SimHash for fid.
+// Returns badger.ErrKeyNotFound when no cached value exists yet.
+func GetFileSimhash(fid []byte, db *badger.DB) (uint64, error) {
+	key := util.AppendToBytesSlice(cnst.FileSimhashNamespace, fid)
+	data, err := GetNode(key, db)
+	if err != nil {
+		return 0, err
+	}
+	if len(data) != 8 {
+		return 0, fmt.Errorf("invalid file simhash length: %d", len(data))
+	}
+	return binary.BigEndian.Uint64(data), nil
+}
+
 func SetBatchChonkNode(key, data []byte, db *badger.DB, batch *badger.WriteBatch, containerMgr *fio.ContainerManager, blockMgr *fio.BlockManager) error {
 	if containerMgr != nil {
 		// Container mode: pack chunks into containers
@@ -252,6 +277,78 @@ func GetChonkNode(key []byte, db *badger.DB) ([]byte, error) {
 
 	return fio.ReadChunkFromContainer(containerPath, offset, size, db.Opts().EncryptionKey)
 }
+
+// StreamLogicalFileBytes iterates over all chunks belonging to the logical file
+// identified by fid (IndexedFile, PartitionFile, or EvidenceFile), trims each chunk
+// to the file's actual byte range, and calls fn with the trimmed data in order.
+// This mirrors the restore loop but without writing to disk, enabling streaming
+// computation (e.g. full-file SimHash) without buffering the entire file in memory.
+func StreamLogicalFileBytes(fid []byte, db *badger.DB, fn func([]byte) error) error {
+	start, size, ehash, err := getLogicalFileMeta(fid, db)
+	if err != nil {
+		return err
+	}
+
+	var dbstart int64
+	if start > 0 {
+		dbstart = util.GetDBStartOffset(start)
+	}
+	end := start + size
+
+	for restoreIndex := dbstart; restoreIndex < end; restoreIndex += cnst.ChonkSize {
+		relKey := util.AppendToBytesSlice(cnst.RelationNamespace, ehash, cnst.DataSeperator, restoreIndex)
+		chash, err := GetNode(relKey, db)
+		if err != nil {
+			return err
+		}
+		ckey := util.AppendToBytesSlice(cnst.ChonkNamespace, chash)
+		data, err := GetChonkData(restoreIndex, start, size, dbstart, end, ckey, db)
+		if err != nil {
+			return err
+		}
+		if err := fn(data); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func getLogicalFileMeta(fid []byte, db *badger.DB) (start, size int64, ehash []byte, err error) {
+	switch {
+	case bytes.HasPrefix(fid, []byte(cnst.EviFileNamespace)):
+		efile, e := GetEvidenceFile(fid, db)
+		if e != nil {
+			return 0, 0, nil, e
+		}
+		ehash = fid[len(cnst.EviFileNamespace):]
+		return efile.Start, efile.Size, ehash, nil
+	case bytes.HasPrefix(fid, []byte(cnst.PartiFileNamespace)):
+		pfile, e := GetPartitionFile(fid, db)
+		if e != nil {
+			return 0, 0, nil, e
+		}
+		name := util.GetArbitratyMapKey(pfile.Names)
+		ehash, e = util.GetEvidenceFileHash(name)
+		if e != nil {
+			return 0, 0, nil, e
+		}
+		return pfile.Start, pfile.Size, ehash, nil
+	case bytes.HasPrefix(fid, []byte(cnst.IdxFileNamespace)):
+		ifile, e := GetIndexedFile(fid, db)
+		if e != nil {
+			return 0, 0, nil, e
+		}
+		name := util.GetArbitratyMapKey(ifile.Names)
+		ehash, e = util.GetEvidenceFileHash(name)
+		if e != nil {
+			return 0, 0, nil, e
+		}
+		return ifile.Start, ifile.Size, ehash, nil
+	default:
+		return 0, 0, nil, cnst.ErrUnknownFileType
+	}
+}
+
 func GetNode(key []byte, db *badger.DB) ([]byte, error) {
 	var data []byte
 

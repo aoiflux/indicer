@@ -12,7 +12,7 @@ import (
 
 func StoreStreamedFile(fpath string) error {
 	key := util.HashPassword("")
-	return cli.StoreFile(int(cnst.DefaultChonkSize), fpath, key, false, false, cnst.DB)
+	return cli.StoreFile(int(cnst.DefaultChonkSize), fpath, key, false, cnst.DB)
 }
 
 func AddEvidenceMetadata(meta *pb.StreamFileMeta) (structs.EvidenceFile, error) {

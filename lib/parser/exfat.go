@@ -1,16 +1,13 @@
 package parser
 
 import (
-	"errors"
 	"indicer/lib/cnst"
-	"indicer/lib/dbio"
 	"indicer/lib/store"
 	"indicer/lib/structs"
 	"indicer/lib/util"
 	"os"
 
 	"github.com/aoiflux/libxfat"
-	"github.com/dgraph-io/badger/v4"
 	"github.com/schollz/progressbar/v3"
 )
 
@@ -124,77 +121,4 @@ func parsEXFAT(fhandle *os.File, size int64) []structs.PartitionFile {
 		return nil
 	}
 	return []structs.PartitionFile{partition}
-}
-
-func storeIndexedFiles(idxmap map[string]structs.IndexedFile, db *badger.DB, batch *badger.WriteBatch, idxChan chan error) error {
-	var pflag bool
-	total := int64(len(idxmap))
-	bar := progressbar.Default(total, "indexing files")
-	bar.Clear()
-
-	for ihash, newIdxfile := range idxmap {
-		delete(idxmap, ihash)
-		if !pflag {
-			pflag = checkChannel(idxChan)
-			if pflag {
-				bar.Set(1)
-			}
-		}
-
-		id := util.AppendToBytesSlice(cnst.IdxFileNamespace, ihash)
-		oldIdxFile, err := dbio.GetIndexedFile(id, db)
-		if errors.Is(err, badger.ErrKeyNotFound) {
-			err = dbio.SetIndexedFile(id, newIdxfile, batch)
-			if err != nil {
-				return err
-			}
-			continue
-		}
-		if err != nil && err != badger.ErrKeyNotFound {
-			return err
-		}
-
-		flag := true
-		if len(newIdxfile.Names) < len(oldIdxFile.Names) {
-			for newName := range newIdxfile.Names {
-				if _, ok := oldIdxFile.Names[newName]; !ok {
-					oldIdxFile.Names[newName] = struct{}{}
-					flag = false
-				}
-			}
-
-			if flag {
-				continue
-			}
-			err = dbio.SetIndexedFile(id, oldIdxFile, batch)
-			if err != nil {
-				return err
-			}
-
-			continue
-		}
-
-		for oldName := range oldIdxFile.Names {
-			if _, ok := newIdxfile.Names[oldName]; !ok {
-				newIdxfile.Names[oldName] = struct{}{}
-				flag = false
-			}
-		}
-		if flag {
-			continue
-		}
-		err = dbio.SetIndexedFile(id, newIdxfile, batch)
-		if err != nil {
-			return err
-		}
-
-		if flag {
-			bar.Add(1)
-		}
-	}
-
-	if pflag {
-		bar.Finish()
-	}
-	return nil
 }

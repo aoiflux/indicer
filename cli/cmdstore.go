@@ -18,7 +18,7 @@ import (
 	"github.com/edsrzf/mmap-go"
 )
 
-func StoreData(chonkSize int, dbpath, evipath string, key []byte, syncIndex, noIndex bool) error {
+func StoreData(chonkSize int, dbpath, evipath string, key []byte, noIndex bool) error {
 	db, dbpath, err := Common(chonkSize, dbpath, key)
 	if err != nil {
 		return err
@@ -35,12 +35,12 @@ func StoreData(chonkSize int, dbpath, evipath string, key []byte, syncIndex, noI
 
 	if finfo.IsDir() {
 		fmt.Println("Storing Entire Folder")
-		err = StoreFolder(chonkSize, evipath, key, syncIndex, noIndex, db)
+		err = StoreFolder(chonkSize, evipath, key, noIndex, db)
 		if err != nil {
 			return err
 		}
 	}
-	err = StoreFile(chonkSize, evipath, key, syncIndex, noIndex, db)
+	err = StoreFile(chonkSize, evipath, key, noIndex, db)
 	if err != nil {
 		return err
 	}
@@ -52,7 +52,7 @@ func StoreData(chonkSize int, dbpath, evipath string, key []byte, syncIndex, noI
 	return nil
 }
 
-func StoreFolder(chonkSize int, evidir string, key []byte, syncIndex, noIndex bool, db *badger.DB) error {
+func StoreFolder(chonkSize int, evidir string, key []byte, noIndex bool, db *badger.DB) error {
 	start := time.Now()
 
 	err := filepath.Walk(evidir, func(path string, info fs.FileInfo, err error) error {
@@ -64,7 +64,7 @@ func StoreFolder(chonkSize int, evidir string, key []byte, syncIndex, noIndex bo
 			return nil
 		}
 
-		return StoreFile(chonkSize, path, key, syncIndex, noIndex, db)
+		return StoreFile(chonkSize, path, key, noIndex, db)
 	})
 
 	if err != nil {
@@ -76,7 +76,7 @@ func StoreFolder(chonkSize int, evidir string, key []byte, syncIndex, noIndex bo
 	return nil
 }
 
-func StoreFile(chonkSize int, evipath string, key []byte, syncIndex, noIndex bool, db *badger.DB) error {
+func StoreFile(chonkSize int, evipath string, key []byte, noIndex bool, db *badger.DB) error {
 	start := time.Now()
 
 	info, err := os.Stat(evipath)
@@ -100,89 +100,20 @@ func StoreFile(chonkSize int, evipath string, key []byte, syncIndex, noIndex boo
 		return nil
 	}
 
-	var active int
-	idxChan := make(chan error)
 	if !noIndex {
-		partitions := parser.GetPartitions(eviFile.GetSize(), eviFile.GetHandle())
-		// not limiting goroutines here because max number of partitions will be 4 or less
-		for index, partition := range partitions {
-			phash := eviFile.GetHash()
-			if partition.Start != 0 && partition.Size != eviFile.GetSize() {
-				phash, err = util.GetLogicalFileHash(eviFile.GetHandle(), cnst.GetHashAlgo(true), partition.Start, partition.Size, true)
-				if err != nil {
-					return err
-				}
-			}
-			eviFile.UpdateInternalObjects(partition.Start, partition.Size, phash)
-
-			ehash, err := eviFile.GetEncodedHash()
-			if err != nil {
-				return err
-			}
-			pname := string(util.AppendToBytesSlice(ehash, cnst.DataSeperator, eviFile.GetName(), "_", cnst.PartitionIndexPrefix, index))
-			pfile := structs.NewInputFile(
-				db,
-				eviFile.GetHandle(),
-				eviFile.GetMappedFile(),
-				pname,
-				cnst.PartiFileNamespace,
-				phash,
-				partition.Size,
-				partition.Start,
-			)
-
-			go parser.IndexEXFAT(pfile, idxChan)
-			if !syncIndex {
-				active++
-			}
-			if syncIndex {
-				idxChan <- nil
-				err = <-idxChan
-				if errors.Is(err, cnst.ErrIncompatibleFile) {
-					continue
-				}
-				if err != nil {
-					return err
-				}
-			}
-			if err != nil {
-				return err
-			}
+		if err = indexEvidenceFile(eviFile, db); err != nil {
+			return err
 		}
 	}
 
 	eviname := filepath.Base(evipath)
 	fmt.Printf("\nSaving Evidence File: %s\n", eviname)
-	if !syncIndex && active > 0 {
-		fmt.Println("(indexer running async)")
-	}
 
 	echan := make(chan error)
 	go store.Store(eviFile, echan)
 	err = <-echan
 	if err != nil {
 		return err
-	}
-
-	if !syncIndex {
-		for active > 0 {
-
-			select {
-			case err = <-idxChan:
-				if err != nil && err != cnst.ErrIncompatibleFileSystem {
-					return err
-				}
-			default:
-				fmt.Println()
-				idxChan <- nil
-				err = <-idxChan
-				if err != nil && err != cnst.ErrIncompatibleFileSystem {
-					return err
-				}
-			}
-
-			active--
-		}
 	}
 
 	eviNode, err := dbio.GetEvidenceFile(eviFile.GetID(), eviFile.GetDB())
@@ -205,6 +136,60 @@ func StoreFile(chonkSize int, evipath string, key []byte, syncIndex, noIndex boo
 		return err
 	}
 	fmt.Printf("\nStored in: %v\n\n", time.Since(start))
+	return nil
+}
+
+func indexEvidenceFile(eviFile structs.InputFile, db *badger.DB) error {
+	tuskJSON, hasTusk := parser.TuskAnalysis(eviFile.GetHandle().Name())
+	partitions := parser.ParseImage(tuskJSON, hasTusk, eviFile.GetSize(), eviFile.GetHandle())
+	idxChan := make(chan error)
+	for index, partition := range partitions {
+		phash := eviFile.GetHash()
+		var err error
+		if partition.Start != 0 && partition.Size != eviFile.GetSize() {
+			phash, err = util.GetLogicalFileHash(eviFile.GetHandle(), cnst.GetHashAlgo(true), partition.Start, partition.Size, true)
+			if err != nil {
+				return err
+			}
+		}
+		eviFile.UpdateInternalObjects(partition.Start, partition.Size, phash)
+
+		ehash, err := eviFile.GetEncodedHash()
+		if err != nil {
+			return err
+		}
+		pname := string(util.AppendToBytesSlice(ehash, cnst.DataSeperator, eviFile.GetName(), "_", cnst.PartitionIndexPrefix, index))
+		pfile := structs.NewInputFile(
+			db,
+			eviFile.GetHandle(),
+			eviFile.GetMappedFile(),
+			pname,
+			cnst.PartiFileNamespace,
+			phash,
+			partition.Size,
+			partition.Start,
+		)
+
+		if hasTusk {
+			go parser.IndexFilesystem(tuskJSON, pfile, idxChan)
+		} else {
+			go parser.IndexEXFAT(pfile, idxChan)
+		}
+		// Use select so that if the goroutine finishes before we send the
+		// start signal (e.g. empty partition with no files), we receive the
+		// result directly instead of deadlocking on the send.
+		select {
+		case idxChan <- nil:
+			err = <-idxChan
+		case err = <-idxChan:
+		}
+		if errors.Is(err, cnst.ErrIncompatibleFile) {
+			continue
+		}
+		if err != nil {
+			return err
+		}
+	}
 	return nil
 }
 

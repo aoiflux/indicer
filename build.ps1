@@ -3,13 +3,12 @@ param(
     [string]$MainPackage = ".",
     [string]$OutputDir = "dist",
     [string[]]$Targets = @(
-        "windows/amd64",
-        "windows/arm64",
-        "linux/amd64",
-        "linux/arm64",
-        "darwin/amd64",
-        "darwin/arm64"
+        "windows/amd64"
     ),
+    # C cross-compiler used when building windows/amd64 with CGO enabled.
+    # Must be a MinGW-w64 cross-compiler targeting x86_64-windows.
+    [string]$WindowsCrossCC = "x86_64-w64-mingw32-gcc",
+    # To compile for Linux, run build.sh on Linux instead.
     [switch]$NoClean
 )
 
@@ -57,6 +56,7 @@ New-Item -ItemType Directory -Path $OutputDir -Force | Out-Null
 $prevGoos = $env:GOOS
 $prevGoarch = $env:GOARCH
 $prevCgo = $env:CGO_ENABLED
+$prevCC = $env:CC
 $prevGoamd64 = $env:GOAMD64
 
 $ldflags = "-s -w -buildid= -extldflags '-static'"
@@ -103,7 +103,19 @@ try {
 
         $env:GOOS = $goos
         $env:GOARCH = $goarch
-        $env:CGO_ENABLED = "0"
+
+        # CGO is required for windows/amd64 (libtusk).
+        # All other targets build without CGO.
+        $cgoLabel = "CGO=0"
+        if ($goos -eq "windows" -and $goarch -eq "amd64") {
+            $env:CGO_ENABLED = "1"
+            $env:CC = $WindowsCrossCC
+            $cgoLabel = "CGO=1, CC=$WindowsCrossCC"
+        }
+        else {
+            $env:CGO_ENABLED = "0"
+            Remove-Item Env:CC -ErrorAction SilentlyContinue
+        }
 
         # Reset amd64 tuning unless the target is amd64.
         Remove-Item Env:GOAMD64 -ErrorAction SilentlyContinue
@@ -125,14 +137,14 @@ try {
         Write-Host ""
         Write-Host ("[" + ($i + 1) + "/" + $targetCount + "] ") -NoNewline -ForegroundColor DarkGray
         Write-Host $outputName -NoNewline -ForegroundColor Yellow
-        Write-Host "  (CGO=0, trimpath, stripped)" -ForegroundColor DarkCyan
+        Write-Host ("  ($cgoLabel, trimpath, stripped)") -ForegroundColor DarkCyan
 
-        $args = @()
-        $args += $baseArgs
-        $args += @("-o", $outputPath, $MainPackage)
+        $arguments = @()
+        $arguments += $baseArgs
+        $arguments += @("-o", $outputPath, $MainPackage)
 
         $stepStart = Get-Date
-        & go @args
+        & go @arguments
         if ($LASTEXITCODE -ne 0) {
             throw "go build failed for target $target"
         }
@@ -154,6 +166,13 @@ finally {
     $env:GOARCH = $prevGoarch
     $env:CGO_ENABLED = $prevCgo
 
+    if ($null -eq $prevCC) {
+        Remove-Item Env:CC -ErrorAction SilentlyContinue
+    }
+    else {
+        $env:CC = $prevCC
+    }
+
     if ($null -eq $prevGoamd64) {
         Remove-Item Env:GOAMD64 -ErrorAction SilentlyContinue
     }
@@ -163,11 +182,15 @@ finally {
 }
 
 $buildSeconds = [math]::Round(((Get-Date) - $buildStart).TotalSeconds, 2)
-$artifacts = Get-ChildItem $OutputDir | Sort-Object Name
+$artifacts = Get-ChildItem $OutputDir | Where-Object { $_.Name -ilike "*.exe" }
+$count = 0;
+foreach ($artifact in $artifacts) {
+    $count++;
+}
 
 Write-Banner -Title "Build Complete" -Color Green
 Write-Label -Label "Duration" -Value ($buildSeconds.ToString() + "s") -ValueColor Green
-Write-Label -Label "Artifacts" -Value $artifacts.Count -ValueColor Green
+Write-Label -Label "Artifacts" -Value $count -ValueColor Green
 Write-Host ""
 
 $artifacts |
@@ -179,3 +202,5 @@ Select-Object @{
     Expression = { [math]::Round($_.Length / 1MB, 2) }
 }, LastWriteTime |
 Format-Table -AutoSize
+
+Write-Host "NOTE: This script builds for Windows only. To compile for Linux, run build.sh on Linux." -ForegroundColor DarkYellow

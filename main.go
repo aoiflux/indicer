@@ -47,7 +47,6 @@ func main() {
 
 	cmdstore := app.Command(cnst.CmdStore, "Store file in database")
 	evipath := cmdstore.Arg(cnst.OperandFile, "Path of file that must be saved").Required().String()
-	syncIndex := cmdstore.Flag(cnst.FlagSyncIndex, "Run file indexer synchronously, this will block dedup").Short(cnst.FlagSyncIndexShort).Default("false").Bool()
 	noIndex := cmdstore.Flag(cnst.FlagNoIndex, "Don't run indexer").Short(cnst.FlagNoIndexShort).Default("false").Bool()
 	hashAlgo := cmdstore.Flag(cnst.FlagHashAlgo, "Hashing algorithm to use [sha3|blake3] (default: BLAKE3)").Short(cnst.FlagHashAlgoShort).Default("blake3").String()
 
@@ -75,7 +74,9 @@ func main() {
 	cmdsearch := app.Command(cnst.CmdSearch, "Search anything in DUES DB")
 	query := cmdsearch.Arg(cnst.OperandQuery, "Search query string").String()
 
-	apiserver := app.Command(cnst.CmdServer, "Run gRPC / Web combined DUES server")
+	cmdserver := app.Command(cnst.CmdServer, "Run gRPC / Web combined DUES server")
+	hashAlgo = cmdserver.Flag(cnst.FlagHashAlgo, "Hashing algorithm to use [sha3|blake3] (default: BLAKE3)").Short(cnst.FlagHashAlgoShort).Default("blake3").String()
+
 	cmdreset := app.Command(cnst.CmdReset, "Delete the database").Alias(cnst.CmdPurge).Alias(cnst.CmdDelete).Alias(cnst.CmdDestroy)
 
 	var err error
@@ -129,7 +130,7 @@ func main() {
 	case cmdtui.FullCommand():
 		err = cli.TUICmd(*chonkSize, *dbpath, key)
 	case cmdstore.FullCommand():
-		err = cli.StoreData(*chonkSize, *dbpath, *evipath, key, *syncIndex, *noIndex)
+		err = cli.StoreData(*chonkSize, *dbpath, *evipath, key, *noIndex)
 	case cmdrestore.FullCommand():
 		err = cli.RestoreData(*chonkSize, *dbpath, *rhash, *rpath, key)
 	case cmdlist.FullCommand():
@@ -144,7 +145,7 @@ func main() {
 		err = cli.SearchCmd(*chonkSize, *query, *dbpath, key)
 	case cmdreset.FullCommand():
 		err = cli.ResetData(*dbpath)
-	case apiserver.FullCommand():
+	case cmdserver.FullCommand():
 		err = api.Server(*chonkSize, *dbpath, key)
 	}
 

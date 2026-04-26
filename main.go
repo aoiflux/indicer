@@ -74,6 +74,13 @@ func main() {
 	cmdsearch := app.Command(cnst.CmdSearch, "Search anything in DUES DB")
 	query := cmdsearch.Arg(cnst.OperandQuery, "Search query string").String()
 
+	cmdmicro := app.Command(cnst.CmdMicro, "Manage micro-artefacts")
+	microExtract := cmdmicro.Command("extract", "Extract micro-artefacts from all indexed files and populate graph database")
+	microExtractForce := microExtract.Flag("force", "Re-process indexed files even when micro-artefacts already exist in graph").Default("false").Bool()
+	microExtractTopK := microExtract.Flag("top-k", "Top-K indexed files (by artefact count) to include in exported HTML graph (0 = all)").Default("1").Int()
+
+	microList := cmdmicro.Command(cnst.CmdList, "List all micro-artefacts in JSON format")
+
 	cmdserver := app.Command(cnst.CmdServer, "Run gRPC / Web combined DUES server")
 	hashAlgo = cmdserver.Flag(cnst.FlagHashAlgo, "Hashing algorithm to use [sha3|blake3] (default: BLAKE3)").Short(cnst.FlagHashAlgoShort).Default("blake3").String()
 
@@ -143,6 +150,10 @@ func main() {
 		err = cli.NearOutData(*outDeep, *outExplainExact, *outVerify, *outTopK, *chonkSize, *dbpath, *outpath, key)
 	case cmdsearch.FullCommand():
 		err = cli.SearchCmd(*chonkSize, *query, *dbpath, key)
+	case microExtract.FullCommand():
+		err = cli.MicroArtefactCmd(*chonkSize, *dbpath, key, *microExtractForce, *microExtractTopK)
+	case microList.FullCommand():
+		err = cli.ListMicroArtefactsCmd(*chonkSize, *dbpath, key)
 	case cmdreset.FullCommand():
 		err = cli.ResetData(*dbpath)
 	case cmdserver.FullCommand():
@@ -262,6 +273,8 @@ func printHelpForPath(path []string) {
 		printStatsHelp()
 	case cnst.CmdSearch:
 		printSearchHelp()
+	case cnst.CmdMicro:
+		printMicroArtefactsHelp()
 	case cnst.CmdServer:
 		printServerHelp()
 	case cnst.CmdReset:
@@ -304,6 +317,7 @@ func printRootHelp() {
 	fmt.Printf("  %-20s %s\n", cmd(cnst.CmdRestore), "Restore file from database")
 	fmt.Printf("  %-20s %s\n", cmd(cnst.CmdList), "List saved files")
 	fmt.Printf("  %-20s %s\n", cmd(cnst.CmdSearch), "Search metadata/content index")
+	fmt.Printf("  %-20s %s\n", cmd(cnst.CmdMicro), "Manage micro-artefacts (extract, list)")
 	fmt.Printf("  %-20s %s\n", cmd(cnst.CmdNear), "Find NeAR file objects")
 	fmt.Printf("  %-20s %s\n", cmd(cnst.CmdServer), "Run gRPC/Web server")
 	fmt.Printf("  %-20s %s\n", cmd(cnst.CmdReset), "Delete database")
@@ -321,6 +335,7 @@ func printRootHelp() {
 	fmt.Println("  dues store evidence.img --dbpath ./dues-data")
 	fmt.Println("  dues restore <hash> --filepath recovered.bin")
 	fmt.Println("  dues search \"invoice\"")
+	fmt.Println("  dues microartefacts")
 	fmt.Println("  dues near in <hash> --deep")
 	fmt.Println("")
 }
@@ -383,6 +398,18 @@ func printSearchHelp() {
 		"dues search \"invoice\"",
 		"dues search \"user:alice\" --dbpath ./caseA",
 	)
+}
+
+func printMicroArtefactsHelp() {
+	printHelpHeader("micro")
+	fmt.Println("Usage: dues micro <extract|list> [options] [global options]")
+	fmt.Println("Manage micro-artefacts extracted from indexed files in the database.")
+	fmt.Println()
+	fmt.Println("  micro extract  — Extract micro-artefacts from all indexed files and populate graph database")
+	fmt.Println("  micro list     — List all micro-artefacts in JSON format")
+	fmt.Println()
+	fmt.Println("Try: dues help micro extract")
+	fmt.Println("or : dues help micro list")
 }
 
 func printNearHelp() {

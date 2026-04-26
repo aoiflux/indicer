@@ -70,6 +70,8 @@ func storeEvidenceFile(infile structs.InputFile) error {
 	return storeEvidenceData(infile)
 }
 func evidenceFilePreflight(infile structs.InputFile) (structs.EvidenceFile, error) {
+	detectedType := util.DetectEvidenceType(infile.GetName(), infile.GetMappedFile())
+
 	evidenceFile, err := dbio.GetEvidenceFile(infile.GetID(), infile.GetDB())
 	if errors.Is(err, badger.ErrKeyNotFound) {
 		evidenceFile := structs.NewEvidenceFile(
@@ -77,12 +79,23 @@ func evidenceFilePreflight(infile structs.InputFile) (structs.EvidenceFile, erro
 			infile.GetStartIndex(),
 			infile.GetSize(),
 			infile.GetInternalObjects(),
+			detectedType,
 		)
 		err = dbio.SetFile(infile.GetID(), evidenceFile, infile.GetDB())
 		return evidenceFile, err
 	}
 	if err != nil && err != badger.ErrKeyNotFound {
 		return evidenceFile, err
+	}
+
+	if evidenceFile.EvidenceType == "" || evidenceFile.EvidenceType == cnst.UnknownEvidenceType {
+		if detectedType != evidenceFile.EvidenceType {
+			evidenceFile.EvidenceType = detectedType
+			err = dbio.SetFile(infile.GetID(), evidenceFile, infile.GetDB())
+			if err != nil {
+				return evidenceFile, err
+			}
+		}
 	}
 
 	if !evidenceFile.Completed {

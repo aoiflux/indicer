@@ -13,12 +13,13 @@ import (
 )
 
 const (
-	FILE_EXISTS   = "EXISTS"
-	FILE_APPENDED = "APPENDED"
-	DefaultDBPath = "./data"
-	UploadsDir    = "uploads"
-	SHA3          = "SHA3"
-	BLAKE3        = "BLAKE3"
+	FILE_EXISTS         = "EXISTS"
+	FILE_APPENDED       = "APPENDED"
+	UnknownEvidenceType = "unknown"
+	DefaultDBPath       = "./data"
+	UploadsDir          = "uploads"
+	SHA3                = "SHA3"
+	BLAKE3              = "BLAKE3"
 )
 
 const (
@@ -98,6 +99,7 @@ const (
 	SubCmdIn    = "in"
 	SubCmdOut   = "out"
 	CmdSearch   = "search"
+	CmdMicro    = "micro"
 	CmdServer   = "server"
 	CmdVeresion = "version"
 

@@ -55,11 +55,11 @@ func (r *indexReport) print() {
 		line := fmt.Sprintf(" %s  %s ", e.label, e.msg)
 		pad := width - len(line)
 		borderColor.Print("│")
+		labelStyle := labelColor
 		if e.warn {
-			warnColor.Printf(" %s ", e.label)
-		} else {
-			labelColor.Printf(" %s ", e.label)
+			labelStyle = warnColor
 		}
+		labelStyle.Printf(" %s ", e.label)
 		infoColor.Printf(" %s%s", e.msg, strings.Repeat(" ", pad))
 		borderColor.Println("│")
 	}

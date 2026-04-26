@@ -2,7 +2,6 @@ package parser
 
 import (
 	"indicer/lib/cnst"
-	"indicer/lib/store"
 	"indicer/lib/structs"
 	"indicer/lib/util"
 	"os"
@@ -59,41 +58,27 @@ func IndexEXFAT(pfile structs.InputFile, idxChan chan error) {
 		iname := string(util.AppendToBytesSlice(pfile.GetEviFileHash(), cnst.DataSeperator, encodedPfileHash, cnst.DataSeperator, entry.GetName()))
 		istart := int64(exfatdata.GetClusterOffset(entry.GetEntryCluster()))
 		isize := int64(entry.GetSize())
-		ihash, err := util.GetLogicalFileHash(pfile.GetHandle(), cnst.GetHashAlgo(true), istart, isize, false)
+		err = registerIndexedRange(idxmap, pfile, iname, istart, isize)
 		if err != nil {
 			idxChan <- err
+			return
 		}
-
-		if val, ok := idxmap[string(ihash)]; ok {
-			if _, ok := val.Names[iname]; !ok {
-				val.Names[iname] = struct{}{}
-			}
-		} else {
-			idxmap[string(ihash)] = structs.NewIndexedFile(iname, istart, isize)
-		}
-		pfile.UpdateInternalObjects(istart, isize, ihash)
 
 		if flag {
 			bar.Add(1)
 		}
 	}
 
-	err = storeIndexedFiles(idxmap, pfile.GetDB(), batch, idxChan)
+	err = finalizeIndexedFiles(idxmap, pfile, batch, idxChan)
 	if err != nil {
 		idxChan <- err
-	}
-
-	err = batch.Flush()
-	if err != nil {
-		idxChan <- err
+		return
 	}
 	if flag {
 		bar.Finish()
 	}
 
-	pchan := make(chan error)
-	go store.Store(pfile, pchan)
-	idxChan <- <-pchan
+	idxChan <- nil
 }
 
 func checkChannel(idxChan chan error) bool {

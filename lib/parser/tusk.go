@@ -4,7 +4,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"indicer/lib/cnst"
-	"indicer/lib/store"
 	"indicer/lib/structs"
 	"indicer/lib/util"
 )
@@ -125,7 +124,9 @@ func IndexFilesystem(jsonOutput string, pfile structs.InputFile, idxChan chan er
 			idxChan <- cnst.ErrIncompatibleFile
 			return
 		}
-	} else {
+	}
+
+	if len(result.Partitions) == 0 {
 		fsType := ""
 		if result.Filesystem != nil {
 			fsType = result.Filesystem.Type
@@ -137,21 +138,11 @@ func IndexFilesystem(jsonOutput string, pfile structs.InputFile, idxChan chan er
 		buildIdxMap(result.Files, idxmap, pfile, encodedPfileHash, idxChan)
 	}
 
-	err = storeIndexedFiles(idxmap, pfile.GetDB(), batch, idxChan)
+	err = finalizeIndexedFiles(idxmap, pfile, batch, idxChan)
 	if err != nil {
 		idxChan <- err
 		return
 	}
-
-	err = batch.Flush()
-	if err != nil {
-		idxChan <- err
-		return
-	}
-
-	pchan := make(chan error)
-	go store.Store(pfile, pchan)
-	err = <-pchan
 	report.print()
-	idxChan <- err
+	idxChan <- nil
 }

@@ -1,19 +1,5 @@
 package model
 
-type FileRecord struct {
-	Hash     string
-	Name     string
-	Path     string
-	Size     int64
-	FileType string
-
-	DiskImageID   string
-	DiskImageName string
-	PartitionID   string
-	PartitionName string
-	IndexedFileID string
-}
-
 type Span struct {
 	Start int64
 	End   int64

@@ -3,6 +3,7 @@ package detection
 import (
 	"indicer/lib/microartefact/model"
 	parsingpkg "indicer/lib/microartefact/parsing"
+	"sort"
 
 	detectorpkg "indicer/lib/microartefact/detectors"
 )
@@ -46,8 +47,14 @@ func (e *Engine) Detect(file model.FileRecord, parsed parsingpkg.Result) ([]mode
 		}
 	}
 
-	artefacts := make([]model.Artefact, 0, 128)
+	detectorNames := make([]string, 0, len(allowed))
 	for detectorName := range allowed {
+		detectorNames = append(detectorNames, detectorName)
+	}
+	sort.Strings(detectorNames)
+
+	artefacts := make([]model.Artefact, 0, 128)
+	for _, detectorName := range detectorNames {
 		detector, ok := e.detectorsByID[detectorName]
 		if !ok {
 			continue

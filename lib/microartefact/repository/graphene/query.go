@@ -3,6 +3,8 @@ package graphene
 import (
 	"sort"
 
+	"indicer/lib/microartefact/model"
+
 	graphstore "github.com/aoiflux/graphene/store"
 	"github.com/vmihailenco/msgpack/v5"
 )
@@ -28,28 +30,29 @@ type DiskImageNode struct {
 type PartitionNode struct {
 	ID    string
 	Name  string
-	Files []*IndexedFileNode
+	Files []*FileNode
 }
 
-// IndexedFileNode represents one indexed file within a partition.
-type IndexedFileNode struct {
-	ID        string
-	Name      string
-	Path      string
-	Size      int64
-	Artefacts []*ArtefactNode
+// NodeIdentity contains fields shared by graph node projections.
+type NodeIdentity struct {
+	ID string
 }
 
-// ArtefactNode is one micro-artefact detected inside an indexed file.
-type ArtefactNode struct {
-	Kind       string
-	Detector   string
-	Value      string
-	Summary    string
-	Confidence float32
-	Start      int64
-	End        int64
+// FileNode represents one indexed file within a partition.
+type FileNode struct {
+	NodeIdentity
+	model.FileNodeFields
+	Artefacts []*MicroArtefactNode
 }
+
+// MicroArtefactNode is one micro-artefact detected inside a file node.
+type MicroArtefactNode struct {
+	model.MicroArtefactNodeFields
+}
+
+// Backward-compatible aliases for older callers.
+type IndexedFileNode = FileNode
+type ArtefactNode = MicroArtefactNode
 
 // ReadHierarchy walks the graphene store and returns the full
 // disk_image → partition → indexed_file → micro_artefact tree.
@@ -99,11 +102,13 @@ func (r *Repository) ReadHierarchy() (*HierarchyTree, error) {
 					continue
 				}
 				fProps := unpackProps(fn.Node.Properties)
-				ifile := &IndexedFileNode{
-					ID:   strProp(fProps, "indexed_file_id"),
-					Name: strProp(fProps, "name"),
-					Path: strProp(fProps, "path"),
-					Size: int64Prop(fProps, "size"),
+				ifile := &FileNode{
+					NodeIdentity: modelNodeID(strProp(fProps, "indexed_file_id")),
+					FileNodeFields: model.FileNodeFields{
+						Name: strProp(fProps, "name"),
+						Path: strProp(fProps, "path"),
+						Size: int64Prop(fProps, "size"),
+					},
 				}
 
 				artNeighbours, err := r.graph.Neighbours(fn.Node.ID, graphstore.DirectionOutbound, contEdges)
@@ -116,14 +121,16 @@ func (r *Repository) ReadHierarchy() (*HierarchyTree, error) {
 						continue
 					}
 					aProps := unpackProps(an.Node.Properties)
-					ifile.Artefacts = append(ifile.Artefacts, &ArtefactNode{
-						Kind:       strProp(aProps, "kind"),
-						Detector:   strProp(aProps, "detector"),
-						Value:      strProp(aProps, "value"),
-						Summary:    strProp(aProps, "summary"),
-						Confidence: float32Prop(aProps, "confidence"),
-						Start:      int64Prop(aProps, "start"),
-						End:        int64Prop(aProps, "end"),
+					ifile.Artefacts = append(ifile.Artefacts, &MicroArtefactNode{
+						MicroArtefactNodeFields: model.MicroArtefactNodeFields{
+							Kind:       strProp(aProps, "kind"),
+							Detector:   strProp(aProps, "detector"),
+							Value:      strProp(aProps, "value"),
+							Summary:    strProp(aProps, "summary"),
+							Confidence: float32Prop(aProps, "confidence"),
+							Start:      int64Prop(aProps, "start"),
+							End:        int64Prop(aProps, "end"),
+						},
 					})
 					tree.TotalArtefacts++
 				}
@@ -180,6 +187,10 @@ func (r *Repository) ReadHierarchy() (*HierarchyTree, error) {
 	}
 
 	return tree, nil
+}
+
+func modelNodeID(id string) NodeIdentity {
+	return NodeIdentity{ID: id}
 }
 
 // ─── property helpers ────────────────────────────────────────────────────────

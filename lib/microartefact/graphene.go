@@ -9,8 +9,12 @@ type GrapheneRepository = graphrepo.Repository
 type HierarchyTree = graphrepo.HierarchyTree
 type DiskImageNode = graphrepo.DiskImageNode
 type PartitionNode = graphrepo.PartitionNode
-type IndexedFileNode = graphrepo.IndexedFileNode
-type ArtefactNode = graphrepo.ArtefactNode
+type FileNode = graphrepo.FileNode
+type MicroArtefactNode = graphrepo.MicroArtefactNode
+
+// Legacy aliases kept for compatibility.
+type IndexedFileNode = graphrepo.FileNode
+type ArtefactNode = graphrepo.MicroArtefactNode
 
 func OpenGrapheneRepository(root string) (*GrapheneRepository, error) {
 	return graphrepo.Open(root)

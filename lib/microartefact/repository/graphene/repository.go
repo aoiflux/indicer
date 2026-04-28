@@ -49,72 +49,26 @@ func (r *Repository) Store(file model.FileRecord, artefacts []model.Artefact, re
 		return nil
 	}
 
-	if file.DiskImageID == "" {
-		return fmt.Errorf("micro-artefact store: DiskImageID is required (micro-artefacts must belong to a disk image → partition → indexed file hierarchy)")
-	}
-	if file.PartitionID == "" {
-		return fmt.Errorf("micro-artefact store: PartitionID is required (micro-artefacts must belong to a disk image → partition → indexed file hierarchy)")
+	if err := validateStoreHierarchy(file); err != nil {
+		return err
 	}
 
-	indexedFileID := file.IndexedFileID
-	if indexedFileID == "" {
-		indexedFileID = file.Hash
-	}
-	diskImageID := file.DiskImageID
-	partitionID := file.PartitionID
-
-	existing, err := r.graph.NodesByProperty("indexed_file_id", []byte(indexedFileID))
+	indexedFileID := resolveIndexedFileID(file)
+	exists, err := r.hasIndexedFile(indexedFileID)
 	if err != nil {
 		return err
 	}
-	if len(existing) > 0 {
+	if exists {
 		return nil
 	}
 
-	diskNode, err := r.upsertNode(
-		"disk_image_id",
-		diskImageID,
-		[]graphstore.NodeType{nodeTypeDiskImage},
-		map[string]any{"disk_image_id": diskImageID, "name": file.DiskImageName},
-	)
+	diskNode, partitionNode, err := r.ensureHierarchyNodes(file)
 	if err != nil {
 		return err
 	}
 
-	partitionNode, err := r.upsertNode(
-		"partition_id",
-		partitionID,
-		[]graphstore.NodeType{nodeTypePartition},
-		map[string]any{"partition_id": partitionID, "name": file.PartitionName, "disk_image_id": diskImageID},
-	)
+	indexedFileNode, err := r.createIndexedFileNode(file, indexedFileID, len(artefacts))
 	if err != nil {
-		return err
-	}
-
-	indexedFileNode, err := r.graph.AddNode(&graphstore.Node{
-		Labels: []graphstore.NodeType{nodeTypeIndexedFile},
-		Properties: mustPack(map[string]any{
-			"indexed_file_id": indexedFileID,
-			"hash":            file.Hash,
-			"name":            file.Name,
-			"path":            file.Path,
-			"size":            file.Size,
-			"artefact_count":  len(artefacts),
-			"partition_id":    partitionID,
-			"disk_image_id":   diskImageID,
-		}),
-	})
-	if err != nil {
-		return err
-	}
-	if err := r.graph.IndexNodeProperties(indexedFileNode, map[string][]byte{
-		"indexed_file_id": []byte(indexedFileID),
-		"evidence_hash":   []byte(file.Hash),
-		"name":            []byte(file.Name),
-		"path":            []byte(file.Path),
-		"partition_id":    []byte(partitionID),
-		"disk_image_id":   []byte(diskImageID),
-	}); err != nil {
 		return err
 	}
 
@@ -125,62 +79,9 @@ func (r *Repository) Store(file model.FileRecord, artefacts []model.Artefact, re
 		return err
 	}
 
-	artefactNodesByKey := make(map[string][]graphstore.NodeID, len(artefacts))
-	for _, artefact := range artefacts {
-		artefactNode, err := r.graph.AddNode(&graphstore.Node{
-			Labels: []graphstore.NodeType{graphstore.NodeTypeMicroArtefact},
-			Properties: mustPack(map[string]any{
-				"kind":          artefact.Kind,
-				"detector":      artefact.Detector,
-				"value":         artefact.Value,
-				"summary":       artefact.Summary,
-				"confidence":    artefact.Confidence,
-				"start":         artefact.Span.Start,
-				"end":           artefact.Span.End,
-				"attributes":    artefact.Attributes,
-				"evidence_hash": file.Hash,
-			}),
-		})
-		if err != nil {
-			return err
-		}
-
-		index := map[string][]byte{
-			"artefact_kind":       []byte(artefact.Kind),
-			"artefact_detector":   []byte(artefact.Detector),
-			"artefact_value_hash": []byte(hashText(artefact.Value)),
-			"evidence_hash":       []byte(file.Hash),
-		}
-		if artefact.Value != "" && len(artefact.Value) <= 256 {
-			index["artefact_value"] = []byte(artefact.Value)
-		}
-		if err := r.graph.IndexNodeProperties(artefactNode, index); err != nil {
-			return err
-		}
-
-		lookupKey := relationNodeLookupKey(artefact.Kind, artefact.Value)
-		artefactNodesByKey[lookupKey] = append(artefactNodesByKey[lookupKey], artefactNode)
-
-		edgeID, err := r.graph.AddEdge(&graphstore.Edge{
-			Src:    indexedFileNode,
-			Dst:    artefactNode,
-			Labels: []graphstore.EdgeType{graphstore.EdgeTypeContains},
-			Properties: mustPack(map[string]any{
-				"detector": artefact.Detector,
-				"start":    artefact.Span.Start,
-				"end":      artefact.Span.End,
-			}),
-		})
-		if err != nil {
-			return err
-		}
-		if err := r.graph.IndexEdgeProperties(edgeID, map[string][]byte{
-			"contains_kind": []byte(artefact.Kind),
-			"start":         []byte(strconv.FormatInt(artefact.Span.Start, 10)),
-			"end":           []byte(strconv.FormatInt(artefact.Span.End, 10)),
-		}); err != nil {
-			return err
-		}
+	artefactNodesByKey, err := r.storeArtefactNodes(indexedFileNode, file.Hash, artefacts)
+	if err != nil {
+		return err
 	}
 
 	if err := r.storeRelationEdges(artefactNodesByKey, relations); err != nil {
@@ -188,6 +89,201 @@ func (r *Repository) Store(file model.FileRecord, artefacts []model.Artefact, re
 	}
 
 	return nil
+}
+
+func validateStoreHierarchy(file model.FileRecord) error {
+	if file.DiskImageID == "" {
+		return fmt.Errorf("micro-artefact store: DiskImageID is required (micro-artefacts must belong to a disk image → partition → indexed file hierarchy)")
+	}
+	if file.PartitionID == "" {
+		return fmt.Errorf("micro-artefact store: PartitionID is required (micro-artefacts must belong to a disk image → partition → indexed file hierarchy)")
+	}
+	return nil
+}
+
+func resolveIndexedFileID(file model.FileRecord) string {
+	if file.IndexedFileID != "" {
+		return file.IndexedFileID
+	}
+	return file.Hash
+}
+
+func (r *Repository) hasIndexedFile(indexedFileID string) (bool, error) {
+	hits, err := r.graph.NodesByProperty("indexed_file_id", []byte(indexedFileID))
+	if err != nil {
+		return false, err
+	}
+	return len(hits) > 0, nil
+}
+
+func (r *Repository) ensureHierarchyNodes(file model.FileRecord) (graphstore.NodeID, graphstore.NodeID, error) {
+	diskNode, err := r.upsertNode(
+		"disk_image_id",
+		file.DiskImageID,
+		[]graphstore.NodeType{nodeTypeDiskImage},
+		map[string]any{"disk_image_id": file.DiskImageID, "name": file.DiskImageName},
+	)
+	if err != nil {
+		return 0, 0, err
+	}
+
+	partitionNode, err := r.upsertNode(
+		"partition_id",
+		file.PartitionID,
+		[]graphstore.NodeType{nodeTypePartition},
+		map[string]any{"partition_id": file.PartitionID, "name": file.PartitionName, "disk_image_id": file.DiskImageID},
+	)
+	if err != nil {
+		return 0, 0, err
+	}
+
+	return diskNode, partitionNode, nil
+}
+
+func (r *Repository) createIndexedFileNode(file model.FileRecord, indexedFileID string, artefactCount int) (graphstore.NodeID, error) {
+	nodeType := file.EffectiveNodeType()
+	props := map[string]any{
+		"indexed_file_id": indexedFileID,
+		"hash":            file.Hash,
+		"name":            file.Name,
+		"path":            file.Path,
+		"size":            file.Size,
+		"artefact_count":  artefactCount,
+		"partition_id":    file.PartitionID,
+		"disk_image_id":   file.DiskImageID,
+		"file_type":       file.FileType,
+		"node_type":       string(nodeType),
+	}
+	appendFileTypeMetadata(props, file, nodeType)
+
+	nodeID, err := r.graph.AddNode(&graphstore.Node{
+		Labels:     []graphstore.NodeType{nodeTypeIndexedFile},
+		Properties: mustPack(props),
+	})
+	if err != nil {
+		return 0, err
+	}
+
+	indexProps := map[string][]byte{
+		"indexed_file_id": []byte(indexedFileID),
+		"evidence_hash":   []byte(file.Hash),
+		"name":            []byte(file.Name),
+		"path":            []byte(file.Path),
+		"node_type":       []byte(string(nodeType)),
+		"file_type":       []byte(file.FileType),
+		"partition_id":    []byte(file.PartitionID),
+		"disk_image_id":   []byte(file.DiskImageID),
+	}
+	if err := r.graph.IndexNodeProperties(nodeID, indexProps); err != nil {
+		return 0, err
+	}
+
+	return nodeID, nil
+}
+
+func (r *Repository) storeArtefactNodes(indexedFileNode graphstore.NodeID, evidenceHash string, artefacts []model.Artefact) (map[string][]graphstore.NodeID, error) {
+	artefactNodesByKey := make(map[string][]graphstore.NodeID, len(artefacts))
+
+	for _, artefact := range artefacts {
+		artefactNode, err := r.createArtefactNode(evidenceHash, artefact)
+		if err != nil {
+			return nil, err
+		}
+
+		lookupKey := relationNodeLookupKey(artefact.Kind, artefact.Value)
+		artefactNodesByKey[lookupKey] = append(artefactNodesByKey[lookupKey], artefactNode)
+
+		if err := r.createContainsEdge(indexedFileNode, artefactNode, artefact); err != nil {
+			return nil, err
+		}
+		if err := r.ensureMicroArtefactHasExactlyOneFileParent(indexedFileNode, artefactNode); err != nil {
+			return nil, err
+		}
+	}
+
+	return artefactNodesByKey, nil
+}
+
+func (r *Repository) createArtefactNode(evidenceHash string, artefact model.Artefact) (graphstore.NodeID, error) {
+	nodeID, err := r.graph.AddNode(&graphstore.Node{
+		Labels: []graphstore.NodeType{graphstore.NodeTypeMicroArtefact},
+		Properties: mustPack(map[string]any{
+			"kind":          artefact.Kind,
+			"detector":      artefact.Detector,
+			"value":         artefact.Value,
+			"summary":       artefact.Summary,
+			"confidence":    artefact.Confidence,
+			"start":         artefact.Span.Start,
+			"end":           artefact.Span.End,
+			"attributes":    artefact.Attributes,
+			"evidence_hash": evidenceHash,
+		}),
+	})
+	if err != nil {
+		return 0, err
+	}
+
+	index := map[string][]byte{
+		"artefact_kind":       []byte(artefact.Kind),
+		"artefact_detector":   []byte(artefact.Detector),
+		"artefact_value_hash": []byte(hashText(artefact.Value)),
+		"evidence_hash":       []byte(evidenceHash),
+	}
+	if artefact.Value != "" && len(artefact.Value) <= 256 {
+		index["artefact_value"] = []byte(artefact.Value)
+	}
+	if err := r.graph.IndexNodeProperties(nodeID, index); err != nil {
+		return 0, err
+	}
+
+	return nodeID, nil
+}
+
+func (r *Repository) createContainsEdge(indexedFileNode, artefactNode graphstore.NodeID, artefact model.Artefact) error {
+	edgeID, err := r.graph.AddEdge(&graphstore.Edge{
+		Src:    indexedFileNode,
+		Dst:    artefactNode,
+		Labels: []graphstore.EdgeType{graphstore.EdgeTypeContains},
+		Properties: mustPack(map[string]any{
+			"detector": artefact.Detector,
+			"start":    artefact.Span.Start,
+			"end":      artefact.Span.End,
+		}),
+	})
+	if err != nil {
+		return err
+	}
+
+	return r.graph.IndexEdgeProperties(edgeID, map[string][]byte{
+		"contains_kind": []byte(artefact.Kind),
+		"start":         []byte(strconv.FormatInt(artefact.Span.Start, 10)),
+		"end":           []byte(strconv.FormatInt(artefact.Span.End, 10)),
+	})
+}
+
+func appendFileTypeMetadata(indexedProps map[string]any, file model.FileRecord, nodeType model.FileNodeType) {
+	switch nodeType {
+	case model.FileNodeTypeELF:
+		if file.ELFMeta != nil {
+			indexedProps["elf_metadata"] = file.ELFMeta
+		}
+	case model.FileNodeTypePE:
+		if file.PEMeta != nil {
+			indexedProps["pe_metadata"] = file.PEMeta
+		}
+	case model.FileNodeTypePDF:
+		if file.PDFMeta != nil {
+			indexedProps["pdf_metadata"] = file.PDFMeta
+		}
+	case model.FileNodeTypeTXT:
+		if file.TXTMeta != nil {
+			indexedProps["txt_metadata"] = file.TXTMeta
+		}
+	default:
+		if file.GenericMeta != nil {
+			indexedProps["generic_metadata"] = file.GenericMeta
+		}
+	}
 }
 
 func (r *Repository) ExportInteractiveHTML(outPath string) error {
@@ -427,6 +523,30 @@ func (r *Repository) ensureContains(src, dst graphstore.NodeID) error {
 	}
 	_, err = r.graph.AddEdge(&graphstore.Edge{Src: src, Dst: dst, Labels: []graphstore.EdgeType{graphstore.EdgeTypeContains}})
 	return err
+}
+
+func (r *Repository) ensureMicroArtefactHasExactlyOneFileParent(fileNodeID, artefactNodeID graphstore.NodeID) error {
+	parents, err := r.graph.Neighbours(artefactNodeID, graphstore.DirectionInbound, []graphstore.EdgeType{graphstore.EdgeTypeContains})
+	if err != nil {
+		return err
+	}
+
+	fileParentCount := 0
+	for _, parent := range parents {
+		if parent.Node == nil || !parent.Node.HasLabel(nodeTypeIndexedFile) {
+			continue
+		}
+		fileParentCount++
+		if parent.Node.ID != fileNodeID {
+			return fmt.Errorf("micro-artefact node %d is linked to unexpected file node %d (expected %d)", artefactNodeID, parent.Node.ID, fileNodeID)
+		}
+	}
+
+	if fileParentCount != 1 {
+		return fmt.Errorf("micro-artefact node %d must have exactly one file parent edge; found %d", artefactNodeID, fileParentCount)
+	}
+
+	return nil
 }
 
 func mustPack(value any) []byte {

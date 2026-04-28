@@ -21,6 +21,7 @@ const (
 type ParsedFile struct {
 	Kind    Kind
 	Content []byte
+	ELFMeta *model.ELFMetadata
 }
 
 func Parse(file model.FileRecord, content []byte) (ParsedFile, bool) {
@@ -51,11 +52,11 @@ func Parse(file model.FileRecord, content []byte) (ParsedFile, bool) {
 		}
 		return ParsedFile{Kind: kind, Content: parsed}, true
 	case KindELF:
-		parsed, ok := parseELFContent(content)
+		parsed, meta, ok := parseELFContent(content)
 		if !ok {
 			return ParsedFile{}, false
 		}
-		return ParsedFile{Kind: kind, Content: parsed}, true
+		return ParsedFile{Kind: kind, Content: parsed, ELFMeta: meta}, true
 	default:
 		return ParsedFile{}, false
 	}

@@ -8,6 +8,7 @@ import (
 
 	"github.com/aoiflux/graphene"
 	graphstore "github.com/aoiflux/graphene/store"
+	"github.com/vmihailenco/msgpack/v5"
 )
 
 type captureRepository struct {
@@ -116,6 +117,7 @@ func TestGrapheneRepositoryStoresNodesAndEdges(t *testing.T) {
 		Name:          "evidence.bin",
 		Path:          filepath.Join(root, "evidence.bin"),
 		Size:          128,
+		ELFMeta:       &ELFMetadata{Class: 64, SectionCount: 4, NamedSymbolCount: 3},
 		DiskImageID:   "disk-image-001",
 		DiskImageName: "evidence.E01",
 		PartitionID:   "partition-001",
@@ -191,10 +193,60 @@ func TestGrapheneRepositoryStoresNodesAndEdges(t *testing.T) {
 	if len(indexedHits) != 1 {
 		t.Fatalf("expected 1 indexed_file node hit, got %d", len(indexedHits))
 	}
+	indexedNode, err := graph.GetNode(indexedHits[0])
+	if err != nil {
+		t.Fatalf("GetNode indexed_file: %v", err)
+	}
+	props := map[string]any{}
+	if err := msgpack.Unmarshal(indexedNode.Properties, &props); err != nil {
+		t.Fatalf("msgpack.Unmarshal indexed node properties: %v", err)
+	}
+	metaRaw, ok := props["elf_metadata"]
+	if !ok {
+		t.Fatalf("expected indexed_file node to contain elf_metadata payload, got %#v", props)
+	}
+	metaMap, ok := metaRaw.(map[string]any)
+	if !ok {
+		t.Fatalf("expected elf_metadata to be map, got %T", metaRaw)
+	}
+	if gotClass := asInt(metaMap["Class"]); gotClass != 64 {
+		t.Fatalf("expected elf_metadata.Class=64, got %#v", metaMap)
+	}
 
 	if kindHits, err := graph.NodesByProperty("artefact_kind", []byte("url")); err != nil {
 		t.Fatalf("NodesByProperty artefact_kind: %v", err)
 	} else if len(kindHits) != 1 {
 		t.Fatalf("expected 1 url artefact hit, got %d", len(kindHits))
+	}
+}
+
+func asInt(value any) int {
+	switch num := value.(type) {
+	case int:
+		return num
+	case int8:
+		return int(num)
+	case int16:
+		return int(num)
+	case int32:
+		return int(num)
+	case int64:
+		return int(num)
+	case uint:
+		return int(num)
+	case uint8:
+		return int(num)
+	case uint16:
+		return int(num)
+	case uint32:
+		return int(num)
+	case uint64:
+		return int(num)
+	case float32:
+		return int(num)
+	case float64:
+		return int(num)
+	default:
+		return 0
 	}
 }

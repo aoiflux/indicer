@@ -40,24 +40,12 @@ func (SameIdentifierBuilder) Build(_ model.FileRecord, artefacts []model.Artefac
 			}
 			return members[i].Span.Start < members[j].Span.Start
 		})
-		for i := 0; i < len(members)-1; i++ {
-			for j := i + 1; j < len(members); j++ {
-				relations = append(relations, model.Relation{
-					FromKind:      members[i].Kind,
-					FromValue:     members[i].Value,
-					ToKind:        members[j].Kind,
-					ToValue:       members[j].Value,
-					RelationType:  method.RelationType,
-					Method:        method.ID,
-					Deterministic: method.Deterministic,
-					Confidence:    method.Confidence,
-					Evidence: []model.EvidenceField{
-						{FieldName: "artefact.value", Parser: members[i].Detector, RawValue: members[i].Value},
-						{FieldName: "artefact.value", Parser: members[j].Detector, RawValue: members[j].Value},
-					},
-				})
+		relations = appendPairwiseRelations(relations, members, method, func(from, to model.Artefact) []model.EvidenceField {
+			return []model.EvidenceField{
+				{FieldName: "artefact.value", Parser: from.Detector, RawValue: from.Value},
+				{FieldName: "artefact.value", Parser: to.Detector, RawValue: to.Value},
 			}
-		}
+		})
 	}
 	return relations
 }
@@ -83,23 +71,37 @@ func (TransactionPropagationBuilder) Build(_ model.FileRecord, artefacts []model
 		if len(members) < 2 {
 			continue
 		}
-		for i := 0; i < len(members)-1; i++ {
-			for j := i + 1; j < len(members); j++ {
-				relations = append(relations, model.Relation{
-					FromKind:      members[i].Kind,
-					FromValue:     members[i].Value,
-					ToKind:        members[j].Kind,
-					ToValue:       members[j].Value,
-					RelationType:  method.RelationType,
-					Method:        method.ID,
-					Deterministic: method.Deterministic,
-					Confidence:    method.Confidence,
-					Evidence: []model.EvidenceField{
-						{FieldName: "transaction_id", Parser: members[i].Detector, RawValue: txid},
-						{FieldName: "transaction_id", Parser: members[j].Detector, RawValue: txid},
-					},
-				})
+		relations = appendPairwiseRelations(relations, members, method, func(from, to model.Artefact) []model.EvidenceField {
+			return []model.EvidenceField{
+				{FieldName: "transaction_id", Parser: from.Detector, RawValue: txid},
+				{FieldName: "transaction_id", Parser: to.Detector, RawValue: txid},
 			}
+		})
+	}
+	return relations
+}
+
+func appendPairwiseRelations(
+	relations []model.Relation,
+	members []model.Artefact,
+	method Method,
+	evidenceBuilder func(from, to model.Artefact) []model.EvidenceField,
+) []model.Relation {
+	for i := 0; i < len(members)-1; i++ {
+		for j := i + 1; j < len(members); j++ {
+			from := members[i]
+			to := members[j]
+			relations = append(relations, model.Relation{
+				FromKind:      from.Kind,
+				FromValue:     from.Value,
+				ToKind:        to.Kind,
+				ToValue:       to.Value,
+				RelationType:  method.RelationType,
+				Method:        method.ID,
+				Deterministic: method.Deterministic,
+				Confidence:    method.Confidence,
+				Evidence:      evidenceBuilder(from, to),
+			})
 		}
 	}
 	return relations

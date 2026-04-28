@@ -61,7 +61,7 @@ func dedupe(relations []model.Relation) []model.Relation {
 	seen := make(map[string]struct{}, len(relations))
 	out := make([]model.Relation, 0, len(relations))
 	for _, relation := range relations {
-		key := relation.RelationType + "\x00" + relation.Method + "\x00" + relation.FromKind + "\x00" + relation.FromValue + "\x00" + relation.ToKind + "\x00" + relation.ToValue
+		key := relationDedupeKey(relation)
 		if _, exists := seen[key]; exists {
 			continue
 		}
@@ -69,4 +69,8 @@ func dedupe(relations []model.Relation) []model.Relation {
 		out = append(out, relation)
 	}
 	return out
+}
+
+func relationDedupeKey(relation model.Relation) string {
+	return relation.RelationType + "\x00" + relation.Method + "\x00" + relation.FromKind + "\x00" + relation.FromValue + "\x00" + relation.ToKind + "\x00" + relation.ToValue
 }

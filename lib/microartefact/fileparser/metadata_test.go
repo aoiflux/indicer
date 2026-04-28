@@ -79,6 +79,47 @@ func TestBuildELFMetadataTextIncludesSectionsAndSymbols(t *testing.T) {
 	}
 }
 
+func TestExtractELFMetadataBuildsStructuredPayload(t *testing.T) {
+	parsed := &saferelf.Parser{
+		F: &saferelf.File{
+			ELFBin32: saferelf.ELFBin32{
+				Sections32: []*saferelf.ELF32Section{
+					{
+						SectionName: ".text",
+						Size:        4096,
+					},
+				},
+				Symbols32: make([]saferelf.ELF32SymbolTableEntry, 2),
+			},
+			ELFSymbols: saferelf.ELFSymbols{
+				NamedSymbols: []saferelf.Symbol{
+					{Name: "main", Value: 0x401000, Size: 128, Version: "GLIBC_2.2.5", Library: "libc.so.6"},
+				},
+			},
+		},
+	}
+
+	meta := extractELFMetadata(parsed)
+	if meta == nil {
+		t.Fatal("expected structured metadata, got nil")
+	}
+	if meta.Class != 32 {
+		t.Fatalf("expected class 32, got %d", meta.Class)
+	}
+	if meta.SectionCount != 1 {
+		t.Fatalf("expected section count 1, got %d", meta.SectionCount)
+	}
+	if meta.RawSymbolCount != 2 {
+		t.Fatalf("expected raw symbol count 2, got %d", meta.RawSymbolCount)
+	}
+	if len(meta.Sections) != 1 || meta.Sections[0].Name != ".text" {
+		t.Fatalf("expected .text section metadata, got %#v", meta.Sections)
+	}
+	if len(meta.NamedSymbols) != 1 || meta.NamedSymbols[0].Name != "main" {
+		t.Fatalf("expected named symbol metadata for main, got %#v", meta.NamedSymbols)
+	}
+}
+
 func TestCombineParsedPayloadAppendsMetadata(t *testing.T) {
 	combined := combineParsedPayload([]byte("token-one\n"), "__pe_metadata__\npe.section_count=1")
 	if !strings.Contains(string(combined), "token-one") {

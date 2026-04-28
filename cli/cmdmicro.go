@@ -26,6 +26,17 @@ const microScanLimit = 4 << 20 // 4 MB
 // collected enough bytes for the scan window.
 var errScanLimitReached = errors.New("scan limit reached")
 
+type microEvidenceContext struct {
+	diskImageID   string
+	diskImageName string
+}
+
+type microPartitionContext struct {
+	microEvidenceContext
+	partitionID   string
+	partitionName string
+}
+
 // MicroArtefactCmd opens the DUES database and extracts micro-artefacts from
 // every indexed file that has been stored in the hierarchy:
 //
@@ -96,11 +107,13 @@ func processAllIndexedFiles(db *badger.DB, service *microartefact.Service, repo 
 			}
 
 			eviHash := bytes.TrimPrefix(k, eviPrefix)
-			eviHashB64 := base64.StdEncoding.EncodeToString(eviHash)
-			eviName := arbitrarySetKey(evidata.Names)
+			evidenceCtx := microEvidenceContext{
+				diskImageID:   base64.StdEncoding.EncodeToString(eviHash),
+				diskImageName: arbitrarySetKey(evidata.Names),
+			}
 
 			for phashB64 := range evidata.InternalObjects {
-				if err := processPartition(txn, db, service, repo, force, eviHashB64, eviName, phashB64); err != nil {
+				if err := processPartition(txn, db, service, repo, force, evidenceCtx, phashB64); err != nil {
 					return err
 				}
 			}
@@ -111,8 +124,8 @@ func processAllIndexedFiles(db *badger.DB, service *microartefact.Service, repo 
 
 // processPartition retrieves a partition file from the store and processes each
 // indexed file it contains.
-func processPartition(txn *badger.Txn, db *badger.DB, service *microartefact.Service, repo *microartefact.GrapheneRepository, force bool, eviHashB64, eviName, phashB64 string) error {
-	rawPhash, err := base64.StdEncoding.DecodeString(phashB64)
+func processPartition(txn *badger.Txn, db *badger.DB, service *microartefact.Service, repo *microartefact.GrapheneRepository, force bool, evidenceCtx microEvidenceContext, partitionHashB64 string) error {
+	rawPhash, err := base64.StdEncoding.DecodeString(partitionHashB64)
 	if err != nil {
 		return fmt.Errorf("partition hash decode: %w", err)
 	}
@@ -120,7 +133,7 @@ func processPartition(txn *badger.Txn, db *badger.DB, service *microartefact.Ser
 
 	item, err := txn.Get(pid)
 	if err != nil {
-		return fmt.Errorf("get partition %s: %w", phashB64, err)
+		return fmt.Errorf("get partition %s: %w", partitionHashB64, err)
 	}
 	v, err := item.ValueCopy(nil)
 	if err != nil {
@@ -135,10 +148,14 @@ func processPartition(txn *badger.Txn, db *badger.DB, service *microartefact.Ser
 	if err := msgpack.Unmarshal(v, &pdata); err != nil {
 		return err
 	}
-	partiName := arbitrarySetKey(pdata.Names)
+	partitionCtx := microPartitionContext{
+		microEvidenceContext: evidenceCtx,
+		partitionID:          partitionHashB64,
+		partitionName:        arbitrarySetKey(pdata.Names),
+	}
 
 	for ihashB64 := range pdata.InternalObjects {
-		if err := processIndexedFile(db, service, repo, force, eviHashB64, eviName, phashB64, partiName, ihashB64); err != nil {
+		if err := processIndexedFile(db, service, repo, force, partitionCtx, ihashB64); err != nil {
 			// Non-fatal: log and continue so one bad file does not abort the run.
 			fmt.Printf("warning: skipping indexed file %s: %v\n", ihashB64, err)
 		}
@@ -148,19 +165,19 @@ func processPartition(txn *badger.Txn, db *badger.DB, service *microartefact.Ser
 
 // processIndexedFile reads one indexed file from the store and runs micro-artefact
 // detection on its content, using the real hierarchy IDs for the graph record.
-func processIndexedFile(db *badger.DB, service *microartefact.Service, repo *microartefact.GrapheneRepository, force bool, eviHashB64, eviName, partiHashB64, partiName, ihashB64 string) error {
+func processIndexedFile(db *badger.DB, service *microartefact.Service, repo *microartefact.GrapheneRepository, force bool, partitionCtx microPartitionContext, indexedFileHashB64 string) error {
 	if !force {
-		exists, err := repo.HasIndexedFile(ihashB64)
+		exists, err := repo.HasIndexedFile(indexedFileHashB64)
 		if err != nil {
 			return fmt.Errorf("check indexed file extraction status: %w", err)
 		}
 		if exists {
-			fmt.Printf("Skipping already-extracted indexed file: %s\n", ihashB64)
+			fmt.Printf("Skipping already-extracted indexed file: %s\n", indexedFileHashB64)
 			return nil
 		}
 	}
 
-	rawIhash, err := base64.StdEncoding.DecodeString(ihashB64)
+	rawIhash, err := base64.StdEncoding.DecodeString(indexedFileHashB64)
 	if err != nil {
 		return fmt.Errorf("indexed file hash decode: %w", err)
 	}
@@ -174,16 +191,16 @@ func processIndexedFile(db *badger.DB, service *microartefact.Service, repo *mic
 	name, path := resolveIndexedFileName(ifile.Names)
 
 	record := microartefact.FileRecord{
-		Hash:          ihashB64,
+		Hash:          indexedFileHashB64,
 		Name:          name,
 		Path:          path,
 		Size:          ifile.Size,
 		FileType:      ifile.IndexedType,
-		DiskImageID:   eviHashB64,
-		DiskImageName: eviName,
-		PartitionID:   partiHashB64,
-		PartitionName: partiName,
-		IndexedFileID: ihashB64,
+		DiskImageID:   partitionCtx.diskImageID,
+		DiskImageName: partitionCtx.diskImageName,
+		PartitionID:   partitionCtx.partitionID,
+		PartitionName: partitionCtx.partitionName,
+		IndexedFileID: indexedFileHashB64,
 	}
 
 	content, err := readIndexedFileContent(iid, db)
@@ -377,8 +394,8 @@ func cliKindIcon(kind string) string {
 	}
 }
 
-func cliGroupByKind(arts []*microartefact.ArtefactNode) map[string][]*microartefact.ArtefactNode {
-	m := make(map[string][]*microartefact.ArtefactNode)
+func cliGroupByKind(arts []*microartefact.MicroArtefactNode) map[string][]*microartefact.MicroArtefactNode {
+	m := make(map[string][]*microartefact.MicroArtefactNode)
 	for _, a := range arts {
 		m[a.Kind] = append(m[a.Kind], a)
 	}
@@ -392,7 +409,7 @@ var cliKindPriority = map[string]int{
 	"log_line": 12,
 }
 
-func cliSortedKinds(m map[string][]*microartefact.ArtefactNode) []string {
+func cliSortedKinds(m map[string][]*microartefact.MicroArtefactNode) []string {
 	keys := make([]string, 0, len(m))
 	for k := range m {
 		keys = append(keys, k)

@@ -53,7 +53,7 @@ func buildMicroPartitionData(partitions []*microartefact.PartitionNode) []map[st
 		pData := map[string]interface{}{
 			"id":    p.ID,
 			"name":  p.Name,
-			"files": buildMicroIndexedFileData(p.Files),
+			"files": buildMicroFileData(p.Files),
 		}
 		partitionList = append(partitionList, pData)
 	}
@@ -61,7 +61,7 @@ func buildMicroPartitionData(partitions []*microartefact.PartitionNode) []map[st
 	return partitionList
 }
 
-func buildMicroIndexedFileData(files []*microartefact.IndexedFileNode) []map[string]interface{} {
+func buildMicroFileData(files []*microartefact.FileNode) []map[string]interface{} {
 	var fileList []map[string]interface{}
 
 	for _, f := range files {
@@ -79,7 +79,7 @@ func buildMicroIndexedFileData(files []*microartefact.IndexedFileNode) []map[str
 	return fileList
 }
 
-func buildMicroArtefactData(artefacts []*microartefact.ArtefactNode) []map[string]interface{} {
+func buildMicroArtefactData(artefacts []*microartefact.MicroArtefactNode) []map[string]interface{} {
 	var artefactList []map[string]interface{}
 
 	for _, a := range artefacts {

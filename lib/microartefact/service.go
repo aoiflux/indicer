@@ -8,7 +8,6 @@ import (
 
 	detectionpkg "indicer/lib/microartefact/detection"
 	detectorpkg "indicer/lib/microartefact/detectors"
-	"indicer/lib/microartefact/model"
 	parsingpkg "indicer/lib/microartefact/parsing"
 	relationpkg "indicer/lib/microartefact/relation"
 	reppkg "indicer/lib/microartefact/repository"
@@ -62,34 +61,49 @@ func (s *Service) Extract(file FileRecord, content []byte) ([]Artefact, error) {
 }
 
 func (s *Service) ExtractWithRelations(file FileRecord, content []byte) ([]Artefact, []Relation, error) {
+	artefacts, relations, _, err := s.extractWithParsed(file, content)
+	return artefacts, relations, err
+}
+
+func (s *Service) extractWithParsed(file FileRecord, content []byte) ([]Artefact, []Relation, parsingpkg.Result, error) {
 	content = s.scanWindow(content)
 
 	parsed, ok := s.parser.Parse(file, content)
 	if !ok {
-		return nil, nil, nil
+		return nil, nil, parsingpkg.Result{}, nil
 	}
 
 	artefacts, err := s.detectionEngine.Detect(file, parsed)
 	if err != nil {
-		return nil, nil, err
+		return nil, nil, parsingpkg.Result{}, err
 	}
 
 	artefacts = dedupeArtefacts(artefacts)
 	sortArtefactsByOffset(artefacts)
 
 	relations := s.relationEngine.Relate(file, artefacts)
-	return artefacts, relations, nil
+	return artefacts, relations, parsed, nil
 }
 
 func (s *Service) Process(file FileRecord, content []byte) error {
-	artefacts, relations, err := s.ExtractWithRelations(file, content)
+	artefacts, relations, parsed, err := s.extractWithParsed(file, content)
 	if err != nil {
 		return err
 	}
 	if len(artefacts) == 0 {
 		return nil
 	}
+	applyParsedMetadata(&file, parsed)
 	return s.repository.Store(file, artefacts, relations)
+}
+
+func applyParsedMetadata(file *FileRecord, parsed parsingpkg.Result) {
+	if file == nil {
+		return
+	}
+	if parsed.ELFMeta != nil {
+		file.ELFMeta = parsed.ELFMeta
+	}
 }
 
 func (s *Service) scanWindow(content []byte) []byte {
@@ -129,19 +143,6 @@ func artefactFingerprint(artefact Artefact) string {
 		strconv.FormatInt(artefact.Span.Start, 10),
 		strconv.FormatInt(artefact.Span.End, 10),
 		artefact.Value,
-	)
-}
-
-func relationFingerprint(relation model.Relation) string {
-	return hashText(
-		relation.RelationType,
-		relation.Method,
-		strconv.FormatBool(relation.Deterministic),
-		strconv.FormatFloat(float64(relation.Confidence), 'f', 6, 32),
-		relation.FromKind,
-		relation.FromValue,
-		relation.ToKind,
-		relation.ToValue,
 	)
 }
 

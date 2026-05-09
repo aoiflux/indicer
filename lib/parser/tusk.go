@@ -36,6 +36,7 @@ type tuskFile struct {
 	Filename     string         `json:"filename"`
 	Type         string         `json:"type"`
 	IsFragmented bool           `json:"is_fragmented"`
+	IsDeleted    bool           `json:"is_deleted"`
 	Size         int64          `json:"size"`
 	Fragments    []tuskFragment `json:"fragments"`
 }

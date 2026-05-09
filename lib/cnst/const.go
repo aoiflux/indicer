@@ -176,10 +176,30 @@ func GetMaxThreadCount() int {
 }
 func GetCacheLimit() (int64, error) {
 	if MEMOPT {
-		return 64 * KB, nil
+		return 64 * MB, nil
 	}
+
+	const (
+		cacheFallback = 256 * MB
+		cacheMin      = 64 * MB
+		cacheMax      = 8 * GB
+	)
+
 	vmemstat, err := mem.VirtualMemory()
-	return int64(vmemstat.Available / 4), err
+	if err != nil {
+		// Reliability first: use a sane fallback when memory probing fails.
+		return cacheFallback, nil
+	}
+
+	cacheLimit := int64(vmemstat.Available / 4)
+	if cacheLimit < cacheMin {
+		cacheLimit = cacheMin
+	}
+	if cacheLimit > cacheMax {
+		cacheLimit = cacheMax
+	}
+
+	return cacheLimit, nil
 }
 func GetMaxBatchCount() (int, error) {
 	if MEMOPT {

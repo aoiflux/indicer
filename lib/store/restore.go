@@ -116,14 +116,17 @@ func getEvidenceFileMeta(fid []byte, db *badger.DB) (structs.FileMeta, error) {
 
 func restoreData(meta structs.FileMeta, dst *os.File, db *badger.DB) error {
 	// Configure cache size based on available memory (25% of available, max 4GB)
-	if cacheSize, err := cnst.GetCacheLimit(); err == nil {
-		// GetCacheLimit returns 25% of available memory
-		maxCache := int64(4 * cnst.GB)
-		if cacheSize > maxCache {
-			cacheSize = maxCache
-		}
-		fio.SetContainerReadCacheSize(cacheSize)
+	cacheSize, err := cnst.GetCacheLimit()
+	if err != nil {
+		cacheSize = 256 * cnst.MB
 	}
+
+	// GetCacheLimit returns a bounded fraction of available memory.
+	maxCache := int64(4 * cnst.GB)
+	if cacheSize > maxCache {
+		cacheSize = maxCache
+	}
+	fio.SetContainerReadCacheSize(cacheSize)
 
 	fio.EnableContainerReadCache()
 	defer fio.DisableContainerReadCache()

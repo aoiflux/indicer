@@ -21,12 +21,24 @@ import (
 func ConnectDB(datadir string, key []byte) (*badger.DB, error) {
 	cacheLimit, err := cnst.GetCacheLimit()
 	if err != nil {
-		return nil, err
+		cacheLimit = 256 * cnst.MB
+	}
+
+	// Treat cacheLimit as the total cache budget and split it between
+	// block/index caches so larger-memory machines still get large caches
+	// without accidentally allocating the same full budget twice.
+	blockCache := (cacheLimit * 3) / 4
+	indexCache := cacheLimit - blockCache
+	if blockCache < 64*cnst.MB {
+		blockCache = 64 * cnst.MB
+	}
+	if indexCache < 32*cnst.MB {
+		indexCache = 32 * cnst.MB
 	}
 
 	opts := badger.DefaultOptions(datadir)
 	opts = opts.WithLoggingLevel(badger.ERROR)
-	opts.IndexCacheSize = cacheLimit
+	opts.IndexCacheSize = indexCache
 	opts.SyncWrites = true
 	opts.NumGoroutines = cnst.GetMaxThreadCount()
 	if !cnst.QUICKOPT {
@@ -38,8 +50,8 @@ func ConnectDB(datadir string, key []byte) (*badger.DB, error) {
 	opts.CompactL0OnClose = true
 	opts.LmaxCompaction = true
 	opts.NumCompactors = opts.NumGoroutines
-	opts.BlockCacheSize = cacheLimit
-	opts.IndexCacheSize = cacheLimit
+	opts.BlockCacheSize = blockCache
+	opts.IndexCacheSize = indexCache
 	opts.ValueLogFileSize = 64 << 20
 	opts.ValueLogMaxEntries = uint32(opts.NumGoroutines)
 

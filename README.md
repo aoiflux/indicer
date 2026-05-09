@@ -8,9 +8,11 @@
 [![Version](https://img.shields.io/badge/version-0.38-green.svg)](https://github.com/aoiflux/indicer)
 [![License](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 
-DUES is a digital forensics data platform for ingesting, deduplicating, indexing, searching, restoring, and comparing large evidence sets.
+DUES is a digital forensics data platform for ingesting, deduplicating,
+indexing, searching, restoring, and comparing large evidence sets.
 
-Patent information: this software has led to two derivative inventions protected by patents 567877 and 556272 registered at the Indian Patent Office.
+Patent information: this software has led to two derivative inventions protected
+by patents 567877 and 556272 registered at the Indian Patent Office.
 
 ## Feature Highlights
 
@@ -19,7 +21,8 @@ Patent information: this software has led to two derivative inventions protected
 - Zstandard-backed compression.
 - Partition-aware indexing for supported images and filesystems.
 - Full-text search with report generation (`report.json`).
-- NeAR (near-duplicate analysis) for files inside (`near in`) and outside (`near out`) the DB.
+- NeAR (near-duplicate analysis) for files inside (`near in`) and outside
+  (`near out`) the DB.
 - Graph generation for similarity analysis (`graph.html`).
 - Container mode for blob packing (`--container`).
 - Hierarchical block index mode (`--hierarchical`, auto-enables container mode).
@@ -83,38 +86,66 @@ dues tui
 
 ## Global Flags
 
-| Flag | Short | Description | Default |
-|------|-------|-------------|---------|
-| `--dbpath` | `-d` | Database path | `~/.dues` |
-| `--password` | `-p` | Password for DB encryption | none |
-| `--chonksize` | `-c` | Chunk size in KB | `256` |
-| `--low` | `-l` | Low-resource mode | `false` |
-| `--quick` | `-q` | Throughput-first mode (less protection/compression) | `false` |
-| `--container` | `-x` | Container blob storage mode | `false` |
-| `--hierarchical` | `-i` | Hierarchical block index mode | `false` |
+| Flag             | Short | Description                                         | Default   |
+| ---------------- | ----- | --------------------------------------------------- | --------- |
+| `--dbpath`       | `-d`  | Database path                                       | `~/.dues` |
+| `--password`     | `-p`  | Password for DB encryption                          | none      |
+| `--chonksize`    | `-c`  | Chunk size in KB                                    | `256`     |
+| `--low`          | `-l`  | Low-resource mode                                   | `false`   |
+| `--quick`        | `-q`  | Throughput-first mode (less protection/compression) | `false`   |
+| `--container`    | `-x`  | Container blob storage mode                         | `false`   |
+| `--hierarchical` | `-i`  | Hierarchical block index mode                       | `false`   |
 
-If `--hierarchical` is set without `--container`, DUES enables container mode automatically.
+If `--hierarchical` is set without `--container`, DUES enables container mode
+automatically.
+
+## Memory and Cache Tuning
+
+High RAM usage is often cache-driven and expected in throughput-first operation.
+With large datasets (for example, ~100 GB on disk), seeing multi-GB process
+memory can be normal when caches are intentionally kept warm.
+
+Quick guidance:
+
+- Use default mode for speed on high-memory hosts.
+- Use `--low` on constrained hosts to reduce worker and cache pressure.
+- During restore, container read cache improves repeated-read performance and is
+  bounded.
+
+Current cache policy summary:
+
+- Badger cache budget targets `25%` of available RAM.
+- Budget is bounded (`64 MB` minimum, `8 GB` maximum) with fallback (`256 MB`)
+  if memory probing fails.
+- Badger budget is split by role (block cache `75%`, index cache `25%`) to avoid
+  double budgeting.
+- Restore container cache uses the same baseline and is capped at `4 GB`.
+
+For detailed rationale and implementation notes, see:
+
+- [Container Mode LLD](CONTAINER_MODE_LLD.md)
+- [Container Manager (Current Implementation)](CONTAINER_MANAGER_CURRENT.md)
 
 ## Command Flags
 
 ### store
 
-| Flag | Short | Description | Default |
-|------|-------|-------------|---------|
-| `--sync` | `-s` | Run indexer synchronously | `false` |
-| `--no-index` | `-n` | Skip indexing | `false` |
+| Flag         | Short | Description               | Default |
+| ------------ | ----- | ------------------------- | ------- |
+| `--sync`     | `-s`  | Run indexer synchronously | `false` |
+| `--no-index` | `-n`  | Skip indexing             | `false` |
 
 ### restore
 
-| Flag | Short | Description | Default |
-|------|-------|-------------|---------|
-| `--filepath` | `-f` | Output restore path | `restored` |
+| Flag         | Short | Description         | Default    |
+| ------------ | ----- | ------------------- | ---------- |
+| `--filepath` | `-f`  | Output restore path | `restored` |
 
 ### near in
 
-| Flag | Short | Description | Default |
-|------|-------|-------------|---------|
-| `--deep` | `-e` | Enable partial chunk matching | `false` |
+| Flag     | Short | Description                   | Default |
+| -------- | ----- | ----------------------------- | ------- |
+| `--deep` | `-e`  | Enable partial chunk matching | `false` |
 
 ## TUI (Bubble Tea v2)
 
@@ -124,7 +155,8 @@ DUES TUI now uses:
 - `charm.land/bubbles/v2`
 - `charm.land/lipgloss/v2`
 
-From the menu you can run Store, List, Search, Restore, NeAR, and Reset flows in one interactive session. See:
+From the menu you can run Store, List, Search, Restore, NeAR, and Reset flows in
+one interactive session. See:
 
 - [TUI Quickstart](TUI_QUICKSTART.md)
 - [TUI Implementation Notes](TUI_IMPLEMENTATION.md)

@@ -58,7 +58,7 @@ func IndexEXFAT(pfile structs.InputFile, idxChan chan error) {
 		iname := string(util.AppendToBytesSlice(pfile.GetEviFileHash(), cnst.DataSeperator, encodedPfileHash, cnst.DataSeperator, entry.GetName()))
 		istart := int64(exfatdata.GetClusterOffset(entry.GetEntryCluster()))
 		isize := int64(entry.GetSize())
-		err = registerIndexedRange(idxmap, pfile, iname, istart, isize)
+		err = registerIndexedRange(idxmap, pfile, iname, istart, isize, false)
 		if err != nil {
 			idxChan <- err
 			return

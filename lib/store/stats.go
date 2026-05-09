@@ -16,15 +16,20 @@ import (
 )
 
 type DBStats struct {
-	TotalFiles        int64
-	CompletedFiles    int64
-	TotalLogicalSize  int64
-	TotalPartitions   int64
-	TotalIndexedFiles int64
-	UniqueChunks      int64
-	TotalChunkRefs    int64
-	SharedChunks      int64 // chunk positions referenced by more than 1 file
-	OnDiskBytes       int64
+	TotalFiles             int64
+	CompletedFiles         int64
+	TotalLogicalSize       int64
+	TotalPartitions        int64
+	TotalIndexedFiles      int64
+	TotalIndexedNames      int64
+	DeletedIndexedFiles    int64
+	FragmentedIndexedFiles int64
+	DeletedIndexedNames    int64
+	FragmentedIndexedNames int64
+	UniqueChunks           int64
+	TotalChunkRefs         int64
+	SharedChunks           int64 // chunk positions referenced by more than 1 file
+	OnDiskBytes            int64
 }
 
 func Stats(db *badger.DB) error {
@@ -84,11 +89,51 @@ func gatherStats(db *badger.DB) (*DBStats, error) {
 		}
 		it.Close()
 
-		// --- Indexed files (keys only) ---
+		// --- Indexed files (values for metadata-aware stats) ---
 		idxPrefix := []byte(cnst.IdxFileNamespace)
-		it = txn.NewIterator(keyOpts)
+		it = txn.NewIterator(valOpts)
 		for it.Seek(idxPrefix); it.ValidForPrefix(idxPrefix); it.Next() {
+			v, err := it.Item().ValueCopy(nil)
+			if err != nil {
+				it.Close()
+				return err
+			}
+			if dec, err := cnst.DECODER.DecodeAll(v, nil); err == nil {
+				v = dec
+			}
+
+			var ifile structs.IndexedFile
+			if err := msgpack.Unmarshal(v, &ifile); err != nil {
+				it.Close()
+				return err
+			}
+
 			s.TotalIndexedFiles++
+			s.TotalIndexedNames += int64(len(ifile.Names))
+
+			objDeleted := ifile.IsDeleted
+			var objFragmented bool
+			for name := range ifile.Names {
+				meta, ok := ifile.NameMeta[name]
+				if !ok {
+					meta = structs.IndexedNameMeta{IsDeleted: ifile.IsDeleted}
+				}
+				if meta.IsDeleted {
+					s.DeletedIndexedNames++
+					objDeleted = true
+				}
+				if meta.IsFragmented {
+					s.FragmentedIndexedNames++
+					objFragmented = true
+				}
+			}
+
+			if objDeleted {
+				s.DeletedIndexedFiles++
+			}
+			if objFragmented {
+				s.FragmentedIndexedFiles++
+			}
 		}
 		it.Close()
 
@@ -225,6 +270,29 @@ func printStats(s *DBStats) {
 
 	statRow("Partition files", humanize.Comma(s.TotalPartitions), val)
 	statRow("Indexed FS objects", humanize.Comma(s.TotalIndexedFiles), val)
+	statRow("Indexed names", humanize.Comma(s.TotalIndexedNames), val)
+
+	if s.TotalIndexedFiles > 0 {
+		deletedPct := float64(s.DeletedIndexedFiles) / float64(s.TotalIndexedFiles) * 100
+		fragmentedPct := float64(s.FragmentedIndexedFiles) / float64(s.TotalIndexedFiles) * 100
+		statRow("Deleted indexed objects", fmt.Sprintf("%s (%.1f%%)", humanize.Comma(s.DeletedIndexedFiles), deletedPct), val)
+		if s.FragmentedIndexedFiles > 0 {
+			statRow("Fragmented indexed objects", fmt.Sprintf("%s (%.1f%%)", humanize.Comma(s.FragmentedIndexedFiles), fragmentedPct), warn)
+		} else {
+			statRow("Fragmented indexed objects", "0 (currently skipped by parser)", dim)
+		}
+	}
+
+	if s.TotalIndexedNames > 0 {
+		deletedNamePct := float64(s.DeletedIndexedNames) / float64(s.TotalIndexedNames) * 100
+		fragmentedNamePct := float64(s.FragmentedIndexedNames) / float64(s.TotalIndexedNames) * 100
+		statRow("Deleted indexed names", fmt.Sprintf("%s (%.1f%%)", humanize.Comma(s.DeletedIndexedNames), deletedNamePct), val)
+		if s.FragmentedIndexedNames > 0 {
+			statRow("Fragmented indexed names", fmt.Sprintf("%s (%.1f%%)", humanize.Comma(s.FragmentedIndexedNames), fragmentedNamePct), warn)
+		} else {
+			statRow("Fragmented indexed names", "0 (currently skipped by parser)", dim)
+		}
+	}
 
 	// ── STORAGE ────────────────────────────────────────────────────────────
 	fmt.Println()

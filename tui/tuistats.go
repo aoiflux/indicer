@@ -189,6 +189,29 @@ func (m StatsModel) renderStats() string {
 	lines = append(lines, sep)
 	lines = append(lines, statRow("  Partition files", humanize.Comma(s.TotalPartitions), statValStyle))
 	lines = append(lines, statRow("  Indexed FS objects", humanize.Comma(s.TotalIndexedFiles), statValStyle))
+	lines = append(lines, statRow("  Indexed names", humanize.Comma(s.TotalIndexedNames), statValStyle))
+
+	if s.TotalIndexedFiles > 0 {
+		deletedPct := float64(s.DeletedIndexedFiles) / float64(s.TotalIndexedFiles) * 100
+		fragmentedPct := float64(s.FragmentedIndexedFiles) / float64(s.TotalIndexedFiles) * 100
+		lines = append(lines, statRow("  Deleted indexed objects", fmt.Sprintf("%s (%.1f%%)", humanize.Comma(s.DeletedIndexedFiles), deletedPct), statValStyle))
+		if s.FragmentedIndexedFiles > 0 {
+			lines = append(lines, statRow("  Fragmented indexed objects", fmt.Sprintf("%s (%.1f%%)", humanize.Comma(s.FragmentedIndexedFiles), fragmentedPct), lipgloss.NewStyle().Foreground(lipgloss.Color("196")).Bold(true)))
+		} else {
+			lines = append(lines, statRow("  Fragmented indexed objects", "0 (currently skipped by parser)", statDimStyle))
+		}
+	}
+
+	if s.TotalIndexedNames > 0 {
+		deletedNamePct := float64(s.DeletedIndexedNames) / float64(s.TotalIndexedNames) * 100
+		fragmentedNamePct := float64(s.FragmentedIndexedNames) / float64(s.TotalIndexedNames) * 100
+		lines = append(lines, statRow("  Deleted indexed names", fmt.Sprintf("%s (%.1f%%)", humanize.Comma(s.DeletedIndexedNames), deletedNamePct), statValStyle))
+		if s.FragmentedIndexedNames > 0 {
+			lines = append(lines, statRow("  Fragmented indexed names", fmt.Sprintf("%s (%.1f%%)", humanize.Comma(s.FragmentedIndexedNames), fragmentedNamePct), lipgloss.NewStyle().Foreground(lipgloss.Color("196")).Bold(true)))
+		} else {
+			lines = append(lines, statRow("  Fragmented indexed names", "0 (currently skipped by parser)", statDimStyle))
+		}
+	}
 
 	lines = append(lines, "")
 

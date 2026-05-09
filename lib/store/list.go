@@ -172,23 +172,47 @@ func buildIndexedFileData(ihash string, txn *badger.Txn) (map[string]interface{}
 		return nil, err
 	}
 
-	// Clean up names
-	for i := range idata.Names {
-		if !strings.Contains(i, cnst.DataSeperator) {
-			continue
+	cleanedNames := make(map[string]struct{}, len(idata.Names))
+	cleanedMeta := make(map[string]structs.IndexedNameMeta, len(idata.Names))
+	for rawName := range idata.Names {
+		name := rawName
+		if strings.Contains(rawName, cnst.DataSeperator) {
+			parts := strings.Split(rawName, cnst.DataSeperator)
+			if len(parts) >= 3 {
+				name = parts[2]
+			}
 		}
-		delete(idata.Names, i)
-		name := strings.Split(i, cnst.DataSeperator)[2]
-		idata.Names[name] = struct{}{}
+
+		cleanedNames[name] = struct{}{}
+
+		meta := structs.IndexedNameMeta{IsDeleted: idata.IsDeleted}
+		if rawMeta, ok := idata.NameMeta[rawName]; ok {
+			meta = rawMeta
+		}
+		existing := cleanedMeta[name]
+		existing.IsDeleted = existing.IsDeleted || meta.IsDeleted
+		cleanedMeta[name] = existing
+	}
+
+	filesDetailed := make([]map[string]interface{}, 0, len(cleanedNames))
+	for name := range cleanedNames {
+		meta := cleanedMeta[name]
+		filesDetailed = append(filesDetailed, map[string]interface{}{
+			"name":         name,
+			"isDeleted":    meta.IsDeleted,
+			"isFragmented": meta.IsFragmented,
+		})
 	}
 
 	ifileData := map[string]interface{}{
-		"hash":      ihash,
-		"type":      idata.IndexedType,
-		"size":      idata.Size,
-		"start":     idata.Start,
-		"files":     getMapKeys(idata.Names),
-		"fileCount": len(idata.Names),
+		"hash":          ihash,
+		"type":          idata.IndexedType,
+		"size":          idata.Size,
+		"start":         idata.Start,
+		"isDeleted":     idata.IsDeleted,
+		"files":         getMapKeys(cleanedNames),
+		"fileCount":     len(cleanedNames),
+		"filesDetailed": filesDetailed,
 	}
 
 	return ifileData, nil

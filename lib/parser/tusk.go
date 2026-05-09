@@ -81,8 +81,10 @@ func (r *tuskResult) flatLayout() []structs.PartitionFile {
 }
 
 // IndexFilesystem indexes all non-fragmented files described in the JSON
-// output produced by libtusk_analyze. It mirrors IndexEXFAT but works from
-// the tusk JSON instead of reading the filesystem directly.
+// output produced by libtusk_analyze. Deleted files are currently included
+// in indexing unless separately filtered by upstream data.
+// It mirrors IndexEXFAT but works from the tusk JSON instead of reading the
+// filesystem directly.
 func IndexFilesystem(jsonOutput string, pfile structs.InputFile, idxChan chan error) {
 	var result tuskResult
 	if err := json.Unmarshal([]byte(jsonOutput), &result); err != nil {
@@ -118,6 +120,9 @@ func IndexFilesystem(jsonOutput string, pfile structs.InputFile, idxChan chan er
 			if n := countFragmented(p.Files); n > 0 {
 				report.warning(fmt.Sprintf("partition %d", i+1), fmt.Sprintf("%d fragmented file(s) skipped (not supported yet)", n))
 			}
+			if n := countDeleted(p.Files); n > 0 {
+				report.info(fmt.Sprintf("partition %d", i+1), fmt.Sprintf("%d deleted file(s) currently indexed", n))
+			}
 			buildIdxMap(p.Files, idxmap, pfile, encodedPfileHash, idxChan)
 			break
 		}
@@ -135,6 +140,9 @@ func IndexFilesystem(jsonOutput string, pfile structs.InputFile, idxChan chan er
 		report.info("filesystem", fsType)
 		if n := countFragmented(result.Files); n > 0 {
 			report.warning("filesystem", fmt.Sprintf("%d fragmented file(s) skipped (not supported yet)", n))
+		}
+		if n := countDeleted(result.Files); n > 0 {
+			report.info("filesystem", fmt.Sprintf("%d deleted file(s) currently indexed", n))
 		}
 		buildIdxMap(result.Files, idxmap, pfile, encodedPfileHash, idxChan)
 	}

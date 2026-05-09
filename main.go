@@ -380,6 +380,7 @@ func printStatsHelp() {
 	printHelpSection("Output includes")
 	fmt.Println("  Total / completed evidence files")
 	fmt.Println("  Total partitions and indexed files")
+	fmt.Println("  Indexed deleted/fragmented stats (fragmented is 0 until fragmented ingestion is enabled)")
 	fmt.Println("  Total logical size (sum of all stored file sizes)")
 	fmt.Println("  Unique chunks vs total chunk references")
 	fmt.Println("  Shared chunks (referenced by more than one file)")

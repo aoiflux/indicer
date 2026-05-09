@@ -23,9 +23,58 @@ func countFragmented(files []tuskFile) int {
 	return n
 }
 
+func countDeleted(files []tuskFile) int {
+	var n int
+	for _, f := range files {
+		if f.IsDeleted {
+			n++
+		}
+	}
+	return n
+}
+
+func ensureNameMeta(ifile *structs.IndexedFile) {
+	if ifile.NameMeta == nil {
+		ifile.NameMeta = make(map[string]structs.IndexedNameMeta)
+	}
+	for name := range ifile.Names {
+		if _, ok := ifile.NameMeta[name]; ok {
+			continue
+		}
+		// Fragmented files are currently skipped by buildIdxMap, so this field
+		// is false today but intentionally preserved for future ingestion modes.
+		ifile.NameMeta[name] = structs.IndexedNameMeta{IsDeleted: ifile.IsDeleted}
+	}
+}
+
+func mergeNameMeta(dst map[string]structs.IndexedNameMeta, src map[string]structs.IndexedNameMeta) bool {
+	updated := false
+	for name, meta := range src {
+		existing, ok := dst[name]
+		if !ok {
+			dst[name] = meta
+			updated = true
+			continue
+		}
+		if !existing.IsDeleted && meta.IsDeleted {
+			existing.IsDeleted = true
+			dst[name] = existing
+			updated = true
+		}
+		if !existing.IsFragmented && meta.IsFragmented {
+			existing.IsFragmented = true
+			dst[name] = existing
+			updated = true
+		}
+	}
+	return updated
+}
+
 func buildIdxMap(files []tuskFile, idxmap map[string]structs.IndexedFile, pfile structs.InputFile, encodedPfileHash []byte, idxChan chan error) {
 	for _, f := range files {
 		if f.IsFragmented {
+			// Current parser behavior: fragmented entries are intentionally skipped.
+			// We still keep IsFragmented in per-name metadata for forward compatibility.
 			continue
 		}
 		iname := string(util.AppendToBytesSlice(pfile.GetEviFileHash(), cnst.DataSeperator, encodedPfileHash, cnst.DataSeperator, []byte(f.Filename)))
@@ -33,7 +82,7 @@ func buildIdxMap(files []tuskFile, idxmap map[string]structs.IndexedFile, pfile 
 			checkChannel(idxChan)
 			istart := frag.StartOffset
 			isize := frag.EndOffset - frag.StartOffset + 1
-			if err := registerIndexedRange(idxmap, pfile, iname, istart, isize); err != nil {
+			if err := registerIndexedRange(idxmap, pfile, iname, istart, isize, f.IsDeleted); err != nil {
 				idxChan <- err
 				return
 			}
@@ -41,7 +90,7 @@ func buildIdxMap(files []tuskFile, idxmap map[string]structs.IndexedFile, pfile 
 	}
 }
 
-func registerIndexedRange(idxmap map[string]structs.IndexedFile, pfile structs.InputFile, iname string, istart, isize int64) error {
+func registerIndexedRange(idxmap map[string]structs.IndexedFile, pfile structs.InputFile, iname string, istart, isize int64, isDeleted bool) error {
 	if isize <= 0 {
 		return fmt.Errorf("invalid indexed file size %d for %s", isize, iname)
 	}
@@ -61,7 +110,7 @@ func registerIndexedRange(idxmap map[string]structs.IndexedFile, pfile structs.I
 	val, ok := idxmap[string(ihash)]
 	if !ok {
 		typeHint := util.DetectFileType(iname, chunk)
-		idxmap[string(ihash)] = structs.NewIndexedFile(iname, istart, isize, typeHint)
+		idxmap[string(ihash)] = structs.NewIndexedFile(iname, istart, isize, typeHint, isDeleted)
 		pfile.UpdateInternalObjects(istart, isize, ihash)
 		return nil
 	}
@@ -69,11 +118,18 @@ func registerIndexedRange(idxmap map[string]structs.IndexedFile, pfile structs.I
 	if _, ok := val.Names[iname]; !ok {
 		val.Names[iname] = struct{}{}
 	}
+	if val.NameMeta == nil {
+		val.NameMeta = make(map[string]structs.IndexedNameMeta)
+	}
+	meta := val.NameMeta[iname]
+	meta.IsDeleted = meta.IsDeleted || isDeleted
+	val.NameMeta[iname] = meta
 	if val.IndexedType == "" || val.IndexedType == cnst.UnknownEvidenceType {
 		if promotedType := util.DetectFileType(iname, chunk); promotedType != cnst.UnknownEvidenceType {
 			val.IndexedType = promotedType
 		}
 	}
+	val.IsDeleted = val.IsDeleted || isDeleted
 	idxmap[string(ihash)] = val
 
 	pfile.UpdateInternalObjects(istart, isize, ihash)
@@ -123,12 +179,19 @@ func storeIndexedFiles(idxmap map[string]structs.IndexedFile, db *badger.DB, bat
 		if err != nil {
 			return err
 		}
+		ensureNameMeta(&oldIdxFile)
+		ensureNameMeta(&newIdxfile)
 
 		typeUpdated := false
 		if (oldIdxFile.IndexedType == "" || oldIdxFile.IndexedType == cnst.UnknownEvidenceType) &&
 			newIdxfile.IndexedType != "" && newIdxfile.IndexedType != cnst.UnknownEvidenceType {
 			oldIdxFile.IndexedType = newIdxfile.IndexedType
 			typeUpdated = true
+		}
+		deletedUpdated := false
+		if !oldIdxFile.IsDeleted && newIdxfile.IsDeleted {
+			oldIdxFile.IsDeleted = true
+			deletedUpdated = true
 		}
 
 		flag := true
@@ -140,8 +203,9 @@ func storeIndexedFiles(idxmap map[string]structs.IndexedFile, db *badger.DB, bat
 				oldIdxFile.Names[newName] = struct{}{}
 				flag = false
 			}
+			nameMetaUpdated := mergeNameMeta(oldIdxFile.NameMeta, newIdxfile.NameMeta)
 
-			unchanged := flag && !typeUpdated
+			unchanged := flag && !typeUpdated && !deletedUpdated && !nameMetaUpdated
 			if unchanged {
 				continue
 			}
@@ -162,7 +226,13 @@ func storeIndexedFiles(idxmap map[string]structs.IndexedFile, db *badger.DB, bat
 		if newIdxfile.IndexedType == "" || newIdxfile.IndexedType == cnst.UnknownEvidenceType {
 			newIdxfile.IndexedType = oldIdxFile.IndexedType
 		}
-		unchanged := flag && !typeUpdated
+		nameMetaUpdated := mergeNameMeta(newIdxfile.NameMeta, oldIdxFile.NameMeta)
+		mergedDeleted := newIdxfile.IsDeleted || oldIdxFile.IsDeleted
+		if mergedDeleted != oldIdxFile.IsDeleted {
+			deletedUpdated = true
+		}
+		newIdxfile.IsDeleted = mergedDeleted
+		unchanged := flag && !typeUpdated && !deletedUpdated && !nameMetaUpdated
 		if unchanged {
 			continue
 		}

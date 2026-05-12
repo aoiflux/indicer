@@ -2,9 +2,12 @@ package model
 
 // FileNodeFields holds file-node specific graph attributes.
 type FileNodeFields struct {
-	Name string
-	Path string
-	Size int64
+	Name         string
+	Path         string
+	Size         int64
+	Hash         string
+	IsDeleted    bool
+	IsFragmented bool
 }
 
 // MicroArtefactNodeFields holds micro-artefact specific graph attributes.

@@ -11,7 +11,7 @@ import (
 	"github.com/schollz/progressbar/v3"
 )
 
-func IndexEXFAT(pfile structs.InputFile, idxChan chan error, enableFTS bool) {
+func IndexEXFAT(pfile structs.InputFile, idxChan chan error, enableFTS bool, enableEnrichment bool) {
 	startOffset := getStartOffset(uint64(pfile.GetStartIndex()))
 	exfatdata, err := libxfat.New(pfile.GetHandle(), true, startOffset)
 	if err != nil {
@@ -81,7 +81,7 @@ func IndexEXFAT(pfile structs.InputFile, idxChan chan error, enableFTS bool) {
 		}
 	}
 
-	err = finalizeIndexedFiles(idxmap, pfile, batch, idxChan, enableFTS)
+	err = finalizeIndexedFiles(idxmap, pfile, batch, idxChan, enableFTS, enableEnrichment)
 	if err != nil {
 		idxChan <- err
 		return

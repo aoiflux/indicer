@@ -54,29 +54,27 @@ func (r *Repository) Store(file model.FileRecord, artefacts []model.Artefact, re
 	}
 
 	indexedFileID := resolveIndexedFileID(file)
-	exists, err := r.hasIndexedFile(indexedFileID)
+	indexedFileNode, exists, err := r.findIndexedFileNode(indexedFileID)
 	if err != nil {
 		return err
 	}
-	if exists {
+
+	if !exists {
+		return fmt.Errorf("micro-artefact store: indexed_file_id=%s not found in graphdb; run dues enrich to backfill file hierarchy first", indexedFileID)
+	}
+
+	if len(artefacts) == 0 {
 		return nil
 	}
 
-	diskNode, partitionNode, err := r.ensureHierarchyNodes(file)
-	if err != nil {
-		return err
-	}
-
-	indexedFileNode, err := r.createIndexedFileNode(file, indexedFileID, len(artefacts))
-	if err != nil {
-		return err
-	}
-
-	if err := r.ensureContains(diskNode, partitionNode); err != nil {
-		return err
-	}
-	if err := r.ensureContains(partitionNode, indexedFileNode); err != nil {
-		return err
+	if exists {
+		hasArtefacts, err := r.hasFileArtefacts(indexedFileNode)
+		if err != nil {
+			return err
+		}
+		if hasArtefacts {
+			return nil
+		}
 	}
 
 	artefactNodesByKey, err := r.storeArtefactNodes(indexedFileNode, file.Hash, artefacts)
@@ -105,80 +103,39 @@ func resolveIndexedFileID(file model.FileRecord) string {
 	if file.IndexedFileID != "" {
 		return file.IndexedFileID
 	}
-	return file.Hash
+	return model.BuildIndexedFileID(file.PartitionID, file.Path, file.Hash)
 }
 
 func (r *Repository) hasIndexedFile(indexedFileID string) (bool, error) {
-	hits, err := r.graph.NodesByProperty("indexed_file_id", []byte(indexedFileID))
+	_, exists, err := r.findIndexedFileNode(indexedFileID)
 	if err != nil {
 		return false, err
 	}
-	return len(hits) > 0, nil
+	return exists, nil
 }
 
-func (r *Repository) ensureHierarchyNodes(file model.FileRecord) (graphstore.NodeID, graphstore.NodeID, error) {
-	diskNode, err := r.upsertNode(
-		"disk_image_id",
-		file.DiskImageID,
-		[]graphstore.NodeType{nodeTypeDiskImage},
-		map[string]any{"disk_image_id": file.DiskImageID, "name": file.DiskImageName},
-	)
+func (r *Repository) findIndexedFileNode(indexedFileID string) (graphstore.NodeID, bool, error) {
+	hits, err := r.graph.NodesByProperty("indexed_file_id", []byte(indexedFileID))
 	if err != nil {
-		return 0, 0, err
+		return 0, false, err
 	}
-
-	partitionNode, err := r.upsertNode(
-		"partition_id",
-		file.PartitionID,
-		[]graphstore.NodeType{nodeTypePartition},
-		map[string]any{"partition_id": file.PartitionID, "name": file.PartitionName, "disk_image_id": file.DiskImageID},
-	)
-	if err != nil {
-		return 0, 0, err
+	if len(hits) == 0 {
+		return 0, false, nil
 	}
-
-	return diskNode, partitionNode, nil
+	return hits[0], true, nil
 }
 
-func (r *Repository) createIndexedFileNode(file model.FileRecord, indexedFileID string, artefactCount int) (graphstore.NodeID, error) {
-	nodeType := file.EffectiveNodeType()
-	props := map[string]any{
-		"indexed_file_id": indexedFileID,
-		"hash":            file.Hash,
-		"name":            file.Name,
-		"path":            file.Path,
-		"size":            file.Size,
-		"artefact_count":  artefactCount,
-		"partition_id":    file.PartitionID,
-		"disk_image_id":   file.DiskImageID,
-		"file_type":       file.FileType,
-		"node_type":       string(nodeType),
-	}
-	appendFileTypeMetadata(props, file, nodeType)
-
-	nodeID, err := r.graph.AddNode(&graphstore.Node{
-		Labels:     []graphstore.NodeType{nodeTypeIndexedFile},
-		Properties: mustPack(props),
-	})
+func (r *Repository) hasFileArtefacts(fileNodeID graphstore.NodeID) (bool, error) {
+	neighbours, err := r.graph.Neighbours(fileNodeID, graphstore.DirectionOutbound, []graphstore.EdgeType{graphstore.EdgeTypeContains})
 	if err != nil {
-		return 0, err
+		return false, err
 	}
-
-	indexProps := map[string][]byte{
-		"indexed_file_id": []byte(indexedFileID),
-		"evidence_hash":   []byte(file.Hash),
-		"name":            []byte(file.Name),
-		"path":            []byte(file.Path),
-		"node_type":       []byte(string(nodeType)),
-		"file_type":       []byte(file.FileType),
-		"partition_id":    []byte(file.PartitionID),
-		"disk_image_id":   []byte(file.DiskImageID),
+	for _, neighbour := range neighbours {
+		if neighbour.Node != nil && neighbour.Node.HasLabel(graphstore.NodeTypeMicroArtefact) {
+			return true, nil
+		}
 	}
-	if err := r.graph.IndexNodeProperties(nodeID, indexProps); err != nil {
-		return 0, err
-	}
-
-	return nodeID, nil
+	return false, nil
 }
 
 func (r *Repository) storeArtefactNodes(indexedFileNode graphstore.NodeID, evidenceHash string, artefacts []model.Artefact) (map[string][]graphstore.NodeID, error) {
@@ -261,31 +218,6 @@ func (r *Repository) createContainsEdge(indexedFileNode, artefactNode graphstore
 	})
 }
 
-func appendFileTypeMetadata(indexedProps map[string]any, file model.FileRecord, nodeType model.FileNodeType) {
-	switch nodeType {
-	case model.FileNodeTypeELF:
-		if file.ELFMeta != nil {
-			indexedProps["elf_metadata"] = file.ELFMeta
-		}
-	case model.FileNodeTypePE:
-		if file.PEMeta != nil {
-			indexedProps["pe_metadata"] = file.PEMeta
-		}
-	case model.FileNodeTypePDF:
-		if file.PDFMeta != nil {
-			indexedProps["pdf_metadata"] = file.PDFMeta
-		}
-	case model.FileNodeTypeTXT:
-		if file.TXTMeta != nil {
-			indexedProps["txt_metadata"] = file.TXTMeta
-		}
-	default:
-		if file.GenericMeta != nil {
-			indexedProps["generic_metadata"] = file.GenericMeta
-		}
-	}
-}
-
 func (r *Repository) ExportInteractiveHTML(outPath string) error {
 	return r.ExportInteractiveHTMLTopK(outPath, 0)
 }
@@ -299,6 +231,20 @@ func (r *Repository) HasIndexedFile(indexedFileID string) (bool, error) {
 		return false, err
 	}
 	return len(hits) > 0, nil
+}
+
+func (r *Repository) HasMicroArtefacts(indexedFileID string) (bool, error) {
+	if r == nil || r.graph == nil {
+		return false, fmt.Errorf("micro-artefact repository is not open")
+	}
+	nodeID, exists, err := r.findIndexedFileNode(indexedFileID)
+	if err != nil {
+		return false, err
+	}
+	if !exists {
+		return false, nil
+	}
+	return r.hasFileArtefacts(nodeID)
 }
 
 func (r *Repository) ExportInteractiveHTMLTopK(outPath string, topK int) error {
@@ -492,37 +438,6 @@ func intProp(m map[string]any, key string) int {
 	default:
 		return 0
 	}
-}
-
-func (r *Repository) upsertNode(indexKey, indexValue string, labels []graphstore.NodeType, properties map[string]any) (graphstore.NodeID, error) {
-	hits, err := r.graph.NodesByProperty(indexKey, []byte(indexValue))
-	if err != nil {
-		return 0, err
-	}
-	if len(hits) > 0 {
-		return hits[0], nil
-	}
-
-	id, err := r.graph.AddNode(&graphstore.Node{Labels: labels, Properties: mustPack(properties)})
-	if err != nil {
-		return 0, err
-	}
-	if err := r.graph.IndexNodeProperty(id, indexKey, []byte(indexValue)); err != nil {
-		return 0, err
-	}
-	return id, nil
-}
-
-func (r *Repository) ensureContains(src, dst graphstore.NodeID) error {
-	exists, err := r.graph.EdgeExists(src, dst, []graphstore.EdgeType{graphstore.EdgeTypeContains})
-	if err != nil {
-		return err
-	}
-	if exists {
-		return nil
-	}
-	_, err = r.graph.AddEdge(&graphstore.Edge{Src: src, Dst: dst, Labels: []graphstore.EdgeType{graphstore.EdgeTypeContains}})
-	return err
 }
 
 func (r *Repository) ensureMicroArtefactHasExactlyOneFileParent(fileNodeID, artefactNodeID graphstore.NodeID) error {

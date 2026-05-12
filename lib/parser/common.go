@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"indicer/lib/cnst"
 	"indicer/lib/dbio"
+	"indicer/lib/enrichment"
 	"indicer/lib/fts"
 	"indicer/lib/store"
 	"indicer/lib/structs"
@@ -138,7 +139,12 @@ func registerIndexedRange(idxmap map[string]structs.IndexedFile, pfile structs.I
 	return nil
 }
 
-func finalizeIndexedFiles(idxmap map[string]structs.IndexedFile, pfile structs.InputFile, batch *badger.WriteBatch, idxChan chan error, enableFTS bool) error {
+func finalizeIndexedFiles(idxmap map[string]structs.IndexedFile, pfile structs.InputFile, batch *badger.WriteBatch, idxChan chan error, enableFTS bool, enableEnrichment bool) error {
+	indexedHashes := make([]string, 0, len(idxmap))
+	for ihash := range idxmap {
+		indexedHashes = append(indexedHashes, ihash)
+	}
+
 	ftsJobs, err := storeIndexedFiles(idxmap, pfile.GetDB(), batch, idxChan)
 	if err != nil {
 		return err
@@ -153,6 +159,18 @@ func finalizeIndexedFiles(idxmap map[string]structs.IndexedFile, pfile structs.I
 	go store.Store(pfile, pchan)
 	if err := <-pchan; err != nil {
 		return err
+	}
+
+	if enableEnrichment {
+		repo, err := enrichment.OpenGrapheneRepository(pfile.GetDB().Opts().Dir)
+		if err != nil {
+			return err
+		}
+		service := enrichment.NewService(pfile.GetDB(), repo)
+		defer service.Close()
+		if err := service.EnrichPartition(pfile, indexedHashes); err != nil {
+			return err
+		}
 	}
 
 	if enableFTS {

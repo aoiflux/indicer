@@ -100,6 +100,7 @@ const (
 	SubCmdOut   = "out"
 	CmdSearch   = "search"
 	CmdMicro    = "micro"
+	CmdEnrich   = "enrich"
 	CmdServer   = "server"
 	CmdVeresion = "version"
 
@@ -136,6 +137,7 @@ const (
 	FlagTopK                 = "top-k"
 	FlagTopKShort            = 'k'
 	FlagEnableFts            = "enable-fts"
+	FlagEnableEnrichment     = "enrich"
 
 	OperandFile  = "FILE"
 	OperandHash  = "HASH"

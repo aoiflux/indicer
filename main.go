@@ -49,6 +49,7 @@ func main() {
 	evipath := cmdstore.Arg(cnst.OperandFile, "Path of file that must be saved").Required().String()
 	noIndex := cmdstore.Flag(cnst.FlagNoIndex, "Don't run indexer").Short(cnst.FlagNoIndexShort).Default("false").Bool()
 	enableFTS := cmdstore.Flag(cnst.FlagEnableFts, "Enable full-text search indexing (sidecar Bleve index)").Default("false").Bool()
+	enableEnrichment := cmdstore.Flag(cnst.FlagEnableEnrichment, "Upsert disk/partition/indexed-file metadata nodes into graphdb during store").Default("false").Bool()
 	hashAlgo := cmdstore.Flag(cnst.FlagHashAlgo, "Hashing algorithm to use [sha3|blake3] (default: BLAKE3)").Short(cnst.FlagHashAlgoShort).Default(cnst.BLAKE3).String()
 
 	cmdrestore := app.Command(cnst.CmdRestore, "Restore file from database")
@@ -83,6 +84,7 @@ func main() {
 	microExtractTopK := microExtract.Flag("top-k", "Top-K indexed files (by artefact count) to include in exported HTML graph (0 = all)").Default("1").Int()
 
 	microList := cmdmicro.Command(cnst.CmdList, "List all micro-artefacts in JSON format")
+	cmdenrich := app.Command(cnst.CmdEnrich, "Backfill file hierarchy metadata enrichment into graphdb")
 
 	cmdserver := app.Command(cnst.CmdServer, "Run gRPC / Web combined DUES server")
 	hashAlgo = cmdserver.Flag(cnst.FlagHashAlgo, "Hashing algorithm to use [sha3|blake3] (default: BLAKE3)").Short(cnst.FlagHashAlgoShort).Default("blake3").String()
@@ -140,7 +142,7 @@ func main() {
 	case cmdtui.FullCommand():
 		err = cli.TUICmd(*chonkSize, *dbpath, key)
 	case cmdstore.FullCommand():
-		err = cli.StoreData(*chonkSize, *dbpath, *evipath, key, *noIndex, *enableFTS)
+		err = cli.StoreData(*chonkSize, *dbpath, *evipath, key, *noIndex, *enableFTS, *enableEnrichment)
 	case cmdrestore.FullCommand():
 		err = cli.RestoreData(*chonkSize, *dbpath, *rhash, *rpath, key)
 	case cmdlist.FullCommand():
@@ -157,6 +159,8 @@ func main() {
 		err = cli.MicroArtefactCmd(*chonkSize, *dbpath, key, *microExtractForce, *microExtractTopK)
 	case microList.FullCommand():
 		err = cli.ListMicroArtefactsCmd(*chonkSize, *dbpath, key)
+	case cmdenrich.FullCommand():
+		err = cli.EnrichData(*chonkSize, *dbpath, key)
 	case cmdreset.FullCommand():
 		err = cli.ResetData(*dbpath)
 	case cmdserver.FullCommand():
@@ -278,6 +282,8 @@ func printHelpForPath(path []string) {
 		printSearchHelp()
 	case cnst.CmdMicro:
 		printMicroArtefactsHelp()
+	case cnst.CmdEnrich:
+		printEnrichHelp()
 	case cnst.CmdServer:
 		printServerHelp()
 	case cnst.CmdReset:
@@ -321,6 +327,7 @@ func printRootHelp() {
 	fmt.Printf("  %-20s %s\n", cmd(cnst.CmdList), "List saved files")
 	fmt.Printf("  %-20s %s\n", cmd(cnst.CmdSearch), "Search metadata/content index")
 	fmt.Printf("  %-20s %s\n", cmd(cnst.CmdMicro), "Manage micro-artefacts (extract, list)")
+	fmt.Printf("  %-20s %s\n", cmd(cnst.CmdEnrich), "Backfill file hierarchy metadata into graphdb")
 	fmt.Printf("  %-20s %s\n", cmd(cnst.CmdNear), "Find NeAR file objects")
 	fmt.Printf("  %-20s %s\n", cmd(cnst.CmdServer), "Run gRPC/Web server")
 	fmt.Printf("  %-20s %s\n", cmd(cnst.CmdReset), "Delete database")
@@ -338,6 +345,7 @@ func printRootHelp() {
 	fmt.Println("  dues store evidence.img --dbpath ./dues-data")
 	fmt.Println("  dues restore <hash> --filepath recovered.bin")
 	fmt.Println("  dues search \"invoice\"")
+	fmt.Println("  dues enrich --dbpath ./dues-data")
 	fmt.Println("  dues microartefacts")
 	fmt.Println("  dues near in <hash> --deep")
 	fmt.Println("")
@@ -345,12 +353,23 @@ func printRootHelp() {
 
 func printStoreHelp() {
 	printHelpHeader("store")
-	fmt.Println("Usage: dues store FILE [--sync|-s] [--no-index|-n] [--hash-algo|-g [sha3|blake3]] [global options]")
+	fmt.Println("Usage: dues store FILE [--sync|-s] [--no-index|-n] [--enable-fts] [--enrich] [--hash-algo|-g [sha3|blake3]] [global options]")
 	fmt.Println("Stores a file in the DUES database using chunk-level deduplication.")
 	printExamples(
 		"dues store E01-image.dd",
+		"dues store E01-image.dd --enrich",
 		"dues store evidence.raw --dbpath ./caseA",
 		"dues store memory.dump --no-index --quick",
+	)
+}
+
+func printEnrichHelp() {
+	printHelpHeader("enrich")
+	fmt.Println("Usage: dues enrich [global options]")
+	fmt.Println("Backfills file-level hierarchy nodes into graphdb: disk image -> partition -> indexed file.")
+	printExamples(
+		"dues enrich",
+		"dues enrich --dbpath ./caseA",
 	)
 }
 

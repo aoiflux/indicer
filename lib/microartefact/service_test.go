@@ -1,6 +1,7 @@
 package microartefact
 
 import (
+	"indicer/lib/enrichment"
 	"path/filepath"
 	"testing"
 
@@ -107,6 +108,27 @@ func TestServiceWithSpecCanDisableDetectionMethod(t *testing.T) {
 
 func TestGrapheneRepositoryStoresNodesAndEdges(t *testing.T) {
 	root := t.TempDir()
+	enrichmentRepo, err := enrichment.OpenGrapheneRepository(root)
+	if err != nil {
+		t.Fatalf("enrichment.OpenGrapheneRepository: %v", err)
+	}
+	if err := enrichmentRepo.UpsertFile(enrichment.FileRecord{
+		Hash:          "hash-2",
+		Name:          "evidence.bin",
+		Path:          filepath.Join(root, "evidence.bin"),
+		Size:          128,
+		DiskImageID:   "disk-image-001",
+		DiskImageName: "evidence.E01",
+		PartitionID:   "partition-001",
+		PartitionName: "vol0",
+		IndexedFileID: "hash-2",
+	}); err != nil {
+		t.Fatalf("enrichment.UpsertFile: %v", err)
+	}
+	if err := enrichmentRepo.Close(); err != nil {
+		t.Fatalf("enrichment.Close: %v", err)
+	}
+
 	repo, err := OpenGrapheneRepository(root)
 	if err != nil {
 		t.Fatalf("OpenGrapheneRepository: %v", err)
@@ -201,16 +223,8 @@ func TestGrapheneRepositoryStoresNodesAndEdges(t *testing.T) {
 	if err := msgpack.Unmarshal(indexedNode.Properties, &props); err != nil {
 		t.Fatalf("msgpack.Unmarshal indexed node properties: %v", err)
 	}
-	metaRaw, ok := props["elf_metadata"]
-	if !ok {
-		t.Fatalf("expected indexed_file node to contain elf_metadata payload, got %#v", props)
-	}
-	metaMap, ok := metaRaw.(map[string]any)
-	if !ok {
-		t.Fatalf("expected elf_metadata to be map, got %T", metaRaw)
-	}
-	if gotClass := asInt(metaMap["Class"]); gotClass != 64 {
-		t.Fatalf("expected elf_metadata.Class=64, got %#v", metaMap)
+	if gotHash, _ := props["hash"].(string); gotHash != file.Hash {
+		t.Fatalf("expected indexed_file node hash=%q, got %#v", file.Hash, props["hash"])
 	}
 
 	if kindHits, err := graph.NodesByProperty("artefact_kind", []byte("url")); err != nil {

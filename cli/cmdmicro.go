@@ -7,7 +7,9 @@ import (
 	"fmt"
 	"indicer/lib/cnst"
 	"indicer/lib/dbio"
+	"indicer/lib/enrichment"
 	"indicer/lib/microartefact"
+	mmodel "indicer/lib/microartefact/model"
 	"indicer/lib/store"
 	"indicer/lib/structs"
 	"indicer/lib/util"
@@ -37,6 +39,11 @@ type microPartitionContext struct {
 	partitionName string
 }
 
+type microFileNodeStatus struct {
+	checked    bool
+	backfilled bool
+}
+
 // MicroArtefactCmd opens the DUES database and extracts micro-artefacts from
 // every indexed file that has been stored in the hierarchy:
 //
@@ -56,8 +63,17 @@ func MicroArtefactCmd(chonkSize int, dbpath string, key []byte, force bool, topK
 	service := microartefact.NewService(repo)
 	defer service.Close()
 
-	if err := processAllIndexedFiles(db, service, repo, force); err != nil {
+	status := &microFileNodeStatus{}
+	if err := processAllIndexedFiles(db, service, repo, force, status); err != nil {
 		return err
+	}
+
+	if status.backfilled {
+		fmt.Println("[micro] File-level graph nodes were missing; enrichment backfill completed before micro extraction.")
+	} else if status.checked {
+		fmt.Println("[micro] File-level graph nodes already present; enrichment backfill not needed.")
+	} else {
+		fmt.Println("[micro] No indexed files found for micro extraction.")
 	}
 
 	tree, err := repo.ReadHierarchy()
@@ -77,7 +93,7 @@ func MicroArtefactCmd(chonkSize int, dbpath string, key []byte, force bool, topK
 
 // processAllIndexedFiles iterates all completed evidence files in the store and
 // processes each indexed file within them for micro-artefact extraction.
-func processAllIndexedFiles(db *badger.DB, service *microartefact.Service, repo *microartefact.GrapheneRepository, force bool) error {
+func processAllIndexedFiles(db *badger.DB, service *microartefact.Service, repo *microartefact.GrapheneRepository, force bool, status *microFileNodeStatus) error {
 	return db.View(func(txn *badger.Txn) error {
 		opts := badger.DefaultIteratorOptions
 		opts.PrefetchSize = 100
@@ -113,7 +129,7 @@ func processAllIndexedFiles(db *badger.DB, service *microartefact.Service, repo 
 			}
 
 			for phashB64 := range evidata.InternalObjects {
-				if err := processPartition(txn, db, service, repo, force, evidenceCtx, phashB64); err != nil {
+				if err := processPartition(txn, db, service, repo, force, status, evidenceCtx, phashB64); err != nil {
 					return err
 				}
 			}
@@ -124,7 +140,7 @@ func processAllIndexedFiles(db *badger.DB, service *microartefact.Service, repo 
 
 // processPartition retrieves a partition file from the store and processes each
 // indexed file it contains.
-func processPartition(txn *badger.Txn, db *badger.DB, service *microartefact.Service, repo *microartefact.GrapheneRepository, force bool, evidenceCtx microEvidenceContext, partitionHashB64 string) error {
+func processPartition(txn *badger.Txn, db *badger.DB, service *microartefact.Service, repo *microartefact.GrapheneRepository, force bool, status *microFileNodeStatus, evidenceCtx microEvidenceContext, partitionHashB64 string) error {
 	rawPhash, err := base64.StdEncoding.DecodeString(partitionHashB64)
 	if err != nil {
 		return fmt.Errorf("partition hash decode: %w", err)
@@ -155,7 +171,7 @@ func processPartition(txn *badger.Txn, db *badger.DB, service *microartefact.Ser
 	}
 
 	for ihashB64 := range pdata.InternalObjects {
-		if err := processIndexedFile(db, service, repo, force, partitionCtx, ihashB64); err != nil {
+		if err := processIndexedFile(db, service, repo, force, status, partitionCtx, ihashB64); err != nil {
 			// Non-fatal: log and continue so one bad file does not abort the run.
 			fmt.Printf("warning: skipping indexed file %s: %v\n", ihashB64, err)
 		}
@@ -165,18 +181,7 @@ func processPartition(txn *badger.Txn, db *badger.DB, service *microartefact.Ser
 
 // processIndexedFile reads one indexed file from the store and runs micro-artefact
 // detection on its content, using the real hierarchy IDs for the graph record.
-func processIndexedFile(db *badger.DB, service *microartefact.Service, repo *microartefact.GrapheneRepository, force bool, partitionCtx microPartitionContext, indexedFileHashB64 string) error {
-	if !force {
-		exists, err := repo.HasIndexedFile(indexedFileHashB64)
-		if err != nil {
-			return fmt.Errorf("check indexed file extraction status: %w", err)
-		}
-		if exists {
-			fmt.Printf("Skipping already-extracted indexed file: %s\n", indexedFileHashB64)
-			return nil
-		}
-	}
-
+func processIndexedFile(db *badger.DB, service *microartefact.Service, repo *microartefact.GrapheneRepository, force bool, status *microFileNodeStatus, partitionCtx microPartitionContext, indexedFileHashB64 string) error {
 	rawIhash, err := base64.StdEncoding.DecodeString(indexedFileHashB64)
 	if err != nil {
 		return fmt.Errorf("indexed file hash decode: %w", err)
@@ -188,19 +193,27 @@ func processIndexedFile(db *badger.DB, service *microartefact.Service, repo *mic
 		return fmt.Errorf("get indexed file: %w", err)
 	}
 
-	name, path := resolveIndexedFileName(ifile.Names)
-
-	record := microartefact.FileRecord{
-		Hash:          indexedFileHashB64,
-		Name:          name,
-		Path:          path,
-		Size:          ifile.Size,
-		FileType:      ifile.IndexedType,
-		DiskImageID:   partitionCtx.diskImageID,
-		DiskImageName: partitionCtx.diskImageName,
-		PartitionID:   partitionCtx.partitionID,
-		PartitionName: partitionCtx.partitionName,
-		IndexedFileID: indexedFileHashB64,
+	records := buildIndexedFileRecords(ifile, partitionCtx, indexedFileHashB64)
+	if err := ensureIndexedFileNodes(db, repo, records, status); err != nil {
+		return err
+	}
+	if !force {
+		pending := make([]microartefact.FileRecord, 0, len(records))
+		for _, record := range records {
+			exists, err := repo.HasMicroArtefacts(record.IndexedFileID)
+			if err != nil {
+				return fmt.Errorf("check indexed file extraction status: %w", err)
+			}
+			if exists {
+				fmt.Printf("Skipping already-extracted indexed file node: %s\n", record.Path)
+				continue
+			}
+			pending = append(pending, record)
+		}
+		records = pending
+	}
+	if len(records) == 0 {
+		return nil
 	}
 
 	content, err := readIndexedFileContent(iid, db)
@@ -208,12 +221,86 @@ func processIndexedFile(db *badger.DB, service *microartefact.Service, repo *mic
 		return fmt.Errorf("read indexed file content: %w", err)
 	}
 
-	if err := service.Process(record, content); err != nil {
-		return fmt.Errorf("micro-artefact process: %w", err)
+	for _, record := range records {
+		if err := service.Process(record, content); err != nil {
+			return fmt.Errorf("micro-artefact process: %w", err)
+		}
+		fmt.Printf("Micro-artefacts extracted: %s\n", record.Name)
+	}
+	return nil
+}
+
+func ensureIndexedFileNodes(db *badger.DB, repo *microartefact.GrapheneRepository, records []microartefact.FileRecord, status *microFileNodeStatus) error {
+	if len(records) == 0 {
+		return nil
+	}
+	if status != nil {
+		status.checked = true
 	}
 
-	fmt.Printf("Micro-artefacts extracted: %s\n", name)
+	missing := false
+	for _, record := range records {
+		exists, err := repo.HasIndexedFile(record.IndexedFileID)
+		if err != nil {
+			return err
+		}
+		if !exists {
+			missing = true
+			break
+		}
+	}
+	if !missing {
+		return nil
+	}
+
+	if status != nil && !status.backfilled {
+		fmt.Println("Missing file-level graph nodes detected. Running enrichment backfill...")
+		enrichmentRepo, err := enrichment.OpenGrapheneRepository(db.Opts().Dir)
+		if err != nil {
+			return err
+		}
+		enrichmentSvc := enrichment.NewService(db, enrichmentRepo)
+		defer enrichmentSvc.Close()
+		if err := enrichmentSvc.EnrichAll(); err != nil {
+			return err
+		}
+		status.backfilled = true
+	}
+
+	for _, record := range records {
+		exists, err := repo.HasIndexedFile(record.IndexedFileID)
+		if err != nil {
+			return err
+		}
+		if !exists {
+			return fmt.Errorf("indexed file node still missing for %s after enrichment backfill", record.Path)
+		}
+	}
+
 	return nil
+}
+
+func buildIndexedFileRecords(ifile structs.IndexedFile, partitionCtx microPartitionContext, indexedFileHashB64 string) []microartefact.FileRecord {
+	records := make([]microartefact.FileRecord, 0, len(ifile.Names))
+	for indexedName := range ifile.Names {
+		name, path := resolveIndexedFileNameSingle(indexedName)
+		meta := ifile.NameMeta[indexedName]
+		records = append(records, microartefact.FileRecord{
+			Hash:          indexedFileHashB64,
+			Name:          name,
+			Path:          path,
+			Size:          ifile.Size,
+			IsDeleted:     ifile.IsDeleted || meta.IsDeleted,
+			IsFragmented:  meta.IsFragmented,
+			FileType:      ifile.IndexedType,
+			DiskImageID:   partitionCtx.diskImageID,
+			DiskImageName: partitionCtx.diskImageName,
+			PartitionID:   partitionCtx.partitionID,
+			PartitionName: partitionCtx.partitionName,
+			IndexedFileID: mmodel.BuildIndexedFileID(partitionCtx.partitionID, path, indexedFileHashB64),
+		})
+	}
+	return records
 }
 
 // readIndexedFileContent streams up to microScanLimit bytes of the indexed file
@@ -240,18 +327,14 @@ func readIndexedFileContent(iid []byte, db *badger.DB) ([]byte, error) {
 // resolveIndexedFileName extracts a human-readable name and path from the
 // IndexedFile.Names set. Names that follow the "hash|||evi_path|||file_name"
 // convention are split accordingly; otherwise the raw entry is used for both.
-func resolveIndexedFileName(names map[string]struct{}) (name, path string) {
-	for n := range names {
-		if strings.Contains(n, cnst.DataSeperator) {
-			parts := strings.SplitN(n, cnst.DataSeperator, 3)
-			if len(parts) == 3 {
-				return parts[2], n
-			}
+func resolveIndexedFileNameSingle(name string) (fileName, path string) {
+	if strings.Contains(name, cnst.DataSeperator) {
+		parts := strings.SplitN(name, cnst.DataSeperator, 3)
+		if len(parts) == 3 {
+			return parts[2], name
 		}
-		name = n
-		path = n
 	}
-	return name, path
+	return name, name
 }
 
 // arbitrarySetKey returns any key from the map (used for display names).

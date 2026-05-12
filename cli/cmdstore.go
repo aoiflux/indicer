@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"indicer/lib/cnst"
 	"indicer/lib/dbio"
+	"indicer/lib/enrichment"
 	"indicer/lib/parser"
 	"indicer/lib/store"
 	"indicer/lib/structs"
@@ -18,7 +19,7 @@ import (
 	"github.com/edsrzf/mmap-go"
 )
 
-func StoreData(chonkSize int, dbpath, evipath string, key []byte, noIndex bool, enableFTS bool) error {
+func StoreData(chonkSize int, dbpath, evipath string, key []byte, noIndex bool, enableFTS bool, enableEnrichment bool) error {
 	db, dbpath, err := Common(chonkSize, dbpath, key)
 	if err != nil {
 		return err
@@ -35,12 +36,12 @@ func StoreData(chonkSize int, dbpath, evipath string, key []byte, noIndex bool, 
 
 	if finfo.IsDir() {
 		fmt.Println("Storing Entire Folder")
-		err = StoreFolder(chonkSize, evipath, key, noIndex, enableFTS, db)
+		err = StoreFolder(chonkSize, evipath, key, noIndex, enableFTS, enableEnrichment, db)
 		if err != nil {
 			return err
 		}
 	}
-	err = StoreFile(chonkSize, evipath, key, noIndex, enableFTS, db)
+	err = StoreFile(chonkSize, evipath, key, noIndex, enableFTS, enableEnrichment, db)
 	if err != nil {
 		return err
 	}
@@ -52,7 +53,7 @@ func StoreData(chonkSize int, dbpath, evipath string, key []byte, noIndex bool, 
 	return nil
 }
 
-func StoreFolder(chonkSize int, evidir string, key []byte, noIndex bool, enableFTS bool, db *badger.DB) error {
+func StoreFolder(chonkSize int, evidir string, key []byte, noIndex bool, enableFTS bool, enableEnrichment bool, db *badger.DB) error {
 	start := time.Now()
 
 	err := filepath.Walk(evidir, func(path string, info fs.FileInfo, err error) error {
@@ -64,7 +65,7 @@ func StoreFolder(chonkSize int, evidir string, key []byte, noIndex bool, enableF
 			return nil
 		}
 
-		return StoreFile(chonkSize, path, key, noIndex, enableFTS, db)
+		return StoreFile(chonkSize, path, key, noIndex, enableFTS, enableEnrichment, db)
 	})
 
 	if err != nil {
@@ -76,7 +77,7 @@ func StoreFolder(chonkSize int, evidir string, key []byte, noIndex bool, enableF
 	return nil
 }
 
-func StoreFile(chonkSize int, evipath string, key []byte, noIndex bool, enableFTS bool, db *badger.DB) error {
+func StoreFile(chonkSize int, evipath string, key []byte, noIndex bool, enableFTS bool, enableEnrichment bool, db *badger.DB) error {
 	start := time.Now()
 
 	info, err := os.Stat(evipath)
@@ -97,11 +98,16 @@ func StoreFile(chonkSize int, evipath string, key []byte, noIndex bool, enableFT
 		return err
 	}
 	if err == nil {
+		if enableEnrichment {
+			if err := enrichEvidenceNode(db, eviFile, evipath); err != nil {
+				return err
+			}
+		}
 		return nil
 	}
 
 	if !noIndex {
-		if err = indexEvidenceFile(eviFile, db, enableFTS); err != nil {
+		if err = indexEvidenceFile(eviFile, db, enableFTS, enableEnrichment); err != nil {
 			return err
 		}
 	}
@@ -126,6 +132,12 @@ func StoreFile(chonkSize int, evipath string, key []byte, noIndex bool, enableFT
 		return err
 	}
 
+	if enableEnrichment {
+		if err := enrichEvidenceNode(db, eviFile, evipath); err != nil {
+			return err
+		}
+	}
+
 	mappedFile := eviFile.GetMappedFile()
 	err = mappedFile.Unmap()
 	if err != nil {
@@ -139,7 +151,28 @@ func StoreFile(chonkSize int, evipath string, key []byte, noIndex bool, enableFT
 	return nil
 }
 
-func indexEvidenceFile(eviFile structs.InputFile, db *badger.DB, enableFTS bool) error {
+func enrichEvidenceNode(db *badger.DB, eviFile structs.InputFile, evipath string) error {
+	repo, err := enrichment.OpenGrapheneRepository(db.Opts().Dir)
+	if err != nil {
+		return err
+	}
+	service := enrichment.NewService(db, repo)
+	defer service.Close()
+
+	evidenceHashB64, err := eviFile.GetEncodedHash()
+	if err != nil {
+		return err
+	}
+
+	return service.EnrichEvidence(enrichment.EvidenceRecord{
+		HashBase64: string(evidenceHashB64),
+		Name:       filepath.Base(evipath),
+		Path:       evipath,
+		Size:       eviFile.GetSize(),
+	})
+}
+
+func indexEvidenceFile(eviFile structs.InputFile, db *badger.DB, enableFTS bool, enableEnrichment bool) error {
 	tuskJSON, hasTusk := parser.TuskAnalysis(eviFile.GetHandle().Name())
 	partitions := parser.ParseImage(tuskJSON, hasTusk, eviFile.GetSize(), eviFile.GetHandle())
 	idxChan := make(chan error)
@@ -171,9 +204,9 @@ func indexEvidenceFile(eviFile structs.InputFile, db *badger.DB, enableFTS bool)
 		)
 
 		if hasTusk {
-			go parser.IndexFilesystem(tuskJSON, pfile, idxChan, enableFTS)
+			go parser.IndexFilesystem(tuskJSON, pfile, idxChan, enableFTS, enableEnrichment)
 		} else {
-			go parser.IndexEXFAT(pfile, idxChan, enableFTS)
+			go parser.IndexEXFAT(pfile, idxChan, enableFTS, enableEnrichment)
 		}
 		// Use select so that if the goroutine finishes before we send the
 		// start signal (e.g. empty partition with no files), we receive the

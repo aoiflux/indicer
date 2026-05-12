@@ -105,9 +105,12 @@ func (r *Repository) ReadHierarchy() (*HierarchyTree, error) {
 				ifile := &FileNode{
 					NodeIdentity: modelNodeID(strProp(fProps, "indexed_file_id")),
 					FileNodeFields: model.FileNodeFields{
-						Name: strProp(fProps, "name"),
-						Path: strProp(fProps, "path"),
-						Size: int64Prop(fProps, "size"),
+						Name:         strProp(fProps, "name"),
+						Path:         strProp(fProps, "path"),
+						Size:         int64Prop(fProps, "size"),
+						Hash:         strProp(fProps, "hash"),
+						IsDeleted:    boolProp(fProps, "is_deleted"),
+						IsFragmented: boolProp(fProps, "is_fragmented"),
 					},
 				}
 

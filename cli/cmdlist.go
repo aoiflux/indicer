@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"indicer/lib/enrichment"
 	"indicer/lib/store"
 )
 
@@ -9,9 +10,16 @@ func ListData(chonkSize int, dbpath string, key []byte) error {
 	if err != nil {
 		return err
 	}
-	err = store.List(db)
+	defer db.Close()
+
+	// Try to open enrichment graphdb for graphdb-first retrieval
+	enrichRepo, err := enrichment.OpenGrapheneRepository(dbpath)
 	if err != nil {
-		return err
+		// Graphdb not available, fall back to KVDB-only
+		return store.List(db)
 	}
-	return db.Close()
+	defer enrichRepo.Close()
+
+	// Try graphdb-first listing
+	return store.ListWithEnrichment(db, enrichRepo)
 }

@@ -101,6 +101,31 @@ func (service *Service) EnrichAll() error {
 				diskImageName: util.GetArbitratyMapKey(evidata.Names),
 			}
 
+			// Create disk image-level file records for each file at evidence level
+			for diskImageFileName := range evidata.Names {
+				fileName := diskImageFileName
+				if strings.Contains(diskImageFileName, cnst.DataSeperator) {
+					parts := strings.SplitN(diskImageFileName, cnst.DataSeperator, 3)
+					if len(parts) >= 3 {
+						fileName = parts[2]
+					}
+				}
+
+				diskImageRecord := FileRecord{
+					Level:         "disk_image",
+					FileName:      fileName,
+					Path:          diskImageFileName,
+					Size:          evidata.Size,
+					IsDeleted:     false,
+					IsFragmented:  false,
+					DiskImageID:   context.diskImageID,
+					DiskImageName: context.diskImageName,
+				}
+				if err := service.repository.UpsertFile(diskImageRecord); err != nil {
+					return err
+				}
+			}
+
 			for partitionHashB64 := range evidata.InternalObjects {
 				if err := service.enrichPartitionByHash(txn, context, partitionHashB64, func() {
 					_ = bar.Add(1)
@@ -186,6 +211,36 @@ func (service *Service) enrichPartitionByHash(txn *badger.Txn, evidence evidence
 		partitionName:   util.GetArbitratyMapKey(pdata.Names),
 	}
 
+	// Create partition-level file records for each file in this partition
+	ensureIndexedNameMeta(&pdata.IndexedFile)
+	for partitionFileName := range pdata.Names {
+		fileName := partitionFileName
+		if strings.Contains(partitionFileName, cnst.DataSeperator) {
+			parts := strings.SplitN(partitionFileName, cnst.DataSeperator, 3)
+			if len(parts) >= 3 {
+				fileName = parts[2]
+			}
+		}
+
+		partitionRecord := FileRecord{
+			Level:         "partition",
+			FileName:      fileName,
+			Path:          partitionFileName,
+			Size:          pdata.Size,
+			IsDeleted:     pdata.IsDeleted,
+			IsFragmented:  false, // Could check NameMeta if needed
+			FileType:      pdata.IndexedType,
+			DiskImageID:   evidence.diskImageID,
+			DiskImageName: evidence.diskImageName,
+			PartitionID:   partitionHashB64,
+			PartitionName: context.partitionName,
+		}
+		if err := service.repository.UpsertFile(partitionRecord); err != nil {
+			return err
+		}
+	}
+
+	// Process indexed files within this partition
 	for indexedHashB64 := range pdata.InternalObjects {
 		if err := service.enrichIndexedHash(context, indexedHashB64); err != nil {
 			return err
@@ -286,22 +341,25 @@ func (service *Service) enrichIndexedHash(context partitionContext, indexedHashB
 	}
 	ensureIndexedNameMeta(&indexedFile)
 
+	// Create one FileRecord per file NAME at the indexed file level
 	for indexedName := range indexedFile.Names {
 		fileName, filePath := splitIndexedName(indexedName)
 		meta := indexedFile.NameMeta[indexedName]
 
 		record := FileRecord{
-			Hash:          indexedHashCanonical,
-			Name:          fileName,
-			Path:          filePath,
-			Size:          indexedFile.Size,
-			IsDeleted:     indexedFile.IsDeleted || meta.IsDeleted,
-			IsFragmented:  meta.IsFragmented,
-			FileType:      indexedFile.IndexedType,
-			DiskImageID:   context.diskImageID,
-			DiskImageName: context.diskImageName,
-			PartitionID:   context.partitionID,
-			PartitionName: context.partitionName,
+			Level:           "indexed_file",
+			FileName:        fileName,
+			Path:            filePath,
+			Size:            indexedFile.Size,
+			IsDeleted:       indexedFile.IsDeleted || meta.IsDeleted,
+			IsFragmented:    meta.IsFragmented,
+			FileType:        indexedFile.IndexedType,
+			DiskImageID:     context.diskImageID,
+			DiskImageName:   context.diskImageName,
+			PartitionID:     context.partitionID,
+			PartitionName:   context.partitionName,
+			IndexedFileID:   indexedHashCanonical,
+			IndexedFileHash: indexedHashCanonical,
 		}
 		if err := service.repository.UpsertFile(record); err != nil {
 			return err

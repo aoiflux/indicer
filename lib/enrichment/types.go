@@ -6,20 +6,27 @@ import (
 )
 
 // FileRecord is a file-level enrichment payload destined for graphdb.
+// Creates FILE nodes at disk image, partition, or indexed file level.
 type FileRecord struct {
-	Hash         string
-	Name         string
-	Path         string
-	Size         int64
-	IsDeleted    bool
-	IsFragmented bool
-	FileType     string
+	Level string // "disk_image", "partition", or "indexed_file" - identifies which level this file belongs to
 
-	DiskImageID   string
-	DiskImageName string
-	PartitionID   string
-	PartitionName string
-	IndexedFileID string
+	// File identity
+	FileName string // The file name at this level
+	Path     string // Full path (for indexed files)
+
+	// File metadata
+	Size         int64  // Size of this file
+	IsDeleted    bool   // Whether file is marked deleted
+	IsFragmented bool   // Whether file is fragmented
+	FileType     string // Type (only set at indexed file level)
+
+	// Hierarchy references
+	DiskImageID     string // ID/hash of parent evidence
+	DiskImageName   string // Name of parent evidence
+	PartitionID     string // ID/hash of parent partition (empty for disk_image level)
+	PartitionName   string // Name of parent partition (empty for disk_image level)
+	IndexedFileID   string // ID/hash of indexed file (empty for disk_image/partition level)
+	IndexedFileHash string // Hash of indexed file
 }
 
 // EvidenceRecord is a top-level evidence object (input file) to be represented
@@ -31,21 +38,17 @@ type EvidenceRecord struct {
 	Size       int64
 }
 
-func (record FileRecord) ensureIndexedFileID() string {
-	if record.IndexedFileID != "" {
-		return record.IndexedFileID
+func (record FileRecord) buildFileNodeID() string {
+	switch record.Level {
+	case "disk_image":
+		return hashText("file-node", record.DiskImageID, record.FileName)
+	case "partition":
+		return hashText("file-node", record.PartitionID, record.FileName)
+	case "indexed_file":
+		return hashText("file-node", record.IndexedFileID, record.FileName)
+	default:
+		return hashText("file-node", record.DiskImageID, record.FileName)
 	}
-	return buildIndexedFileID(record.PartitionID, record.Path, record.Hash)
-}
-
-func buildIndexedFileID(partitionID, path, fallback string) string {
-	if partitionID != "" && path != "" {
-		return hashText("path-node", partitionID, path)
-	}
-	if fallback != "" {
-		return fallback
-	}
-	return hashText("path-node", partitionID, path)
 }
 
 func hashText(value string, rest ...string) string {

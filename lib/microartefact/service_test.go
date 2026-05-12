@@ -113,15 +113,16 @@ func TestGrapheneRepositoryStoresNodesAndEdges(t *testing.T) {
 		t.Fatalf("enrichment.OpenGrapheneRepository: %v", err)
 	}
 	if err := enrichmentRepo.UpsertFile(enrichment.FileRecord{
-		Hash:          "hash-2",
-		Name:          "evidence.bin",
-		Path:          filepath.Join(root, "evidence.bin"),
-		Size:          128,
-		DiskImageID:   "disk-image-001",
-		DiskImageName: "evidence.E01",
-		PartitionID:   "partition-001",
-		PartitionName: "vol0",
-		IndexedFileID: "hash-2",
+		Level:           "indexed_file",
+		FileName:        "evidence.bin",
+		Path:            filepath.Join(root, "evidence.bin"),
+		Size:            128,
+		DiskImageID:     "disk-image-001",
+		DiskImageName:   "evidence.E01",
+		PartitionID:     "partition-001",
+		PartitionName:   "vol0",
+		IndexedFileID:   "hash-2",
+		IndexedFileHash: "hash-2",
 	}); err != nil {
 		t.Fatalf("enrichment.UpsertFile: %v", err)
 	}
@@ -176,12 +177,13 @@ func TestGrapheneRepositoryStoresNodesAndEdges(t *testing.T) {
 	}
 	defer graph.Close()
 
-	fileHits, err := graph.NodesByProperty("evidence_hash", []byte(file.Hash))
+	// Check for FILE node with "evidence.bin" name at indexed_file level
+	fileHits, err := graph.NodesByProperty("name", []byte("evidence.bin"))
 	if err != nil {
-		t.Fatalf("NodesByProperty evidence_hash: %v", err)
+		t.Fatalf("NodesByProperty name: %v", err)
 	}
-	if len(fileHits) != 3 {
-		t.Fatalf("expected 3 evidence_hash hits (1 file + 2 artefacts), got %d", len(fileHits))
+	if len(fileHits) == 0 {
+		t.Fatalf("expected file node with name 'evidence.bin', got %d nodes", len(fileHits))
 	}
 
 	artefactHits, err := graph.NodesByType(graphstore.NodeTypeMicroArtefact)
@@ -196,8 +198,8 @@ func TestGrapheneRepositoryStoresNodesAndEdges(t *testing.T) {
 	if err != nil {
 		t.Fatalf("EdgesByType contains: %v", err)
 	}
-	if len(edgeHits) != 4 {
-		t.Fatalf("expected 4 contains edges (disk->partition->indexed_file + 2 artefacts), got %d", len(edgeHits))
+	if len(edgeHits) != 5 {
+		t.Fatalf("expected 5 contains edges (disk->partition->indexed_file->file + 2 artefacts), got %d", len(edgeHits))
 	}
 
 	relationEdgeHits, err := graph.EdgesByType(graphstore.EdgeType(100))

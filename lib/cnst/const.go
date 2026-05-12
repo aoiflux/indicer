@@ -61,7 +61,7 @@ const (
 )
 
 const (
-	BLOBSDIR    = "BLOBS"
+	BLOBSDIR    = "blobs"
 	BLOBEXT     = ".blob"
 	BLOBZSTEXT  = ".blob.zst"
 	FileNameLen = 25

@@ -5,9 +5,12 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
+	"regexp"
+	"sort"
 	"strings"
 
 	"indicer/lib/cnst"
+	"indicer/lib/enrichment"
 	"indicer/lib/structs"
 	"indicer/lib/util"
 
@@ -63,6 +66,7 @@ func List(db *badger.DB) error {
 
 			eviFile := map[string]interface{}{
 				"hash":           hashStr,
+				"name":           normalizeDiskImageName(firstCleanNameFromMap(evidata.Names)),
 				"type":           evidata.EvidenceType,
 				"size":           evidata.Size,
 				"completed":      evidata.Completed,
@@ -134,6 +138,7 @@ func buildPartitionData(phash string, txn *badger.Txn) (map[string]interface{}, 
 
 	partData := map[string]interface{}{
 		"hash":         phash,
+		"fileName":     firstCleanNameFromMap(pdata.Names),
 		"type":         pdata.IndexedType,
 		"size":         pdata.Size,
 		"files":        getMapKeys(pdata.Names),
@@ -206,6 +211,7 @@ func buildIndexedFileData(ihash string, txn *badger.Txn) (map[string]interface{}
 
 	ifileData := map[string]interface{}{
 		"hash":          ihash,
+		"fileName":      firstMapKey(cleanedNames),
 		"type":          idata.IndexedType,
 		"size":          idata.Size,
 		"start":         idata.Start,
@@ -224,4 +230,139 @@ func getMapKeys(m map[string]struct{}) []string {
 		keys = append(keys, k)
 	}
 	return keys
+}
+
+// ListWithEnrichment attempts to list data from enrichment graphdb first,
+// falling back to KVDB if graphdb is empty or unavailable.
+func ListWithEnrichment(db *badger.DB, enrichRepo enrichment.Repository) error {
+	// Try to read enrichment hierarchy
+	hierarchy, err := enrichRepo.ReadHierarchy()
+	if err != nil {
+		// Fall back to KVDB-only listing
+		return List(db)
+	}
+
+	// If no disk images found in graphdb, fall back to KVDB
+	if len(hierarchy.DiskImages) == 0 {
+		return List(db)
+	}
+
+	// Format graphdb hierarchy into output
+	var evidenceFiles []map[string]interface{}
+
+	for _, diskImage := range hierarchy.DiskImages {
+		var partitions []map[string]interface{}
+
+		for _, partition := range diskImage.Partitions {
+			var indexedFiles []map[string]interface{}
+			partitionFileName := trimHierName(partition.Name)
+			if partitionFileName == "" {
+				partitionFileName = trimHierName(partition.ID)
+			}
+
+			for _, file := range partition.Files {
+				indexedFileName := ""
+				for _, levelFile := range file.FileLevelNodes {
+					if indexedFileName == "" {
+						indexedFileName = levelFile.FileName
+					}
+				}
+				if indexedFileName == "" && len(file.FileNames) > 0 {
+					indexedFileName = file.FileNames[0]
+				}
+				if indexedFileName == "" {
+					indexedFileName = file.Hash
+				}
+
+				indexedFiles = append(indexedFiles, map[string]interface{}{
+					"hash":         file.Hash,
+					"fileName":     indexedFileName,
+					"type":         file.FileType,
+					"size":         file.Size,
+					"isDeleted":    file.IsDeleted,
+					"isFragmented": file.IsFragmented,
+				})
+			}
+
+			partitions = append(partitions, map[string]interface{}{
+				"hash":         partition.ID,
+				"fileName":     partitionFileName,
+				"name":         partition.Name,
+				"type":         "partition",
+				"indexedFiles": indexedFiles,
+				"indexedCount": len(indexedFiles),
+			})
+		}
+
+		eviFile := map[string]interface{}{
+			"hash":           diskImage.ID,
+			"name":           normalizeDiskImageName(diskImage.Name),
+			"type":           "image",
+			"completed":      true,
+			"partitions":     partitions,
+			"partitionCount": len(partitions),
+			"source":         "graphdb",
+		}
+		evidenceFiles = append(evidenceFiles, eviFile)
+	}
+
+	// Output as JSON
+	output := map[string]interface{}{
+		"totalEvidence": len(evidenceFiles),
+		"evidence":      evidenceFiles,
+	}
+
+	jsonData, err := json.MarshalIndent(output, "", "  ")
+	if err != nil {
+		return err
+	}
+
+	fmt.Println(string(jsonData))
+	return nil
+}
+
+func getMapKeysFromSlice(m map[string]struct{}) []string {
+	keys := make([]string, 0, len(m))
+	for k := range m {
+		keys = append(keys, k)
+	}
+	return keys
+}
+
+func trimHierName(value string) string {
+	if strings.Contains(value, cnst.DataSeperator) {
+		parts := strings.SplitN(value, cnst.DataSeperator, 3)
+		if len(parts) >= 2 {
+			return parts[len(parts)-1]
+		}
+	}
+	return value
+}
+
+func firstMapKey(values map[string]struct{}) string {
+	keys := getMapKeys(values)
+	if len(keys) == 0 {
+		return ""
+	}
+	sort.Strings(keys)
+	return keys[0]
+}
+
+func firstCleanNameFromMap(values map[string]struct{}) string {
+	if len(values) == 0 {
+		return ""
+	}
+	keys := make([]string, 0, len(values))
+	for name := range values {
+		keys = append(keys, trimHierName(name))
+	}
+	sort.Strings(keys)
+	return keys[0]
+}
+
+var partitionSuffixPattern = regexp.MustCompile(`_p[0-9]+$`)
+
+func normalizeDiskImageName(value string) string {
+	name := strings.TrimSpace(trimHierName(value))
+	return partitionSuffixPattern.ReplaceAllString(name, "")
 }

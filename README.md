@@ -145,6 +145,7 @@ For detailed rationale and implementation notes, see:
 
 - [Container Mode LLD](CONTAINER_MODE_LLD.md)
 - [Container Manager (Current Implementation)](CONTAINER_MANAGER_CURRENT.md)
+- [Search LLD and Developer Guide](SEARCH_LLD.md)
 
 ## Command Flags
 

@@ -200,7 +200,7 @@ func indexFullTextSidecar(db *badger.DB, jobs []ftsIndexJob) error {
 	fmt.Fprintln(os.Stderr, "Updating full-text index sidecar...")
 	bar := progressbar.NewOptions64(
 		int64(len(jobs)),
-		progressbar.OptionSetDescription("indexing full-text sidecar"),
+		progressbar.OptionSetDescription("Indexing full-text sidecar"),
 		progressbar.OptionSetWriter(os.Stderr),
 		progressbar.OptionSetTheme(cnst.CommonProgressBarTheme),
 	)

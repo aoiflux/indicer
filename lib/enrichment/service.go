@@ -120,7 +120,7 @@ func (service *Service) EnrichPartition(pfile structs.InputFile, indexedHashes [
 		return nil
 	}
 
-	bar := newEnrichmentProgressBar(int64(len(indexedHashes)), "enriching graphdb")
+	bar := newEnrichmentProgressBar(int64(len(indexedHashes)), "Enriching graphdb")
 	defer func() {
 		bar.Finish()
 		fmt.Fprintln(os.Stderr)

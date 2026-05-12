@@ -111,17 +111,36 @@ func SearchToPathWithContextFullTextFallback(ctx context.Context, query, reportP
 	if pq.op == queryOpOr {
 		mode = fts.QueryModeOr
 	}
+	ftsActivePrinted := false
 	ftScores, err := fts.SearchFileScoresParsed(ctx, db, pq.terms, mode, 5000)
 	if errors.Is(err, fts.ErrIndexNotReady) {
 		if backfillErr := fts.BuildFromIndexedFiles(ctx, db); backfillErr == nil {
 			ftScores, err = fts.SearchFileScoresParsed(ctx, db, pq.terms, mode, 5000)
 		}
 	}
-	if err != nil || len(ftScores) == 0 {
+	if err != nil {
 		color.New(color.FgHiYellow, color.Bold).Fprintf(os.Stderr, "[search] Full-text index unavailable, falling back to scan search\n")
 		return SearchToPathWithContext(ctx, query, reportPath, db)
 	}
-	color.New(color.FgHiCyan, color.Bold).Fprintf(os.Stderr, "[search] Full-text search active (candidate filtering enabled)\n")
+	if len(ftScores) == 0 {
+		rawScores, rawErr := fts.SearchFileScores(ctx, db, query, 5000)
+		if rawErr == nil && len(rawScores) > 0 {
+			ftScores = rawScores
+			color.New(color.FgHiCyan, color.Bold).Fprintf(os.Stderr, "[search] Full-text search active (raw-query candidate filtering enabled)\n")
+			ftsActivePrinted = true
+		} else {
+			docCount, countErr := fts.IndexDocumentCount(db)
+			if countErr == nil {
+				color.New(color.FgHiYellow, color.Bold).Fprintf(os.Stderr, "[search] Full-text index available (%d docs) but query returned no candidates, falling back to scan search\n", docCount)
+			} else {
+				color.New(color.FgHiYellow, color.Bold).Fprintf(os.Stderr, "[search] Full-text index returned no candidates for query, falling back to scan search\n")
+			}
+			return SearchToPathWithContext(ctx, query, reportPath, db)
+		}
+	}
+	if len(ftScores) > 0 && !ftsActivePrinted {
+		color.New(color.FgHiCyan, color.Bold).Fprintf(os.Stderr, "[search] Full-text search active (candidate filtering enabled)\n")
+	}
 
 	candidates := fts.TopCandidateIDs(ftScores)
 	totalWork := int64(len(candidates))*int64(len(pq.terms)) + 1

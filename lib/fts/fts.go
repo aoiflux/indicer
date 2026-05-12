@@ -149,6 +149,16 @@ func SearchFileScores(ctx context.Context, db *badger.DB, query string, limit in
 	return scores, nil
 }
 
+func IndexDocumentCount(db *badger.DB) (uint64, error) {
+	index, err := openExisting(db)
+	if err != nil {
+		return 0, err
+	}
+	defer index.Close()
+
+	return index.DocCount()
+}
+
 // SearchFileScoresParsed evaluates FTS scores using already-parsed terms and a
 // caller-selected AND/OR mode so FTS candidate retrieval matches higher-level
 // query semantics.

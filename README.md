@@ -21,6 +21,7 @@ by patents 567877 and 556272 registered at the Indian Patent Office.
 - Zstandard-backed compression.
 - Partition-aware indexing for supported images and filesystems.
 - Full-text search with report generation (`report.json`).
+- Occurrence-aware ranking with configurable weighting (`--rank-alpha`).
 - NeAR (near-duplicate analysis) for files inside (`near in`) and outside
   (`near out`) the DB.
 - Graph generation for similarity analysis (`graph.html`).
@@ -56,6 +57,15 @@ dues list
 # Search indexed content/metadata
 dues search "invoice"
 
+# Search with multiple terms (AND by default)
+dues search "invoice payment"
+
+# Search with OR semantics
+dues search "invoice|receipt"
+
+# Increase the influence of raw occurrence counts in ranking
+dues search --rank-alpha 0.8 "invoice payment"
+
 # Restore by hash
 dues restore <hash> --filepath restored.bin
 
@@ -74,6 +84,10 @@ dues tui
 - `dues list`: List completed evidence entries in the database.
 - `dues restore HASH`: Restore a stored file by hash.
 - `dues search QUERY`: Run search and emit `report.json`.
+  - Supports AND queries (`foo bar`), OR queries (`foo|bar`), and quoted phrases
+    (`"foo bar"`).
+  - `--rank-alpha` tunes how strongly raw occurrence counts influence ranking
+    while BM25 remains the primary relevance signal.
 - `dues near in HASH`: Find similar files for a stored object.
 - `dues near out FILE`: Compare an external file against DB objects.
 - `dues reset`: Delete database after confirmation.
@@ -95,6 +109,12 @@ dues tui
 | `--quick`        | `-q`  | Throughput-first mode (less protection/compression) | `false`   |
 | `--container`    | `-x`  | Container blob storage mode                         | `false`   |
 | `--hierarchical` | `-i`  | Hierarchical block index mode                       | `false`   |
+
+### search
+
+| Flag           | Short | Description                                            | Default |
+| -------------- | ----- | ------------------------------------------------------ | ------- |
+| `--rank-alpha` | none  | Weight for occurrence-aware ranking influence (`>= 0`) | `0.35`  |
 
 If `--hierarchical` is set without `--container`, DUES enables container mode
 automatically.

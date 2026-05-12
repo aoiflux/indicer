@@ -1,6 +1,7 @@
 package tui
 
 import (
+	"context"
 	"fmt"
 	"strings"
 
@@ -14,7 +15,8 @@ type SearchModel struct {
 	queryInput   textinput.Model
 	results      []string
 	db           *badger.DB
-	searchFn     func(query string) error
+	searchFn     func(ctx context.Context, query string) error
+	cancelSearch context.CancelFunc
 	width        int
 	height       int
 	searching    bool
@@ -25,7 +27,7 @@ type searchCompletedMsg struct {
 	err error
 }
 
-func NewSearchModel(db *badger.DB, searchFn func(query string) error) *SearchModel {
+func NewSearchModel(db *badger.DB, searchFn func(ctx context.Context, query string) error) *SearchModel {
 	queryInput := textinput.New()
 	queryInput.Placeholder = "Enter search query..."
 	queryInput.Focus()
@@ -60,7 +62,12 @@ func (m SearchModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
 	case searchCompletedMsg:
 		m.searching = false
+		m.cancelSearch = nil
 		if msg.err != nil {
+			if msg.err == context.Canceled {
+				m.results = []string{"Search canceled"}
+				return m, nil
+			}
 			m.results = []string{"Error: " + msg.err.Error()}
 		} else {
 			m.results = []string{"Search complete", "Generated report.json in current directory"}
@@ -69,6 +76,11 @@ func (m SearchModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case tea.KeyMsg:
 		switch msg.String() {
 		case "ctrl+c", "esc":
+			if m.searching && m.cancelSearch != nil {
+				m.cancelSearch()
+				m.results = []string{"Canceling search..."}
+				return m, nil
+			}
 			return m, tea.Quit
 		case "enter":
 			if m.focusedField == 0 && !m.searching {
@@ -83,7 +95,9 @@ func (m SearchModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				}
 				m.searching = true
 				m.results = nil
-				return m, runSearchCmd(m.searchFn, query)
+				ctx, cancel := context.WithCancel(context.Background())
+				m.cancelSearch = cancel
+				return m, runSearchCmd(m.searchFn, ctx, query)
 			}
 		}
 	}
@@ -95,9 +109,9 @@ func (m SearchModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	return m, cmd
 }
 
-func runSearchCmd(searchFn func(query string) error, query string) tea.Cmd {
+func runSearchCmd(searchFn func(ctx context.Context, query string) error, ctx context.Context, query string) tea.Cmd {
 	return func() tea.Msg {
-		return searchCompletedMsg{err: searchFn(query)}
+		return searchCompletedMsg{err: searchFn(ctx, query)}
 	}
 }
 

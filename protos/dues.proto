@@ -73,10 +73,13 @@ message GetIdxFilesRes {
 
 
 message SearchReq {
+    // Keyword is matched case-insensitively against indexed content.
     string keyword = 1;
 }
 message SearchRes {
     string err = 1;
     int64 total_count = 2;
+    // Keys are base64-encoded internal file IDs from the search index.
+    // Values are occurrence counts for the matched keyword within that file.
     map<string, int64> keyword_count_map = 3;
 }

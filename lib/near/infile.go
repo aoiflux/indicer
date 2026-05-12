@@ -618,7 +618,17 @@ func getNearFile(start, size int64, ehash, fid []byte, db *badger.DB, deep ...bo
 	idmap := structs.NewConcMap()
 
 	fmt.Println("Finding NeAR Artefacts....")
-	bar := progressbar.DefaultBytes(size)
+	bar := progressbar.NewOptions64(
+		size,
+		progressbar.OptionShowBytes(true),
+		progressbar.OptionSetTheme(progressbar.Theme{
+			Saucer:        "#",
+			SaucerHead:    ">",
+			SaucerPadding: "-",
+			BarStart:      "[",
+			BarEnd:        "]",
+		}),
+	)
 
 	var active int
 	echan := make(chan error)

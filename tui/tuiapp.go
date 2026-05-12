@@ -1,6 +1,7 @@
 package tui
 
 import (
+	"context"
 	"fmt"
 	"io"
 	"strings"
@@ -33,7 +34,7 @@ type Model struct {
 
 type Actions struct {
 	Store   func(filePath string, syncIndex bool, noIndex bool, hashAlgo string) error
-	Search  func(query string) error
+	Search  func(ctx context.Context, query string) error
 	Restore func(hash string, restorePath string) error
 	NearIn  func(hash string, deep bool) error
 	NearOut func(filePath string) error

@@ -29,7 +29,17 @@ func IndexEXFAT(pfile structs.InputFile, idxChan chan error) {
 
 	var flag bool
 	total := int64(len(indexableEntries))
-	bar := progressbar.Default(total, "indexing files")
+	bar := progressbar.NewOptions64(
+		total,
+		progressbar.OptionSetDescription("indexing files"),
+		progressbar.OptionSetTheme(progressbar.Theme{
+			Saucer:        "#",
+			SaucerHead:    ">",
+			SaucerPadding: "-",
+			BarStart:      "[",
+			BarEnd:        "]",
+		}),
+	)
 	bar.Clear()
 
 	encodedPfileHash, err := pfile.GetEncodedHash()

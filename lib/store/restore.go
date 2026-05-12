@@ -137,7 +137,17 @@ func restoreData(meta structs.FileMeta, dst *os.File, db *badger.DB) error {
 	}
 	end := meta.Start + meta.Size
 
-	bar := progressbar.DefaultBytes(meta.Size)
+	bar := progressbar.NewOptions64(
+		meta.Size,
+		progressbar.OptionShowBytes(true),
+		progressbar.OptionSetTheme(progressbar.Theme{
+			Saucer:        "#",
+			SaucerHead:    ">",
+			SaucerPadding: "-",
+			BarStart:      "[",
+			BarEnd:        "]",
+		}),
+	)
 	for restoreIndex := dbstart; restoreIndex < end; restoreIndex += cnst.ChonkSize {
 		relKey := util.AppendToBytesSlice(cnst.RelationNamespace, meta.EviHash, cnst.DataSeperator, restoreIndex)
 		chash, err := dbio.GetNode(relKey, db)

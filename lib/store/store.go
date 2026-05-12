@@ -111,7 +111,17 @@ func evidenceFilePreflight(infile structs.InputFile) (structs.EvidenceFile, erro
 }
 func storeEvidenceData(infile structs.InputFile) (err error) {
 
-	bar := progressbar.DefaultBytes(infile.GetSize())
+	bar := progressbar.NewOptions64(
+		infile.GetSize(),
+		progressbar.OptionShowBytes(true),
+		progressbar.OptionSetTheme(progressbar.Theme{
+			Saucer:        "#",
+			SaucerHead:    ">",
+			SaucerPadding: "-",
+			BarStart:      "[",
+			BarEnd:        "]",
+		}),
+	)
 	simhashWriter := newSimhashAsyncWriter(infile.GetDB(), cnst.GetMaxThreadCount())
 	defer func() {
 		simhashErr := simhashWriter.wait()

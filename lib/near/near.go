@@ -35,7 +35,6 @@ func countEviFile(index int64, confidence float64, method string, inputHash, rev
 	if err != nil {
 		return err
 	}
-	db.RunValueLogGC(0.5)
 
 	if len(efile.InternalObjects) == 0 {
 		idmap.Set(string(eid), confidence)
@@ -61,7 +60,6 @@ func countPartiFile(confidence float64, ridx int64, method string, inputHash, ei
 		if err != nil {
 			return err
 		}
-		db.RunValueLogGC(0.5)
 
 		if len(pfile.InternalObjects) == 0 {
 			idmap.Set(string(pid), confidence)

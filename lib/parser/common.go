@@ -155,7 +155,17 @@ func finalizeIndexedFiles(idxmap map[string]structs.IndexedFile, pfile structs.I
 func storeIndexedFiles(idxmap map[string]structs.IndexedFile, db *badger.DB, batch *badger.WriteBatch, idxChan chan error) error {
 	var pflag bool
 	total := int64(len(idxmap))
-	bar := progressbar.Default(total, "indexing files")
+	bar := progressbar.NewOptions64(
+		total,
+		progressbar.OptionSetDescription("indexing files"),
+		progressbar.OptionSetTheme(progressbar.Theme{
+			Saucer:        "#",
+			SaucerHead:    ">",
+			SaucerPadding: "-",
+			BarStart:      "[",
+			BarEnd:        "]",
+		}),
+	)
 	bar.Clear()
 
 	for ihash, newIdxfile := range idxmap {

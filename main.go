@@ -73,6 +73,7 @@ func main() {
 
 	cmdsearch := app.Command(cnst.CmdSearch, "Search anything in DUES DB")
 	query := cmdsearch.Arg(cnst.OperandQuery, "Search query string").String()
+	rankAlpha := cmdsearch.Flag("rank-alpha", "Occurrence boost weight for ranking (>= 0, default: 0.35)").Default("0.35").Float64()
 
 	cmdmicro := app.Command(cnst.CmdMicro, "Manage micro-artefacts")
 	microExtract := cmdmicro.Command("extract", "Extract micro-artefacts from all indexed files and populate graph database")
@@ -149,7 +150,7 @@ func main() {
 	case cmdout.FullCommand():
 		err = cli.NearOutData(*outDeep, *outExplainExact, *outVerify, *outTopK, *chonkSize, *dbpath, *outpath, key)
 	case cmdsearch.FullCommand():
-		err = cli.SearchCmd(*chonkSize, *query, *dbpath, key)
+		err = cli.SearchCmd(*chonkSize, *query, *dbpath, key, *rankAlpha)
 	case microExtract.FullCommand():
 		err = cli.MicroArtefactCmd(*chonkSize, *dbpath, key, *microExtractForce, *microExtractTopK)
 	case microList.FullCommand():

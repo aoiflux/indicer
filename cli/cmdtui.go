@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"context"
 	"fmt"
 	"indicer/lib/cnst"
 	"indicer/lib/near"
@@ -67,12 +68,12 @@ func TUICmd(chonkSize int, dbpath string, key []byte) error {
 				return StoreFile(chonkSize, filePath, key, noIndex, db)
 			})
 		},
-		Search: func(query string) error {
+		Search: func(ctx context.Context, query string) error {
 			if len(query) < 2 {
 				return fmt.Errorf("query must be at least 2 characters")
 			}
 			return runQuiet(func() error {
-				return search.Search(strings.ToLower(query), db)
+				return search.SearchWithContext(ctx, strings.ToLower(query), db)
 			})
 		},
 		Restore: func(hash string, restorePath string) error {

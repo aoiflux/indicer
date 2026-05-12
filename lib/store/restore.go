@@ -141,13 +141,7 @@ func restoreData(meta structs.FileMeta, dst *os.File, db *badger.DB) error {
 		meta.Size,
 		progressbar.OptionShowBytes(true),
 		progressbar.OptionSetWriter(os.Stderr),
-		progressbar.OptionSetTheme(progressbar.Theme{
-			Saucer:        "#",
-			SaucerHead:    ">",
-			SaucerPadding: "-",
-			BarStart:      "[",
-			BarEnd:        "]",
-		}),
+		progressbar.OptionSetTheme(cnst.CommonProgressBarTheme),
 	)
 	for restoreIndex := dbstart; restoreIndex < end; restoreIndex += cnst.ChonkSize {
 		relKey := util.AppendToBytesSlice(cnst.RelationNamespace, meta.EviHash, cnst.DataSeperator, restoreIndex)

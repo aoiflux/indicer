@@ -258,13 +258,7 @@ func BuildFromIndexedFiles(ctx context.Context, db *badger.DB) error {
 		int64(len(ids)),
 		progressbar.OptionSetDescription("building full-text index (names + extracted content)"),
 		progressbar.OptionSetWriter(os.Stderr),
-		progressbar.OptionSetTheme(progressbar.Theme{
-			Saucer:        "#",
-			SaucerHead:    ">",
-			SaucerPadding: "-",
-			BarStart:      "[",
-			BarEnd:        "]",
-		}),
+		progressbar.OptionSetTheme(cnst.CommonProgressBarTheme),
 	)
 
 	for _, fid := range ids {

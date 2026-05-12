@@ -132,13 +132,7 @@ func SearchToPathWithContextFullTextFallback(ctx context.Context, query, reportP
 		totalWork,
 		progressbar.OptionSetDescription("Searching...."),
 		progressbar.OptionSetWriter(os.Stderr),
-		progressbar.OptionSetTheme(progressbar.Theme{
-			Saucer:        "#",
-			SaucerHead:    ">",
-			SaucerPadding: "-",
-			BarStart:      "[",
-			BarEnd:        "]",
-		}),
+		progressbar.OptionSetTheme(cnst.CommonProgressBarTheme),
 	)
 	var progressMu sync.Mutex
 	onProcessed := func() {
@@ -215,13 +209,7 @@ func SearchToPathWithContext(ctx context.Context, query, reportPath string, db *
 		totalWork,
 		progressbar.OptionSetDescription("Searching...."),
 		progressbar.OptionSetWriter(os.Stderr),
-		progressbar.OptionSetTheme(progressbar.Theme{
-			Saucer:        "#",
-			SaucerHead:    ">",
-			SaucerPadding: "-",
-			BarStart:      "[",
-			BarEnd:        "]",
-		}),
+		progressbar.OptionSetTheme(cnst.CommonProgressBarTheme),
 	)
 	var progressMu sync.Mutex
 	onProcessed := func() {

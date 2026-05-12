@@ -622,13 +622,7 @@ func getNearFile(start, size int64, ehash, fid []byte, db *badger.DB, deep ...bo
 		size,
 		progressbar.OptionShowBytes(true),
 		progressbar.OptionSetWriter(os.Stderr),
-		progressbar.OptionSetTheme(progressbar.Theme{
-			Saucer:        "#",
-			SaucerHead:    ">",
-			SaucerPadding: "-",
-			BarStart:      "[",
-			BarEnd:        "]",
-		}),
+		progressbar.OptionSetTheme(cnst.CommonProgressBarTheme),
 	)
 
 	var active int

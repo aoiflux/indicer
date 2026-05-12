@@ -202,13 +202,7 @@ func indexFullTextSidecar(db *badger.DB, jobs []ftsIndexJob) error {
 		int64(len(jobs)),
 		progressbar.OptionSetDescription("indexing full-text sidecar"),
 		progressbar.OptionSetWriter(os.Stderr),
-		progressbar.OptionSetTheme(progressbar.Theme{
-			Saucer:        "#",
-			SaucerHead:    ">",
-			SaucerPadding: "-",
-			BarStart:      "[",
-			BarEnd:        "]",
-		}),
+		progressbar.OptionSetTheme(cnst.CommonProgressBarTheme),
 	)
 
 	if err := fts.IndexIndexedFileJobs(db, jobs, func() {
@@ -231,13 +225,7 @@ func storeIndexedFiles(idxmap map[string]structs.IndexedFile, db *badger.DB, bat
 		total,
 		progressbar.OptionSetDescription("indexing files"),
 		progressbar.OptionSetWriter(os.Stderr),
-		progressbar.OptionSetTheme(progressbar.Theme{
-			Saucer:        "#",
-			SaucerHead:    ">",
-			SaucerPadding: "-",
-			BarStart:      "[",
-			BarEnd:        "]",
-		}),
+		progressbar.OptionSetTheme(cnst.CommonProgressBarTheme),
 	)
 	bar.Clear()
 

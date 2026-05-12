@@ -34,13 +34,7 @@ func IndexEXFAT(pfile structs.InputFile, idxChan chan error, enableFTS bool, ena
 		total,
 		progressbar.OptionSetDescription("indexing files"),
 		progressbar.OptionSetWriter(os.Stderr),
-		progressbar.OptionSetTheme(progressbar.Theme{
-			Saucer:        "#",
-			SaucerHead:    ">",
-			SaucerPadding: "-",
-			BarStart:      "[",
-			BarEnd:        "]",
-		}),
+		progressbar.OptionSetTheme(cnst.CommonProgressBarTheme),
 	)
 	bar.Clear()
 

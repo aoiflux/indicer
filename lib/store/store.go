@@ -117,13 +117,7 @@ func storeEvidenceData(infile structs.InputFile) (err error) {
 		infile.GetSize(),
 		progressbar.OptionShowBytes(true),
 		progressbar.OptionSetWriter(os.Stderr),
-		progressbar.OptionSetTheme(progressbar.Theme{
-			Saucer:        "#",
-			SaucerHead:    ">",
-			SaucerPadding: "-",
-			BarStart:      "[",
-			BarEnd:        "]",
-		}),
+		progressbar.OptionSetTheme(cnst.CommonProgressBarTheme),
 	)
 	simhashWriter := newSimhashAsyncWriter(infile.GetDB(), cnst.GetMaxThreadCount())
 	defer func() {

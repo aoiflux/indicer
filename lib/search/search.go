@@ -21,6 +21,7 @@ import (
 	"time"
 
 	"github.com/dgraph-io/badger/v4"
+	"github.com/fatih/color"
 	"github.com/schollz/progressbar/v3"
 )
 
@@ -106,15 +107,21 @@ func SearchToPathWithContextFullTextFallback(ctx context.Context, query, reportP
 		return fmt.Errorf("countSearchFiles: %w", err)
 	}
 
-	ftScores, err := fts.SearchFileScores(ctx, db, query, 5000)
+	mode := fts.QueryModeAnd
+	if pq.op == queryOpOr {
+		mode = fts.QueryModeOr
+	}
+	ftScores, err := fts.SearchFileScoresParsed(ctx, db, pq.terms, mode, 5000)
 	if errors.Is(err, fts.ErrIndexNotReady) {
 		if backfillErr := fts.BuildFromIndexedFiles(ctx, db); backfillErr == nil {
-			ftScores, err = fts.SearchFileScores(ctx, db, query, 5000)
+			ftScores, err = fts.SearchFileScoresParsed(ctx, db, pq.terms, mode, 5000)
 		}
 	}
 	if err != nil || len(ftScores) == 0 {
+		color.New(color.FgHiYellow, color.Bold).Fprintf(os.Stderr, "[search] Full-text index unavailable, falling back to scan search\n")
 		return SearchToPathWithContext(ctx, query, reportPath, db)
 	}
+	color.New(color.FgHiCyan, color.Bold).Fprintf(os.Stderr, "[search] Full-text search active (candidate filtering enabled)\n")
 
 	candidates := fts.TopCandidateIDs(ftScores)
 	totalWork := int64(len(candidates))*int64(len(pq.terms)) + 1
@@ -156,6 +163,7 @@ func SearchToPathWithContextFullTextFallback(ctx context.Context, query, reportP
 		}
 	}
 	if !hasHits {
+		color.New(color.FgHiYellow, color.Bold).Fprintf(os.Stderr, "[search] Full-text path produced no hits, falling back to scan search\n")
 		return SearchToPathWithContext(ctx, query, reportPath, db)
 	}
 

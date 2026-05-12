@@ -9,6 +9,8 @@ import (
 	"os/signal"
 	"strings"
 	"syscall"
+
+	"github.com/fatih/color"
 )
 
 func SearchCmd(chonkSize int, query, dbpath string, key []byte, rankAlpha float64, fullText bool) error {
@@ -27,7 +29,9 @@ func SearchCmd(chonkSize int, query, dbpath string, key []byte, rankAlpha float6
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 	if fullText {
+		color.New(color.FgHiCyan, color.Bold).Fprintln(os.Stderr, "[search] Mode: hybrid full-text + scan ranking")
 		return search.SearchWithContextFullTextFallback(ctx, query, db)
 	}
+	color.New(color.FgHiWhite, color.Bold).Fprintln(os.Stderr, "[search] Mode: scan ranking only (use --enable-fts to enable hybrid mode)")
 	return search.SearchWithContext(ctx, query, db)
 }

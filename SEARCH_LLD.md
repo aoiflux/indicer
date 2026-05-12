@@ -103,7 +103,7 @@ Implemented today:
   - phrase: `"foo bar"`
 - BM25-based scoring with occurrence-aware ordering
 - configurable occurrence influence: `--rank-alpha`
-- optional full-text sidecar mode with automatic scan fallback: `--fulltext`
+- optional full-text sidecar mode with automatic scan fallback: `--enable-fts`
 - JSON report generation (`report.json`)
 - context cancellation support in CLI and TUI
 
@@ -116,7 +116,7 @@ Not implemented in current search path:
 Current full-text implementation note:
 
 - sidecar index is used to narrow candidates and add a light ranking boost in
-  `--fulltext` mode; scan search remains the source of truth for final counts
+  `--enable-fts` mode; scan search remains the source of truth for final counts
   and report payloads.
 
 ---
@@ -359,7 +359,7 @@ Current report fields:
 - Phrase query:
   - `dues search -d ./data "\"error code\""`
 - Full-text with fallback:
-  - `dues search -d ./data --fulltext "exe|dll"`
+  - `dues search -d ./data --enable-fts "exe|dll"`
 
 ### 10.2 Ranking tuning
 
@@ -372,7 +372,7 @@ Current report fields:
 
 ### 10.3 Full-text mode
 
-- `--fulltext` tries sidecar full-text search first.
+- `--enable-fts` tries sidecar full-text search first.
 - If sidecar index is missing, DUES auto-builds it from indexed-file metadata.
 - If sidecar results are empty/unhelpful, DUES falls back to regular scan path.
 - Final report still uses scan-derived counts and schema.

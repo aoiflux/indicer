@@ -30,6 +30,13 @@ type IndexedFileJob struct {
 	Names  map[string]struct{}
 }
 
+type QueryMode int
+
+const (
+	QueryModeAnd QueryMode = iota
+	QueryModeOr
+)
+
 func indexPath(db *badger.DB) string {
 	return filepath.Join(db.Opts().Dir, "fts_bleve.bleve")
 }
@@ -140,6 +147,82 @@ func SearchFileScores(ctx context.Context, db *badger.DB, query string, limit in
 		scores[hit.ID] = hit.Score
 	}
 	return scores, nil
+}
+
+// SearchFileScoresParsed evaluates FTS scores using already-parsed terms and a
+// caller-selected AND/OR mode so FTS candidate retrieval matches higher-level
+// query semantics.
+func SearchFileScoresParsed(ctx context.Context, db *badger.DB, terms []string, mode QueryMode, limit int) (map[string]float64, error) {
+	index, err := openExisting(db)
+	if err != nil {
+		return nil, err
+	}
+	defer index.Close()
+
+	if limit <= 0 {
+		limit = defaultLimit
+	}
+
+	query := buildParsedQueryString(terms, mode)
+	if query == "" {
+		return map[string]float64{}, nil
+	}
+
+	q := bleve.NewQueryStringQuery(query)
+	req := bleve.NewSearchRequestOptions(q, limit, 0, false)
+	res, err := index.SearchInContext(ctx, req)
+	if err != nil {
+		return nil, err
+	}
+
+	scores := make(map[string]float64, len(res.Hits))
+	for _, hit := range res.Hits {
+		scores[hit.ID] = hit.Score
+	}
+	return scores, nil
+}
+
+func buildParsedQueryString(terms []string, mode QueryMode) string {
+	parts := make([]string, 0, len(terms))
+	for _, term := range terms {
+		t := strings.TrimSpace(strings.ToLower(term))
+		if t == "" {
+			continue
+		}
+		parts = append(parts, ftsTermToQueryString(t))
+	}
+	if len(parts) == 0 {
+		return ""
+	}
+	if len(parts) == 1 {
+		return parts[0]
+	}
+	sep := " AND "
+	if mode == QueryModeOr {
+		sep = " OR "
+	}
+	return strings.Join(parts, sep)
+}
+
+func ftsTermToQueryString(term string) string {
+	escaped := escapeQueryStringTerm(term)
+	if strings.ContainsRune(term, ' ') {
+		return "\"" + escaped + "\""
+	}
+	return escaped
+}
+
+func escapeQueryStringTerm(term string) string {
+	const special = `+-=&|><!(){}[]^"~*?:\\/`
+	var b strings.Builder
+	b.Grow(len(term) * 2)
+	for _, r := range term {
+		if strings.ContainsRune(special, r) {
+			b.WriteRune('\\')
+		}
+		b.WriteRune(r)
+	}
+	return b.String()
 }
 
 // BuildFromIndexedFiles backfills the sidecar index from existing indexed-file

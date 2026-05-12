@@ -75,7 +75,7 @@ func main() {
 	cmdsearch := app.Command(cnst.CmdSearch, "Search anything in DUES DB")
 	query := cmdsearch.Arg(cnst.OperandQuery, "Search query string").String()
 	rankAlpha := cmdsearch.Flag("rank-alpha", "Occurrence boost weight for ranking (>= 0, default: 0.35)").Default("0.35").Float64()
-	fullText := cmdsearch.Flag("fulltext", "Enable sidecar full-text search first, then fallback to scan path").Default("false").Bool()
+	fullText := cmdsearch.Flag(cnst.FlagEnableFts, "Enable sidecar full-text search first, then fallback to scan path").Default("false").Bool()
 
 	cmdmicro := app.Command(cnst.CmdMicro, "Manage micro-artefacts")
 	microExtract := cmdmicro.Command("extract", "Extract micro-artefacts from all indexed files and populate graph database")

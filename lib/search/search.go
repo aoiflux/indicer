@@ -9,11 +9,13 @@ import (
 	"fmt"
 	"indicer/lib/cnst"
 	"indicer/lib/dbio"
+	"indicer/lib/fts"
 	"indicer/lib/near"
 	"indicer/lib/store"
 	"indicer/lib/structs"
 	"indicer/lib/util"
 	"os"
+	"sort"
 	"strings"
 	"sync"
 	"time"
@@ -65,7 +67,7 @@ func SearchSummaryWithContext(ctx context.Context, query string, db *badger.DB) 
 	}
 
 	settings := newSearchSettings(query)
-	idmap, err := executeSearchPipeline(ctx, settings, db, nil)
+	idmap, err := executeSearchPipeline(ctx, settings, db, nil, nil)
 	if err != nil {
 		return nil, 0, err
 	}
@@ -76,6 +78,105 @@ func SearchSummaryWithContext(ctx context.Context, query string, db *badger.DB) 
 
 func SearchWithContext(ctx context.Context, query string, db *badger.DB) error {
 	return SearchToPathWithContext(ctx, query, defaultReportPath, db)
+}
+
+// SearchWithContextFullTextFallback tries FTS-assisted search first and falls back
+// to the scan-only path when the sidecar index is unavailable or not useful.
+func SearchWithContextFullTextFallback(ctx context.Context, query string, db *badger.DB) error {
+	return SearchToPathWithContextFullTextFallback(ctx, query, defaultReportPath, db)
+}
+
+func SearchToPathWithContextFullTextFallback(ctx context.Context, query, reportPath string, db *badger.DB) error {
+	if reportPath == "" {
+		reportPath = defaultReportPath
+	}
+
+	pq := parseQuery(query)
+	if err := validateParsedQuery(pq); err != nil {
+		return err
+	}
+
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+
+	start := time.Now()
+	totalFiles, err := countSearchFiles(ctx, db)
+	if err != nil {
+		return fmt.Errorf("countSearchFiles: %w", err)
+	}
+
+	ftScores, err := fts.SearchFileScores(ctx, db, query, 5000)
+	if errors.Is(err, fts.ErrIndexNotReady) {
+		if backfillErr := fts.BuildFromIndexedFiles(ctx, db); backfillErr == nil {
+			ftScores, err = fts.SearchFileScores(ctx, db, query, 5000)
+		}
+	}
+	if err != nil || len(ftScores) == 0 {
+		return SearchToPathWithContext(ctx, query, reportPath, db)
+	}
+
+	candidates := fts.TopCandidateIDs(ftScores)
+	totalWork := int64(len(candidates))*int64(len(pq.terms)) + 1
+	if totalWork <= 0 {
+		totalWork = 1
+	}
+	bar := progressbar.NewOptions64(
+		totalWork,
+		progressbar.OptionSetDescription("Searching...."),
+		progressbar.OptionSetWriter(os.Stderr),
+		progressbar.OptionSetTheme(progressbar.Theme{
+			Saucer:        "#",
+			SaucerHead:    ">",
+			SaucerPadding: "-",
+			BarStart:      "[",
+			BarEnd:        "]",
+		}),
+	)
+	var progressMu sync.Mutex
+	onProcessed := func() {
+		progressMu.Lock()
+		defer progressMu.Unlock()
+		_ = bar.Add(1)
+	}
+
+	hitMaps, err := runMultiTermSearch(ctx, pq, db, onProcessed, candidates)
+	if err != nil {
+		return err
+	}
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+
+	hasHits := false
+	for _, hm := range hitMaps {
+		if len(hm) > 0 {
+			hasHits = true
+			break
+		}
+	}
+	if !hasHits {
+		return SearchToPathWithContext(ctx, query, reportPath, db)
+	}
+
+	docSizes, err := fetchDocSizesForHits(ctx, hitMaps, db)
+	if err != nil {
+		return err
+	}
+
+	ranked := rankBM25(hitMaps, docSizes, totalFiles, pq.op)
+	ranked = applyFTSBoost(ranked, ftScores)
+
+	err = searchReport(reportPath, query, ranked, db)
+	if err != nil {
+		return err
+	}
+	onProcessed()
+
+	bar.Finish()
+	fmt.Fprintln(os.Stderr)
+	fmt.Println("Done....", time.Since(start))
+	return bar.Close()
 }
 
 func SearchToPathWithContext(ctx context.Context, query, reportPath string, db *badger.DB) error {
@@ -105,6 +206,7 @@ func SearchToPathWithContext(ctx context.Context, query, reportPath string, db *
 	bar := progressbar.NewOptions64(
 		totalWork,
 		progressbar.OptionSetDescription("Searching...."),
+		progressbar.OptionSetWriter(os.Stderr),
 		progressbar.OptionSetTheme(progressbar.Theme{
 			Saucer:        "#",
 			SaucerHead:    ">",
@@ -120,7 +222,7 @@ func SearchToPathWithContext(ctx context.Context, query, reportPath string, db *
 		_ = bar.Add(1)
 	}
 
-	hitMaps, err := runMultiTermSearch(ctx, pq, db, onProcessed)
+	hitMaps, err := runMultiTermSearch(ctx, pq, db, onProcessed, nil)
 	if err != nil {
 		return err
 	}
@@ -142,6 +244,7 @@ func SearchToPathWithContext(ctx context.Context, query, reportPath string, db *
 	onProcessed()
 
 	bar.Finish()
+	fmt.Fprintln(os.Stderr)
 	fmt.Println("Done....", time.Since(start))
 	return bar.Close()
 }
@@ -158,11 +261,11 @@ func validateParsedQuery(pq parsedQuery) error {
 	return nil
 }
 
-func runMultiTermSearch(ctx context.Context, pq parsedQuery, db *badger.DB, onProcessed func()) ([]map[string]int, error) {
+func runMultiTermSearch(ctx context.Context, pq parsedQuery, db *badger.DB, onProcessed func(), candidates map[string]struct{}) ([]map[string]int, error) {
 	hitMaps := make([]map[string]int, 0, len(pq.terms))
 	for _, term := range pq.terms {
 		settings := newSearchSettings(term)
-		idmap, err := executeSearchPipeline(ctx, settings, db, onProcessed)
+		idmap, err := executeSearchPipeline(ctx, settings, db, onProcessed, candidates)
 		if err != nil {
 			return nil, err
 		}
@@ -193,7 +296,28 @@ func fetchDocSizesForHits(ctx context.Context, hitMaps []map[string]int, db *bad
 	return sizes, nil
 }
 
-func executeSearchPipeline(ctx context.Context, settings searchSettings, db *badger.DB, onProcessed func()) (*structs.SearchIDMap, error) {
+func applyFTSBoost(ranked []RankedResult, ftScores map[string]float64) []RankedResult {
+	if len(ranked) == 0 || len(ftScores) == 0 {
+		return ranked
+	}
+	for index := range ranked {
+		if score, ok := ftScores[ranked[index].FileID]; ok {
+			ranked[index].Score += 0.05 * score
+		}
+	}
+	sort.Slice(ranked, func(i, j int) bool {
+		if ranked[i].Score != ranked[j].Score {
+			return ranked[i].Score > ranked[j].Score
+		}
+		if ranked[i].TF != ranked[j].TF {
+			return ranked[i].TF > ranked[j].TF
+		}
+		return ranked[i].FileID < ranked[j].FileID
+	})
+	return ranked
+}
+
+func executeSearchPipeline(ctx context.Context, settings searchSettings, db *badger.DB, onProcessed func(), candidates map[string]struct{}) (*structs.SearchIDMap, error) {
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
@@ -204,7 +328,7 @@ func executeSearchPipeline(ctx context.Context, settings searchSettings, db *bad
 	idmap := structs.NewSearchIDMap()
 
 	for _, namespace := range searchNamespaces {
-		err := searchFiles(ctx, cancel, settings, namespace, cmap, idmap, db, onProcessed)
+		err := searchFiles(ctx, cancel, settings, namespace, cmap, idmap, db, onProcessed, candidates)
 		if err != nil {
 			return nil, err
 		}
@@ -253,7 +377,7 @@ func countNamespaceFiles(ctx context.Context, namespace string, db *badger.DB) (
 	return count, nil
 }
 
-func searchFiles(ctx context.Context, cancel context.CancelFunc, settings searchSettings, namespace string, cmap *structs.SeenChonkMap, idmap *structs.SearchIDMap, db *badger.DB, onProcessed func()) error {
+func searchFiles(ctx context.Context, cancel context.CancelFunc, settings searchSettings, namespace string, cmap *structs.SeenChonkMap, idmap *structs.SearchIDMap, db *badger.DB, onProcessed func(), candidates map[string]struct{}) error {
 	sem := make(chan struct{}, workerLimit())
 	var wg sync.WaitGroup
 	var once sync.Once
@@ -273,6 +397,11 @@ func searchFiles(ctx context.Context, cancel context.CancelFunc, settings search
 			}
 
 			fid := it.Item().KeyCopy(nil)
+			if candidates != nil {
+				if _, ok := candidates[string(fid)]; !ok {
+					continue
+				}
+			}
 			sem <- struct{}{}
 			wg.Add(1)
 			go func(fid []byte) {

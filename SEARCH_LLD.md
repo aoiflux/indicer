@@ -103,6 +103,7 @@ Implemented today:
   - phrase: `"foo bar"`
 - BM25-based scoring with occurrence-aware ordering
 - configurable occurrence influence: `--rank-alpha`
+- optional full-text sidecar mode with automatic scan fallback: `--fulltext`
 - JSON report generation (`report.json`)
 - context cancellation support in CLI and TUI
 
@@ -111,6 +112,12 @@ Not implemented in current search path:
 - regex query
 - fuzzy query
 - inverted index (current design is scan-based)
+
+Current full-text implementation note:
+
+- sidecar index is used to narrow candidates and add a light ranking boost in
+  `--fulltext` mode; scan search remains the source of truth for final counts
+  and report payloads.
 
 ---
 
@@ -351,6 +358,8 @@ Current report fields:
   - `dues search -d ./data "invoice|receipt"`
 - Phrase query:
   - `dues search -d ./data "\"error code\""`
+- Full-text with fallback:
+  - `dues search -d ./data --fulltext "exe|dll"`
 
 ### 10.2 Ranking tuning
 
@@ -361,18 +370,25 @@ Current report fields:
 - Pure BM25 ordering:
   - `dues search -d ./data --rank-alpha 0 invoice`
 
+### 10.3 Full-text mode
+
+- `--fulltext` tries sidecar full-text search first.
+- If sidecar index is missing, DUES auto-builds it from indexed-file metadata.
+- If sidecar results are empty/unhelpful, DUES falls back to regular scan path.
+- Final report still uses scan-derived counts and schema.
+
 Tuning guidance:
 
 - start with `0.35` (default)
 - use `0.6-1.0` when you want frequent hits to dominate
 - use `0` for strict BM25 ranking experiments
 
-### 10.3 Canceling search
+### 10.4 Canceling search
 
 - CLI: `Ctrl+C`
 - TUI: `Esc` or `Ctrl+C` while search is running
 
-### 10.4 Reading results
+### 10.5 Reading results
 
 - output file is `report.json` by default
 - ranking appears as occurrence order in `occurances`

@@ -48,7 +48,8 @@ func main() {
 	cmdstore := app.Command(cnst.CmdStore, "Store file in database")
 	evipath := cmdstore.Arg(cnst.OperandFile, "Path of file that must be saved").Required().String()
 	noIndex := cmdstore.Flag(cnst.FlagNoIndex, "Don't run indexer").Short(cnst.FlagNoIndexShort).Default("false").Bool()
-	hashAlgo := cmdstore.Flag(cnst.FlagHashAlgo, "Hashing algorithm to use [sha3|blake3] (default: BLAKE3)").Short(cnst.FlagHashAlgoShort).Default("blake3").String()
+	enableFTS := cmdstore.Flag(cnst.FlagEnableFts, "Enable full-text search indexing (sidecar Bleve index)").Default("false").Bool()
+	hashAlgo := cmdstore.Flag(cnst.FlagHashAlgo, "Hashing algorithm to use [sha3|blake3] (default: BLAKE3)").Short(cnst.FlagHashAlgoShort).Default(cnst.BLAKE3).String()
 
 	cmdrestore := app.Command(cnst.CmdRestore, "Restore file from database")
 	rpath := cmdrestore.Flag(cnst.FlagRestoreFilePath, "Path for restoring the file").Short(cnst.FlagRestoreFilePathShort).Default("restored").String()
@@ -74,6 +75,7 @@ func main() {
 	cmdsearch := app.Command(cnst.CmdSearch, "Search anything in DUES DB")
 	query := cmdsearch.Arg(cnst.OperandQuery, "Search query string").String()
 	rankAlpha := cmdsearch.Flag("rank-alpha", "Occurrence boost weight for ranking (>= 0, default: 0.35)").Default("0.35").Float64()
+	fullText := cmdsearch.Flag("fulltext", "Enable sidecar full-text search first, then fallback to scan path").Default("false").Bool()
 
 	cmdmicro := app.Command(cnst.CmdMicro, "Manage micro-artefacts")
 	microExtract := cmdmicro.Command("extract", "Extract micro-artefacts from all indexed files and populate graph database")
@@ -138,7 +140,7 @@ func main() {
 	case cmdtui.FullCommand():
 		err = cli.TUICmd(*chonkSize, *dbpath, key)
 	case cmdstore.FullCommand():
-		err = cli.StoreData(*chonkSize, *dbpath, *evipath, key, *noIndex)
+		err = cli.StoreData(*chonkSize, *dbpath, *evipath, key, *noIndex, *enableFTS)
 	case cmdrestore.FullCommand():
 		err = cli.RestoreData(*chonkSize, *dbpath, *rhash, *rpath, key)
 	case cmdlist.FullCommand():
@@ -150,7 +152,7 @@ func main() {
 	case cmdout.FullCommand():
 		err = cli.NearOutData(*outDeep, *outExplainExact, *outVerify, *outTopK, *chonkSize, *dbpath, *outpath, key)
 	case cmdsearch.FullCommand():
-		err = cli.SearchCmd(*chonkSize, *query, *dbpath, key, *rankAlpha)
+		err = cli.SearchCmd(*chonkSize, *query, *dbpath, key, *rankAlpha, *fullText)
 	case microExtract.FullCommand():
 		err = cli.MicroArtefactCmd(*chonkSize, *dbpath, key, *microExtractForce, *microExtractTopK)
 	case microList.FullCommand():

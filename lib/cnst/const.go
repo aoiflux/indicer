@@ -18,8 +18,8 @@ const (
 	UnknownEvidenceType = "unknown"
 	DefaultDBPath       = "./data"
 	UploadsDir          = "uploads"
-	SHA3                = "SHA3"
-	BLAKE3              = "BLAKE3"
+	SHA3                = "sha3"
+	BLAKE3              = "blake3"
 )
 
 const (
@@ -135,6 +135,7 @@ const (
 	FlagAdvancedDeepShort    = 'a'
 	FlagTopK                 = "top-k"
 	FlagTopKShort            = 'k'
+	FlagEnableFts            = "enable-fts"
 
 	OperandFile  = "FILE"
 	OperandHash  = "HASH"

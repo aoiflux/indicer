@@ -181,9 +181,10 @@ func (m NearModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 	}
 
-	if m.focusedField == 0 {
+	switch m.focusedField {
+	case 0:
 		m.modeList, cmd = m.modeList.Update(msg)
-	} else if m.focusedField == 1 {
+	case 1:
 		m.fileInput, cmd = m.fileInput.Update(msg)
 	}
 

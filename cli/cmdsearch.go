@@ -11,7 +11,7 @@ import (
 	"syscall"
 )
 
-func SearchCmd(chonkSize int, query, dbpath string, key []byte, rankAlpha float64) error {
+func SearchCmd(chonkSize int, query, dbpath string, key []byte, rankAlpha float64, fullText bool) error {
 	if len(query) < 2 {
 		return cnst.ErrSmallQuery
 	}
@@ -26,5 +26,8 @@ func SearchCmd(chonkSize int, query, dbpath string, key []byte, rankAlpha float6
 	query = strings.ToLower(query)
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
+	if fullText {
+		return search.SearchWithContextFullTextFallback(ctx, query, db)
+	}
 	return search.SearchWithContext(ctx, query, db)
 }

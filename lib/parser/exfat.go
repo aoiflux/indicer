@@ -1,6 +1,7 @@
 package parser
 
 import (
+	"fmt"
 	"indicer/lib/cnst"
 	"indicer/lib/structs"
 	"indicer/lib/util"
@@ -10,7 +11,7 @@ import (
 	"github.com/schollz/progressbar/v3"
 )
 
-func IndexEXFAT(pfile structs.InputFile, idxChan chan error) {
+func IndexEXFAT(pfile structs.InputFile, idxChan chan error, enableFTS bool) {
 	startOffset := getStartOffset(uint64(pfile.GetStartIndex()))
 	exfatdata, err := libxfat.New(pfile.GetHandle(), true, startOffset)
 	if err != nil {
@@ -32,6 +33,7 @@ func IndexEXFAT(pfile structs.InputFile, idxChan chan error) {
 	bar := progressbar.NewOptions64(
 		total,
 		progressbar.OptionSetDescription("indexing files"),
+		progressbar.OptionSetWriter(os.Stderr),
 		progressbar.OptionSetTheme(progressbar.Theme{
 			Saucer:        "#",
 			SaucerHead:    ">",
@@ -79,13 +81,14 @@ func IndexEXFAT(pfile structs.InputFile, idxChan chan error) {
 		}
 	}
 
-	err = finalizeIndexedFiles(idxmap, pfile, batch, idxChan)
+	err = finalizeIndexedFiles(idxmap, pfile, batch, idxChan, enableFTS)
 	if err != nil {
 		idxChan <- err
 		return
 	}
 	if flag {
 		bar.Finish()
+		fmt.Fprintln(os.Stderr)
 	}
 
 	idxChan <- nil

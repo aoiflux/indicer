@@ -118,13 +118,14 @@ func (m RestoreModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, tea.Quit
 		case "tab":
 			m.focusedField = (m.focusedField + 1) % 3
-			if m.focusedField == 0 {
+			switch m.focusedField {
+			case 0:
 				m.hashInput.Focus()
 				m.pathInput.Blur()
-			} else if m.focusedField == 1 {
+			case 1:
 				m.hashInput.Blur()
 				m.pathInput.Focus()
-			} else {
+			default:
 				m.pathInput.Blur()
 			}
 		case "enter":
@@ -149,9 +150,10 @@ func (m RestoreModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 	}
 
-	if m.focusedField == 0 {
+	switch m.focusedField {
+	case 0:
 		m.hashInput, cmd = m.hashInput.Update(msg)
-	} else if m.focusedField == 1 {
+	case 1:
 		m.pathInput, cmd = m.pathInput.Update(msg)
 	}
 

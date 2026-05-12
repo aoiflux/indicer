@@ -3,11 +3,13 @@ package store
 import (
 	"bytes"
 	"errors"
+	"fmt"
 	"indicer/lib/cnst"
 	"indicer/lib/dbio"
 	"indicer/lib/fio"
 	"indicer/lib/structs"
 	"indicer/lib/util"
+	"os"
 
 	"github.com/dgraph-io/badger/v4"
 	"github.com/schollz/progressbar/v3"
@@ -114,6 +116,7 @@ func storeEvidenceData(infile structs.InputFile) (err error) {
 	bar := progressbar.NewOptions64(
 		infile.GetSize(),
 		progressbar.OptionShowBytes(true),
+		progressbar.OptionSetWriter(os.Stderr),
 		progressbar.OptionSetTheme(progressbar.Theme{
 			Saucer:        "#",
 			SaucerHead:    ">",
@@ -210,6 +213,7 @@ func storeEvidenceData(infile structs.InputFile) (err error) {
 
 	bar.Add64(cnst.ChonkSize)
 	bar.Finish()
+	fmt.Fprintln(os.Stderr)
 	err = bar.Close()
 	return err
 }

@@ -62,10 +62,10 @@ func TUICmd(chonkSize int, dbpath string, key []byte) error {
 				}
 
 				if info.IsDir() {
-					return StoreFolder(chonkSize, filePath, key, noIndex, db)
+					return StoreFolder(chonkSize, filePath, key, noIndex, false, db)
 				}
 
-				return StoreFile(chonkSize, filePath, key, noIndex, db)
+				return StoreFile(chonkSize, filePath, key, noIndex, false, db)
 			})
 		},
 		Search: func(ctx context.Context, query string) error {

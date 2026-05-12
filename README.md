@@ -66,6 +66,9 @@ dues search "invoice|receipt"
 # Increase the influence of raw occurrence counts in ranking
 dues search --rank-alpha 0.8 "invoice payment"
 
+# Try sidecar full-text mode first, fallback to scan search
+dues search --fulltext "invoice|receipt"
+
 # Restore by hash
 dues restore <hash> --filepath restored.bin
 
@@ -88,6 +91,8 @@ dues tui
     (`"foo bar"`).
   - `--rank-alpha` tunes how strongly raw occurrence counts influence ranking
     while BM25 remains the primary relevance signal.
+  - `--fulltext` attempts sidecar full-text retrieval first and automatically
+    falls back to scan search when sidecar results are unavailable or empty.
 - `dues near in HASH`: Find similar files for a stored object.
 - `dues near out FILE`: Compare an external file against DB objects.
 - `dues reset`: Delete database after confirmation.
@@ -115,6 +120,7 @@ dues tui
 | Flag           | Short | Description                                            | Default |
 | -------------- | ----- | ------------------------------------------------------ | ------- |
 | `--rank-alpha` | none  | Weight for occurrence-aware ranking influence (`>= 0`) | `0.35`  |
+| `--fulltext`   | none  | Try sidecar full-text first, then fallback to scan     | `false` |
 
 If `--hierarchical` is set without `--container`, DUES enables container mode
 automatically.

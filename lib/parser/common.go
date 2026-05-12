@@ -5,9 +5,11 @@ import (
 	"fmt"
 	"indicer/lib/cnst"
 	"indicer/lib/dbio"
+	"indicer/lib/fts"
 	"indicer/lib/store"
 	"indicer/lib/structs"
 	"indicer/lib/util"
+	"os"
 
 	"github.com/dgraph-io/badger/v4"
 	"github.com/schollz/progressbar/v3"
@@ -136,8 +138,8 @@ func registerIndexedRange(idxmap map[string]structs.IndexedFile, pfile structs.I
 	return nil
 }
 
-func finalizeIndexedFiles(idxmap map[string]structs.IndexedFile, pfile structs.InputFile, batch *badger.WriteBatch, idxChan chan error) error {
-	err := storeIndexedFiles(idxmap, pfile.GetDB(), batch, idxChan)
+func finalizeIndexedFiles(idxmap map[string]structs.IndexedFile, pfile structs.InputFile, batch *badger.WriteBatch, idxChan chan error, enableFTS bool) error {
+	ftsJobs, err := storeIndexedFiles(idxmap, pfile.GetDB(), batch, idxChan)
 	if err != nil {
 		return err
 	}
@@ -149,15 +151,68 @@ func finalizeIndexedFiles(idxmap map[string]structs.IndexedFile, pfile structs.I
 
 	pchan := make(chan error)
 	go store.Store(pfile, pchan)
-	return <-pchan
+	if err := <-pchan; err != nil {
+		return err
+	}
+
+	if enableFTS {
+		return indexFullTextSidecar(pfile.GetDB(), ftsJobs)
+	}
+	return nil
 }
 
-func storeIndexedFiles(idxmap map[string]structs.IndexedFile, db *badger.DB, batch *badger.WriteBatch, idxChan chan error) error {
+type ftsIndexJob = fts.IndexedFileJob
+
+func cloneNamesMap(names map[string]struct{}) map[string]struct{} {
+	if len(names) == 0 {
+		return nil
+	}
+	cloned := make(map[string]struct{}, len(names))
+	for name := range names {
+		cloned[name] = struct{}{}
+	}
+	return cloned
+}
+
+func indexFullTextSidecar(db *badger.DB, jobs []ftsIndexJob) error {
+	if len(jobs) == 0 {
+		return nil
+	}
+
+	fmt.Fprintln(os.Stderr, "Updating full-text index sidecar...")
+	bar := progressbar.NewOptions64(
+		int64(len(jobs)),
+		progressbar.OptionSetDescription("indexing full-text sidecar"),
+		progressbar.OptionSetWriter(os.Stderr),
+		progressbar.OptionSetTheme(progressbar.Theme{
+			Saucer:        "#",
+			SaucerHead:    ">",
+			SaucerPadding: "-",
+			BarStart:      "[",
+			BarEnd:        "]",
+		}),
+	)
+
+	if err := fts.IndexIndexedFileJobs(db, jobs, func() {
+		bar.Add(1)
+	}); err != nil {
+		return err
+	}
+
+	bar.Finish()
+	fmt.Fprintln(os.Stderr, "Full-text index sidecar update complete.")
+	fmt.Fprintln(os.Stderr)
+	return nil
+}
+
+func storeIndexedFiles(idxmap map[string]structs.IndexedFile, db *badger.DB, batch *badger.WriteBatch, idxChan chan error) ([]ftsIndexJob, error) {
 	var pflag bool
+	ftsJobs := make([]ftsIndexJob, 0, len(idxmap))
 	total := int64(len(idxmap))
 	bar := progressbar.NewOptions64(
 		total,
 		progressbar.OptionSetDescription("indexing files"),
+		progressbar.OptionSetWriter(os.Stderr),
 		progressbar.OptionSetTheme(progressbar.Theme{
 			Saucer:        "#",
 			SaucerHead:    ">",
@@ -182,12 +237,14 @@ func storeIndexedFiles(idxmap map[string]structs.IndexedFile, db *badger.DB, bat
 		if errors.Is(err, badger.ErrKeyNotFound) {
 			err = dbio.SetIndexedFile(id, newIdxfile, batch)
 			if err != nil {
-				return err
+				return nil, err
 			}
+			ftsJobs = append(ftsJobs, ftsIndexJob{FileID: string(id), Names: cloneNamesMap(newIdxfile.Names)})
+			bar.Add(1)
 			continue
 		}
 		if err != nil {
-			return err
+			return nil, err
 		}
 		ensureNameMeta(&oldIdxFile)
 		ensureNameMeta(&newIdxfile)
@@ -220,9 +277,10 @@ func storeIndexedFiles(idxmap map[string]structs.IndexedFile, db *badger.DB, bat
 				continue
 			}
 			if err := dbio.SetIndexedFile(id, oldIdxFile, batch); err != nil {
-				return err
+				return nil, err
 			}
-
+			ftsJobs = append(ftsJobs, ftsIndexJob{FileID: string(id), Names: cloneNamesMap(oldIdxFile.Names)})
+			bar.Add(1)
 			continue
 		}
 
@@ -247,16 +305,15 @@ func storeIndexedFiles(idxmap map[string]structs.IndexedFile, db *badger.DB, bat
 			continue
 		}
 		if err := dbio.SetIndexedFile(id, newIdxfile, batch); err != nil {
-			return err
+			return nil, err
 		}
-
-		if flag {
-			bar.Add(1)
-		}
+		ftsJobs = append(ftsJobs, ftsIndexJob{FileID: string(id), Names: cloneNamesMap(newIdxfile.Names)})
+		bar.Add(1)
 	}
 
 	if pflag {
 		bar.Finish()
+		fmt.Fprintln(os.Stderr)
 	}
-	return nil
+	return ftsJobs, nil
 }

@@ -18,7 +18,7 @@ import (
 	"github.com/edsrzf/mmap-go"
 )
 
-func StoreData(chonkSize int, dbpath, evipath string, key []byte, noIndex bool) error {
+func StoreData(chonkSize int, dbpath, evipath string, key []byte, noIndex bool, enableFTS bool) error {
 	db, dbpath, err := Common(chonkSize, dbpath, key)
 	if err != nil {
 		return err
@@ -35,12 +35,12 @@ func StoreData(chonkSize int, dbpath, evipath string, key []byte, noIndex bool) 
 
 	if finfo.IsDir() {
 		fmt.Println("Storing Entire Folder")
-		err = StoreFolder(chonkSize, evipath, key, noIndex, db)
+		err = StoreFolder(chonkSize, evipath, key, noIndex, enableFTS, db)
 		if err != nil {
 			return err
 		}
 	}
-	err = StoreFile(chonkSize, evipath, key, noIndex, db)
+	err = StoreFile(chonkSize, evipath, key, noIndex, enableFTS, db)
 	if err != nil {
 		return err
 	}
@@ -52,7 +52,7 @@ func StoreData(chonkSize int, dbpath, evipath string, key []byte, noIndex bool) 
 	return nil
 }
 
-func StoreFolder(chonkSize int, evidir string, key []byte, noIndex bool, db *badger.DB) error {
+func StoreFolder(chonkSize int, evidir string, key []byte, noIndex bool, enableFTS bool, db *badger.DB) error {
 	start := time.Now()
 
 	err := filepath.Walk(evidir, func(path string, info fs.FileInfo, err error) error {
@@ -64,7 +64,7 @@ func StoreFolder(chonkSize int, evidir string, key []byte, noIndex bool, db *bad
 			return nil
 		}
 
-		return StoreFile(chonkSize, path, key, noIndex, db)
+		return StoreFile(chonkSize, path, key, noIndex, enableFTS, db)
 	})
 
 	if err != nil {
@@ -76,7 +76,7 @@ func StoreFolder(chonkSize int, evidir string, key []byte, noIndex bool, db *bad
 	return nil
 }
 
-func StoreFile(chonkSize int, evipath string, key []byte, noIndex bool, db *badger.DB) error {
+func StoreFile(chonkSize int, evipath string, key []byte, noIndex bool, enableFTS bool, db *badger.DB) error {
 	start := time.Now()
 
 	info, err := os.Stat(evipath)
@@ -101,7 +101,7 @@ func StoreFile(chonkSize int, evipath string, key []byte, noIndex bool, db *badg
 	}
 
 	if !noIndex {
-		if err = indexEvidenceFile(eviFile, db); err != nil {
+		if err = indexEvidenceFile(eviFile, db, enableFTS); err != nil {
 			return err
 		}
 	}
@@ -139,7 +139,7 @@ func StoreFile(chonkSize int, evipath string, key []byte, noIndex bool, db *badg
 	return nil
 }
 
-func indexEvidenceFile(eviFile structs.InputFile, db *badger.DB) error {
+func indexEvidenceFile(eviFile structs.InputFile, db *badger.DB, enableFTS bool) error {
 	tuskJSON, hasTusk := parser.TuskAnalysis(eviFile.GetHandle().Name())
 	partitions := parser.ParseImage(tuskJSON, hasTusk, eviFile.GetSize(), eviFile.GetHandle())
 	idxChan := make(chan error)
@@ -171,9 +171,9 @@ func indexEvidenceFile(eviFile structs.InputFile, db *badger.DB) error {
 		)
 
 		if hasTusk {
-			go parser.IndexFilesystem(tuskJSON, pfile, idxChan)
+			go parser.IndexFilesystem(tuskJSON, pfile, idxChan, enableFTS)
 		} else {
-			go parser.IndexEXFAT(pfile, idxChan)
+			go parser.IndexEXFAT(pfile, idxChan, enableFTS)
 		}
 		// Use select so that if the goroutine finishes before we send the
 		// start signal (e.g. empty partition with no files), we receive the

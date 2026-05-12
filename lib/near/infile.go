@@ -621,6 +621,7 @@ func getNearFile(start, size int64, ehash, fid []byte, db *badger.DB, deep ...bo
 	bar := progressbar.NewOptions64(
 		size,
 		progressbar.OptionShowBytes(true),
+		progressbar.OptionSetWriter(os.Stderr),
 		progressbar.OptionSetTheme(progressbar.Theme{
 			Saucer:        "#",
 			SaucerHead:    ">",
@@ -669,6 +670,7 @@ func getNearFile(start, size int64, ehash, fid []byte, db *badger.DB, deep ...bo
 	}
 
 	bar.Finish()
+	fmt.Fprintln(os.Stderr)
 	fmt.Println("Found NeAR Artefacts. Generating Artefact Relation Graph....")
 	return idmap, bar.Close()
 }

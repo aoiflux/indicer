@@ -140,6 +140,7 @@ func restoreData(meta structs.FileMeta, dst *os.File, db *badger.DB) error {
 	bar := progressbar.NewOptions64(
 		meta.Size,
 		progressbar.OptionShowBytes(true),
+		progressbar.OptionSetWriter(os.Stderr),
 		progressbar.OptionSetTheme(progressbar.Theme{
 			Saucer:        "#",
 			SaucerHead:    ">",
@@ -170,6 +171,7 @@ func restoreData(meta structs.FileMeta, dst *os.File, db *badger.DB) error {
 	}
 
 	bar.Finish()
+	fmt.Fprintln(os.Stderr)
 	fmt.Println("Restored file with size: ", humanize.Bytes(uint64(meta.Size)))
 	return bar.Close()
 }

@@ -85,7 +85,7 @@ func (r *tuskResult) flatLayout() []structs.PartitionFile {
 // in indexing unless separately filtered by upstream data.
 // It mirrors IndexEXFAT but works from the tusk JSON instead of reading the
 // filesystem directly.
-func IndexFilesystem(jsonOutput string, pfile structs.InputFile, idxChan chan error) {
+func IndexFilesystem(jsonOutput string, pfile structs.InputFile, idxChan chan error, enableFTS bool) {
 	var result tuskResult
 	if err := json.Unmarshal([]byte(jsonOutput), &result); err != nil {
 		idxChan <- err
@@ -147,11 +147,12 @@ func IndexFilesystem(jsonOutput string, pfile structs.InputFile, idxChan chan er
 		buildIdxMap(result.Files, idxmap, pfile, encodedPfileHash, idxChan)
 	}
 
-	err = finalizeIndexedFiles(idxmap, pfile, batch, idxChan)
+	report.print()
+
+	err = finalizeIndexedFiles(idxmap, pfile, batch, idxChan, enableFTS)
 	if err != nil {
 		idxChan <- err
 		return
 	}
-	report.print()
 	idxChan <- nil
 }

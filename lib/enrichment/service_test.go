@@ -112,17 +112,17 @@ func TestEnrichAllCreatesFileNodesAtAllLevels(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ReadHierarchy: %v", err)
 	}
-	if len(hierarchy.DiskImages) != 1 {
-		t.Fatalf("expected 1 disk image, got %d", len(hierarchy.DiskImages))
+	if len(hierarchy.EvidenceFiles) != 1 {
+		t.Fatalf("expected 1 evidence file, got %d", len(hierarchy.EvidenceFiles))
 	}
-	if len(hierarchy.DiskImages[0].Partitions) != 1 {
-		t.Fatalf("expected 1 partition, got %d", len(hierarchy.DiskImages[0].Partitions))
+	if len(hierarchy.EvidenceFiles[0].Partitions) != 1 {
+		t.Fatalf("expected 1 partition, got %d", len(hierarchy.EvidenceFiles[0].Partitions))
 	}
-	if len(hierarchy.DiskImages[0].Partitions[0].Files) != 1 {
-		t.Fatalf("expected 1 indexed file node, got %d", len(hierarchy.DiskImages[0].Partitions[0].Files))
+	if len(hierarchy.EvidenceFiles[0].Partitions[0].Files) != 1 {
+		t.Fatalf("expected 1 indexed file node, got %d", len(hierarchy.EvidenceFiles[0].Partitions[0].Files))
 	}
-	if len(hierarchy.DiskImages[0].Partitions[0].Files[0].FileNames) != 2 {
-		t.Fatalf("expected 2 indexed-level file names, got %d", len(hierarchy.DiskImages[0].Partitions[0].Files[0].FileNames))
+	if len(hierarchy.EvidenceFiles[0].Partitions[0].Files[0].FileNames) != 2 {
+		t.Fatalf("expected 2 indexed-level file names, got %d", len(hierarchy.EvidenceFiles[0].Partitions[0].Files[0].FileNames))
 	}
 
 	if err := repo.Close(); err != nil {

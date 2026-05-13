@@ -349,17 +349,17 @@ func arbitrarySetKey(m map[string]struct{}) string {
 
 // printHierarchyTree renders the micro-artefact hierarchy to stdout as an
 // ASCII tree after extraction completes.
-func printHierarchyTree(tree *microartefact.HierarchyTree) {
-	if tree == nil || len(tree.DiskImages) == 0 {
+func printHierarchyTree(tree *microartefact.EvidenceFileHierarchy) {
+	if tree == nil || len(tree.EvidenceFiles) == 0 {
 		fmt.Println("\n  (no micro-artefacts found — run 'dues microartefacts' on a populated database)")
 		return
 	}
 
 	fmt.Printf("\n🔬 Micro-Artefact Graph  (%d disk image(s) · %d artefact(s) · %d relation(s): %d deterministic, %d probabilistic)\n\n",
-		len(tree.DiskImages), tree.TotalArtefacts, tree.TotalRelations, tree.DeterministicRelations, tree.ProbabilisticRelations)
+		len(tree.EvidenceFiles), tree.TotalArtefacts, tree.TotalRelations, tree.DeterministicRelations, tree.ProbabilisticRelations)
 
-	for di, disk := range tree.DiskImages {
-		isLastDisk := di == len(tree.DiskImages)-1
+	for di, disk := range tree.EvidenceFiles {
+		isLastDisk := di == len(tree.EvidenceFiles)-1
 		totalForDisk := 0
 		for _, p := range disk.Partitions {
 			for _, f := range p.Files {

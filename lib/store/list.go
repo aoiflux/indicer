@@ -242,15 +242,15 @@ func ListWithEnrichment(db *badger.DB, enrichRepo enrichment.Repository) error {
 		return List(db)
 	}
 
-	// If no disk images found in graphdb, fall back to KVDB
-	if len(hierarchy.DiskImages) == 0 {
+	// If no evidence files found in graphdb, fall back to KVDB
+	if len(hierarchy.EvidenceFiles) == 0 {
 		return List(db)
 	}
 
 	// Format graphdb hierarchy into output
 	var evidenceFiles []map[string]interface{}
 
-	for _, diskImage := range hierarchy.DiskImages {
+	for _, diskImage := range hierarchy.EvidenceFiles {
 		var partitions []map[string]interface{}
 
 		for _, partition := range diskImage.Partitions {

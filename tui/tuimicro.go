@@ -19,12 +19,12 @@ type MicroModel struct {
 	height   int
 	loaded   bool
 	err      error
-	tree     *microartefact.HierarchyTree
+	tree     *microartefact.EvidenceFileHierarchy
 	viewport viewport.Model
 }
 
 type microLoadedMsg struct {
-	tree *microartefact.HierarchyTree
+	tree *microartefact.EvidenceFileHierarchy
 	err  error
 }
 
@@ -95,7 +95,7 @@ func (m MicroModel) View() tea.View {
 		body = InfoStyle.Render("Loading hierarchy...")
 	case m.err != nil:
 		body = ErrorStyle.Render("Error: " + m.err.Error())
-	case m.tree == nil || len(m.tree.DiskImages) == 0:
+	case m.tree == nil || len(m.tree.EvidenceFiles) == 0:
 		body = microDimStyle.Render("No micro-artefacts found. Run dues micro first.")
 	default:
 		body = m.viewport.View()
@@ -103,7 +103,7 @@ func (m MicroModel) View() tea.View {
 
 	summary := ""
 	if m.tree != nil {
-		summary = microDimStyle.Render(fmt.Sprintf("%d disk image(s) | %d artefact(s)", len(m.tree.DiskImages), m.tree.TotalArtefacts))
+		summary = microDimStyle.Render(fmt.Sprintf("%d evidence file(s) | %d artefact(s)", len(m.tree.EvidenceFiles), m.tree.TotalArtefacts))
 	}
 
 	help := HelpStyle.Render("Up/Down/PgUp/PgDn: Scroll | Esc/q: Back")
@@ -133,9 +133,9 @@ func (m MicroModel) renderTree() string {
 	}
 
 	var sb strings.Builder
-	for _, disk := range m.tree.DiskImages {
+	for _, disk := range m.tree.EvidenceFiles {
 		diskName := fallback(disk.Name, disk.ID)
-		sb.WriteString(fmt.Sprintf("disk_image: %s\n", diskName))
+		sb.WriteString(fmt.Sprintf("evidence_file: %s\n", diskName))
 
 		for _, part := range disk.Partitions {
 			partName := fallback(part.Name, part.ID)

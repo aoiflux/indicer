@@ -1,20 +1,20 @@
 package hierarchy
 
-// HierarchyTree is the shared top-level read model for container ancestry.
-type HierarchyTree[DiskImage any] struct {
-	DiskImages []DiskImage
+// ContainerHierarchy is the shared top-level read model for container ancestry.
+type ContainerHierarchy[EvidenceFile any] struct {
+	EvidenceFiles []EvidenceFile
 }
 
-// DiskImageNode represents one evidence image in the read model.
-type DiskImageNode[Partition any] struct {
+// EvidenceFileNode represents one top-level evidence file in the read model.
+type EvidenceFileNode[PartitionFile any] struct {
 	ID         string
 	Name       string
-	Partitions []Partition
+	Partitions []PartitionFile
 }
 
-// PartitionNode represents one partition within a disk image in the read model.
-type PartitionNode[File any] struct {
+// PartitionFileNode represents one partition file under an evidence file.
+type PartitionFileNode[IndexedFile any] struct {
 	ID    string
 	Name  string
-	Files []File
+	Files []IndexedFile
 }

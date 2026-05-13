@@ -11,33 +11,30 @@ import (
 	"github.com/vmihailenco/msgpack/v5"
 )
 
-// HierarchyTree is the top-level result of ReadHierarchy. It reflects the
-// enforced hierarchy: disk_image → partition → indexed_file → micro_artefact.
-type HierarchyTree struct {
-	hierarchy.HierarchyTree[*DiskImageNode]
+// EvidenceFileHierarchy is the top-level result of ReadHierarchy. It reflects
+// the enforced hierarchy: evidence_file → partition_file → indexed_file →
+// micro_artefact.
+type EvidenceFileHierarchy struct {
+	hierarchy.ContainerHierarchy[*EvidenceFileNode]
 	TotalArtefacts         int
 	TotalRelations         int
 	DeterministicRelations int
 	ProbabilisticRelations int
 }
 
-type DiskImageNode = hierarchy.DiskImageNode[*PartitionNode]
-type PartitionNode = hierarchy.PartitionNode[*FileNode]
+type EvidenceFileNode = hierarchy.EvidenceFileNode[*PartitionFileNode]
+type PartitionFileNode = hierarchy.PartitionFileNode[*IndexedFileArtefactView]
 
-// FileNode represents one indexed file within a partition.
-type FileNode = enrichment.IndexedFileWithArtefactsNode
+// IndexedFileArtefactView is one indexed file with its contained micro-artefacts.
+type IndexedFileArtefactView = enrichment.IndexedFileArtefactView
 
 // MicroArtefactNode is one micro-artefact detected inside a file node.
 type MicroArtefactNode = enrichment.FileLevelArtefactNode
 
-// Backward-compatible aliases for older callers.
-type IndexedFileNode = enrichment.IndexedFileWithArtefactsNode
-type ArtefactNode = enrichment.FileLevelArtefactNode
-
 // ReadHierarchy walks the graphene store and returns the full
 // disk_image → partition → indexed_file → micro_artefact tree.
-func (r *Repository) ReadHierarchy() (*HierarchyTree, error) {
-	tree := &HierarchyTree{}
+func (r *Repository) ReadHierarchy() (*EvidenceFileHierarchy, error) {
+	tree := &EvidenceFileHierarchy{}
 
 	diskImageIDs, err := r.graph.NodesByType(nodeTypeDiskImage)
 	if err != nil {
@@ -52,7 +49,7 @@ func (r *Repository) ReadHierarchy() (*HierarchyTree, error) {
 			return nil, err
 		}
 		dProps := unpackProps(diskNode.Properties)
-		di := &DiskImageNode{
+		di := &EvidenceFileNode{
 			ID:   strProp(dProps, "disk_image_id"),
 			Name: strProp(dProps, "name"),
 		}
@@ -67,7 +64,7 @@ func (r *Repository) ReadHierarchy() (*HierarchyTree, error) {
 				continue
 			}
 			pProps := unpackProps(pn.Node.Properties)
-			partition := &PartitionNode{
+			partition := &PartitionFileNode{
 				ID:   strProp(pProps, "partition_id"),
 				Name: strProp(pProps, "name"),
 			}
@@ -82,8 +79,8 @@ func (r *Repository) ReadHierarchy() (*HierarchyTree, error) {
 					continue
 				}
 				fProps := unpackProps(fn.Node.Properties)
-				ifile := &FileNode{
-					IndexedFileNode: enrichment.IndexedFileNode{
+				ifile := &IndexedFileArtefactView{
+					IndexedFileProjection: enrichment.IndexedFileProjection{
 						ID:           strProp(fProps, "indexed_file_id"),
 						Name:         strProp(fProps, "name"),
 						Path:         strProp(fProps, "path"),
@@ -140,13 +137,12 @@ func (r *Repository) ReadHierarchy() (*HierarchyTree, error) {
 			return di.Partitions[i].Name < di.Partitions[j].Name
 		})
 
-		tree.DiskImages = append(tree.DiskImages, di)
+		tree.EvidenceFiles = append(tree.EvidenceFiles, di)
 	}
 
-	sort.Slice(tree.DiskImages, func(i, j int) bool {
-		return tree.DiskImages[i].Name < tree.DiskImages[j].Name
+	sort.Slice(tree.EvidenceFiles, func(i, j int) bool {
+		return tree.EvidenceFiles[i].Name < tree.EvidenceFiles[j].Name
 	})
-
 	relationEdgeIDs, err := r.graph.EdgesByType(edgeTypeRelation)
 	if err != nil {
 		return nil, err

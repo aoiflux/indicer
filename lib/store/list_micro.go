@@ -19,7 +19,7 @@ func ListMicroArtefacts(repo *microartefact.GrapheneRepository) error {
 		"totalRelations":         tree.TotalRelations,
 		"deterministicRelations": tree.DeterministicRelations,
 		"probabilisticRelations": tree.ProbabilisticRelations,
-		"diskImages":             buildMicroDiskImageData(tree.DiskImages),
+		"evidenceFiles":          buildEvidenceFileData(tree.EvidenceFiles),
 	}
 
 	jsonData, err := json.MarshalIndent(output, "", "  ")
@@ -31,29 +31,29 @@ func ListMicroArtefacts(repo *microartefact.GrapheneRepository) error {
 	return nil
 }
 
-func buildMicroDiskImageData(diskImages []*microartefact.DiskImageNode) []map[string]interface{} {
-	var diskImageList []map[string]interface{}
+func buildEvidenceFileData(evidenceFiles []*microartefact.EvidenceFileNode) []map[string]interface{} {
+	var evidenceFileList []map[string]interface{}
 
-	for _, di := range diskImages {
-		diData := map[string]interface{}{
-			"id":         di.ID,
-			"name":       di.Name,
-			"partitions": buildMicroPartitionData(di.Partitions),
+	for _, evidenceFile := range evidenceFiles {
+		evidenceFileData := map[string]interface{}{
+			"id":         evidenceFile.ID,
+			"name":       evidenceFile.Name,
+			"partitions": buildPartitionFileData(evidenceFile.Partitions),
 		}
-		diskImageList = append(diskImageList, diData)
+		evidenceFileList = append(evidenceFileList, evidenceFileData)
 	}
 
-	return diskImageList
+	return evidenceFileList
 }
 
-func buildMicroPartitionData(partitions []*microartefact.PartitionNode) []map[string]interface{} {
+func buildPartitionFileData(partitions []*microartefact.PartitionFileNode) []map[string]interface{} {
 	var partitionList []map[string]interface{}
 
 	for _, p := range partitions {
 		pData := map[string]interface{}{
 			"id":    p.ID,
 			"name":  p.Name,
-			"files": buildMicroFileData(p.Files),
+			"files": buildMicroIndexedFileData(p.Files),
 		}
 		partitionList = append(partitionList, pData)
 	}
@@ -61,7 +61,7 @@ func buildMicroPartitionData(partitions []*microartefact.PartitionNode) []map[st
 	return partitionList
 }
 
-func buildMicroFileData(files []*microartefact.FileNode) []map[string]interface{} {
+func buildMicroIndexedFileData(files []*microartefact.IndexedFileArtefactView) []map[string]interface{} {
 	var fileList []map[string]interface{}
 
 	for _, f := range files {

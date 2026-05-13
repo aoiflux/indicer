@@ -221,12 +221,12 @@ func mustPack(value any) []byte {
 
 // ReadHierarchy walks the enrichment graphdb and returns the full
 // disk_image → partition → indexed_file hierarchy with file-level metadata.
-func (repository *GrapheneRepository) ReadHierarchy() (*HierarchyTree, error) {
+func (repository *GrapheneRepository) ReadHierarchy() (*EnrichmentHierarchy, error) {
 	if repository == nil || repository.graph == nil {
-		return &HierarchyTree{}, nil
+		return &EnrichmentHierarchy{}, nil
 	}
 
-	tree := &HierarchyTree{}
+	tree := &EnrichmentHierarchy{}
 	diskImageIDs, err := repository.graph.NodesByType(nodeTypeDiskImage)
 	if err != nil {
 		return nil, err
@@ -240,13 +240,13 @@ func (repository *GrapheneRepository) ReadHierarchy() (*HierarchyTree, error) {
 			return nil, err
 		}
 		dProps := unpackProps(diskNode.Properties)
-		di := &DiskImageNode{
+		di := &EnrichmentDiskImageNode{
 			ID:   strProp(dProps, "disk_image_id"),
 			Name: strProp(dProps, "name"),
 		}
 
 		// Get disk image level files
-		diskImageFileMap := make(map[string]*FileNode)
+		diskImageFileMap := make(map[string]*EnrichmentFileNode)
 		diskFileNeighbours, err := repository.graph.Neighbours(diskID, graphstore.DirectionOutbound, contEdges)
 		if err != nil {
 			return nil, err
@@ -258,7 +258,7 @@ func (repository *GrapheneRepository) ReadHierarchy() (*HierarchyTree, error) {
 			dfProps := unpackProps(dfn.Node.Properties)
 			fileLevel := strProp(dfProps, "level")
 			if fileLevel == "disk_image" {
-				dfile := &FileNode{
+				dfile := &EnrichmentFileNode{
 					ID:           strProp(dfProps, "file_node_id"),
 					FileName:     strProp(dfProps, "name"),
 					Path:         strProp(dfProps, "path"),
@@ -282,13 +282,13 @@ func (repository *GrapheneRepository) ReadHierarchy() (*HierarchyTree, error) {
 				continue
 			}
 			pProps := unpackProps(pn.Node.Properties)
-			partition := &PartitionNode{
+			partition := &EnrichmentPartitionNode{
 				ID:   strProp(pProps, "partition_id"),
 				Name: strProp(pProps, "name"),
 			}
 
 			// Get partition level files
-			partitionFileMap := make(map[string]*FileNode)
+			partitionFileMap := make(map[string]*EnrichmentFileNode)
 			partFileNeighbours, err := repository.graph.Neighbours(pn.Node.ID, graphstore.DirectionOutbound, contEdges)
 			if err != nil {
 				return nil, err
@@ -300,7 +300,7 @@ func (repository *GrapheneRepository) ReadHierarchy() (*HierarchyTree, error) {
 				pfProps := unpackProps(pfn.Node.Properties)
 				fileLevel := strProp(pfProps, "level")
 				if fileLevel == "partition" {
-					pfile := &FileNode{
+					pfile := &EnrichmentFileNode{
 						ID:           strProp(pfProps, "file_node_id"),
 						FileName:     strProp(pfProps, "name"),
 						Path:         strProp(pfProps, "path"),
@@ -325,7 +325,7 @@ func (repository *GrapheneRepository) ReadHierarchy() (*HierarchyTree, error) {
 					continue
 				}
 				fProps := unpackProps(fn.Node.Properties)
-				ifile := &FileNode{
+				ifile := &EnrichmentFileNode{
 					ID:           strProp(fProps, "indexed_file_id"),
 					Hash:         strProp(fProps, "hash"),
 					FileNames:    strSliceProp(fProps, "file_names"),
@@ -341,7 +341,7 @@ func (repository *GrapheneRepository) ReadHierarchy() (*HierarchyTree, error) {
 					return nil, err
 				}
 
-				var indexedFileLevelFiles []*FileNode
+				var indexedFileLevelFiles []*EnrichmentFileNode
 				for _, file := range fileNeighbours {
 					if !file.Node.HasLabel(nodeTypeFile) {
 						continue
@@ -349,7 +349,7 @@ func (repository *GrapheneRepository) ReadHierarchy() (*HierarchyTree, error) {
 					fileProps := unpackProps(file.Node.Properties)
 					fileLevel := strProp(fileProps, "level")
 					if fileLevel == "indexed_file" {
-						levelFile := &FileNode{
+						levelFile := &EnrichmentFileNode{
 							ID:           strProp(fileProps, "file_node_id"),
 							FileName:     strProp(fileProps, "name"),
 							Path:         strProp(fileProps, "path"),
@@ -389,11 +389,11 @@ func (repository *GrapheneRepository) ReadHierarchy() (*HierarchyTree, error) {
 			return di.Partitions[i].Name < di.Partitions[j].Name
 		})
 
-		tree.DiskImages = append(tree.DiskImages, di)
+		tree.EvidenceFiles = append(tree.EvidenceFiles, di)
 	}
 
-	sort.Slice(tree.DiskImages, func(i, j int) bool {
-		return tree.DiskImages[i].Name < tree.DiskImages[j].Name
+	sort.Slice(tree.EvidenceFiles, func(i, j int) bool {
+		return tree.EvidenceFiles[i].Name < tree.EvidenceFiles[j].Name
 	})
 
 	return tree, nil

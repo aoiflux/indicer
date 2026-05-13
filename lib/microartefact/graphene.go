@@ -6,15 +6,11 @@ const grapheneStoreDir = graphrepo.StoreDirName
 
 // Type aliases so callers don't need to import the inner package.
 type GrapheneRepository = graphrepo.Repository
-type HierarchyTree = graphrepo.HierarchyTree
-type DiskImageNode = graphrepo.DiskImageNode
-type PartitionNode = graphrepo.PartitionNode
-type FileNode = graphrepo.FileNode
+type EvidenceFileHierarchy = graphrepo.EvidenceFileHierarchy
+type EvidenceFileNode = graphrepo.EvidenceFileNode
+type PartitionFileNode = graphrepo.PartitionFileNode
 type MicroArtefactNode = graphrepo.MicroArtefactNode
-
-// Legacy aliases kept for compatibility.
-type IndexedFileNode = graphrepo.FileNode
-type ArtefactNode = graphrepo.MicroArtefactNode
+type IndexedFileArtefactView = graphrepo.IndexedFileArtefactView
 
 func OpenGrapheneRepository(root string) (*GrapheneRepository, error) {
 	return graphrepo.Open(root)

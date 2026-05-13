@@ -66,6 +66,38 @@ func (repository *GrapheneRepository) UpsertEvidence(record EvidenceRecord) erro
 	return nil
 }
 
+func (repository *GrapheneRepository) UpsertPartition(record PartitionRecord) error {
+	if repository == nil || repository.graph == nil {
+		return nil
+	}
+
+	evidenceNode, err := repository.upsertNode(
+		"evidence_file_id",
+		record.EvidenceFileID,
+		[]graphstore.NodeType{nodeTypeEvidenceFile},
+		map[string]any{"evidence_file_id": record.EvidenceFileID, "name": record.EvidenceFileName},
+	)
+	if err != nil {
+		return err
+	}
+
+	partitionNode, err := repository.upsertNode(
+		"partition_id",
+		record.PartitionID,
+		[]graphstore.NodeType{nodeTypePartition},
+		map[string]any{
+			"partition_id":     record.PartitionID,
+			"name":             record.PartitionName,
+			"evidence_file_id": record.EvidenceFileID,
+		},
+	)
+	if err != nil {
+		return err
+	}
+
+	return repository.ensureContains(evidenceNode, partitionNode)
+}
+
 func (repository *GrapheneRepository) UpsertFile(record FileRecord) error {
 	if repository == nil || repository.graph == nil {
 		return nil

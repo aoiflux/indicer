@@ -176,6 +176,17 @@ func indexEvidenceFile(eviFile structs.InputFile, db *badger.DB, enableFTS bool,
 	tuskJSON, hasTusk := parser.TuskAnalysis(eviFile.GetHandle().Name())
 	partitions := parser.ParseImage(tuskJSON, hasTusk, eviFile.GetSize(), eviFile.GetHandle())
 	idxChan := make(chan error)
+
+	var enrichRepo *enrichment.GrapheneRepository
+	if enableEnrichment {
+		var err error
+		enrichRepo, err = enrichment.OpenGrapheneRepository(db.Opts().Dir)
+		if err != nil {
+			return err
+		}
+		defer enrichRepo.Close()
+	}
+
 	for index, partition := range partitions {
 		phash := eviFile.GetHash()
 		var err error
@@ -203,6 +214,12 @@ func indexEvidenceFile(eviFile structs.InputFile, db *badger.DB, enableFTS bool,
 			partition.Start,
 		)
 
+		if enableEnrichment {
+			if err := upsertPartitionNodeForUnparsedPartition(enrichRepo, eviFile, pfile); err != nil {
+				return err
+			}
+		}
+
 		if hasTusk {
 			go parser.IndexFilesystem(tuskJSON, pfile, idxChan, enableFTS, enableEnrichment)
 		} else {
@@ -224,6 +241,28 @@ func indexEvidenceFile(eviFile structs.InputFile, db *badger.DB, enableFTS bool,
 		}
 	}
 	return nil
+}
+
+func upsertPartitionNodeForUnparsedPartition(repo *enrichment.GrapheneRepository, eviFile structs.InputFile, pfile structs.InputFile) error {
+	if repo == nil {
+		return nil
+	}
+
+	evidenceHashB64, err := eviFile.GetEncodedHash()
+	if err != nil {
+		return err
+	}
+	partitionHashB64, err := pfile.GetEncodedHash()
+	if err != nil {
+		return err
+	}
+
+	return repo.UpsertPartition(enrichment.PartitionRecord{
+		EvidenceFileID:   string(evidenceHashB64),
+		EvidenceFileName: eviFile.GetName(),
+		PartitionID:      string(partitionHashB64),
+		PartitionName:    pfile.GetName(),
+	})
 }
 
 func initEvidenceFile(evifilepath string, db *badger.DB) (structs.InputFile, error) {

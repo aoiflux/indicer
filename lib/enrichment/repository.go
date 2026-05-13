@@ -8,6 +8,7 @@ import (
 // Repository is injected into enrichment service so storage backend stays swappable.
 type Repository interface {
 	UpsertEvidence(record EvidenceRecord) error
+	UpsertPartition(record PartitionRecord) error
 	UpsertFile(record FileRecord) error
 	ReadHierarchy() (*EnrichmentHierarchy, error)
 	Close() error

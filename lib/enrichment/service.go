@@ -176,7 +176,7 @@ func (service *Service) EnrichPartition(pfile structs.InputFile, indexedHashes [
 func (service *Service) enrichPartitionByHash(txn *badger.Txn, evidence evidenceContext, partitionHashB64 string, entropyCache map[string]float64, onProcessed func()) error {
 	pdata, err := readPartitionFileByHash(txn, partitionHashB64)
 	if err != nil {
-		return err
+		return service.upsertUnreadablePartition(evidence, partitionHashB64)
 	}
 
 	context := partitionContext{
@@ -247,7 +247,7 @@ func (service *Service) countIndexedObjectsForEnrichment() (int64, error) {
 			for partitionHashB64 := range evidata.InternalObjects {
 				pdata, err := readPartitionFileByHash(txn, partitionHashB64)
 				if err != nil {
-					return err
+					continue
 				}
 				total += int64(len(pdata.InternalObjects))
 			}
@@ -413,6 +413,19 @@ func buildNameLevelRecord(shared FileRecord, rawName string, meta structs.Indexe
 	record.IsFragmented = meta.IsFragmented
 	record.MimeType, record.Tags = classifyFile(record.Path, record.FileType)
 	return record
+}
+
+func (service *Service) upsertUnreadablePartition(evidence evidenceContext, partitionHashB64 string) error {
+	if service == nil || service.repository == nil {
+		return nil
+	}
+
+	return service.repository.UpsertPartition(PartitionRecord{
+		EvidenceFileID:   evidence.evidenceFileID,
+		EvidenceFileName: evidence.evidenceFileName,
+		PartitionID:      partitionHashB64,
+		PartitionName:    partitionHashB64,
+	})
 }
 
 func ensureIndexedNameMeta(indexedFile *structs.IndexedFile) {

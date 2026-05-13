@@ -42,6 +42,15 @@ type EvidenceRecord struct {
 	Size       int64
 }
 
+// PartitionRecord represents a structural partition node that should exist
+// even when partition payload parsing fails.
+type PartitionRecord struct {
+	EvidenceFileID   string
+	EvidenceFileName string
+	PartitionID      string
+	PartitionName    string
+}
+
 func (record FileRecord) buildFileNodeID() string {
 	identity := record.Path
 	if identity == "" {

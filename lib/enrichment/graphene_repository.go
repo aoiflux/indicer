@@ -132,17 +132,31 @@ func (repository *GrapheneRepository) UpsertFile(record FileRecord) error {
 
 	// Create FILE node for this specific file
 	fileNodeID := record.buildFileNodeID()
+	fileHash := ""
+	switch record.Level {
+	case "evidence_file":
+		fileHash = record.EvidenceFileID
+	case "partition":
+		fileHash = record.PartitionID
+	case "indexed_file":
+		fileHash = record.IndexedFileHash
+	}
 	fileProps := map[string]any{
-		"file_node_id":  fileNodeID,
-		"name":          record.FileName,
-		"path":          record.Path,
-		"size":          record.Size,
-		"is_deleted":    record.IsDeleted,
-		"is_fragmented": record.IsFragmented,
-		"level":         record.Level,
-		"mime_type":     record.MimeType,
-		"tags":          record.Tags,
-		"has_entropy":   record.HasEntropy,
+		"file_node_id":     fileNodeID,
+		"name":             record.FileName,
+		"path":             record.Path,
+		"hash":             fileHash,
+		"size":             record.Size,
+		"is_deleted":       record.IsDeleted,
+		"is_fragmented":    record.IsFragmented,
+		"level":            record.Level,
+		"file_type":        record.FileType,
+		"mime_type":        record.MimeType,
+		"tags":             record.Tags,
+		"has_entropy":      record.HasEntropy,
+		"evidence_file_id": record.EvidenceFileID,
+		"partition_id":     record.PartitionID,
+		"indexed_file_id":  record.IndexedFileID,
 	}
 	if record.HasEntropy {
 		fileProps["entropy"] = record.Entropy
@@ -248,35 +262,6 @@ func (repository *GrapheneRepository) ReadHierarchy() (*EnrichmentHierarchy, err
 			Name: strProp(dProps, "name"),
 		}
 
-		// Get evidence file level files
-		evidenceFileMap := make(map[string]*EnrichmentFileNode)
-		evidenceFileNeighbours, err := repository.graph.Neighbours(evidenceID, graphstore.DirectionOutbound, contEdges)
-		if err != nil {
-			return nil, err
-		}
-		for _, dfn := range evidenceFileNeighbours {
-			if !dfn.Node.HasLabel(nodeTypeFile) {
-				continue
-			}
-			dfProps := unpackProps(dfn.Node.Properties)
-			fileLevel := strProp(dfProps, "level")
-			if fileLevel == "evidence_file" {
-				dfile := &EnrichmentFileNode{
-					ID:           strProp(dfProps, "file_node_id"),
-					FileName:     strProp(dfProps, "name"),
-					Path:         strProp(dfProps, "path"),
-					Size:         int64Prop(dfProps, "size"),
-					IsDeleted:    boolProp(dfProps, "is_deleted"),
-					IsFragmented: boolProp(dfProps, "is_fragmented"),
-					MimeType:     strProp(dfProps, "mime_type"),
-					Tags:         strSliceProp(dfProps, "tags"),
-					Entropy:      float64Prop(dfProps, "entropy"),
-					HasEntropy:   boolProp(dfProps, "has_entropy"),
-				}
-				evidenceFileMap[dfile.ID] = dfile
-			}
-		}
-
 		partNeighbours, err := repository.graph.Neighbours(evidenceID, graphstore.DirectionOutbound, contEdges)
 		if err != nil {
 			return nil, err
@@ -290,35 +275,6 @@ func (repository *GrapheneRepository) ReadHierarchy() (*EnrichmentHierarchy, err
 			partition := &EnrichmentPartitionNode{
 				ID:   strProp(pProps, "partition_id"),
 				Name: strProp(pProps, "name"),
-			}
-
-			// Get partition level files
-			partitionFileMap := make(map[string]*EnrichmentFileNode)
-			partFileNeighbours, err := repository.graph.Neighbours(pn.Node.ID, graphstore.DirectionOutbound, contEdges)
-			if err != nil {
-				return nil, err
-			}
-			for _, pfn := range partFileNeighbours {
-				if !pfn.Node.HasLabel(nodeTypeFile) {
-					continue
-				}
-				pfProps := unpackProps(pfn.Node.Properties)
-				fileLevel := strProp(pfProps, "level")
-				if fileLevel == "partition" {
-					pfile := &EnrichmentFileNode{
-						ID:           strProp(pfProps, "file_node_id"),
-						FileName:     strProp(pfProps, "name"),
-						Path:         strProp(pfProps, "path"),
-						Size:         int64Prop(pfProps, "size"),
-						IsDeleted:    boolProp(pfProps, "is_deleted"),
-						IsFragmented: boolProp(pfProps, "is_fragmented"),
-						MimeType:     strProp(pfProps, "mime_type"),
-						Tags:         strSliceProp(pfProps, "tags"),
-						Entropy:      float64Prop(pfProps, "entropy"),
-						HasEntropy:   boolProp(pfProps, "has_entropy"),
-					}
-					partitionFileMap[pfile.ID] = pfile
-				}
 			}
 
 			// Get indexed file nodes
@@ -353,35 +309,14 @@ func (repository *GrapheneRepository) ReadHierarchy() (*EnrichmentHierarchy, err
 						continue
 					}
 					fileProps := unpackProps(file.Node.Properties)
-					fileLevel := strProp(fileProps, "level")
-					if fileLevel == "indexed_file" {
-						levelFile := &EnrichmentFileNode{
-							ID:           strProp(fileProps, "file_node_id"),
-							Hash:         indexedMeta.Hash,
-							FileName:     strProp(fileProps, "name"),
-							Path:         strProp(fileProps, "path"),
-							Size:         int64Prop(fileProps, "size"),
-							IsDeleted:    boolProp(fileProps, "is_deleted"),
-							IsFragmented: boolProp(fileProps, "is_fragmented"),
-							FileType:     strProp(fileProps, "file_type"),
-							MimeType:     strProp(fileProps, "mime_type"),
-							Tags:         strSliceProp(fileProps, "tags"),
-							Entropy:      float64Prop(fileProps, "entropy"),
-							HasEntropy:   boolProp(fileProps, "has_entropy"),
-						}
-						if levelFile.FileType == "" {
-							levelFile.FileType = indexedMeta.FileType
-						}
-						if levelFile.Size == 0 {
-							levelFile.Size = indexedMeta.Size
-						}
-						if !levelFile.HasEntropy {
-							levelFile.Entropy = indexedMeta.Entropy
-							levelFile.HasEntropy = indexedMeta.HasEntropy
-						}
-						partition.Files = append(partition.Files, levelFile)
-						addedFileNode = true
+					if strProp(fileProps, "level") != "indexed_file" {
+						continue
 					}
+
+					levelFile := buildEnrichmentFileNodeFromProps(fileProps)
+					mergeIndexedFallback(levelFile, indexedMeta)
+					partition.Files = append(partition.Files, levelFile)
+					addedFileNode = true
 				}
 
 				// Fallback for legacy/partial graph data where indexed metadata exists
@@ -413,6 +348,39 @@ func (repository *GrapheneRepository) ReadHierarchy() (*EnrichmentHierarchy, err
 	})
 
 	return tree, nil
+}
+
+func buildEnrichmentFileNodeFromProps(props map[string]any) *EnrichmentFileNode {
+	return &EnrichmentFileNode{
+		ID:           strProp(props, "file_node_id"),
+		Hash:         strProp(props, "hash"),
+		FileName:     strProp(props, "name"),
+		Path:         strProp(props, "path"),
+		Size:         int64Prop(props, "size"),
+		IsDeleted:    boolProp(props, "is_deleted"),
+		IsFragmented: boolProp(props, "is_fragmented"),
+		FileType:     strProp(props, "file_type"),
+		MimeType:     strProp(props, "mime_type"),
+		Tags:         strSliceProp(props, "tags"),
+		Entropy:      float64Prop(props, "entropy"),
+		HasEntropy:   boolProp(props, "has_entropy"),
+	}
+}
+
+func mergeIndexedFallback(fileNode, indexedMeta *EnrichmentFileNode) {
+	if fileNode.Hash == "" {
+		fileNode.Hash = indexedMeta.Hash
+	}
+	if fileNode.FileType == "" {
+		fileNode.FileType = indexedMeta.FileType
+	}
+	if fileNode.Size == 0 {
+		fileNode.Size = indexedMeta.Size
+	}
+	if !fileNode.HasEntropy {
+		fileNode.Entropy = indexedMeta.Entropy
+		fileNode.HasEntropy = indexedMeta.HasEntropy
+	}
 }
 
 // ─── property helpers ────────────────────────────────────────────────────────

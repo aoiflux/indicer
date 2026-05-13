@@ -83,11 +83,7 @@ func (service *Service) EnrichAll() error {
 			if err != nil {
 				return err
 			}
-
-			decoded, err := cnst.DECODER.DecodeAll(value, nil)
-			if err == nil {
-				value = decoded
-			}
+			value = decodeStoredValue(value)
 
 			var evidata structs.EvidenceFile
 			if err := msgpack.Unmarshal(value, &evidata); err != nil {
@@ -106,29 +102,17 @@ func (service *Service) EnrichAll() error {
 			// Create evidence-file-level file records for each file at evidence level
 			ensureIndexedNameMeta(&evidata.IndexedFile)
 			evidenceEntropy, hasEvidenceEntropy := service.computeEntropyForLogicalFile(cnst.EviFileNamespace, context.evidenceFileID, entropyCache)
+			sharedEvidenceRecord := FileRecord{
+				Level:            "evidence_file",
+				Size:             evidata.Size,
+				EvidenceFileID:   context.evidenceFileID,
+				EvidenceFileName: context.evidenceFileName,
+				Entropy:          evidenceEntropy,
+				HasEntropy:       hasEvidenceEntropy,
+			}
 			for evidenceFileName := range evidata.Names {
-				fileName := evidenceFileName
-				if strings.Contains(evidenceFileName, cnst.DataSeperator) {
-					parts := strings.SplitN(evidenceFileName, cnst.DataSeperator, 3)
-					if len(parts) >= 3 {
-						fileName = parts[2]
-					}
-				}
 				meta := evidata.NameMeta[evidenceFileName]
-
-				evidenceFileRecord := FileRecord{
-					Level:            "evidence_file",
-					FileName:         fileName,
-					Path:             evidenceFileName,
-					Size:             evidata.Size,
-					IsDeleted:        meta.IsDeleted,
-					IsFragmented:     meta.IsFragmented,
-					EvidenceFileID:   context.evidenceFileID,
-					EvidenceFileName: context.evidenceFileName,
-					Entropy:          evidenceEntropy,
-					HasEntropy:       hasEvidenceEntropy,
-				}
-				evidenceFileRecord.MimeType, evidenceFileRecord.Tags = classifyFile(evidenceFileRecord.Path, evidenceFileRecord.FileType)
+				evidenceFileRecord := buildNameLevelRecord(sharedEvidenceRecord, evidenceFileName, meta, false)
 				if err := service.repository.UpsertFile(evidenceFileRecord); err != nil {
 					return err
 				}
@@ -190,27 +174,8 @@ func (service *Service) EnrichPartition(pfile structs.InputFile, indexedHashes [
 }
 
 func (service *Service) enrichPartitionByHash(txn *badger.Txn, evidence evidenceContext, partitionHashB64 string, entropyCache map[string]float64, onProcessed func()) error {
-	rawPartitionHash, err := base64.StdEncoding.DecodeString(partitionHashB64)
+	pdata, err := readPartitionFileByHash(txn, partitionHashB64)
 	if err != nil {
-		return fmt.Errorf("partition hash decode: %w", err)
-	}
-	partitionID := util.AppendToBytesSlice(cnst.PartiFileNamespace, rawPartitionHash)
-
-	item, err := txn.Get(partitionID)
-	if err != nil {
-		return fmt.Errorf("get partition %s: %w", partitionHashB64, err)
-	}
-	value, err := item.ValueCopy(nil)
-	if err != nil {
-		return err
-	}
-	decoded, err := cnst.DECODER.DecodeAll(value, nil)
-	if err == nil {
-		value = decoded
-	}
-
-	var pdata structs.PartitionFile
-	if err := msgpack.Unmarshal(value, &pdata); err != nil {
 		return err
 	}
 
@@ -223,32 +188,20 @@ func (service *Service) enrichPartitionByHash(txn *badger.Txn, evidence evidence
 
 	// Create partition-level file records for each file in this partition
 	ensureIndexedNameMeta(&pdata.IndexedFile)
+	sharedPartitionRecord := FileRecord{
+		Level:            "partition",
+		Size:             pdata.Size,
+		FileType:         pdata.IndexedType,
+		EvidenceFileID:   evidence.evidenceFileID,
+		EvidenceFileName: evidence.evidenceFileName,
+		PartitionID:      partitionHashB64,
+		PartitionName:    context.partitionName,
+		Entropy:          partitionEntropy,
+		HasEntropy:       hasPartitionEntropy,
+	}
 	for partitionFileName := range pdata.Names {
-		fileName := partitionFileName
-		if strings.Contains(partitionFileName, cnst.DataSeperator) {
-			parts := strings.SplitN(partitionFileName, cnst.DataSeperator, 3)
-			if len(parts) >= 3 {
-				fileName = parts[2]
-			}
-		}
 		meta := pdata.NameMeta[partitionFileName]
-
-		partitionRecord := FileRecord{
-			Level:            "partition",
-			FileName:         fileName,
-			Path:             partitionFileName,
-			Size:             pdata.Size,
-			IsDeleted:        meta.IsDeleted,
-			IsFragmented:     meta.IsFragmented,
-			FileType:         pdata.IndexedType,
-			EvidenceFileID:   evidence.evidenceFileID,
-			EvidenceFileName: evidence.evidenceFileName,
-			PartitionID:      partitionHashB64,
-			PartitionName:    context.partitionName,
-			Entropy:          partitionEntropy,
-			HasEntropy:       hasPartitionEntropy,
-		}
-		partitionRecord.MimeType, partitionRecord.Tags = classifyFile(partitionRecord.Path, partitionRecord.FileType)
+		partitionRecord := buildNameLevelRecord(sharedPartitionRecord, partitionFileName, meta, false)
 		if err := service.repository.UpsertFile(partitionRecord); err != nil {
 			return err
 		}
@@ -281,11 +234,7 @@ func (service *Service) countIndexedObjectsForEnrichment() (int64, error) {
 			if err != nil {
 				return err
 			}
-
-			decoded, err := cnst.DECODER.DecodeAll(value, nil)
-			if err == nil {
-				value = decoded
-			}
+			value = decodeStoredValue(value)
 
 			var evidata structs.EvidenceFile
 			if err := msgpack.Unmarshal(value, &evidata); err != nil {
@@ -296,27 +245,8 @@ func (service *Service) countIndexedObjectsForEnrichment() (int64, error) {
 			}
 
 			for partitionHashB64 := range evidata.InternalObjects {
-				rawPartitionHash, err := base64.StdEncoding.DecodeString(partitionHashB64)
+				pdata, err := readPartitionFileByHash(txn, partitionHashB64)
 				if err != nil {
-					return fmt.Errorf("partition hash decode: %w", err)
-				}
-				partitionID := util.AppendToBytesSlice(cnst.PartiFileNamespace, rawPartitionHash)
-
-				partitionItem, err := txn.Get(partitionID)
-				if err != nil {
-					return fmt.Errorf("get partition %s: %w", partitionHashB64, err)
-				}
-				partitionValue, err := partitionItem.ValueCopy(nil)
-				if err != nil {
-					return err
-				}
-				partitionDecoded, err := cnst.DECODER.DecodeAll(partitionValue, nil)
-				if err == nil {
-					partitionValue = partitionDecoded
-				}
-
-				var pdata structs.PartitionFile
-				if err := msgpack.Unmarshal(partitionValue, &pdata); err != nil {
 					return err
 				}
 				total += int64(len(pdata.InternalObjects))
@@ -355,30 +285,24 @@ func (service *Service) enrichIndexedHash(context partitionContext, indexedHashB
 	}
 	ensureIndexedNameMeta(&indexedFile)
 	indexedEntropy, hasIndexedEntropy := service.computeEntropyForLogicalFile(cnst.IdxFileNamespace, indexedHashCanonical, entropyCache)
+	sharedIndexedRecord := FileRecord{
+		Level:            "indexed_file",
+		Size:             indexedFile.Size,
+		FileType:         indexedFile.IndexedType,
+		EvidenceFileID:   context.evidenceFileID,
+		EvidenceFileName: context.evidenceFileName,
+		PartitionID:      context.partitionID,
+		PartitionName:    context.partitionName,
+		IndexedFileID:    indexedHashCanonical,
+		IndexedFileHash:  indexedHashCanonical,
+		Entropy:          indexedEntropy,
+		HasEntropy:       hasIndexedEntropy,
+	}
 
 	// Create one FileRecord per file NAME at the indexed file level
 	for indexedName := range indexedFile.Names {
-		fileName, filePath := splitIndexedName(indexedName)
 		meta := indexedFile.NameMeta[indexedName]
-
-		record := FileRecord{
-			Level:            "indexed_file",
-			FileName:         fileName,
-			Path:             filePath,
-			Size:             indexedFile.Size,
-			IsDeleted:        indexedFile.IsDeleted || meta.IsDeleted,
-			IsFragmented:     meta.IsFragmented,
-			FileType:         indexedFile.IndexedType,
-			EvidenceFileID:   context.evidenceFileID,
-			EvidenceFileName: context.evidenceFileName,
-			PartitionID:      context.partitionID,
-			PartitionName:    context.partitionName,
-			IndexedFileID:    indexedHashCanonical,
-			IndexedFileHash:  indexedHashCanonical,
-			Entropy:          indexedEntropy,
-			HasEntropy:       hasIndexedEntropy,
-		}
-		record.MimeType, record.Tags = classifyFile(record.Path, record.FileType)
+		record := buildNameLevelRecord(sharedIndexedRecord, indexedName, meta, indexedFile.IsDeleted)
 		if err := service.repository.UpsertFile(record); err != nil {
 			return err
 		}
@@ -444,6 +368,51 @@ func parseHashValue(value string) ([]byte, string) {
 
 	raw = []byte(value)
 	return raw, base64.StdEncoding.EncodeToString(raw)
+}
+
+func decodeStoredValue(value []byte) []byte {
+	decoded, err := cnst.DECODER.DecodeAll(value, nil)
+	if err == nil {
+		return decoded
+	}
+	return value
+}
+
+func readPartitionFileByHash(txn *badger.Txn, partitionHashB64 string) (structs.PartitionFile, error) {
+	var pdata structs.PartitionFile
+
+	rawPartitionHash, err := base64.StdEncoding.DecodeString(partitionHashB64)
+	if err != nil {
+		return pdata, fmt.Errorf("partition hash decode: %w", err)
+	}
+	partitionID := util.AppendToBytesSlice(cnst.PartiFileNamespace, rawPartitionHash)
+
+	item, err := txn.Get(partitionID)
+	if err != nil {
+		return pdata, fmt.Errorf("get partition %s: %w", partitionHashB64, err)
+	}
+	value, err := item.ValueCopy(nil)
+	if err != nil {
+		return pdata, err
+	}
+	value = decodeStoredValue(value)
+
+	if err := msgpack.Unmarshal(value, &pdata); err != nil {
+		return pdata, err
+	}
+
+	return pdata, nil
+}
+
+func buildNameLevelRecord(shared FileRecord, rawName string, meta structs.IndexedNameMeta, baseDeleted bool) FileRecord {
+	name, path := splitIndexedName(rawName)
+	record := shared
+	record.FileName = name
+	record.Path = path
+	record.IsDeleted = baseDeleted || meta.IsDeleted
+	record.IsFragmented = meta.IsFragmented
+	record.MimeType, record.Tags = classifyFile(record.Path, record.FileType)
+	return record
 }
 
 func ensureIndexedNameMeta(indexedFile *structs.IndexedFile) {

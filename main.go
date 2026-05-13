@@ -366,7 +366,7 @@ func printStoreHelp() {
 func printEnrichHelp() {
 	printHelpHeader("enrich")
 	fmt.Println("Usage: dues enrich [global options]")
-	fmt.Println("Backfills file-level hierarchy nodes into graphdb: disk image -> partition -> indexed file.")
+	fmt.Println("Backfills file-level hierarchy nodes into graphdb: evidence file -> partition -> indexed file.")
 	printExamples(
 		"dues enrich",
 		"dues enrich --dbpath ./caseA",

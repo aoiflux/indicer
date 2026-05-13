@@ -33,7 +33,7 @@ message AppendIfExistsRes {
 }
 message StreamFileMeta {
     string file_path = 1;
-    string file_type = 2; // disk image type (windows_exfat, linux_ext4, something else)
+    string file_type = 2; // evidence file type (windows_exfat, linux_ext4, something else)
     string file_hash = 3;
 }
 message StreamFileReq {

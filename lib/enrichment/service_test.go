@@ -118,11 +118,8 @@ func TestEnrichAllCreatesFileNodesAtAllLevels(t *testing.T) {
 	if len(hierarchy.EvidenceFiles[0].Partitions) != 1 {
 		t.Fatalf("expected 1 partition, got %d", len(hierarchy.EvidenceFiles[0].Partitions))
 	}
-	if len(hierarchy.EvidenceFiles[0].Partitions[0].Files) != 1 {
-		t.Fatalf("expected 1 indexed file node, got %d", len(hierarchy.EvidenceFiles[0].Partitions[0].Files))
-	}
-	if len(hierarchy.EvidenceFiles[0].Partitions[0].Files[0].FileNames) != 2 {
-		t.Fatalf("expected 2 indexed-level file names, got %d", len(hierarchy.EvidenceFiles[0].Partitions[0].Files[0].FileNames))
+	if len(hierarchy.EvidenceFiles[0].Partitions[0].Files) != 2 {
+		t.Fatalf("expected 2 indexed file entries, got %d", len(hierarchy.EvidenceFiles[0].Partitions[0].Files))
 	}
 
 	if err := repo.Close(); err != nil {
@@ -135,12 +132,12 @@ func TestEnrichAllCreatesFileNodesAtAllLevels(t *testing.T) {
 	}
 	defer graph.Close()
 
-	diskLevelHits, err := graph.NodesByProperty("level", []byte("disk_image"))
+	evidenceLevelHits, err := graph.NodesByProperty("level", []byte("evidence_file"))
 	if err != nil {
-		t.Fatalf("NodesByProperty level=disk_image: %v", err)
+		t.Fatalf("NodesByProperty level=evidence_file: %v", err)
 	}
-	if len(diskLevelHits) != 2 {
-		t.Fatalf("expected 2 disk_image FILE nodes, got %d", len(diskLevelHits))
+	if len(evidenceLevelHits) != 2 {
+		t.Fatalf("expected 2 evidence_file FILE nodes, got %d", len(evidenceLevelHits))
 	}
 
 	partitionLevelHits, err := graph.NodesByProperty("level", []byte("partition"))

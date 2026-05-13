@@ -24,6 +24,6 @@ func EnrichData(chonkSize int, dbpath string, key []byte) error {
 		return err
 	}
 
-	fmt.Println("Graph enrichment complete: disk images, partitions, and indexed-file metadata upserted.")
+	fmt.Println("Graph enrichment complete: evidence files, partitions, and indexed-file metadata upserted.")
 	return nil
 }

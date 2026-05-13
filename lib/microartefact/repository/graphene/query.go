@@ -32,29 +32,29 @@ type IndexedFileArtefactView = enrichment.IndexedFileArtefactView
 type MicroArtefactNode = enrichment.FileLevelArtefactNode
 
 // ReadHierarchy walks the graphene store and returns the full
-// disk_image → partition → indexed_file → micro_artefact tree.
+// evidence_file → partition → indexed_file → micro_artefact tree.
 func (r *Repository) ReadHierarchy() (*EvidenceFileHierarchy, error) {
 	tree := &EvidenceFileHierarchy{}
 
-	diskImageIDs, err := r.graph.NodesByType(nodeTypeDiskImage)
+	evidenceFileIDs, err := r.graph.NodesByType(nodeTypeEvidenceFile)
 	if err != nil {
 		return nil, err
 	}
 
 	contEdges := []graphstore.EdgeType{graphstore.EdgeTypeContains}
 
-	for _, diskID := range diskImageIDs {
-		diskNode, err := r.graph.GetNode(diskID)
+	for _, evidenceID := range evidenceFileIDs {
+		evidenceNode, err := r.graph.GetNode(evidenceID)
 		if err != nil {
 			return nil, err
 		}
-		dProps := unpackProps(diskNode.Properties)
-		di := &EvidenceFileNode{
-			ID:   strProp(dProps, "disk_image_id"),
+		dProps := unpackProps(evidenceNode.Properties)
+		evidenceFile := &EvidenceFileNode{
+			ID:   strProp(dProps, "evidence_file_id"),
 			Name: strProp(dProps, "name"),
 		}
 
-		partNeighbours, err := r.graph.Neighbours(diskID, graphstore.DirectionOutbound, contEdges)
+		partNeighbours, err := r.graph.Neighbours(evidenceID, graphstore.DirectionOutbound, contEdges)
 		if err != nil {
 			return nil, err
 		}
@@ -89,6 +89,8 @@ func (r *Repository) ReadHierarchy() (*EvidenceFileHierarchy, error) {
 						IsDeleted:    boolProp(fProps, "is_deleted"),
 						IsFragmented: boolProp(fProps, "is_fragmented"),
 						FileType:     strProp(fProps, "file_type"),
+						Entropy:      float64Prop(fProps, "entropy"),
+						HasEntropy:   boolProp(fProps, "has_entropy"),
 					},
 				}
 
@@ -130,14 +132,14 @@ func (r *Repository) ReadHierarchy() (*EvidenceFileHierarchy, error) {
 				return partition.Files[i].Name < partition.Files[j].Name
 			})
 
-			di.Partitions = append(di.Partitions, partition)
+			evidenceFile.Partitions = append(evidenceFile.Partitions, partition)
 		}
 
-		sort.Slice(di.Partitions, func(i, j int) bool {
-			return di.Partitions[i].Name < di.Partitions[j].Name
+		sort.Slice(evidenceFile.Partitions, func(i, j int) bool {
+			return evidenceFile.Partitions[i].Name < evidenceFile.Partitions[j].Name
 		})
 
-		tree.EvidenceFiles = append(tree.EvidenceFiles, di)
+		tree.EvidenceFiles = append(tree.EvidenceFiles, evidenceFile)
 	}
 
 	sort.Slice(tree.EvidenceFiles, func(i, j int) bool {
@@ -216,6 +218,24 @@ func float32Prop(m map[string]any, key string) float32 {
 			return n
 		case float64:
 			return float32(n)
+		}
+	}
+	return 0
+}
+
+func float64Prop(m map[string]any, key string) float64 {
+	if v, ok := m[key]; ok {
+		switch n := v.(type) {
+		case float64:
+			return n
+		case float32:
+			return float64(n)
+		case int64:
+			return float64(n)
+		case int32:
+			return float64(n)
+		case int:
+			return float64(n)
 		}
 	}
 	return 0

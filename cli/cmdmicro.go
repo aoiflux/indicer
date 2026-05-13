@@ -29,8 +29,8 @@ const microScanLimit = 4 << 20 // 4 MB
 var errScanLimitReached = errors.New("scan limit reached")
 
 type microEvidenceContext struct {
-	diskImageID   string
-	diskImageName string
+	evidenceFileID   string
+	evidenceFileName string
 }
 
 type microPartitionContext struct {
@@ -47,7 +47,7 @@ type microFileNodeStatus struct {
 // MicroArtefactCmd opens the DUES database and extracts micro-artefacts from
 // every indexed file that has been stored in the hierarchy:
 //
-// disk_image → partition → indexed_file → micro_artefact
+// evidence_file → partition → indexed_file → micro_artefact
 func MicroArtefactCmd(chonkSize int, dbpath string, key []byte, force bool, topK int) error {
 	db, dbpath, err := Common(chonkSize, dbpath, key)
 	if err != nil {
@@ -124,8 +124,8 @@ func processAllIndexedFiles(db *badger.DB, service *microartefact.Service, repo 
 
 			eviHash := bytes.TrimPrefix(k, eviPrefix)
 			evidenceCtx := microEvidenceContext{
-				diskImageID:   base64.StdEncoding.EncodeToString(eviHash),
-				diskImageName: arbitrarySetKey(evidata.Names),
+				evidenceFileID:   base64.StdEncoding.EncodeToString(eviHash),
+				evidenceFileName: arbitrarySetKey(evidata.Names),
 			}
 
 			for phashB64 := range evidata.InternalObjects {
@@ -286,18 +286,18 @@ func buildIndexedFileRecords(ifile structs.IndexedFile, partitionCtx microPartit
 		name, path := resolveIndexedFileNameSingle(indexedName)
 		meta := ifile.NameMeta[indexedName]
 		records = append(records, microartefact.FileRecord{
-			Hash:          indexedFileHashB64,
-			Name:          name,
-			Path:          path,
-			Size:          ifile.Size,
-			IsDeleted:     ifile.IsDeleted || meta.IsDeleted,
-			IsFragmented:  meta.IsFragmented,
-			FileType:      ifile.IndexedType,
-			DiskImageID:   partitionCtx.diskImageID,
-			DiskImageName: partitionCtx.diskImageName,
-			PartitionID:   partitionCtx.partitionID,
-			PartitionName: partitionCtx.partitionName,
-			IndexedFileID: mmodel.BuildIndexedFileID(partitionCtx.partitionID, path, indexedFileHashB64),
+			Hash:             indexedFileHashB64,
+			Name:             name,
+			Path:             path,
+			Size:             ifile.Size,
+			IsDeleted:        ifile.IsDeleted || meta.IsDeleted,
+			IsFragmented:     meta.IsFragmented,
+			FileType:         ifile.IndexedType,
+			EvidenceFileID:   partitionCtx.evidenceFileID,
+			EvidenceFileName: partitionCtx.evidenceFileName,
+			PartitionID:      partitionCtx.partitionID,
+			PartitionName:    partitionCtx.partitionName,
+			IndexedFileID:    mmodel.BuildIndexedFileID(partitionCtx.partitionID, path, indexedFileHashB64),
 		})
 	}
 	return records
@@ -355,7 +355,7 @@ func printHierarchyTree(tree *microartefact.EvidenceFileHierarchy) {
 		return
 	}
 
-	fmt.Printf("\n🔬 Micro-Artefact Graph  (%d disk image(s) · %d artefact(s) · %d relation(s): %d deterministic, %d probabilistic)\n\n",
+	fmt.Printf("\n🔬 Micro-Artefact Graph  (%d evidence file(s) · %d artefact(s) · %d relation(s): %d deterministic, %d probabilistic)\n\n",
 		len(tree.EvidenceFiles), tree.TotalArtefacts, tree.TotalRelations, tree.DeterministicRelations, tree.ProbabilisticRelations)
 
 	for di, disk := range tree.EvidenceFiles {

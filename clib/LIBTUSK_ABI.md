@@ -3,7 +3,8 @@
 `libtusk` exposes a single public C API in two build forms:
 
 - `build/libtusk.a`: static archive for link-time integration
-- `build/libtusk.so` and `build/libtusk.so.1`: shared library for runtime linking or loading
+- `build/libtusk.so` and `build/libtusk.so.1`: shared library for runtime
+  linking or loading
 
 The supported public interface is defined by `include/libtusk.h`.
 
@@ -22,7 +23,7 @@ void libtusk_free(char *ptr);
 char *libtusk_analyze(const char *image_path);
 ```
 
-- Input: path to a disk image file
+- Input: path to an evidence file
 - Output: NUL-terminated JSON string allocated by `libtusk`
 - Failure: returns `NULL`
 - Ownership: the caller must release the result with `libtusk_free`
@@ -35,7 +36,8 @@ void libtusk_free(char *ptr);
 
 - Input: pointer returned by `libtusk_analyze`
 - Output: none
-- Requirement: do not free the returned buffer with `free`, `C.free`, or a language runtime allocator
+- Requirement: do not free the returned buffer with `free`, `C.free`, or a
+  language runtime allocator
 
 ## Static vs Shared ABI
 
@@ -43,8 +45,10 @@ void libtusk_free(char *ptr);
 
 - `libtusk.a` is a static archive, not a runtime-loaded module.
 - It currently contains one object file, `libtusk.cpp.o`.
-- That object file provides the externally linkable definitions of `libtusk_analyze` and `libtusk_free`.
-- Any extra archive symbols from C++ or the toolchain are implementation details and are not public API.
+- That object file provides the externally linkable definitions of
+  `libtusk_analyze` and `libtusk_free`.
+- Any extra archive symbols from C++ or the toolchain are implementation details
+  and are not public API.
 
 ### Shared Library: `build/libtusk.so`, `build/libtusk.so.1`
 
@@ -78,23 +82,23 @@ Build outputs:
 
 ```json
 {
-  "image": "/path/to/image.dd",
-  "filesystem": {
-    "type": "exFAT",
-    "block_size": 512,
-    "offset": 0
-  },
-  "files": [
-    {
-      "filename": "/path/to/file.txt",
-      "type": "file",
-      "is_fragmented": false,
-      "size": 1024,
-      "fragments": [
-        {"start_offset": 2048, "end_offset": 3071}
-      ]
-    }
-  ]
+    "image": "/path/to/image.dd",
+    "filesystem": {
+        "type": "exFAT",
+        "block_size": 512,
+        "offset": 0
+    },
+    "files": [
+        {
+            "filename": "/path/to/file.txt",
+            "type": "file",
+            "is_fragmented": false,
+            "size": 1024,
+            "fragments": [
+                { "start_offset": 2048, "end_offset": 3071 }
+            ]
+        }
+    ]
 }
 ```
 
@@ -102,7 +106,7 @@ Important fields:
 
 - `filesystem.type`: detected filesystem name
 - `filesystem.block_size`: block size in bytes
-- `filesystem.offset`: filesystem byte offset in the disk image
+- `filesystem.offset`: filesystem byte offset in the evidence file
 - `files[*].type`: `file`, `directory`, or `other`
 - `files[*].fragments`: absolute byte ranges inside the image
 
@@ -113,7 +117,8 @@ Important fields:
 - Use `libtusk.a` with `cgo` for static link-time integration.
 - Use `libtusk.so` with `cgo` for dynamic linking.
 - Use `libtusk.so` with `purego` for runtime loading without `cgo`.
-- Do not try to use `libtusk.a` with `purego`; `purego` loads shared objects only.
+- Do not try to use `libtusk.a` with `purego`; `purego` loads shared objects
+  only.
 
 ### Go With `cgo` Using the Static Archive
 
@@ -152,7 +157,8 @@ func AnalyzeImage(imagePath string) (string, error) {
 
 Notes:
 
-- The static build currently depends on `/path/to/tusk/lib/libtsk.a` and `/path/to/tusk/lib/libz.a`.
+- The static build currently depends on `/path/to/tusk/lib/libtsk.a` and
+  `/path/to/tusk/lib/libz.a`.
 - `-lstdc++` is required because `libtusk` is implemented in C++.
 
 Build example:
@@ -298,7 +304,8 @@ Rules:
 
 ### shared library not found at runtime
 
-- Add `build/` to `LD_LIBRARY_PATH` or install the shared library into a loader search path.
+- Add `build/` to `LD_LIBRARY_PATH` or install the shared library into a loader
+  search path.
 - Ensure `libtsk.so` and `libz.so` are also available.
 
 ### `purego` returns corrupted data or leaks memory

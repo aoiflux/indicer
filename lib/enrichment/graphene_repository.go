@@ -19,10 +19,10 @@ type GrapheneRepository struct {
 const storeDirName = "graph"
 
 var (
-	nodeTypeDiskImage   = graphstore.CustomNodeType(0)
-	nodeTypePartition   = graphstore.CustomNodeType(1)
-	nodeTypeIndexedFile = graphstore.CustomNodeType(2)
-	nodeTypeFile        = graphstore.CustomNodeType(3)
+	nodeTypeEvidenceFile = graphstore.CustomNodeType(0)
+	nodeTypePartition    = graphstore.CustomNodeType(1)
+	nodeTypeIndexedFile  = graphstore.CustomNodeType(2)
+	nodeTypeFile         = graphstore.CustomNodeType(3)
 )
 
 func OpenGrapheneRepository(root string) (*GrapheneRepository, error) {
@@ -38,24 +38,24 @@ func (repository *GrapheneRepository) UpsertEvidence(record EvidenceRecord) erro
 		return nil
 	}
 
-	diskNode, err := repository.upsertNode(
-		"disk_image_id",
+	evidenceNode, err := repository.upsertNode(
+		"evidence_file_id",
 		record.HashBase64,
-		[]graphstore.NodeType{nodeTypeDiskImage},
+		[]graphstore.NodeType{nodeTypeEvidenceFile},
 		map[string]any{
-			"disk_image_id": record.HashBase64,
-			"name":          record.Name,
-			"path":          record.Path,
-			"size":          record.Size,
-			"evidence_hash": record.HashBase64,
-			"node_type":     "evidence",
+			"evidence_file_id": record.HashBase64,
+			"name":             record.Name,
+			"path":             record.Path,
+			"size":             record.Size,
+			"evidence_hash":    record.HashBase64,
+			"node_type":        "evidence",
 		},
 	)
 	if err != nil {
 		return err
 	}
 
-	if err := repository.graph.IndexNodeProperties(diskNode, map[string][]byte{
+	if err := repository.graph.IndexNodeProperties(evidenceNode, map[string][]byte{
 		"evidence_hash": []byte(record.HashBase64),
 		"name":          []byte(record.Name),
 		"path":          []byte(record.Path),
@@ -71,56 +71,54 @@ func (repository *GrapheneRepository) UpsertFile(record FileRecord) error {
 		return nil
 	}
 
-	// Always create/get disk image node
-	diskNode, err := repository.upsertNode(
-		"disk_image_id",
-		record.DiskImageID,
-		[]graphstore.NodeType{nodeTypeDiskImage},
-		map[string]any{"disk_image_id": record.DiskImageID, "name": record.DiskImageName},
+	// Always create/get evidence file node
+	evidenceNode, err := repository.upsertNode(
+		"evidence_file_id",
+		record.EvidenceFileID,
+		[]graphstore.NodeType{nodeTypeEvidenceFile},
+		map[string]any{"evidence_file_id": record.EvidenceFileID, "name": record.EvidenceFileName},
 	)
 	if err != nil {
 		return err
 	}
 
-	var parentNode graphstore.NodeID = diskNode
+	var parentNode graphstore.NodeID = evidenceNode
 
 	// For partition and indexed_file levels, create/get partition node
-	if record.Level != "disk_image" && record.PartitionID != "" {
+	if record.Level != "evidence_file" && record.PartitionID != "" {
 		partitionNode, err := repository.upsertNode(
 			"partition_id",
 			record.PartitionID,
 			[]graphstore.NodeType{nodeTypePartition},
-			map[string]any{"partition_id": record.PartitionID, "name": record.PartitionName, "disk_image_id": record.DiskImageID},
+			map[string]any{"partition_id": record.PartitionID, "name": record.PartitionName, "evidence_file_id": record.EvidenceFileID},
 		)
 		if err != nil {
 			return err
 		}
-		if err := repository.ensureContains(diskNode, partitionNode); err != nil {
+		if err := repository.ensureContains(evidenceNode, partitionNode); err != nil {
 			return err
 		}
 		parentNode = partitionNode
 
 		// For indexed_file level, create/get indexed file node
 		if record.Level == "indexed_file" && record.IndexedFileID != "" {
-			indexedFileNames := []string{}
-			if record.FileName != "" {
-				indexedFileNames = append(indexedFileNames, record.FileName)
+			indexedProps := map[string]any{
+				"indexed_file_id":  record.IndexedFileID,
+				"hash":             record.IndexedFileHash,
+				"size":             record.Size,
+				"partition_id":     record.PartitionID,
+				"evidence_file_id": record.EvidenceFileID,
+				"file_type":        record.FileType,
+				"has_entropy":      record.HasEntropy,
+			}
+			if record.HasEntropy {
+				indexedProps["entropy"] = record.Entropy
 			}
 			indexedNode, err := repository.upsertNode(
 				"indexed_file_id",
 				record.IndexedFileID,
 				[]graphstore.NodeType{nodeTypeIndexedFile},
-				map[string]any{
-					"indexed_file_id": record.IndexedFileID,
-					"hash":            record.IndexedFileHash,
-					"file_names":      indexedFileNames,
-					"size":            record.Size,
-					"is_deleted":      record.IsDeleted,
-					"is_fragmented":   record.IsFragmented,
-					"partition_id":    record.PartitionID,
-					"disk_image_id":   record.DiskImageID,
-					"file_type":       record.FileType,
-				},
+				indexedProps,
 			)
 			if err != nil {
 				return err
@@ -134,21 +132,26 @@ func (repository *GrapheneRepository) UpsertFile(record FileRecord) error {
 
 	// Create FILE node for this specific file
 	fileNodeID := record.buildFileNodeID()
+	fileProps := map[string]any{
+		"file_node_id":  fileNodeID,
+		"name":          record.FileName,
+		"path":          record.Path,
+		"size":          record.Size,
+		"is_deleted":    record.IsDeleted,
+		"is_fragmented": record.IsFragmented,
+		"level":         record.Level,
+		"mime_type":     record.MimeType,
+		"tags":          record.Tags,
+		"has_entropy":   record.HasEntropy,
+	}
+	if record.HasEntropy {
+		fileProps["entropy"] = record.Entropy
+	}
 	fileNode, err := repository.upsertNode(
 		"file_node_id",
 		fileNodeID,
 		[]graphstore.NodeType{nodeTypeFile},
-		map[string]any{
-			"file_node_id":  fileNodeID,
-			"name":          record.FileName,
-			"path":          record.Path,
-			"size":          record.Size,
-			"is_deleted":    record.IsDeleted,
-			"is_fragmented": record.IsFragmented,
-			"level":         record.Level,
-			"mime_type":     record.MimeType,
-			"tags":          record.Tags,
-		},
+		fileProps,
 	)
 	if err != nil {
 		return err
@@ -220,44 +223,44 @@ func mustPack(value any) []byte {
 }
 
 // ReadHierarchy walks the enrichment graphdb and returns the full
-// disk_image → partition → indexed_file hierarchy with file-level metadata.
+// evidence_file → partition → indexed_file hierarchy with file-level metadata.
 func (repository *GrapheneRepository) ReadHierarchy() (*EnrichmentHierarchy, error) {
 	if repository == nil || repository.graph == nil {
 		return &EnrichmentHierarchy{}, nil
 	}
 
 	tree := &EnrichmentHierarchy{}
-	diskImageIDs, err := repository.graph.NodesByType(nodeTypeDiskImage)
+	evidenceFileIDs, err := repository.graph.NodesByType(nodeTypeEvidenceFile)
 	if err != nil {
 		return nil, err
 	}
 
 	contEdges := []graphstore.EdgeType{graphstore.EdgeTypeContains}
 
-	for _, diskID := range diskImageIDs {
-		diskNode, err := repository.graph.GetNode(diskID)
+	for _, evidenceID := range evidenceFileIDs {
+		evidenceNode, err := repository.graph.GetNode(evidenceID)
 		if err != nil {
 			return nil, err
 		}
-		dProps := unpackProps(diskNode.Properties)
-		di := &EnrichmentDiskImageNode{
-			ID:   strProp(dProps, "disk_image_id"),
+		dProps := unpackProps(evidenceNode.Properties)
+		evidenceFile := &EnrichmentEvidenceFileNode{
+			ID:   strProp(dProps, "evidence_file_id"),
 			Name: strProp(dProps, "name"),
 		}
 
-		// Get disk image level files
-		diskImageFileMap := make(map[string]*EnrichmentFileNode)
-		diskFileNeighbours, err := repository.graph.Neighbours(diskID, graphstore.DirectionOutbound, contEdges)
+		// Get evidence file level files
+		evidenceFileMap := make(map[string]*EnrichmentFileNode)
+		evidenceFileNeighbours, err := repository.graph.Neighbours(evidenceID, graphstore.DirectionOutbound, contEdges)
 		if err != nil {
 			return nil, err
 		}
-		for _, dfn := range diskFileNeighbours {
+		for _, dfn := range evidenceFileNeighbours {
 			if !dfn.Node.HasLabel(nodeTypeFile) {
 				continue
 			}
 			dfProps := unpackProps(dfn.Node.Properties)
 			fileLevel := strProp(dfProps, "level")
-			if fileLevel == "disk_image" {
+			if fileLevel == "evidence_file" {
 				dfile := &EnrichmentFileNode{
 					ID:           strProp(dfProps, "file_node_id"),
 					FileName:     strProp(dfProps, "name"),
@@ -267,12 +270,14 @@ func (repository *GrapheneRepository) ReadHierarchy() (*EnrichmentHierarchy, err
 					IsFragmented: boolProp(dfProps, "is_fragmented"),
 					MimeType:     strProp(dfProps, "mime_type"),
 					Tags:         strSliceProp(dfProps, "tags"),
+					Entropy:      float64Prop(dfProps, "entropy"),
+					HasEntropy:   boolProp(dfProps, "has_entropy"),
 				}
-				diskImageFileMap[dfile.ID] = dfile
+				evidenceFileMap[dfile.ID] = dfile
 			}
 		}
 
-		partNeighbours, err := repository.graph.Neighbours(diskID, graphstore.DirectionOutbound, contEdges)
+		partNeighbours, err := repository.graph.Neighbours(evidenceID, graphstore.DirectionOutbound, contEdges)
 		if err != nil {
 			return nil, err
 		}
@@ -309,6 +314,8 @@ func (repository *GrapheneRepository) ReadHierarchy() (*EnrichmentHierarchy, err
 						IsFragmented: boolProp(pfProps, "is_fragmented"),
 						MimeType:     strProp(pfProps, "mime_type"),
 						Tags:         strSliceProp(pfProps, "tags"),
+						Entropy:      float64Prop(pfProps, "entropy"),
+						HasEntropy:   boolProp(pfProps, "has_entropy"),
 					}
 					partitionFileMap[pfile.ID] = pfile
 				}
@@ -325,14 +332,13 @@ func (repository *GrapheneRepository) ReadHierarchy() (*EnrichmentHierarchy, err
 					continue
 				}
 				fProps := unpackProps(fn.Node.Properties)
-				ifile := &EnrichmentFileNode{
-					ID:           strProp(fProps, "indexed_file_id"),
-					Hash:         strProp(fProps, "hash"),
-					FileNames:    strSliceProp(fProps, "file_names"),
-					Size:         int64Prop(fProps, "size"),
-					IsDeleted:    boolProp(fProps, "is_deleted"),
-					IsFragmented: boolProp(fProps, "is_fragmented"),
-					FileType:     strProp(fProps, "file_type"),
+				indexedMeta := &EnrichmentFileNode{
+					ID:         strProp(fProps, "indexed_file_id"),
+					Hash:       strProp(fProps, "hash"),
+					Size:       int64Prop(fProps, "size"),
+					FileType:   strProp(fProps, "file_type"),
+					Entropy:    float64Prop(fProps, "entropy"),
+					HasEntropy: boolProp(fProps, "has_entropy"),
 				}
 
 				// Get file-level nodes under this indexed file
@@ -341,7 +347,7 @@ func (repository *GrapheneRepository) ReadHierarchy() (*EnrichmentHierarchy, err
 					return nil, err
 				}
 
-				var indexedFileLevelFiles []*EnrichmentFileNode
+				addedFileNode := false
 				for _, file := range fileNeighbours {
 					if !file.Node.HasLabel(nodeTypeFile) {
 						continue
@@ -351,45 +357,55 @@ func (repository *GrapheneRepository) ReadHierarchy() (*EnrichmentHierarchy, err
 					if fileLevel == "indexed_file" {
 						levelFile := &EnrichmentFileNode{
 							ID:           strProp(fileProps, "file_node_id"),
+							Hash:         indexedMeta.Hash,
 							FileName:     strProp(fileProps, "name"),
 							Path:         strProp(fileProps, "path"),
 							Size:         int64Prop(fileProps, "size"),
 							IsDeleted:    boolProp(fileProps, "is_deleted"),
 							IsFragmented: boolProp(fileProps, "is_fragmented"),
+							FileType:     strProp(fileProps, "file_type"),
 							MimeType:     strProp(fileProps, "mime_type"),
 							Tags:         strSliceProp(fileProps, "tags"),
+							Entropy:      float64Prop(fileProps, "entropy"),
+							HasEntropy:   boolProp(fileProps, "has_entropy"),
 						}
-						indexedFileLevelFiles = append(indexedFileLevelFiles, levelFile)
+						if levelFile.FileType == "" {
+							levelFile.FileType = indexedMeta.FileType
+						}
+						if levelFile.Size == 0 {
+							levelFile.Size = indexedMeta.Size
+						}
+						if !levelFile.HasEntropy {
+							levelFile.Entropy = indexedMeta.Entropy
+							levelFile.HasEntropy = indexedMeta.HasEntropy
+						}
+						partition.Files = append(partition.Files, levelFile)
+						addedFileNode = true
 					}
 				}
 
-				sort.Slice(indexedFileLevelFiles, func(i, j int) bool {
-					return indexedFileLevelFiles[i].FileName < indexedFileLevelFiles[j].FileName
-				})
-
-				ifile.FileLevelNodes = indexedFileLevelFiles
-				if len(indexedFileLevelFiles) > 0 {
-					ifile.FileNames = make([]string, len(indexedFileLevelFiles))
-					for i, f := range indexedFileLevelFiles {
-						ifile.FileNames[i] = f.FileName
-					}
+				// Fallback for legacy/partial graph data where indexed metadata exists
+				// without explicit file nodes yet.
+				if !addedFileNode {
+					partition.Files = append(partition.Files, indexedMeta)
 				}
-
-				partition.Files = append(partition.Files, ifile)
 			}
 
 			sort.Slice(partition.Files, func(i, j int) bool {
-				return partition.Files[i].Hash < partition.Files[j].Hash
+				if partition.Files[i].FileName == partition.Files[j].FileName {
+					return partition.Files[i].Hash < partition.Files[j].Hash
+				}
+				return partition.Files[i].FileName < partition.Files[j].FileName
 			})
 
-			di.Partitions = append(di.Partitions, partition)
+			evidenceFile.Partitions = append(evidenceFile.Partitions, partition)
 		}
 
-		sort.Slice(di.Partitions, func(i, j int) bool {
-			return di.Partitions[i].Name < di.Partitions[j].Name
+		sort.Slice(evidenceFile.Partitions, func(i, j int) bool {
+			return evidenceFile.Partitions[i].Name < evidenceFile.Partitions[j].Name
 		})
 
-		tree.EvidenceFiles = append(tree.EvidenceFiles, di)
+		tree.EvidenceFiles = append(tree.EvidenceFiles, evidenceFile)
 	}
 
 	sort.Slice(tree.EvidenceFiles, func(i, j int) bool {
@@ -425,6 +441,24 @@ func int64Prop(props map[string]any, key string) int64 {
 			return val
 		case float64:
 			return int64(val)
+		}
+	}
+	return 0
+}
+
+func float64Prop(props map[string]any, key string) float64 {
+	if v, ok := props[key]; ok {
+		switch val := v.(type) {
+		case float64:
+			return val
+		case float32:
+			return float64(val)
+		case int64:
+			return float64(val)
+		case int32:
+			return float64(val)
+		case int:
+			return float64(val)
 		}
 	}
 	return 0

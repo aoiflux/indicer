@@ -15,7 +15,7 @@ The repo already has a working micro-artefact pipeline:
   [lib/microartefact/fileparser/fileparser.go](lib/microartefact/fileparser/fileparser.go)
 - Detectors (url/ioc/key-value/pe/registry/evtx/log/event/task/service/browser):
   [lib/microartefact/detectors/detectors.go](lib/microartefact/detectors/detectors.go)
-- Graph storage in hierarchy disk_image -> partition -> indexed_file ->
+- Graph storage in hierarchy evidence_file -> partition -> indexed_file ->
   micro_artefact:
   [lib/microartefact/repository/graphene/repository.go](lib/microartefact/repository/graphene/repository.go)
 - Hierarchy query/read model:

@@ -655,20 +655,20 @@ func searchReport(reportPath, query string, ranked []RankedResult, db *badger.DB
 		occurrence.ArtefactHash = hashStr
 		occurrence.Count = rr.TF
 		occurrence.BM25Score = rr.Score
-		occurrence.Disk = structs.NewDiskImage()
+		occurrence.EvidenceFile = structs.NewEvidenceFilePart()
 		err = setOccurrenceData(occurrence.ArtefactHash, names, seenMap, &occurrence, db)
 		if err != nil {
 			return err
 		}
 
-		if occurrence.Disk.Partition.Indexed != nil && len(occurrence.Disk.Partition.Indexed.IndexedFileNames) == 0 {
-			occurrence.Disk.Partition.Indexed = nil
+		if occurrence.EvidenceFile.Partition.Indexed != nil && len(occurrence.EvidenceFile.Partition.Indexed.IndexedFileNames) == 0 {
+			occurrence.EvidenceFile.Partition.Indexed = nil
 		}
-		if occurrence.Disk.Partition != nil && len(occurrence.Disk.Partition.PartitionPartNames) == 0 {
-			occurrence.Disk.Partition = nil
+		if occurrence.EvidenceFile.Partition != nil && len(occurrence.EvidenceFile.Partition.PartitionPartNames) == 0 {
+			occurrence.EvidenceFile.Partition = nil
 		}
-		if occurrence.Disk != nil && len(occurrence.Disk.DiskImageNames) == 0 {
-			occurrence.Disk = nil
+		if occurrence.EvidenceFile != nil && len(occurrence.EvidenceFile.EvidenceFileNames) == 0 {
+			occurrence.EvidenceFile = nil
 		}
 
 		fileCount += len(names)
@@ -709,15 +709,15 @@ func setOccurrenceData(artefactHash string, names map[string]struct{}, smap map[
 			occurrence.FileNames = append(occurrence.FileNames, name)
 			continue
 		case 2:
-			occurrence.Disk.Partition.Indexed.IndexedFileHash = occurrence.ArtefactHash
+			occurrence.EvidenceFile.Partition.Indexed.IndexedFileHash = occurrence.ArtefactHash
 		case 3:
-			occurrence.Disk.Partition.PartitionHash = occurrence.ArtefactHash
+			occurrence.EvidenceFile.Partition.PartitionHash = occurrence.ArtefactHash
 		default:
 			return fmt.Errorf(cnst.ErrTooManySplits.Error(), name)
 		}
 
 		sameOccurrence := hierarchyIdx > 0
-		err := setDiskImageData(sameOccurrence, artefactHash, split, smap, occurrence, db)
+		err := setEvidenceFileData(sameOccurrence, artefactHash, split, smap, occurrence, db)
 		if err != nil {
 			return err
 		}
@@ -728,7 +728,7 @@ func setOccurrenceData(artefactHash string, names map[string]struct{}, smap map[
 	return nil
 }
 
-func setDiskImageData(same bool, artefactHash string, nameSplit []string, smap map[string][]string, occurrence *structs.OccurrenceData, db *badger.DB) error {
+func setEvidenceFileData(same bool, artefactHash string, nameSplit []string, smap map[string][]string, occurrence *structs.OccurrenceData, db *badger.DB) error {
 	var err error
 
 	splitLen := len(nameSplit)
@@ -736,55 +736,55 @@ func setDiskImageData(same bool, artefactHash string, nameSplit []string, smap m
 
 	switch splitLen {
 	case 3:
-		occurrence.Disk.Partition.Indexed.IndexedFileHash = artefactHash
-		occurrence.Disk.Partition.Indexed.IndexedFileNames = append(occurrence.Disk.Partition.Indexed.IndexedFileNames, name)
+		occurrence.EvidenceFile.Partition.Indexed.IndexedFileHash = artefactHash
+		occurrence.EvidenceFile.Partition.Indexed.IndexedFileNames = append(occurrence.EvidenceFile.Partition.Indexed.IndexedFileNames, name)
 
 		partitionHash := nameSplit[1]
-		occurrence.Disk.Partition.PartitionHash = partitionHash
+		occurrence.EvidenceFile.Partition.PartitionHash = partitionHash
 		partitionNames, ok := smap[cnst.PartiFileNamespace+partitionHash]
 		if ok {
-			if !same || len(occurrence.Disk.Partition.PartitionPartNames) == 0 {
-				occurrence.Disk.Partition.PartitionPartNames = partitionNames
+			if !same || len(occurrence.EvidenceFile.Partition.PartitionPartNames) == 0 {
+				occurrence.EvidenceFile.Partition.PartitionPartNames = partitionNames
 			}
 		} else {
-			occurrence.Disk.Partition.PartitionPartNames, err = getFileNames(cnst.PartiFileNamespace, partitionHash, db)
+			occurrence.EvidenceFile.Partition.PartitionPartNames, err = getFileNames(cnst.PartiFileNamespace, partitionHash, db)
 			if err != nil {
 				return err
 			}
-			smap[cnst.PartiFileNamespace+partitionHash] = occurrence.Disk.Partition.PartitionPartNames
+			smap[cnst.PartiFileNamespace+partitionHash] = occurrence.EvidenceFile.Partition.PartitionPartNames
 		}
 
-		diskHash := nameSplit[0]
-		occurrence.Disk.DiskImageHash = diskHash
-		diskNames, ok := smap[cnst.EviFileNamespace+diskHash]
+		evidenceHash := nameSplit[0]
+		occurrence.EvidenceFile.EvidenceFileHash = evidenceHash
+		evidenceNames, ok := smap[cnst.EviFileNamespace+evidenceHash]
 		if ok {
-			if !same || len(occurrence.Disk.DiskImageNames) == 0 {
-				occurrence.Disk.DiskImageNames = diskNames
+			if !same || len(occurrence.EvidenceFile.EvidenceFileNames) == 0 {
+				occurrence.EvidenceFile.EvidenceFileNames = evidenceNames
 			}
 		} else {
-			occurrence.Disk.DiskImageNames, err = getFileNames(cnst.EviFileNamespace, diskHash, db)
+			occurrence.EvidenceFile.EvidenceFileNames, err = getFileNames(cnst.EviFileNamespace, evidenceHash, db)
 			if err != nil {
 				return err
 			}
-			smap[cnst.EviFileNamespace+diskHash] = occurrence.Disk.DiskImageNames
+			smap[cnst.EviFileNamespace+evidenceHash] = occurrence.EvidenceFile.EvidenceFileNames
 		}
 	case 2:
-		occurrence.Disk.Partition.PartitionHash = artefactHash
-		occurrence.Disk.Partition.PartitionPartNames = append(occurrence.Disk.Partition.PartitionPartNames, name)
+		occurrence.EvidenceFile.Partition.PartitionHash = artefactHash
+		occurrence.EvidenceFile.Partition.PartitionPartNames = append(occurrence.EvidenceFile.Partition.PartitionPartNames, name)
 
-		diskHash := nameSplit[0]
-		occurrence.Disk.DiskImageHash = diskHash
-		diskNames, ok := smap[cnst.EviFileNamespace+diskHash]
+		evidenceHash := nameSplit[0]
+		occurrence.EvidenceFile.EvidenceFileHash = evidenceHash
+		evidenceNames, ok := smap[cnst.EviFileNamespace+evidenceHash]
 		if ok {
-			if !same || len(occurrence.Disk.DiskImageNames) == 0 {
-				occurrence.Disk.DiskImageNames = diskNames
+			if !same || len(occurrence.EvidenceFile.EvidenceFileNames) == 0 {
+				occurrence.EvidenceFile.EvidenceFileNames = evidenceNames
 			}
 		} else {
-			occurrence.Disk.DiskImageNames, err = getFileNames(cnst.EviFileNamespace, diskHash, db)
+			occurrence.EvidenceFile.EvidenceFileNames, err = getFileNames(cnst.EviFileNamespace, evidenceHash, db)
 			if err != nil {
 				return err
 			}
-			smap[cnst.EviFileNamespace+diskHash] = occurrence.Disk.DiskImageNames
+			smap[cnst.EviFileNamespace+evidenceHash] = occurrence.EvidenceFile.EvidenceFileNames
 		}
 	}
 

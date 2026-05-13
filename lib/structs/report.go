@@ -10,20 +10,20 @@ type SearchReport struct {
 }
 
 type OccurrenceData struct {
-	ArtefactHash string     `json:"artefact"`
-	Count        int        `json:"count"`
-	BM25Score    float64    `json:"bm25_score,omitempty"`
-	FileNames    []string   `json:"files,omitempty"`
-	Disk         *DiskImage `json:"disk,omitempty"`
+	ArtefactHash string            `json:"artefact"`
+	Count        int               `json:"count"`
+	BM25Score    float64           `json:"bm25_score,omitempty"`
+	FileNames    []string          `json:"files,omitempty"`
+	EvidenceFile *EvidenceFilePart `json:"evidence_file,omitempty"`
 }
 
 // Backward-compatible alias for older references.
 type OccuranceData = OccurrenceData
 
-type DiskImage struct {
-	DiskImageHash  string         `json:"disk_image_hash,omitempty"`
-	DiskImageNames []string       `json:"disk_image_names,omitempty"`
-	Partition      *PartitionPart `json:"partition,omitempty"`
+type EvidenceFilePart struct {
+	EvidenceFileHash  string         `json:"evidence_file_hash,omitempty"`
+	EvidenceFileNames []string       `json:"evidence_file_names,omitempty"`
+	Partition         *PartitionPart `json:"partition,omitempty"`
 }
 
 type PartitionPart struct {
@@ -37,9 +37,9 @@ type IndexedPart struct {
 	IndexedFileNames []string `json:"indexed_file_names,omitempty"`
 }
 
-func NewDiskImage() *DiskImage {
-	return &DiskImage{
-		DiskImageNames: []string{},
+func NewEvidenceFilePart() *EvidenceFilePart {
+	return &EvidenceFilePart{
+		EvidenceFileNames: []string{},
 		Partition: &PartitionPart{
 			PartitionPartNames: []string{},
 			Indexed: &IndexedPart{

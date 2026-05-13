@@ -19,10 +19,10 @@ import (
 const StoreDirName = "graph"
 
 var (
-	nodeTypeDiskImage   = graphstore.CustomNodeType(0)
-	nodeTypePartition   = graphstore.CustomNodeType(1)
-	nodeTypeIndexedFile = graphstore.CustomNodeType(2)
-	edgeTypeRelation    = graphstore.EdgeType(100)
+	nodeTypeEvidenceFile = graphstore.CustomNodeType(0)
+	nodeTypePartition    = graphstore.CustomNodeType(1)
+	nodeTypeIndexedFile  = graphstore.CustomNodeType(2)
+	edgeTypeRelation     = graphstore.EdgeType(100)
 )
 
 type Repository struct {
@@ -90,11 +90,11 @@ func (r *Repository) Store(file model.FileRecord, artefacts []model.Artefact, re
 }
 
 func validateStoreHierarchy(file model.FileRecord) error {
-	if file.DiskImageID == "" {
-		return fmt.Errorf("micro-artefact store: DiskImageID is required (micro-artefacts must belong to a disk image → partition → indexed file hierarchy)")
+	if file.EvidenceFileID == "" {
+		return fmt.Errorf("micro-artefact store: EvidenceFileID is required (micro-artefacts must belong to an evidence file → partition → indexed file hierarchy)")
 	}
 	if file.PartitionID == "" {
-		return fmt.Errorf("micro-artefact store: PartitionID is required (micro-artefacts must belong to a disk image → partition → indexed file hierarchy)")
+		return fmt.Errorf("micro-artefact store: PartitionID is required (micro-artefacts must belong to an evidence file → partition → indexed file hierarchy)")
 	}
 	return nil
 }

@@ -6,9 +6,9 @@ import (
 )
 
 // FileRecord is a file-level enrichment payload destined for graphdb.
-// Creates FILE nodes at disk image, partition, or indexed file level.
+// Creates FILE nodes at evidence file, partition, or indexed file level.
 type FileRecord struct {
-	Level string // "disk_image", "partition", or "indexed_file" - identifies which level this file belongs to
+	Level string // "evidence_file", "partition", or "indexed_file" - identifies which level this file belongs to
 
 	// File identity
 	FileName string // The file name at this level
@@ -21,18 +21,20 @@ type FileRecord struct {
 	FileType     string // Type (only set at indexed file level)
 	MimeType     string // MIME type inferred from extension/type hints
 	Tags         []string
+	Entropy      float64
+	HasEntropy   bool
 
 	// Hierarchy references
-	DiskImageID     string // ID/hash of parent evidence
-	DiskImageName   string // Name of parent evidence
-	PartitionID     string // ID/hash of parent partition (empty for disk_image level)
-	PartitionName   string // Name of parent partition (empty for disk_image level)
-	IndexedFileID   string // ID/hash of indexed file (empty for disk_image/partition level)
-	IndexedFileHash string // Hash of indexed file
+	EvidenceFileID   string // ID/hash of parent evidence
+	EvidenceFileName string // Name of parent evidence
+	PartitionID      string // ID/hash of parent partition (empty for evidence_file level)
+	PartitionName    string // Name of parent partition (empty for evidence_file level)
+	IndexedFileID    string // ID/hash of indexed file (empty for evidence_file/partition level)
+	IndexedFileHash  string // Hash of indexed file
 }
 
 // EvidenceRecord is a top-level evidence object (input file) to be represented
-// as a disk-image node in graphdb even when no partition/indexed parsing runs.
+// as an evidence-file node in graphdb even when no partition/indexed parsing runs.
 type EvidenceRecord struct {
 	HashBase64 string
 	Name       string
@@ -41,15 +43,20 @@ type EvidenceRecord struct {
 }
 
 func (record FileRecord) buildFileNodeID() string {
+	identity := record.Path
+	if identity == "" {
+		identity = record.FileName
+	}
+
 	switch record.Level {
-	case "disk_image":
-		return hashText("file-node", record.DiskImageID, record.FileName)
+	case "evidence_file":
+		return hashText("file-node", record.EvidenceFileID, identity)
 	case "partition":
-		return hashText("file-node", record.PartitionID, record.FileName)
+		return hashText("file-node", record.PartitionID, identity)
 	case "indexed_file":
-		return hashText("file-node", record.IndexedFileID, record.FileName)
+		return hashText("file-node", record.IndexedFileID, identity)
 	default:
-		return hashText("file-node", record.DiskImageID, record.FileName)
+		return hashText("file-node", record.EvidenceFileID, identity)
 	}
 }
 

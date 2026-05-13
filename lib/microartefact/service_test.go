@@ -113,16 +113,16 @@ func TestGrapheneRepositoryStoresNodesAndEdges(t *testing.T) {
 		t.Fatalf("enrichment.OpenGrapheneRepository: %v", err)
 	}
 	if err := enrichmentRepo.UpsertFile(enrichment.FileRecord{
-		Level:           "indexed_file",
-		FileName:        "evidence.bin",
-		Path:            filepath.Join(root, "evidence.bin"),
-		Size:            128,
-		DiskImageID:     "disk-image-001",
-		DiskImageName:   "evidence.E01",
-		PartitionID:     "partition-001",
-		PartitionName:   "vol0",
-		IndexedFileID:   "hash-2",
-		IndexedFileHash: "hash-2",
+		Level:            "indexed_file",
+		FileName:         "evidence.bin",
+		Path:             filepath.Join(root, "evidence.bin"),
+		Size:             128,
+		EvidenceFileID:   "evidence-file-001",
+		EvidenceFileName: "evidence.E01",
+		PartitionID:      "partition-001",
+		PartitionName:    "vol0",
+		IndexedFileID:    "hash-2",
+		IndexedFileHash:  "hash-2",
 	}); err != nil {
 		t.Fatalf("enrichment.UpsertFile: %v", err)
 	}
@@ -136,16 +136,16 @@ func TestGrapheneRepositoryStoresNodesAndEdges(t *testing.T) {
 	}
 
 	file := FileRecord{
-		Hash:          "hash-2",
-		Name:          "evidence.bin",
-		Path:          filepath.Join(root, "evidence.bin"),
-		Size:          128,
-		ELFMeta:       &ELFMetadata{Class: 64, SectionCount: 4, NamedSymbolCount: 3},
-		DiskImageID:   "disk-image-001",
-		DiskImageName: "evidence.E01",
-		PartitionID:   "partition-001",
-		PartitionName: "vol0",
-		IndexedFileID: "hash-2",
+		Hash:             "hash-2",
+		Name:             "evidence.bin",
+		Path:             filepath.Join(root, "evidence.bin"),
+		Size:             128,
+		ELFMeta:          &ELFMetadata{Class: 64, SectionCount: 4, NamedSymbolCount: 3},
+		EvidenceFileID:   "evidence-file-001",
+		EvidenceFileName: "evidence.E01",
+		PartitionID:      "partition-001",
+		PartitionName:    "vol0",
+		IndexedFileID:    "hash-2",
 	}
 	artefacts := []Artefact{
 		{Kind: "url", Detector: "url-pattern", Value: "https://example.org", Summary: "https://example.org", Confidence: 0.9, Span: Span{Start: 4, End: 23}},

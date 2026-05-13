@@ -66,7 +66,7 @@ func List(db *badger.DB) error {
 
 			eviFile := map[string]interface{}{
 				"hash":           hashStr,
-				"name":           normalizeDiskImageName(firstCleanNameFromMap(evidata.Names)),
+				"name":           normalizeEvidenceFileName(firstCleanNameFromMap(evidata.Names)),
 				"type":           evidata.EvidenceType,
 				"size":           evidata.Size,
 				"completed":      evidata.Completed,
@@ -121,19 +121,21 @@ func buildPartitionData(phash string, txn *badger.Txn) (map[string]interface{}, 
 		return nil, err
 	}
 
-	// Build indexed files data
+	// Build indexed files data as one output node per fullpath.
 	var indexedFiles []map[string]interface{}
 	for ihash := range pdata.InternalObjects {
 		offset := pdata.InternalObjects[ihash]
-		ifileData, err := buildIndexedFileData(ihash, txn)
+		ifileDataEntries, err := buildIndexedFileData(ihash, txn)
 		if err != nil {
 			return nil, err
 		}
-		ifileData["offset"] = map[string]interface{}{
-			"start": offset.Start,
-			"end":   offset.End,
+		for _, ifileData := range ifileDataEntries {
+			ifileData["offset"] = map[string]interface{}{
+				"start": offset.Start,
+				"end":   offset.End,
+			}
+			indexedFiles = append(indexedFiles, ifileData)
 		}
-		indexedFiles = append(indexedFiles, ifileData)
 	}
 
 	partData := map[string]interface{}{
@@ -150,7 +152,7 @@ func buildPartitionData(phash string, txn *badger.Txn) (map[string]interface{}, 
 	return partData, nil
 }
 
-func buildIndexedFileData(ihash string, txn *badger.Txn) (map[string]interface{}, error) {
+func buildIndexedFileData(ihash string, txn *badger.Txn) ([]map[string]interface{}, error) {
 	decodedIhash, err := base64.StdEncoding.DecodeString(ihash)
 	if err != nil {
 		return nil, err
@@ -199,29 +201,29 @@ func buildIndexedFileData(ihash string, txn *badger.Txn) (map[string]interface{}
 		cleanedMeta[name] = existing
 	}
 
-	filesDetailed := make([]map[string]interface{}, 0, len(cleanedNames))
-	for name := range cleanedNames {
+	names := getMapKeys(cleanedNames)
+	sort.Strings(names)
+	if len(names) == 0 {
+		names = []string{ihash}
+	}
+
+	entries := make([]map[string]interface{}, 0, len(names))
+	for _, name := range names {
 		meta := cleanedMeta[name]
-		filesDetailed = append(filesDetailed, map[string]interface{}{
-			"name":         name,
-			"isDeleted":    meta.IsDeleted,
+		entry := map[string]interface{}{
+			"hash":         ihash,
+			"fileName":     name,
+			"path":         name,
+			"type":         idata.IndexedType,
+			"size":         idata.Size,
+			"start":        idata.Start,
+			"isDeleted":    idata.IsDeleted || meta.IsDeleted,
 			"isFragmented": meta.IsFragmented,
-		})
+		}
+		entries = append(entries, entry)
 	}
 
-	ifileData := map[string]interface{}{
-		"hash":          ihash,
-		"fileName":      firstMapKey(cleanedNames),
-		"type":          idata.IndexedType,
-		"size":          idata.Size,
-		"start":         idata.Start,
-		"isDeleted":     idata.IsDeleted,
-		"files":         getMapKeys(cleanedNames),
-		"fileCount":     len(cleanedNames),
-		"filesDetailed": filesDetailed,
-	}
-
-	return ifileData, nil
+	return entries, nil
 }
 
 func getMapKeys(m map[string]struct{}) []string {
@@ -250,58 +252,59 @@ func ListWithEnrichment(db *badger.DB, enrichRepo enrichment.Repository) error {
 	// Format graphdb hierarchy into output
 	var evidenceFiles []map[string]interface{}
 
-	for _, diskImage := range hierarchy.EvidenceFiles {
+	for _, evidenceFile := range hierarchy.EvidenceFiles {
 		var partitions []map[string]interface{}
+		totalIndexed := 0
+		totalDeletedIndexed := 0
+		totalFragmentedIndexed := 0
 
-		for _, partition := range diskImage.Partitions {
+		for _, partition := range evidenceFile.Partitions {
 			var indexedFiles []map[string]interface{}
 			partitionFileName := trimHierName(partition.Name)
 			if partitionFileName == "" {
 				partitionFileName = trimHierName(partition.ID)
 			}
+			deletedIndexed := 0
+			fragmentedIndexed := 0
 
 			for _, file := range partition.Files {
-				indexedFileName := ""
-				for _, levelFile := range file.FileLevelNodes {
-					if indexedFileName == "" {
-						indexedFileName = levelFile.FileName
-					}
+				entry := buildEnrichedIndexedFileData(file)
+				if deleted, ok := entry["isDeleted"].(bool); ok && deleted {
+					deletedIndexed++
 				}
-				if indexedFileName == "" && len(file.FileNames) > 0 {
-					indexedFileName = file.FileNames[0]
+				if fragmented, ok := entry["isFragmented"].(bool); ok && fragmented {
+					fragmentedIndexed++
 				}
-				if indexedFileName == "" {
-					indexedFileName = file.Hash
-				}
-
-				indexedFiles = append(indexedFiles, map[string]interface{}{
-					"hash":         file.Hash,
-					"fileName":     indexedFileName,
-					"type":         file.FileType,
-					"size":         file.Size,
-					"isDeleted":    file.IsDeleted,
-					"isFragmented": file.IsFragmented,
-				})
+				indexedFiles = append(indexedFiles, entry)
 			}
 
+			totalIndexed += len(indexedFiles)
+			totalDeletedIndexed += deletedIndexed
+			totalFragmentedIndexed += fragmentedIndexed
+
 			partitions = append(partitions, map[string]interface{}{
-				"hash":         partition.ID,
-				"fileName":     partitionFileName,
-				"name":         partition.Name,
-				"type":         "partition",
-				"indexedFiles": indexedFiles,
-				"indexedCount": len(indexedFiles),
+				"hash":                   partition.ID,
+				"fileName":               partitionFileName,
+				"name":                   partition.Name,
+				"type":                   "partition",
+				"indexedFiles":           indexedFiles,
+				"indexedCount":           len(indexedFiles),
+				"deletedIndexedCount":    deletedIndexed,
+				"fragmentedIndexedCount": fragmentedIndexed,
 			})
 		}
 
 		eviFile := map[string]interface{}{
-			"hash":           diskImage.ID,
-			"name":           normalizeDiskImageName(diskImage.Name),
-			"type":           "image",
-			"completed":      true,
-			"partitions":     partitions,
-			"partitionCount": len(partitions),
-			"source":         "graphdb",
+			"hash":                   evidenceFile.ID,
+			"name":                   normalizeEvidenceFileName(evidenceFile.Name),
+			"type":                   "image",
+			"completed":              true,
+			"partitions":             partitions,
+			"partitionCount":         len(partitions),
+			"indexedCount":           totalIndexed,
+			"deletedIndexedCount":    totalDeletedIndexed,
+			"fragmentedIndexedCount": totalFragmentedIndexed,
+			"source":                 "graphdb",
 		}
 		evidenceFiles = append(evidenceFiles, eviFile)
 	}
@@ -360,9 +363,38 @@ func firstCleanNameFromMap(values map[string]struct{}) string {
 	return keys[0]
 }
 
+func buildEnrichedIndexedFileData(file *enrichment.EnrichmentFileNode) map[string]interface{} {
+	name := trimHierName(file.FileName)
+	if name == "" {
+		name = trimHierName(file.Path)
+	}
+	if name == "" {
+		name = file.Hash
+	}
+	path := file.Path
+	if path == "" {
+		path = name
+	}
+
+	return map[string]interface{}{
+		"id":           file.ID,
+		"hash":         file.Hash,
+		"fileName":     name,
+		"path":         path,
+		"type":         file.FileType,
+		"size":         file.Size,
+		"entropy":      file.Entropy,
+		"hasEntropy":   file.HasEntropy,
+		"isDeleted":    file.IsDeleted,
+		"isFragmented": file.IsFragmented,
+		"mimeType":     file.MimeType,
+		"tags":         file.Tags,
+	}
+}
+
 var partitionSuffixPattern = regexp.MustCompile(`_p[0-9]+$`)
 
-func normalizeDiskImageName(value string) string {
+func normalizeEvidenceFileName(value string) string {
 	name := strings.TrimSpace(trimHierName(value))
 	return partitionSuffixPattern.ReplaceAllString(name, "")
 }

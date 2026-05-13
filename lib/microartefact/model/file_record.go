@@ -34,11 +34,11 @@ type FileRecord struct {
 	PDFMeta     *PDFMetadata
 	TXTMeta     *TXTMetadata
 
-	DiskImageID   string
-	DiskImageName string
-	PartitionID   string
-	PartitionName string
-	IndexedFileID string
+	EvidenceFileID   string
+	EvidenceFileName string
+	PartitionID      string
+	PartitionName    string
+	IndexedFileID    string
 }
 
 // BuildIndexedFileID returns a deterministic graph node ID for an indexed-file

@@ -233,7 +233,7 @@ func corsMiddleware(next http.Handler) http.Handler {
 func ensureUploadDir(uploadsDir string) error {
 	_, err := os.Stat(uploadsDir)
 	if os.IsNotExist(err) {
-		return os.MkdirAll(uploadsDir, 0o755)
+		return os.MkdirAll(uploadsDir, cnst.DirPerm)
 	}
 	return nil
 }

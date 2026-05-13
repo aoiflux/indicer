@@ -10,7 +10,6 @@ import (
 	"indicer/lib/util"
 	"indicer/tui"
 	"os"
-	"path/filepath"
 	"strings"
 	"sync"
 )
@@ -78,7 +77,7 @@ func TUICmd(chonkSize int, dbpath string, key []byte) error {
 		},
 		Restore: func(hash string, restorePath string) error {
 			return runQuiet(func() error {
-				fhandle, err := os.Create(restorePath)
+				fhandle, err := os.OpenFile(restorePath, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, cnst.FilePerm)
 				if err != nil {
 					return err
 				}
@@ -102,7 +101,7 @@ func TUICmd(chonkSize int, dbpath string, key []byte) error {
 					return err
 				}
 
-				blobDir := filepath.Join(db.Opts().Dir, cnst.BLOBSDIR)
+				blobDir := util.BlobPath(db.Opts().Dir)
 				if err := os.RemoveAll(blobDir); err != nil {
 					return err
 				}

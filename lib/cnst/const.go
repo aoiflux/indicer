@@ -17,6 +17,12 @@ const (
 	FILE_APPENDED       = "APPENDED"
 	UnknownEvidenceType = "unknown"
 	DefaultDBPath       = "./data"
+	DirPerm             = 0o755
+	FilePerm            = 0o644
+	KVDBDIR             = "kvdb"
+	GRAPHDIR            = "graph"
+	BLOBSDIR            = "blob"
+	FTSDIR              = "fts"
 	UploadsDir          = "uploads"
 	SHA3                = "sha3"
 	BLAKE3              = "blake3"
@@ -61,7 +67,6 @@ const (
 )
 
 const (
-	BLOBSDIR    = "blobs"
 	BLOBEXT     = ".blob"
 	BLOBZSTEXT  = ".blob.zst"
 	FileNameLen = 25

@@ -4,6 +4,7 @@ import (
 	"encoding/binary"
 	"fmt"
 	"indicer/lib/cnst"
+	"indicer/lib/util"
 	"io"
 	"os"
 	"path/filepath"
@@ -178,14 +179,14 @@ func (bm *BlockManager) flushBlock(block *Block) error {
 	}
 
 	// Ensure block directory exists
-	blockDir := filepath.Join(bm.dbpath, cnst.BLOBSDIR, "blocks")
-	if err := os.MkdirAll(blockDir, os.ModePerm); err != nil {
+	blockDir := filepath.Join(util.BlobPath(bm.dbpath), "blocks")
+	if err := os.MkdirAll(blockDir, cnst.DirPerm); err != nil {
 		return err
 	}
 
 	// Open or create block file
 	blockFilePath := bm.getBlockFilePath(block.blockID)
-	file, err := os.OpenFile(blockFilePath, os.O_CREATE|os.O_WRONLY|os.O_APPEND, os.ModePerm)
+	file, err := os.OpenFile(blockFilePath, os.O_CREATE|os.O_WRONLY|os.O_APPEND, cnst.FilePerm)
 	if err != nil {
 		return err
 	}
@@ -258,7 +259,7 @@ func (bm *BlockManager) getBlockID(chunkHash []byte) string {
 
 // getBlockFilePath returns the file path for a block
 func (bm *BlockManager) getBlockFilePath(blockID string) string {
-	blockDir := filepath.Join(bm.dbpath, cnst.BLOBSDIR, "blocks")
+	blockDir := filepath.Join(util.BlobPath(bm.dbpath), "blocks")
 	// blockID is already the hash prefix, use it directly
 	fileName := fmt.Sprintf("block_%s%s", blockID, BlockIndexExt)
 	return filepath.Join(blockDir, fileName)

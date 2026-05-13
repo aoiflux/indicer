@@ -369,7 +369,7 @@ func writeNearJSONReportWithInput(input nearReportInput, idmap *structs.ConcMap,
 	}
 	reportPath := filepath.Join(cwd, fname)
 
-	err = os.WriteFile(reportPath, body, 0o644)
+	err = os.WriteFile(reportPath, body, cnst.FilePerm)
 	if err != nil {
 		return "", err
 	}

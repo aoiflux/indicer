@@ -4,7 +4,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"fmt"
-	"path/filepath"
+	"indicer/lib/util"
 	"sort"
 	"strconv"
 
@@ -30,7 +30,7 @@ type Repository struct {
 }
 
 func Open(root string) (*Repository, error) {
-	graph, err := graphenedb.Open(filepath.Join(root, StoreDirName))
+	graph, err := graphenedb.Open(util.GraphPath(root))
 	if err != nil {
 		return nil, err
 	}

@@ -9,6 +9,7 @@ import (
 	"indicer/lib/fio"
 	"indicer/lib/structs"
 	"indicer/lib/util"
+	"os"
 	"strconv"
 	"strings"
 	"time"
@@ -19,6 +20,11 @@ import (
 )
 
 func ConnectDB(datadir string, key []byte) (*badger.DB, error) {
+	datadir = util.KVDBPath(datadir)
+	if err := os.MkdirAll(datadir, cnst.DirPerm); err != nil {
+		return nil, err
+	}
+
 	cacheLimit, err := cnst.GetCacheLimit()
 	if err != nil {
 		cacheLimit = 256 * cnst.MB

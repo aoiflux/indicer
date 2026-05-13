@@ -686,7 +686,7 @@ func searchReport(reportPath, query string, ranked []RankedResult, db *badger.DB
 		return err
 	}
 
-	return os.WriteFile(reportPath, reportData, 0o644)
+	return os.WriteFile(reportPath, reportData, cnst.FilePerm)
 }
 
 func artefactHashFromSearchID(id string) (string, error) {

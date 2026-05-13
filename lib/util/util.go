@@ -43,7 +43,7 @@ func GetDBPath() (string, error) {
 	}
 
 	dbpath := filepath.Join(fullpath, dbdir)
-	err = os.MkdirAll(dbpath, 0x700)
+	err = os.MkdirAll(dbpath, cnst.DirPerm)
 	if err != nil {
 		return "", err
 	}
@@ -52,7 +52,7 @@ func GetDBPath() (string, error) {
 }
 
 func EnsureBlobPath(dbpath string) error {
-	blobpath := filepath.Join(dbpath, cnst.BLOBSDIR)
+	blobpath := BlobPath(dbpath)
 	_, err := os.Stat(blobpath)
 	if err != nil && !os.IsNotExist(err) {
 		return err
@@ -60,7 +60,31 @@ func EnsureBlobPath(dbpath string) error {
 	if os.IsExist(err) {
 		return nil
 	}
-	return os.MkdirAll(blobpath, os.ModeDir)
+	return os.MkdirAll(blobpath, cnst.DirPerm)
+}
+
+func ResolveDataRoot(path string) string {
+	clean := filepath.Clean(path)
+	if filepath.Base(clean) == cnst.KVDBDIR {
+		return filepath.Dir(clean)
+	}
+	return clean
+}
+
+func KVDBPath(path string) string {
+	return filepath.Join(ResolveDataRoot(path), cnst.KVDBDIR)
+}
+
+func BlobPath(path string) string {
+	return filepath.Join(ResolveDataRoot(path), cnst.BLOBSDIR)
+}
+
+func GraphPath(path string) string {
+	return filepath.Join(ResolveDataRoot(path), cnst.GRAPHDIR)
+}
+
+func FTSPath(path string) string {
+	return filepath.Join(ResolveDataRoot(path), cnst.FTSDIR)
 }
 
 func SetChonkSize(chonkSize int) {

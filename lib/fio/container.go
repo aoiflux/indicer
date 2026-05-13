@@ -200,17 +200,17 @@ func (cm *ContainerManager) createNewContainer() error {
 		return err
 	}
 	cfname := base64.RawURLEncoding.EncodeToString(ckhash)[:cnst.FileNameLen] + cnst.BLOBEXT
-	cfpath := filepath.Join(cm.dbpath, cnst.BLOBSDIR, cfname)
+	cfpath := filepath.Join(util.BlobPath(cm.dbpath), cfname)
 
 	// Ensure BLOBS directory exists
-	blobsDir := filepath.Join(cm.dbpath, cnst.BLOBSDIR)
-	err = os.MkdirAll(blobsDir, os.ModePerm)
+	blobsDir := util.BlobPath(cm.dbpath)
+	err = os.MkdirAll(blobsDir, cnst.DirPerm)
 	if err != nil {
 		return err
 	}
 
 	// Open new container file
-	file, err := os.OpenFile(cfpath, os.O_CREATE|os.O_WRONLY|os.O_APPEND, os.ModePerm)
+	file, err := os.OpenFile(cfpath, os.O_CREATE|os.O_WRONLY|os.O_APPEND, cnst.FilePerm)
 	if err != nil {
 		return err
 	}
@@ -276,7 +276,7 @@ func (cm *ContainerManager) compressContainer(containerPath string) error {
 	// Create compressed file (temp + rename for safer replacement)
 	compressedPath := strings.TrimSuffix(containerPath, cnst.BLOBEXT) + cnst.BLOBZSTEXT
 	tempCompressedPath := compressedPath + ".tmp"
-	dstFile, err := os.Create(tempCompressedPath)
+	dstFile, err := os.OpenFile(tempCompressedPath, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, cnst.FilePerm)
 	if err != nil {
 		srcFile.Close()
 		return err

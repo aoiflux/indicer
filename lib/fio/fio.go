@@ -23,8 +23,8 @@ func WriteChonk(dbpath string, data, ckey, key []byte) ([]byte, error) {
 		return nil, err
 	}
 	cfname := base64.RawURLEncoding.EncodeToString(ckhash) + cnst.BLOBEXT
-	cfpath := filepath.Join(dbpath, cnst.BLOBSDIR, cfname)
-	err = os.WriteFile(cfpath, data, os.ModePerm)
+	cfpath := filepath.Join(util.BlobPath(dbpath), cfname)
+	err = os.WriteFile(cfpath, data, cnst.FilePerm)
 	return []byte(cfpath), err
 }
 

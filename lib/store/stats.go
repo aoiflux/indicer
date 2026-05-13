@@ -8,6 +8,7 @@ import (
 
 	"indicer/lib/cnst"
 	"indicer/lib/structs"
+	"indicer/lib/util"
 
 	"github.com/dgraph-io/badger/v4"
 	"github.com/dustin/go-humanize"
@@ -184,7 +185,7 @@ func gatherStats(db *badger.DB) (*DBStats, error) {
 
 func calcBlobDirBytes(dbDir string) int64 {
 	var total int64
-	blobsDir := filepath.Join(dbDir, cnst.BLOBSDIR)
+	blobsDir := util.BlobPath(dbDir)
 	_ = filepath.Walk(blobsDir, func(_ string, info os.FileInfo, err error) error {
 		if err == nil && !info.IsDir() {
 			total += info.Size()

@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"indicer/lib/cnst"
 	"indicer/lib/dbio"
+	"indicer/lib/util"
 	"os"
 	"path/filepath"
 	"strings"
@@ -38,7 +39,7 @@ const (
 )
 
 func indexPath(db *badger.DB) string {
-	return filepath.Join(db.Opts().Dir, "fts_bleve.bleve")
+	return util.FTSPath(db.Opts().Dir)
 }
 
 func createOrOpen(db *badger.DB) (bleve.Index, error) {
@@ -46,7 +47,7 @@ func createOrOpen(db *badger.DB) (bleve.Index, error) {
 	if _, err := os.Stat(path); err == nil {
 		return bleve.Open(path)
 	}
-	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+	if err := os.MkdirAll(filepath.Dir(path), cnst.DirPerm); err != nil {
 		return nil, err
 	}
 	return bleve.New(path, bleve.NewIndexMapping())

@@ -1,7 +1,7 @@
 package enrichment
 
 import (
-	"path/filepath"
+	"indicer/lib/util"
 	"sort"
 	"strconv"
 
@@ -25,7 +25,7 @@ var (
 )
 
 func OpenGrapheneRepository(root string) (*GrapheneRepository, error) {
-	graph, err := graphenedb.Open(filepath.Join(root, storeDirName))
+	graph, err := graphenedb.Open(util.GraphPath(root))
 	if err != nil {
 		return nil, err
 	}

@@ -19,6 +19,8 @@ type FileRecord struct {
 	IsDeleted    bool   // Whether file is marked deleted
 	IsFragmented bool   // Whether file is fragmented
 	FileType     string // Type (only set at indexed file level)
+	MimeType     string // MIME type inferred from extension/type hints
+	Tags         []string
 
 	// Hierarchy references
 	DiskImageID     string // ID/hash of parent evidence

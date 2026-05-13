@@ -121,6 +121,7 @@ func (service *Service) EnrichAll() error {
 					DiskImageID:   context.diskImageID,
 					DiskImageName: context.diskImageName,
 				}
+				diskImageRecord.MimeType, diskImageRecord.Tags = classifyFile(diskImageRecord.Path, diskImageRecord.FileType)
 				if err := service.repository.UpsertFile(diskImageRecord); err != nil {
 					return err
 				}
@@ -235,6 +236,7 @@ func (service *Service) enrichPartitionByHash(txn *badger.Txn, evidence evidence
 			PartitionID:   partitionHashB64,
 			PartitionName: context.partitionName,
 		}
+		partitionRecord.MimeType, partitionRecord.Tags = classifyFile(partitionRecord.Path, partitionRecord.FileType)
 		if err := service.repository.UpsertFile(partitionRecord); err != nil {
 			return err
 		}
@@ -361,6 +363,7 @@ func (service *Service) enrichIndexedHash(context partitionContext, indexedHashB
 			IndexedFileID:   indexedHashCanonical,
 			IndexedFileHash: indexedHashCanonical,
 		}
+		record.MimeType, record.Tags = classifyFile(record.Path, record.FileType)
 		if err := service.repository.UpsertFile(record); err != nil {
 			return err
 		}

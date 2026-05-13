@@ -1,5 +1,10 @@
 package enrichment
 
+import (
+	"indicer/lib/hierarchy"
+	"indicer/lib/microartefact/model"
+)
+
 // Repository is injected into enrichment service so storage backend stays swappable.
 type Repository interface {
 	UpsertEvidence(record EvidenceRecord) error
@@ -8,24 +13,35 @@ type Repository interface {
 	Close() error
 }
 
-// HierarchyTree represents the disk_image → partition → indexed_file hierarchy
-// from the enrichment graphdb.
-type HierarchyTree struct {
-	DiskImages []*DiskImageNode
+type HierarchyTree = hierarchy.HierarchyTree[*DiskImageNode]
+type DiskImageNode = hierarchy.DiskImageNode[*PartitionNode]
+type PartitionNode = hierarchy.PartitionNode[*FileNode]
+
+// IndexedFileNode is a shared projection for indexed-file nodes in graphdb.
+// Micro-artefact query paths can embed this to avoid redefining file-level
+// graph node fields in multiple packages.
+type IndexedFileNode struct {
+	ID           string
+	Name         string
+	Path         string
+	Size         int64
+	Hash         string
+	IsDeleted    bool
+	IsFragmented bool
+	FileType     string
+	MimeType     string
+	Tags         []string
 }
 
-// DiskImageNode represents one evidence image in the enrichment graph.
-type DiskImageNode struct {
-	ID         string
-	Name       string
-	Partitions []*PartitionNode
+// FileLevelArtefactNode is one micro-artefact detected inside an indexed file.
+type FileLevelArtefactNode struct {
+	model.MicroArtefactNodeFields
 }
 
-// PartitionNode represents one partition within a disk image.
-type PartitionNode struct {
-	ID    string
-	Name  string
-	Files []*FileNode
+// IndexedFileWithArtefactsNode extends indexed-file projection with contained artefacts.
+type IndexedFileWithArtefactsNode struct {
+	IndexedFileNode
+	Artefacts []*FileLevelArtefactNode
 }
 
 // FileNode represents one indexed file within a partition with enrichment metadata.
@@ -40,4 +56,6 @@ type FileNode struct {
 	IsDeleted      bool        // Whether indexed file is marked deleted
 	IsFragmented   bool        // Whether indexed file is fragmented
 	FileType       string      // Type of indexed file (e.g., "exfat", "zip")
+	MimeType       string      // MIME type for file-level nodes
+	Tags           []string    // Classification tags for file-level nodes
 }

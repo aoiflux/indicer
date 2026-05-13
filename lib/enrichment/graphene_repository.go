@@ -4,6 +4,7 @@ import (
 	"indicer/lib/util"
 	"sort"
 	"strconv"
+	"strings"
 
 	graphenedb "github.com/aoiflux/graphene"
 	graphstore "github.com/aoiflux/graphene/store"
@@ -145,6 +146,8 @@ func (repository *GrapheneRepository) UpsertFile(record FileRecord) error {
 			"is_deleted":    record.IsDeleted,
 			"is_fragmented": record.IsFragmented,
 			"level":         record.Level,
+			"mime_type":     record.MimeType,
+			"tags":          record.Tags,
 		},
 	)
 	if err != nil {
@@ -156,6 +159,8 @@ func (repository *GrapheneRepository) UpsertFile(record FileRecord) error {
 		"level":         []byte(record.Level),
 		"is_deleted":    []byte(strconv.FormatBool(record.IsDeleted)),
 		"is_fragmented": []byte(strconv.FormatBool(record.IsFragmented)),
+		"mime_type":     []byte(record.MimeType),
+		"tags":          []byte(joinTags(record.Tags)),
 	}); err != nil {
 		return err
 	}
@@ -260,6 +265,8 @@ func (repository *GrapheneRepository) ReadHierarchy() (*HierarchyTree, error) {
 					Size:         int64Prop(dfProps, "size"),
 					IsDeleted:    boolProp(dfProps, "is_deleted"),
 					IsFragmented: boolProp(dfProps, "is_fragmented"),
+					MimeType:     strProp(dfProps, "mime_type"),
+					Tags:         strSliceProp(dfProps, "tags"),
 				}
 				diskImageFileMap[dfile.ID] = dfile
 			}
@@ -300,6 +307,8 @@ func (repository *GrapheneRepository) ReadHierarchy() (*HierarchyTree, error) {
 						Size:         int64Prop(pfProps, "size"),
 						IsDeleted:    boolProp(pfProps, "is_deleted"),
 						IsFragmented: boolProp(pfProps, "is_fragmented"),
+						MimeType:     strProp(pfProps, "mime_type"),
+						Tags:         strSliceProp(pfProps, "tags"),
 					}
 					partitionFileMap[pfile.ID] = pfile
 				}
@@ -347,6 +356,8 @@ func (repository *GrapheneRepository) ReadHierarchy() (*HierarchyTree, error) {
 							Size:         int64Prop(fileProps, "size"),
 							IsDeleted:    boolProp(fileProps, "is_deleted"),
 							IsFragmented: boolProp(fileProps, "is_fragmented"),
+							MimeType:     strProp(fileProps, "mime_type"),
+							Tags:         strSliceProp(fileProps, "tags"),
 						}
 						indexedFileLevelFiles = append(indexedFileLevelFiles, levelFile)
 					}
@@ -444,4 +455,11 @@ func strSliceProp(props map[string]any, key string) []string {
 		}
 	}
 	return nil
+}
+
+func joinTags(tags []string) string {
+	if len(tags) == 0 {
+		return ""
+	}
+	return strings.Join(tags, "|")
 }

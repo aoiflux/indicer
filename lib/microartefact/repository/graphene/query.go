@@ -3,6 +3,8 @@ package graphene
 import (
 	"sort"
 
+	"indicer/lib/enrichment"
+	"indicer/lib/hierarchy"
 	"indicer/lib/microartefact/model"
 
 	graphstore "github.com/aoiflux/graphene/store"
@@ -12,47 +14,25 @@ import (
 // HierarchyTree is the top-level result of ReadHierarchy. It reflects the
 // enforced hierarchy: disk_image → partition → indexed_file → micro_artefact.
 type HierarchyTree struct {
-	DiskImages             []*DiskImageNode
+	hierarchy.HierarchyTree[*DiskImageNode]
 	TotalArtefacts         int
 	TotalRelations         int
 	DeterministicRelations int
 	ProbabilisticRelations int
 }
 
-// DiskImageNode represents one evidence image (disk image) in the graph.
-type DiskImageNode struct {
-	ID         string
-	Name       string
-	Partitions []*PartitionNode
-}
-
-// PartitionNode represents one partition within a disk image.
-type PartitionNode struct {
-	ID    string
-	Name  string
-	Files []*FileNode
-}
-
-// NodeIdentity contains fields shared by graph node projections.
-type NodeIdentity struct {
-	ID string
-}
+type DiskImageNode = hierarchy.DiskImageNode[*PartitionNode]
+type PartitionNode = hierarchy.PartitionNode[*FileNode]
 
 // FileNode represents one indexed file within a partition.
-type FileNode struct {
-	NodeIdentity
-	model.FileNodeFields
-	Artefacts []*MicroArtefactNode
-}
+type FileNode = enrichment.IndexedFileWithArtefactsNode
 
 // MicroArtefactNode is one micro-artefact detected inside a file node.
-type MicroArtefactNode struct {
-	model.MicroArtefactNodeFields
-}
+type MicroArtefactNode = enrichment.FileLevelArtefactNode
 
 // Backward-compatible aliases for older callers.
-type IndexedFileNode = FileNode
-type ArtefactNode = MicroArtefactNode
+type IndexedFileNode = enrichment.IndexedFileWithArtefactsNode
+type ArtefactNode = enrichment.FileLevelArtefactNode
 
 // ReadHierarchy walks the graphene store and returns the full
 // disk_image → partition → indexed_file → micro_artefact tree.
@@ -103,14 +83,15 @@ func (r *Repository) ReadHierarchy() (*HierarchyTree, error) {
 				}
 				fProps := unpackProps(fn.Node.Properties)
 				ifile := &FileNode{
-					NodeIdentity: modelNodeID(strProp(fProps, "indexed_file_id")),
-					FileNodeFields: model.FileNodeFields{
+					IndexedFileNode: enrichment.IndexedFileNode{
+						ID:           strProp(fProps, "indexed_file_id"),
 						Name:         strProp(fProps, "name"),
 						Path:         strProp(fProps, "path"),
 						Size:         int64Prop(fProps, "size"),
 						Hash:         strProp(fProps, "hash"),
 						IsDeleted:    boolProp(fProps, "is_deleted"),
 						IsFragmented: boolProp(fProps, "is_fragmented"),
+						FileType:     strProp(fProps, "file_type"),
 					},
 				}
 
@@ -190,10 +171,6 @@ func (r *Repository) ReadHierarchy() (*HierarchyTree, error) {
 	}
 
 	return tree, nil
-}
-
-func modelNodeID(id string) NodeIdentity {
-	return NodeIdentity{ID: id}
 }
 
 // ─── property helpers ────────────────────────────────────────────────────────

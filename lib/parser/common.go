@@ -223,7 +223,7 @@ func storeIndexedFiles(idxmap map[string]structs.IndexedFile, db *badger.DB, bat
 	total := int64(len(idxmap))
 	bar := progressbar.NewOptions64(
 		total,
-		progressbar.OptionSetDescription("indexing files"),
+		progressbar.OptionSetDescription("Indexing files"),
 		progressbar.OptionSetWriter(os.Stderr),
 		progressbar.OptionSetTheme(cnst.CommonProgressBarTheme),
 	)

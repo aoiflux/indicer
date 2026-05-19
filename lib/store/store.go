@@ -3,16 +3,15 @@ package store
 import (
 	"bytes"
 	"errors"
-	"fmt"
 	"indicer/lib/cnst"
 	"indicer/lib/dbio"
-	"indicer/lib/fio"
+	"indicer/lib/logging"
 	"indicer/lib/structs"
 	"indicer/lib/util"
-	"os"
+	"time"
 
 	"github.com/dgraph-io/badger/v4"
-	"github.com/schollz/progressbar/v3"
+	"go.uber.org/zap"
 )
 
 func Store(infile structs.InputFile, errchan chan error) {
@@ -38,7 +37,80 @@ func EvidenceFilePreStoreCheck(infile structs.InputFile) error {
 	return dbio.SetFile(infile.GetID(), evidenceFile, infile.GetDB())
 }
 
+func MarkEvidenceFileFailed(fileID []byte, db *badger.DB) error {
+	evidenceFile, err := dbio.GetEvidenceFile(fileID, db)
+	if errors.Is(err, badger.ErrKeyNotFound) {
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	if evidenceFile.Completed {
+		return nil
+	}
+	if evidenceFile.Failed {
+		return nil
+	}
+
+	evidenceFile.Failed = true
+	if evidenceFile.IngestState == "" {
+		evidenceFile.IngestState = structs.IngestStatePending
+	}
+	return dbio.SetFile(fileID, evidenceFile, db)
+}
+
+// MarkEvidenceFileFailedUnlessFlushed marks an ingest as failed unless it is
+// already in FLUSHED state. FLUSHED ingests should remain recoverable so
+// startup recovery/repair can auto-complete the final marker write.
+func MarkEvidenceFileFailedUnlessFlushed(fileID []byte, db *badger.DB) error {
+	evidenceFile, err := dbio.GetEvidenceFile(fileID, db)
+	if errors.Is(err, badger.ErrKeyNotFound) {
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	if evidenceFile.Completed || evidenceFile.Failed {
+		return nil
+	}
+	if evidenceFile.IngestState == structs.IngestStateFlushed {
+		return nil
+	}
+
+	evidenceFile.Failed = true
+	if evidenceFile.IngestState == "" {
+		evidenceFile.IngestState = structs.IngestStatePending
+	}
+	return dbio.SetFile(fileID, evidenceFile, db)
+}
+
+// CompleteEvidenceFile atomically marks an evidence record as completed.
+// It is used by the repair/recovery path to finish a FLUSHED ingest whose
+// final COMPLETED marker was never written before a crash.
+func CompleteEvidenceFile(fileID []byte, db *badger.DB) error {
+	evidenceFile, err := dbio.GetEvidenceFile(fileID, db)
+	if errors.Is(err, badger.ErrKeyNotFound) {
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	if evidenceFile.Completed {
+		return nil
+	}
+
+	evidenceFile.Completed = true
+	evidenceFile.IngestState = structs.IngestStateCompleted
+	return dbio.SetFile(fileID, evidenceFile, db)
+}
+
 func storePartitionFile(infile structs.InputFile) error {
+	start := time.Now()
+	logging.GetLogger().Info("storePartitionFile START",
+		zap.String("file_name", infile.GetName()),
+		zap.Int64("file_size", infile.GetSize()),
+	)
+
 	partitionFile, err := dbio.GetPartitionFile(infile.GetID(), infile.GetDB())
 	if errors.Is(err, badger.ErrKeyNotFound) {
 		partitionFile = structs.NewPartitionFile(
@@ -47,33 +119,128 @@ func storePartitionFile(infile structs.InputFile) error {
 			infile.GetSize(),
 			infile.GetInternalObjects(),
 		)
-		return dbio.SetFile(infile.GetID(), partitionFile, infile.GetDB())
+		err = dbio.SetFile(infile.GetID(), partitionFile, infile.GetDB())
+		if err != nil {
+			logging.GetLogger().Error("storePartitionFile SET_FILE_ERROR", zap.Error(err))
+			return err
+		}
+		logging.GetLogger().Info("storePartitionFile COMPLETE",
+			zap.Int64("duration_ms", time.Since(start).Milliseconds()),
+			zap.String("result", "created"),
+		)
+		return nil
 	}
 	if err != nil && err != badger.ErrKeyNotFound {
+		logging.GetLogger().Error("storePartitionFile GET_PARTITION_ERROR", zap.Error(err))
 		return err
 	}
 
 	if _, ok := partitionFile.Names[infile.GetName()]; ok {
+		logging.GetLogger().Debug("storePartitionFile ALREADY_EXISTS", zap.String("file_name", infile.GetName()))
+		logging.GetLogger().Info("storePartitionFile COMPLETE",
+			zap.Int64("duration_ms", time.Since(start).Milliseconds()),
+			zap.String("result", "unchanged"),
+		)
 		return nil
 	}
 
 	partitionFile.Names[infile.GetName()] = struct{}{}
-	return dbio.SetFile(infile.GetID(), partitionFile, infile.GetDB())
+	err = dbio.SetFile(infile.GetID(), partitionFile, infile.GetDB())
+	if err != nil {
+		logging.GetLogger().Error("storePartitionFile UPDATE_FILE_ERROR", zap.Error(err))
+		return err
+	}
+	logging.GetLogger().Info("storePartitionFile COMPLETE",
+		zap.Int64("duration_ms", time.Since(start).Milliseconds()),
+		zap.String("result", "updated"),
+	)
+	return nil
 }
 
 func storeEvidenceFile(infile structs.InputFile) error {
+	start := time.Now()
+	logging.GetLogger().Info("storeEvidenceFile START",
+		zap.String("file_name", infile.GetName()),
+		zap.Int64("file_size", infile.GetSize()),
+	)
+
 	evidenceFile, err := evidenceFilePreflight(infile)
 	if err != nil {
+		logging.GetLogger().Error("storeEvidenceFile PREFLIGHT_ERROR", zap.Error(err))
 		return err
 	}
 	if evidenceFile.Completed {
+		logging.GetLogger().Info("storeEvidenceFile COMPLETE",
+			zap.Int64("duration_ms", time.Since(start).Milliseconds()),
+			zap.String("result", "already_completed"),
+		)
 		return nil
 	}
-	return storeEvidenceData(infile)
+	err = storeEvidenceDataBatchOwner(infile)
+	if err != nil {
+		return failEvidenceStore(infile, err)
+	}
+	if err := markEvidenceFileFlushed(infile); err != nil {
+		return err
+	}
+	logging.GetLogger().Info("storeEvidenceFile COMPLETE",
+		zap.Int64("duration_ms", time.Since(start).Milliseconds()),
+		zap.String("result", "stored"),
+	)
+	return nil
 }
+
+func failEvidenceStore(infile structs.InputFile, storeErr error) error {
+	if markErr := MarkEvidenceFileFailed(infile.GetID(), infile.GetDB()); markErr != nil {
+		logging.GetLogger().Error("storeEvidenceFile MARK_FAILED_ERROR", zap.Error(markErr))
+	}
+	logging.GetLogger().Error("storeEvidenceFile STORE_DATA_ERROR", zap.Error(storeErr))
+	return storeErr
+}
+
+func markEvidenceFileFlushed(infile structs.InputFile) error {
+	// Mark as FLUSHED: all chunk data has been written to persistent storage.
+	// The caller (cmdstore.go) atomically transitions this to COMPLETED.
+	evidenceFile, err := dbio.GetEvidenceFile(infile.GetID(), infile.GetDB())
+	if err != nil {
+		logging.GetLogger().Error("storeEvidenceFile GET_EVIDENCE_AFTER_STORE_ERROR", zap.Error(err))
+		return err
+	}
+	evidenceFile.IngestState = structs.IngestStateFlushed
+	err = dbio.SetFile(infile.GetID(), evidenceFile, infile.GetDB())
+	if err != nil {
+		logging.GetLogger().Error("storeEvidenceFile MARK_FLUSHED_ERROR", zap.Error(err))
+	}
+	return err
+}
+
 func evidenceFilePreflight(infile structs.InputFile) (structs.EvidenceFile, error) {
 	detectedType := util.DetectEvidenceType(infile.GetName(), infile.GetMappedFile())
 
+	evidenceFile, created, err := loadOrCreateEvidenceFile(infile, detectedType)
+	if err != nil {
+		return evidenceFile, err
+	}
+	if created {
+		return evidenceFile, nil
+	}
+
+	if err := maybeUpdateEvidenceType(infile, &evidenceFile, detectedType); err != nil {
+		return evidenceFile, err
+	}
+
+	if err := maybeSyncCompletedIngestState(infile, &evidenceFile); err != nil {
+		return evidenceFile, err
+	}
+
+	if !evidenceFile.Completed {
+		return ensureIncompleteEvidenceState(infile, evidenceFile)
+	}
+
+	return ensureEvidenceAlias(infile, evidenceFile)
+}
+
+func loadOrCreateEvidenceFile(infile structs.InputFile, detectedType string) (structs.EvidenceFile, bool, error) {
 	evidenceFile, err := dbio.GetEvidenceFile(infile.GetID(), infile.GetDB())
 	if errors.Is(err, badger.ErrKeyNotFound) {
 		evidenceFile := structs.NewEvidenceFile(
@@ -84,194 +251,72 @@ func evidenceFilePreflight(infile structs.InputFile) (structs.EvidenceFile, erro
 			detectedType,
 		)
 		err = dbio.SetFile(infile.GetID(), evidenceFile, infile.GetDB())
-		return evidenceFile, err
+		return evidenceFile, true, err
 	}
-	if err != nil && err != badger.ErrKeyNotFound {
-		return evidenceFile, err
+	if err != nil {
+		return evidenceFile, false, err
 	}
+	return evidenceFile, false, nil
+}
 
-	if evidenceFile.EvidenceType == "" || evidenceFile.EvidenceType == cnst.UnknownEvidenceType {
-		if detectedType != evidenceFile.EvidenceType {
-			evidenceFile.EvidenceType = detectedType
-			err = dbio.SetFile(infile.GetID(), evidenceFile, infile.GetDB())
-			if err != nil {
-				return evidenceFile, err
-			}
-		}
+func maybeUpdateEvidenceType(infile structs.InputFile, evidenceFile *structs.EvidenceFile, detectedType string) error {
+	if evidenceFile.EvidenceType != "" && evidenceFile.EvidenceType != cnst.UnknownEvidenceType {
+		return nil
 	}
+	if detectedType == evidenceFile.EvidenceType {
+		return nil
+	}
+	evidenceFile.EvidenceType = detectedType
+	return dbio.SetFile(infile.GetID(), *evidenceFile, infile.GetDB())
+}
 
-	if !evidenceFile.Completed {
+func maybeSyncCompletedIngestState(infile structs.InputFile, evidenceFile *structs.EvidenceFile) error {
+	if !evidenceFile.Completed || evidenceFile.IngestState == structs.IngestStateCompleted {
+		return nil
+	}
+	evidenceFile.IngestState = structs.IngestStateCompleted
+	return dbio.SetFile(infile.GetID(), *evidenceFile, infile.GetDB())
+}
+
+func ensureIncompleteEvidenceState(infile structs.InputFile, evidenceFile structs.EvidenceFile) (structs.EvidenceFile, error) {
+	needsUpdate := false
+	if evidenceFile.IngestState == "" {
+		evidenceFile.IngestState = structs.IngestStatePending
+		needsUpdate = true
+	}
+	if evidenceFile.Failed {
+		evidenceFile.Failed = false
+		needsUpdate = true
+	}
+	if !needsUpdate {
 		return evidenceFile, nil
 	}
+	err := dbio.SetFile(infile.GetID(), evidenceFile, infile.GetDB())
+	return evidenceFile, err
+}
+
+func ensureEvidenceAlias(infile structs.InputFile, evidenceFile structs.EvidenceFile) (structs.EvidenceFile, error) {
 	if _, ok := evidenceFile.Names[infile.GetName()]; ok {
 		return evidenceFile, nil
 	}
-
 	evidenceFile.Names[infile.GetName()] = struct{}{}
-	err = dbio.SetFile(infile.GetID(), evidenceFile, infile.GetDB())
+	err := dbio.SetFile(infile.GetID(), evidenceFile, infile.GetDB())
 	return evidenceFile, err
-}
-func storeEvidenceData(infile structs.InputFile) (err error) {
-
-	bar := progressbar.NewOptions64(
-		infile.GetSize(),
-		progressbar.OptionShowBytes(true),
-		progressbar.OptionSetWriter(os.Stderr),
-		progressbar.OptionSetTheme(cnst.CommonProgressBarTheme),
-	)
-	simhashWriter := newSimhashAsyncWriter(infile.GetDB(), cnst.GetMaxThreadCount())
-	defer func() {
-		simhashErr := simhashWriter.wait()
-		if err == nil && simhashErr != nil {
-			err = simhashErr
-		}
-	}()
-
-	var tio structs.ThreadIO
-	tio.FHash = infile.GetHash()
-	tio.DB = infile.GetDB()
-
-	// Create container manager only if container mode is enabled
-	if cnst.CONTAINERMODE {
-		containerMgr := fio.NewContainerManager(infile.GetDB().Opts().Dir)
-		defer func() {
-			if closeErr := containerMgr.Close(); closeErr != nil && err == nil {
-				err = closeErr
-			}
-		}()
-		tio.ContainerMgr = containerMgr
-
-		// Create block manager if hierarchical index is enabled
-		if cnst.HIERARCHICALINDEX {
-			blockMgr := fio.NewBlockManager(infile.GetDB().Opts().Dir, containerMgr)
-			defer func() {
-				if closeErr := blockMgr.Close(); closeErr != nil && err == nil {
-					err = closeErr
-				}
-			}()
-			tio.BlockMgr = blockMgr
-		} else {
-			tio.BlockMgr = nil
-		}
-	} else {
-		tio.ContainerMgr = nil
-		tio.BlockMgr = nil
-	}
-
-	tio.Batch, err = util.InitBatch(infile.GetDB())
-	if err != nil {
-		return err
-	}
-
-	tio.Err = make(chan error, cnst.GetMaxThreadCount())
-	tio.MappedFile = infile.GetMappedFile()
-
-	var active int
-	var buffsize int64
-	for storeIndex := infile.GetStartIndex(); storeIndex < infile.GetSize(); storeIndex += cnst.ChonkSize {
-		tio.Index = storeIndex
-
-		if infile.GetSize()-storeIndex <= cnst.ChonkSize {
-			buffsize = infile.GetSize() - storeIndex
-		} else {
-			buffsize = cnst.ChonkSize
-		}
-
-		tio.ChonkEnd = tio.Index + buffsize
-		go storeWorker(tio, simhashWriter)
-		active++
-
-		if active > cnst.GetMaxThreadCount() {
-			workerErr := <-tio.Err
-			if workerErr != nil {
-				return workerErr
-			}
-			active--
-			bar.Add64(buffsize)
-		}
-	}
-
-	for active > 0 {
-		workerErr := <-tio.Err
-		if workerErr != nil {
-			return workerErr
-		}
-		active--
-		bar.Add64(cnst.ChonkSize)
-	}
-
-	err = tio.Batch.Flush()
-	if err != nil {
-		return err
-	}
-
-	bar.Add64(cnst.ChonkSize)
-	bar.Finish()
-	fmt.Fprintln(os.Stderr)
-	err = bar.Close()
-	return err
-}
-func storeWorker(tio structs.ThreadIO, simhashWriter *simhashAsyncWriter) {
-	lostChonk := tio.MappedFile[tio.Index:tio.ChonkEnd]
-	chash, err := util.GetChonkHash(lostChonk, cnst.GetHashAlgo())
-	if err != nil {
-		tio.Err <- err
-		return
-	}
-	err = processChonk(lostChonk, chash, tio.DB, tio.Batch, tio.ContainerMgr, tio.BlockMgr, simhashWriter)
-	if err != nil {
-		tio.Err <- err
-		return
-	}
-	err = processRel(tio.Index, tio.FHash, chash, tio.DB, tio.Batch)
-	if err != nil {
-		tio.Err <- err
-		return
-	}
-	tio.Err <- processRevRel(tio.Index, tio.FHash, chash, tio.DB, tio.Batch)
-}
-func processChonk(cdata, chash []byte, db *badger.DB, batch *badger.WriteBatch, containerMgr *fio.ContainerManager, blockMgr *fio.BlockManager, simhashWriter *simhashAsyncWriter) error {
-	sigKey := util.AppendToBytesSlice(cnst.ChonkSimhashNamespace, chash)
-	err := dbio.PingNode(sigKey, db)
-	if errors.Is(err, badger.ErrKeyNotFound) {
-		simhashWriter.enqueue(cdata, chash)
-	} else if err != nil {
-		return err
-	}
-
-	ckey := util.AppendToBytesSlice(cnst.ChonkNamespace, chash)
-
-	err = dbio.PingNode(ckey, db)
-	if errors.Is(err, badger.ErrKeyNotFound) {
-		return dbio.SetBatchChonkNode(ckey, cdata, db, batch, containerMgr, blockMgr)
-	}
-
-	return err
 }
 
 func processRel(index int64, fhash, chash []byte, db *badger.DB, batch *badger.WriteBatch) error {
 	relKey := util.AppendToBytesSlice(cnst.RelationNamespace, fhash, cnst.DataSeperator, index)
+	_ = db
 
-	err := dbio.PingNode(relKey, db)
-	if errors.Is(err, badger.ErrKeyNotFound) {
-		return dbio.SetBatchNode(relKey, chash, batch)
-	}
-
-	return err
+	// Relation keys are deterministic per (file hash, chunk index), so an upsert is
+	// safe and avoids an extra DB read on the hot ingest path.
+	return dbio.SetBatchNode(relKey, chash, batch)
 }
-func processRevRel(index int64, fhash, chash []byte, db *badger.DB, batch *badger.WriteBatch) error {
-	revRelKey := util.AppendToBytesSlice(cnst.ReverseRelationNamespace, chash, cnst.DataSeperator, index)
-
-	revRelMap, err := dbio.GetReverseRelationNode(revRelKey, db)
-	if errors.Is(err, badger.ErrKeyNotFound) {
-		revRelMap = make(map[string]struct{})
-		revRelMap[string(fhash)] = struct{}{}
-		return dbio.SetReverseRelationNode(revRelKey, revRelMap, batch)
-	}
-	if err != nil && err != badger.ErrKeyNotFound {
+func processRevRel(index int64, fhash, chash []byte, batch *badger.WriteBatch, revRelBuffer *revRelAppendBuffer) error {
+	if revRelBuffer != nil {
+		revRelBuffer.add(chash, index)
+	} else if err := dbio.SetReverseRelationAppendMember(chash, index, fhash, batch); err != nil {
 		return err
 	}
-
-	revRelMap[string(fhash)] = struct{}{}
-	return dbio.SetReverseRelationNode(revRelKey, revRelMap, batch)
+	return nil
 }

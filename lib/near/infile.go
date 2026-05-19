@@ -895,6 +895,23 @@ func getRevRelSameChashPrefix(revkey []byte, db *badger.DB) (map[int64][]string,
 
 		return nil
 	})
+	if err != nil {
+		return similarMap, err
+	}
+
+	prototypeMap, err := dbio.GetReverseRelationAppendPrefixMembers(revkey, db)
+	if err != nil {
+		return nil, err
+	}
+	for idx, revlist := range prototypeMap {
+		merged := similarMap[idx]
+		for _, revid := range revlist {
+			if util.FindInStringSlice(merged, revid) == int(cnst.IgnoreVar) {
+				merged = append(merged, revid)
+			}
+		}
+		similarMap[idx] = merged
+	}
 
 	return similarMap, err
 }

@@ -32,7 +32,7 @@ func IndexEXFAT(pfile structs.InputFile, idxChan chan error, enableFTS bool, ena
 	total := int64(len(indexableEntries))
 	bar := progressbar.NewOptions64(
 		total,
-		progressbar.OptionSetDescription("indexing files"),
+		progressbar.OptionSetDescription("Indexing files"),
 		progressbar.OptionSetWriter(os.Stderr),
 		progressbar.OptionSetTheme(cnst.CommonProgressBarTheme),
 	)

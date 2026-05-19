@@ -115,18 +115,7 @@ func getEvidenceFileMeta(fid []byte, db *badger.DB) (structs.FileMeta, error) {
 }
 
 func restoreData(meta structs.FileMeta, dst *os.File, db *badger.DB) error {
-	// Configure cache size based on available memory (25% of available, max 4GB)
-	cacheSize, err := cnst.GetCacheLimit()
-	if err != nil {
-		cacheSize = 256 * cnst.MB
-	}
-
-	// GetCacheLimit returns a bounded fraction of available memory.
-	maxCache := int64(4 * cnst.GB)
-	if cacheSize > maxCache {
-		cacheSize = maxCache
-	}
-	fio.SetContainerReadCacheSize(cacheSize)
+	configureRestoreCache()
 
 	fio.EnableContainerReadCache()
 	defer fio.DisableContainerReadCache()
@@ -144,20 +133,7 @@ func restoreData(meta structs.FileMeta, dst *os.File, db *badger.DB) error {
 		progressbar.OptionSetTheme(cnst.CommonProgressBarTheme),
 	)
 	for restoreIndex := dbstart; restoreIndex < end; restoreIndex += cnst.ChonkSize {
-		relKey := util.AppendToBytesSlice(cnst.RelationNamespace, meta.EviHash, cnst.DataSeperator, restoreIndex)
-		chash, err := dbio.GetNode(relKey, db)
-		if err != nil {
-			return err
-		}
-
-		ckey := util.AppendToBytesSlice(cnst.ChonkNamespace, chash)
-		data, err := dbio.GetChonkData(restoreIndex, meta.Start, meta.Size, dbstart, end, ckey, db)
-		if err != nil {
-			return err
-		}
-
-		_, err = dst.Write(data)
-		if err != nil {
+		if err := writeRestoredChunk(meta, restoreIndex, dbstart, end, dst, db); err != nil {
 			return err
 		}
 
@@ -168,4 +144,34 @@ func restoreData(meta structs.FileMeta, dst *os.File, db *badger.DB) error {
 	fmt.Fprintln(os.Stderr)
 	fmt.Println("Restored file with size: ", humanize.Bytes(uint64(meta.Size)))
 	return bar.Close()
+}
+
+func configureRestoreCache() {
+	cacheSize, err := cnst.GetCacheLimit()
+	if err != nil {
+		cacheSize = 256 * cnst.MB
+	}
+
+	maxCache := int64(4 * cnst.GB)
+	if cacheSize > maxCache {
+		cacheSize = maxCache
+	}
+	fio.SetContainerReadCacheSize(cacheSize)
+}
+
+func writeRestoredChunk(meta structs.FileMeta, restoreIndex, dbstart, end int64, dst *os.File, db *badger.DB) error {
+	relKey := util.AppendToBytesSlice(cnst.RelationNamespace, meta.EviHash, cnst.DataSeperator, restoreIndex)
+	chash, err := dbio.GetNode(relKey, db)
+	if err != nil {
+		return err
+	}
+
+	ckey := util.AppendToBytesSlice(cnst.ChonkNamespace, chash)
+	data, err := dbio.GetChonkData(restoreIndex, meta.Start, meta.Size, dbstart, end, ckey, db)
+	if err != nil {
+		return err
+	}
+
+	_, err = dst.Write(data)
+	return err
 }

@@ -18,7 +18,8 @@ import (
 	"github.com/vmihailenco/msgpack/v5"
 )
 
-func List(db *badger.DB) error {
+func List(db *badger.DB, statusFilter string) error {
+	statusFilter = normalizeStatusFilter(statusFilter)
 	return db.View(func(txn *badger.Txn) error {
 		opts := badger.DefaultIteratorOptions
 		opts.PrefetchSize = 1000
@@ -27,6 +28,7 @@ func List(db *badger.DB) error {
 
 		eviPrefix := []byte(cnst.EviFileNamespace)
 		var evidenceFiles []map[string]interface{}
+		var completedCount, pendingCount, failedCount int
 
 		for it.Seek(eviPrefix); it.ValidForPrefix(eviPrefix); it.Next() {
 			item := it.Item()
@@ -47,7 +49,16 @@ func List(db *badger.DB) error {
 				return err
 			}
 
-			if !evidata.Completed {
+			status := evidenceStatus(evidata.Completed, evidata.Failed)
+			switch status {
+			case "completed":
+				completedCount++
+			case "failed":
+				failedCount++
+			default:
+				pendingCount++
+			}
+			if !matchesStatusFilter(statusFilter, status) {
 				continue
 			}
 
@@ -56,12 +67,14 @@ func List(db *badger.DB) error {
 
 			// Build partition data
 			var partitions []map[string]interface{}
-			for phash := range evidata.InternalObjects {
-				partData, err := buildPartitionData(phash, txn)
-				if err != nil {
-					return err
+			if evidata.Completed {
+				for phash := range evidata.InternalObjects {
+					partData, err := buildPartitionData(phash, txn)
+					if err != nil {
+						return err
+					}
+					partitions = append(partitions, partData)
 				}
-				partitions = append(partitions, partData)
 			}
 
 			eviFile := map[string]interface{}{
@@ -70,6 +83,8 @@ func List(db *badger.DB) error {
 				"type":           evidata.EvidenceType,
 				"size":           evidata.Size,
 				"completed":      evidata.Completed,
+				"failed":         evidata.Failed,
+				"status":         status,
 				"files":          getMapKeys(evidata.Names),
 				"fileCount":      len(evidata.Names),
 				"partitions":     partitions,
@@ -78,10 +93,32 @@ func List(db *badger.DB) error {
 			evidenceFiles = append(evidenceFiles, eviFile)
 		}
 
+		visibleCompleted := 0
+		visiblePending := 0
+		visibleFailed := 0
+		for _, evidence := range evidenceFiles {
+			status, _ := evidence["status"].(string)
+			switch status {
+			case "completed":
+				visibleCompleted++
+			case "failed":
+				visibleFailed++
+			default:
+				visiblePending++
+			}
+		}
+
 		// Output as JSON
 		output := map[string]interface{}{
-			"totalEvidence": len(evidenceFiles),
-			"evidence":      evidenceFiles,
+			"statusFilter":      statusFilter,
+			"totalEvidence":     len(evidenceFiles),
+			"completedEvidence": visibleCompleted,
+			"pendingEvidence":   visiblePending,
+			"failedEvidence":    visibleFailed,
+			"scanCompleted":     completedCount,
+			"scanPending":       pendingCount,
+			"scanFailed":        failedCount,
+			"evidence":          evidenceFiles,
 		}
 
 		jsonData, err := json.MarshalIndent(output, "", "  ")
@@ -92,6 +129,33 @@ func List(db *badger.DB) error {
 		fmt.Println(string(jsonData))
 		return nil
 	})
+}
+
+func evidenceStatus(completed, failed bool) string {
+	if completed {
+		return "completed"
+	}
+	if failed {
+		return "failed"
+	}
+	return "pending"
+}
+
+func normalizeStatusFilter(status string) string {
+	s := strings.ToLower(strings.TrimSpace(status))
+	switch s {
+	case "completed", "pending", "failed":
+		return s
+	default:
+		return "all"
+	}
+}
+
+func matchesStatusFilter(filter, status string) bool {
+	if filter == "all" {
+		return true
+	}
+	return filter == status
 }
 
 func buildPartitionData(phash string, txn *badger.Txn) (map[string]interface{}, error) {
@@ -236,23 +300,27 @@ func getMapKeys(m map[string]struct{}) []string {
 
 // ListWithEnrichment attempts to list data from enrichment graphdb first,
 // falling back to KVDB if graphdb is empty or unavailable.
-func ListWithEnrichment(db *badger.DB, enrichRepo enrichment.Repository) error {
+func ListWithEnrichment(db *badger.DB, enrichRepo enrichment.Repository, statusFilter string) error {
+	statusFilter = normalizeStatusFilter(statusFilter)
 	// Try to read enrichment hierarchy
 	hierarchy, err := enrichRepo.ReadHierarchy()
 	if err != nil {
 		// Fall back to KVDB-only listing
-		return List(db)
+		return List(db, statusFilter)
 	}
 
 	// If no evidence files found in graphdb, fall back to KVDB
 	if len(hierarchy.EvidenceFiles) == 0 {
-		return List(db)
+		return List(db, statusFilter)
 	}
 
 	// Format graphdb hierarchy into output
 	var evidenceFiles []map[string]interface{}
 
 	for _, evidenceFile := range hierarchy.EvidenceFiles {
+		if !matchesStatusFilter(statusFilter, "completed") {
+			continue
+		}
 		var partitions []map[string]interface{}
 		totalIndexed := 0
 		totalDeletedIndexed := 0
@@ -299,6 +367,8 @@ func ListWithEnrichment(db *badger.DB, enrichRepo enrichment.Repository) error {
 			"name":                   normalizeEvidenceFileName(evidenceFile.Name),
 			"type":                   "image",
 			"completed":              true,
+			"failed":                 false,
+			"status":                 "completed",
 			"partitions":             partitions,
 			"partitionCount":         len(partitions),
 			"indexedCount":           totalIndexed,
@@ -310,9 +380,44 @@ func ListWithEnrichment(db *badger.DB, enrichRepo enrichment.Repository) error {
 	}
 
 	// Output as JSON
+	repairReport, err := InspectEvidenceRepairs(db, false)
+	if err != nil {
+		return err
+	}
+
+	filteredIncomplete := make([]RepairEvidenceRow, 0, len(repairReport.Evidence))
+	for _, row := range repairReport.Evidence {
+		status := evidenceStatus(row.Completed, row.Failed)
+		if matchesStatusFilter(statusFilter, status) {
+			filteredIncomplete = append(filteredIncomplete, row)
+		}
+	}
+
+	completedVisible := len(evidenceFiles)
+	pendingVisible := 0
+	failedVisible := 0
+	for _, row := range filteredIncomplete {
+		if row.Failed {
+			failedVisible++
+		} else {
+			pendingVisible++
+		}
+	}
+	if statusFilter == "pending" {
+		completedVisible = 0
+	}
+	if statusFilter == "failed" {
+		completedVisible = 0
+	}
+
 	output := map[string]interface{}{
-		"totalEvidence": len(evidenceFiles),
-		"evidence":      evidenceFiles,
+		"statusFilter":       statusFilter,
+		"totalEvidence":      completedVisible + len(filteredIncomplete),
+		"completedEvidence":  completedVisible,
+		"pendingEvidence":    pendingVisible,
+		"failedEvidence":     failedVisible,
+		"incompleteEvidence": filteredIncomplete,
+		"evidence":           evidenceFiles,
 	}
 
 	jsonData, err := json.MarshalIndent(output, "", "  ")

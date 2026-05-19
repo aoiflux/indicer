@@ -10,6 +10,7 @@ import (
 	"indicer/lib/cnst"
 	"indicer/lib/dbio"
 	"indicer/lib/fts"
+	"indicer/lib/logging"
 	"indicer/lib/near"
 	"indicer/lib/store"
 	"indicer/lib/structs"
@@ -23,6 +24,7 @@ import (
 	"github.com/dgraph-io/badger/v4"
 	"github.com/fatih/color"
 	"github.com/schollz/progressbar/v3"
+	"go.uber.org/zap"
 )
 
 var searchNamespaces = []string{
@@ -60,20 +62,31 @@ func workerLimit() int {
 }
 
 func SearchSummaryWithContext(ctx context.Context, query string, db *badger.DB) (map[string]int64, int64, error) {
+	start := time.Now()
+	logging.GetLogger().Info("SearchSummaryWithContext START", zap.Int("query_length", len(query)))
+
 	if len(query) < 2 {
+		err := cnst.ErrSmallQuery
+		logging.GetLogger().Error("SearchSummaryWithContext VALIDATION_ERROR", zap.Error(err))
 		return nil, 0, cnst.ErrSmallQuery
 	}
 	if err := ctx.Err(); err != nil {
+		logging.GetLogger().Error("SearchSummaryWithContext CONTEXT_ERROR", zap.Error(err))
 		return nil, 0, err
 	}
 
 	settings := newSearchSettings(query)
 	idmap, err := executeSearchPipeline(ctx, settings, db, nil, nil)
 	if err != nil {
+		logging.GetLogger().Error("SearchSummaryWithContext PIPELINE_ERROR", zap.Error(err))
 		return nil, 0, err
 	}
 
 	results := idmap.GetData()
+	logging.GetLogger().Info("SearchSummaryWithContext COMPLETE",
+		zap.Int64("duration_ms", time.Since(start).Milliseconds()),
+		zap.Int("result_count", len(results)),
+	)
 	return buildKeywordCountMap(results), countTotalOccurrences(results), nil
 }
 
@@ -88,22 +101,30 @@ func SearchWithContextFullTextFallback(ctx context.Context, query string, db *ba
 }
 
 func SearchToPathWithContextFullTextFallback(ctx context.Context, query, reportPath string, db *badger.DB) error {
+	start := time.Now()
+	logging.GetLogger().Info("SearchToPathWithContextFullTextFallback START",
+		zap.Int("query_length", len(query)),
+		zap.String("report_path", reportPath),
+	)
+
 	if reportPath == "" {
 		reportPath = defaultReportPath
 	}
 
 	pq := parseQuery(query)
 	if err := validateParsedQuery(pq); err != nil {
+		logging.GetLogger().Error("SearchToPathWithContextFullTextFallback VALIDATION_ERROR", zap.Error(err))
 		return err
 	}
 
 	if err := ctx.Err(); err != nil {
+		logging.GetLogger().Error("SearchToPathWithContextFullTextFallback CONTEXT_ERROR", zap.Error(err))
 		return err
 	}
 
-	start := time.Now()
 	totalFiles, err := countSearchFiles(ctx, db)
 	if err != nil {
+		logging.GetLogger().Error("SearchToPathWithContextFullTextFallback COUNT_FILES_ERROR", zap.Error(err))
 		return fmt.Errorf("countSearchFiles: %w", err)
 	}
 
@@ -119,6 +140,7 @@ func SearchToPathWithContextFullTextFallback(ctx context.Context, query, reportP
 		}
 	}
 	if err != nil {
+		logging.GetLogger().Debug("SearchToPathWithContextFullTextFallback FTS_FALLBACK", zap.Error(err))
 		color.New(color.FgHiYellow, color.Bold).Fprintf(os.Stderr, "[search] Full-text index unavailable, falling back to scan search\n")
 		return SearchToPathWithContext(ctx, query, reportPath, db)
 	}
@@ -162,9 +184,11 @@ func SearchToPathWithContextFullTextFallback(ctx context.Context, query, reportP
 
 	hitMaps, err := runMultiTermSearch(ctx, pq, db, onProcessed, candidates)
 	if err != nil {
+		logging.GetLogger().Error("SearchToPathWithContextFullTextFallback RUN_SEARCH_ERROR", zap.Error(err))
 		return err
 	}
 	if err := ctx.Err(); err != nil {
+		logging.GetLogger().Error("SearchToPathWithContextFullTextFallback CONTEXT_ERROR", zap.Error(err))
 		return err
 	}
 
@@ -182,6 +206,7 @@ func SearchToPathWithContextFullTextFallback(ctx context.Context, query, reportP
 
 	docSizes, err := fetchDocSizesForHits(ctx, hitMaps, db)
 	if err != nil {
+		logging.GetLogger().Error("SearchToPathWithContextFullTextFallback FETCH_DOC_SIZES_ERROR", zap.Error(err))
 		return err
 	}
 
@@ -190,6 +215,7 @@ func SearchToPathWithContextFullTextFallback(ctx context.Context, query, reportP
 
 	err = searchReport(reportPath, query, ranked, db)
 	if err != nil {
+		logging.GetLogger().Error("SearchToPathWithContextFullTextFallback REPORT_ERROR", zap.Error(err), zap.String("report_path", reportPath))
 		return err
 	}
 	onProcessed()
@@ -197,26 +223,39 @@ func SearchToPathWithContextFullTextFallback(ctx context.Context, query, reportP
 	bar.Finish()
 	fmt.Fprintln(os.Stderr)
 	fmt.Println("Done....", time.Since(start))
+	logging.GetLogger().Info("SearchToPathWithContextFullTextFallback COMPLETE",
+		zap.Int64("duration_ms", time.Since(start).Milliseconds()),
+		zap.Int64("total_files", totalFiles),
+		zap.Int("result_count", len(ranked)),
+	)
 	return bar.Close()
 }
 
 func SearchToPathWithContext(ctx context.Context, query, reportPath string, db *badger.DB) error {
+	start := time.Now()
+	logging.GetLogger().Info("SearchToPathWithContext START",
+		zap.Int("query_length", len(query)),
+		zap.String("report_path", reportPath),
+	)
+
 	if reportPath == "" {
 		reportPath = defaultReportPath
 	}
 
 	pq := parseQuery(query)
 	if err := validateParsedQuery(pq); err != nil {
+		logging.GetLogger().Error("SearchToPathWithContext VALIDATION_ERROR", zap.Error(err))
 		return err
 	}
 
 	if err := ctx.Err(); err != nil {
+		logging.GetLogger().Error("SearchToPathWithContext CONTEXT_ERROR", zap.Error(err))
 		return err
 	}
 
-	start := time.Now()
 	totalFiles, err := countSearchFiles(ctx, db)
 	if err != nil {
+		logging.GetLogger().Error("SearchToPathWithContext COUNT_FILES_ERROR", zap.Error(err))
 		return fmt.Errorf("countSearchFiles: %w", err)
 	}
 
@@ -239,14 +278,17 @@ func SearchToPathWithContext(ctx context.Context, query, reportPath string, db *
 
 	hitMaps, err := runMultiTermSearch(ctx, pq, db, onProcessed, nil)
 	if err != nil {
+		logging.GetLogger().Error("SearchToPathWithContext RUN_SEARCH_ERROR", zap.Error(err))
 		return err
 	}
 	if err := ctx.Err(); err != nil {
+		logging.GetLogger().Error("SearchToPathWithContext CONTEXT_ERROR", zap.Error(err))
 		return err
 	}
 
 	docSizes, err := fetchDocSizesForHits(ctx, hitMaps, db)
 	if err != nil {
+		logging.GetLogger().Error("SearchToPathWithContext FETCH_DOC_SIZES_ERROR", zap.Error(err))
 		return err
 	}
 
@@ -254,6 +296,7 @@ func SearchToPathWithContext(ctx context.Context, query, reportPath string, db *
 
 	err = searchReport(reportPath, query, ranked, db)
 	if err != nil {
+		logging.GetLogger().Error("SearchToPathWithContext REPORT_ERROR", zap.Error(err), zap.String("report_path", reportPath))
 		return err
 	}
 	onProcessed()
@@ -261,6 +304,11 @@ func SearchToPathWithContext(ctx context.Context, query, reportPath string, db *
 	bar.Finish()
 	fmt.Fprintln(os.Stderr)
 	fmt.Println("Done....", time.Since(start))
+	logging.GetLogger().Info("SearchToPathWithContext COMPLETE",
+		zap.Int64("duration_ms", time.Since(start).Milliseconds()),
+		zap.Int64("total_files", totalFiles),
+		zap.Int("result_count", len(ranked)),
+	)
 	return bar.Close()
 }
 
@@ -333,7 +381,13 @@ func applyFTSBoost(ranked []RankedResult, ftScores map[string]float64) []RankedR
 }
 
 func executeSearchPipeline(ctx context.Context, settings searchSettings, db *badger.DB, onProcessed func(), candidates map[string]struct{}) (*structs.SearchIDMap, error) {
+	logging.GetLogger().Debug("executeSearchPipeline START",
+		zap.String("query", settings.query),
+		zap.Int("query_length", settings.queryLen),
+		zap.Bool("has_candidates", candidates != nil),
+	)
 	if err := ctx.Err(); err != nil {
+		logging.GetLogger().Error("executeSearchPipeline CONTEXT_ERROR", zap.Error(err))
 		return nil, err
 	}
 	ctx, cancel := context.WithCancel(ctx)
@@ -345,10 +399,12 @@ func executeSearchPipeline(ctx context.Context, settings searchSettings, db *bad
 	for _, namespace := range searchNamespaces {
 		err := searchFiles(ctx, cancel, settings, namespace, cmap, idmap, db, onProcessed, candidates)
 		if err != nil {
+			logging.GetLogger().Error("executeSearchPipeline SEARCH_NAMESPACE_ERROR", zap.Error(err), zap.String("namespace", namespace))
 			return nil, err
 		}
 	}
 
+	logging.GetLogger().Debug("executeSearchPipeline COMPLETE", zap.Int("result_count", len(idmap.GetData())))
 	return idmap, nil
 }
 

@@ -2,6 +2,15 @@ package structs
 
 import "indicer/lib/cnst"
 
+// IngestState tracks the commitment phase of an ingest transaction
+type IngestState string
+
+const (
+	IngestStatePending   IngestState = "pending"
+	IngestStateFlushed   IngestState = "flushed"
+	IngestStateCompleted IngestState = "completed"
+)
+
 type baseFile struct {
 	Names map[string]struct{} `msgpack:"names"`
 	Size  int64               `msgpack:"size"`
@@ -45,13 +54,26 @@ func NewPartitionFile(name string, start, size int64, indexedFiles map[string]In
 
 type EvidenceFile struct {
 	PartitionFile
-	EvidenceType string `msgpack:"evidence_type"`
-	Completed    bool   `msgpack:"completed"`
+	EvidenceType string      `msgpack:"evidence_type"`
+	Completed    bool        `msgpack:"completed"`
+	Failed       bool        `msgpack:"failed"`
+	IngestState  IngestState `msgpack:"ingest_state"`
 }
 
 func NewEvidenceFile(name string, start, size int64, partitions map[string]InternalOffset, evidenceType string) EvidenceFile {
 	partitionFile := NewPartitionFile(name, start, size, partitions)
-	return EvidenceFile{PartitionFile: partitionFile, EvidenceType: evidenceType, Completed: false}
+	return EvidenceFile{PartitionFile: partitionFile, EvidenceType: evidenceType, Completed: false, Failed: false, IngestState: IngestStatePending}
+}
+
+// IsIngestIncomplete returns true if ingest is still in progress (not completed)
+func (ef EvidenceFile) IsIngestIncomplete() bool {
+	return !ef.Completed && ef.IngestState != IngestStateCompleted
+}
+
+// IsIngestOrphaned returns true if ingest is in FLUSHED or PENDING but not marked as failed
+func (ef EvidenceFile) IsIngestOrphaned() bool {
+	return !ef.Completed && !ef.Failed &&
+		(ef.IngestState == IngestStatePending || ef.IngestState == IngestStateFlushed)
 }
 
 type FileTypes interface {

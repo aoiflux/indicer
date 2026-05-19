@@ -267,6 +267,16 @@ func (cm *ContainerManager) compressContainer(containerPath string) error {
 		return nil
 	}
 
+	// In non-QUICKOPT mode each chunk is already zstd-compressed then AES-GCM
+	// encrypted before being written to the container.  AES-GCM output is
+	// statistically indistinguishable from random bytes and cannot be further
+	// compressed.  Running a full container-level zstd pass would read and
+	// rewrite the entire file for zero compression benefit while burning
+	// significant CPU and I/O.  Skip it and keep the plain .blob file.
+	if !cnst.QUICKOPT {
+		return nil
+	}
+
 	// Open source file
 	srcFile, err := os.Open(containerPath)
 	if err != nil {

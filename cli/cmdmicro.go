@@ -8,6 +8,7 @@ import (
 	"indicer/lib/cnst"
 	"indicer/lib/dbio"
 	"indicer/lib/enrichment"
+	"indicer/lib/logging"
 	"indicer/lib/microartefact"
 	mmodel "indicer/lib/microartefact/model"
 	"indicer/lib/store"
@@ -15,9 +16,11 @@ import (
 	"indicer/lib/util"
 	"path/filepath"
 	"strings"
+	"time"
 
 	"github.com/dgraph-io/badger/v4"
 	"github.com/vmihailenco/msgpack/v5"
+	"go.uber.org/zap"
 )
 
 // microScanLimit matches the Service's defaultScanLimit so we never stream
@@ -49,14 +52,24 @@ type microFileNodeStatus struct {
 //
 // evidence_file → partition → indexed_file → micro_artefact
 func MicroArtefactCmd(chonkSize int, dbpath string, key []byte, force bool, topK int) error {
+	start := time.Now()
+	logging.GetLogger().Info("MicroArtefactCmd START",
+		zap.Int("chonk_size", chonkSize),
+		zap.String("db_path", dbpath),
+		zap.Bool("force", force),
+		zap.Int("top_k", topK),
+	)
+
 	db, dbpath, err := Common(chonkSize, dbpath, key)
 	if err != nil {
+		logging.GetLogger().Error("MicroArtefactCmd DB_CONNECT_ERROR", zap.Error(err))
 		return err
 	}
 	defer db.Close()
 
 	repo, err := microartefact.OpenGrapheneRepository(dbpath)
 	if err != nil {
+		logging.GetLogger().Error("MicroArtefactCmd OPEN_GRAPH_REPOSITORY_ERROR", zap.Error(err))
 		return err
 	}
 
@@ -64,7 +77,9 @@ func MicroArtefactCmd(chonkSize int, dbpath string, key []byte, force bool, topK
 	defer service.Close()
 
 	status := &microFileNodeStatus{}
+	logging.GetLogger().Info("MicroArtefactCmd PROCESS_INDEXED_FILES")
 	if err := processAllIndexedFiles(db, service, repo, force, status); err != nil {
+		logging.GetLogger().Error("MicroArtefactCmd PROCESS_INDEXED_FILES_ERROR", zap.Error(err))
 		return err
 	}
 
@@ -78,22 +93,29 @@ func MicroArtefactCmd(chonkSize int, dbpath string, key []byte, force bool, topK
 
 	tree, err := repo.ReadHierarchy()
 	if err != nil {
+		logging.GetLogger().Error("MicroArtefactCmd READ_HIERARCHY_ERROR", zap.Error(err))
 		return err
 	}
 
 	htmlPath := filepath.Join(dbpath, "graph.html")
 	if err := repo.ExportInteractiveHTMLTopK(htmlPath, topK); err != nil {
+		logging.GetLogger().Error("MicroArtefactCmd EXPORT_HTML_ERROR", zap.Error(err), zap.String("file_path", htmlPath))
 		return err
 	}
 
 	printHierarchyTree(tree)
 	fmt.Printf("HTML graph visualisation: %s\n", htmlPath)
+	logging.GetLogger().Info("MicroArtefactCmd COMPLETE",
+		zap.Int64("duration_ms", time.Since(start).Milliseconds()),
+		zap.String("html_path", htmlPath),
+	)
 	return nil
 }
 
 // processAllIndexedFiles iterates all completed evidence files in the store and
 // processes each indexed file within them for micro-artefact extraction.
 func processAllIndexedFiles(db *badger.DB, service *microartefact.Service, repo *microartefact.GrapheneRepository, force bool, status *microFileNodeStatus) error {
+	logging.GetLogger().Debug("processAllIndexedFiles START", zap.Bool("force", force))
 	return db.View(func(txn *badger.Txn) error {
 		opts := badger.DefaultIteratorOptions
 		opts.PrefetchSize = 100
@@ -116,6 +138,7 @@ func processAllIndexedFiles(db *badger.DB, service *microartefact.Service, repo 
 
 			var evidata structs.EvidenceFile
 			if err := msgpack.Unmarshal(v, &evidata); err != nil {
+				logging.GetLogger().Error("processAllIndexedFiles UNMARSHAL_EVIDENCE_ERROR", zap.Error(err))
 				return err
 			}
 			if !evidata.Completed {
@@ -130,6 +153,7 @@ func processAllIndexedFiles(db *badger.DB, service *microartefact.Service, repo 
 
 			for phashB64 := range evidata.InternalObjects {
 				if err := processPartition(txn, db, service, repo, force, status, evidenceCtx, phashB64); err != nil {
+					logging.GetLogger().Error("processAllIndexedFiles PROCESS_PARTITION_ERROR", zap.Error(err), zap.String("partition_id", phashB64))
 					return err
 				}
 			}
@@ -141,14 +165,20 @@ func processAllIndexedFiles(db *badger.DB, service *microartefact.Service, repo 
 // processPartition retrieves a partition file from the store and processes each
 // indexed file it contains.
 func processPartition(txn *badger.Txn, db *badger.DB, service *microartefact.Service, repo *microartefact.GrapheneRepository, force bool, status *microFileNodeStatus, evidenceCtx microEvidenceContext, partitionHashB64 string) error {
+	logging.GetLogger().Debug("processPartition START",
+		zap.String("partition_id", partitionHashB64),
+		zap.String("evidence_id", evidenceCtx.evidenceFileID),
+	)
 	rawPhash, err := base64.StdEncoding.DecodeString(partitionHashB64)
 	if err != nil {
+		logging.GetLogger().Error("processPartition DECODE_HASH_ERROR", zap.Error(err), zap.String("partition_id", partitionHashB64))
 		return fmt.Errorf("partition hash decode: %w", err)
 	}
 	pid := util.AppendToBytesSlice(cnst.PartiFileNamespace, rawPhash)
 
 	item, err := txn.Get(pid)
 	if err != nil {
+		logging.GetLogger().Error("processPartition GET_PARTITION_ERROR", zap.Error(err), zap.String("partition_id", partitionHashB64))
 		return fmt.Errorf("get partition %s: %w", partitionHashB64, err)
 	}
 	v, err := item.ValueCopy(nil)
@@ -162,6 +192,7 @@ func processPartition(txn *badger.Txn, db *badger.DB, service *microartefact.Ser
 
 	var pdata structs.PartitionFile
 	if err := msgpack.Unmarshal(v, &pdata); err != nil {
+		logging.GetLogger().Error("processPartition UNMARSHAL_PARTITION_ERROR", zap.Error(err), zap.String("partition_id", partitionHashB64))
 		return err
 	}
 	partitionCtx := microPartitionContext{
@@ -173,6 +204,7 @@ func processPartition(txn *badger.Txn, db *badger.DB, service *microartefact.Ser
 	for ihashB64 := range pdata.InternalObjects {
 		if err := processIndexedFile(db, service, repo, force, status, partitionCtx, ihashB64); err != nil {
 			// Non-fatal: log and continue so one bad file does not abort the run.
+			logging.GetLogger().Error("processPartition PROCESS_INDEXED_FILE_ERROR", zap.Error(err), zap.String("indexed_file_id", ihashB64))
 			fmt.Printf("warning: skipping indexed file %s: %v\n", ihashB64, err)
 		}
 	}
@@ -182,19 +214,28 @@ func processPartition(txn *badger.Txn, db *badger.DB, service *microartefact.Ser
 // processIndexedFile reads one indexed file from the store and runs micro-artefact
 // detection on its content, using the real hierarchy IDs for the graph record.
 func processIndexedFile(db *badger.DB, service *microartefact.Service, repo *microartefact.GrapheneRepository, force bool, status *microFileNodeStatus, partitionCtx microPartitionContext, indexedFileHashB64 string) error {
+	start := time.Now()
+	logging.GetLogger().Debug("processIndexedFile START",
+		zap.String("indexed_file_id", indexedFileHashB64),
+		zap.String("partition_id", partitionCtx.partitionID),
+		zap.Bool("force", force),
+	)
 	rawIhash, err := base64.StdEncoding.DecodeString(indexedFileHashB64)
 	if err != nil {
+		logging.GetLogger().Error("processIndexedFile DECODE_HASH_ERROR", zap.Error(err), zap.String("indexed_file_id", indexedFileHashB64))
 		return fmt.Errorf("indexed file hash decode: %w", err)
 	}
 	iid := util.AppendToBytesSlice(cnst.IdxFileNamespace, rawIhash)
 
 	ifile, err := dbio.GetIndexedFile(iid, db)
 	if err != nil {
+		logging.GetLogger().Error("processIndexedFile GET_INDEXED_FILE_ERROR", zap.Error(err))
 		return fmt.Errorf("get indexed file: %w", err)
 	}
 
 	records := buildIndexedFileRecords(ifile, partitionCtx, indexedFileHashB64)
 	if err := ensureIndexedFileNodes(db, repo, records, status); err != nil {
+		logging.GetLogger().Error("processIndexedFile ENSURE_GRAPH_NODES_ERROR", zap.Error(err))
 		return err
 	}
 	if !force {
@@ -218,15 +259,22 @@ func processIndexedFile(db *badger.DB, service *microartefact.Service, repo *mic
 
 	content, err := readIndexedFileContent(iid, db)
 	if err != nil {
+		logging.GetLogger().Error("processIndexedFile READ_CONTENT_ERROR", zap.Error(err))
 		return fmt.Errorf("read indexed file content: %w", err)
 	}
 
 	for _, record := range records {
 		if err := service.Process(record, content); err != nil {
+			logging.GetLogger().Error("processIndexedFile PROCESS_ERROR", zap.Error(err), zap.String("record_name", record.Name))
 			return fmt.Errorf("micro-artefact process: %w", err)
 		}
 		fmt.Printf("Micro-artefacts extracted: %s\n", record.Name)
 	}
+	logging.GetLogger().Debug("processIndexedFile COMPLETE",
+		zap.String("indexed_file_id", indexedFileHashB64),
+		zap.Int("record_count", len(records)),
+		zap.Int64("duration_ms", time.Since(start).Milliseconds()),
+	)
 	return nil
 }
 

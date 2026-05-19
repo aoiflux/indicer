@@ -49,21 +49,27 @@ var MEMOPT bool
 var QUICKOPT bool
 var CONTAINERMODE bool
 var HIERARCHICALINDEX bool
+var ENABLESIMHASH = false  // compute and persist per-chunk simhash signatures during ingest (opt-in via --simhash)
+var CompressLevel = "best" // per-chunk zstd ingest level: fast | default | best
+var StoreWorkerCount = 0
+var StoreTaskQueueDepth = 0
 var DB *badger.DB
 
 const (
-	EviFileNamespace         = "E|||:"
-	PartiFileNamespace       = "P|||:"
-	IdxFileNamespace         = "I|||:"
-	RelationNamespace        = "R|||:"
-	ReverseRelationNamespace = "Я|||:"
-	ChonkNamespace           = "C|||:"
-	ChonkSimhashNamespace    = "S|||:"
-	FileSimhashNamespace     = "F|||:"
-	NamespaceSeperator       = "|||:"
-	RangeSeperator           = "-"
-	DataSeperator            = "|||"
-	PartitionIndexPrefix     = "p"
+	EviFileNamespace                = "E|||:"
+	PartiFileNamespace              = "P|||:"
+	IdxFileNamespace                = "I|||:"
+	RelationNamespace               = "R|||:"
+	ReverseRelationNamespace        = "Я|||:"
+	ReverseRelationAppendNamespace  = "RA|||:"
+	ChonkNamespace                  = "C|||:"
+	ChonkSimhashNamespace           = "S|||:"
+	FileSimhashNamespace            = "F|||:"
+	NamespaceSeperator              = "|||:"
+	RangeSeperator                  = "-"
+	DataSeperator                   = "|||"
+	PartitionIndexPrefix            = "p"
+	ReverseRelationAppendShardCount = 16
 )
 
 const (
@@ -95,6 +101,7 @@ const (
 	CmdStore    = "store"
 	CmdList     = "list"
 	CmdStats    = "stats"
+	CmdRepair   = "repair"
 	CmdRestore  = "restore"
 	CmdNear     = "near"
 	CmdReset    = "reset"
@@ -139,10 +146,17 @@ const (
 	FlagExplainExactShort    = 't'
 	FlagAdvancedDeep         = "advanced-deep"
 	FlagAdvancedDeepShort    = 'a'
+	FlagRepairFix            = "fix"
+	FlagRepairMigrateRevRel  = "migrate-revrel"
 	FlagTopK                 = "top-k"
 	FlagTopKShort            = 'k'
 	FlagEnableFts            = "enable-fts"
 	FlagEnableEnrichment     = "enrich"
+	FlagListStatus           = "status"
+	FlagCompressLevel        = "compress-level"
+	FlagSimhash              = "simhash"
+	FlagStoreWorkers         = "store-workers"
+	FlagStoreQueue           = "store-queue"
 
 	OperandFile  = "FILE"
 	OperandHash  = "HASH"
@@ -181,6 +195,42 @@ func GetMaxThreadCount() int {
 	// This maximizes throughput since workers are I/O-bound
 	// (waiting on file writes, DB operations, compression, etc.)
 	return runtime.NumCPU() * 2
+}
+
+// GetStorePipelineTuning returns worker count and task queue depth for the
+// batch-owner ingest pipeline. Non-container mode benefits from higher worker
+// parallelism for chunk materialization, while container/hierarchical modes
+// involve additional serialized components and are tuned for steadier flow.
+func GetStorePipelineTuning(containerMode bool, hierarchicalMode bool) (int, int) {
+	workers := GetMaxThreadCount()
+	queueDepth := workers * 2
+
+	if containerMode {
+		workers = workers / 2
+		if workers < 2 {
+			workers = 2
+		}
+		queueDepth = workers * 4
+		if hierarchicalMode {
+			queueDepth = workers * 6
+		}
+	}
+
+	if StoreWorkerCount > 0 {
+		workers = StoreWorkerCount
+	}
+	if StoreTaskQueueDepth > 0 {
+		queueDepth = StoreTaskQueueDepth
+	}
+
+	if workers < 1 {
+		workers = 1
+	}
+	if queueDepth < workers {
+		queueDepth = workers
+	}
+
+	return workers, queueDepth
 }
 func GetCacheLimit() (int64, error) {
 	if MEMOPT {

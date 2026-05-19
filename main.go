@@ -5,6 +5,7 @@ import (
 	"indicer/api"
 	"indicer/cli"
 	"indicer/lib/cnst"
+	"indicer/lib/logging"
 	"indicer/lib/util"
 	"os"
 	"strings"
@@ -12,6 +13,7 @@ import (
 	"github.com/alecthomas/kingpin/v2"
 	"github.com/fatih/color"
 	"github.com/klauspost/compress/zstd"
+	"go.uber.org/zap"
 )
 
 const (
@@ -25,7 +27,7 @@ func init() {
 	cnst.DECODER, err = zstd.NewReader(nil, zstd.WithDecoderConcurrency(0))
 	handle(err)
 
-	cnst.ENCODER, err = zstd.NewWriter(nil, zstd.WithEncoderLevel(zstd.EncoderLevel(zstd.SpeedBestCompression)))
+	cnst.ENCODER, err = zstd.NewWriter(nil, zstd.WithEncoderLevel(zstd.SpeedBestCompression))
 	handle(err)
 }
 
@@ -41,23 +43,31 @@ func main() {
 	QUICKOPT := app.Flag(cnst.FlagFastMode, "Quick mode, forgoes encryption, intra-chunk & overall db compression in favour of higher throughput").Short(cnst.FlagFastModeShort).Default("false").Bool()
 	containerMode := app.Flag(cnst.FlagContainerMode, "Use container-based storage (packs multiple chunks into 1GB containers)").Short(cnst.FlagContainerModeShort).Default("false").Bool()
 	hierarchicalIndex := app.Flag(cnst.FlagHierarchicalIndex, "Use hierarchical block index (groups 1000 chunks per block, requires container mode)").Short(cnst.FlagHierarchicalShort).Default("false").Bool()
+	compressLevel := app.Flag(cnst.FlagCompressLevel, "Per-chunk zstd compression level [fast|default|best] (default: best)").Default("best").String()
 	cmdversion := app.Command(cnst.CmdVeresion, "Show version details and quick feature overview")
 
 	cmdtui := app.Command(cnst.CmdTui, "Launch interactive TUI interface")
 
 	cmdstore := app.Command(cnst.CmdStore, "Store file in database")
 	evipath := cmdstore.Arg(cnst.OperandFile, "Path of file that must be saved").Required().String()
+	syncIndex := cmdstore.Flag(cnst.FlagSyncIndex, "Run indexer synchronously (disables overlap with chunk ingest; slower but deterministic ordering)").Short(cnst.FlagSyncIndexShort).Default("false").Bool()
 	noIndex := cmdstore.Flag(cnst.FlagNoIndex, "Don't run indexer").Short(cnst.FlagNoIndexShort).Default("false").Bool()
 	enableFTS := cmdstore.Flag(cnst.FlagEnableFts, "Enable full-text search indexing (sidecar Bleve index)").Default("false").Bool()
 	enableEnrichment := cmdstore.Flag(cnst.FlagEnableEnrichment, "Upsert disk/partition/indexed-file metadata nodes into graphdb during store").Default("false").Bool()
 	hashAlgo := cmdstore.Flag(cnst.FlagHashAlgo, "Hashing algorithm to use [sha3|blake3] (default: BLAKE3)").Short(cnst.FlagHashAlgoShort).Default(cnst.BLAKE3).String()
+	enableSimhash := cmdstore.Flag(cnst.FlagSimhash, "Compute and store per-chunk simhash signatures during ingest (enables NeAR chunk-level similarity; off by default)").Default("false").Bool()
+	storeWorkers := cmdstore.Flag(cnst.FlagStoreWorkers, "Override batch-owner worker count (0 = mode-aware default)").Default("0").Int()
+	storeQueue := cmdstore.Flag(cnst.FlagStoreQueue, "Override batch-owner task queue depth (0 = mode-aware default)").Default("0").Int()
 
 	cmdrestore := app.Command(cnst.CmdRestore, "Restore file from database")
 	rpath := cmdrestore.Flag(cnst.FlagRestoreFilePath, "Path for restoring the file").Short(cnst.FlagRestoreFilePathShort).Default("restored").String()
 	rhash := cmdrestore.Arg(cnst.OperandHash, "Hash of file that must be restoed").String()
 
 	cmdlist := app.Command(cnst.CmdList, "List all the saved files in the database")
+	listStatus := cmdlist.Flag(cnst.FlagListStatus, "Filter evidence by status [all|completed|pending|failed]").Default("all").String()
 	cmdstats := app.Command(cnst.CmdStats, "Show database statistics")
+	cmdrepair := app.Command(cnst.CmdRepair, "Inspect and optionally mark partial evidence ingests as failed")
+	repairFix := cmdrepair.Flag(cnst.FlagRepairFix, "Mark pending evidence ingests as failed so they are visible and retryable").Default("false").Bool()
 
 	cmdnear := app.Command(cnst.CmdNear, "Get NeAR file objects")
 	cmdin := cmdnear.Command(cnst.SubCmdIn, "Finds NeAR objects & generates GReAt graph for file INside of the database")
@@ -100,12 +110,49 @@ func main() {
 		return
 	}
 
+	// Initialize structured logging
+	debugMode := os.Getenv("DUES_DEBUG") != ""
+	logErr := logging.InitLogger(debugMode)
+	_ = logErr
+	defer logging.Sync()
+
+	logging.GetLogger().Info("DUES starting",
+		zap.String("version", duesVersion),
+		zap.String("codename", duesCodename))
+
 	parsed := kingpin.MustParse(app.Parse(os.Args[1:]))
 	cnst.MEMOPT = *memopt
 	cnst.QUICKOPT = *QUICKOPT
 	cnst.CONTAINERMODE = *containerMode
 	cnst.HIERARCHICALINDEX = *hierarchicalIndex
-	cnst.HASHALGO = strings.ToUpper(*hashAlgo)
+	cnst.HASHALGO = strings.ToLower(*hashAlgo)
+	cnst.CompressLevel = strings.ToLower(*compressLevel)
+	storePipelineWorkers := 0
+	storePipelineQueue := 0
+	if parsed == cmdstore.FullCommand() {
+		cnst.ENABLESIMHASH = *enableSimhash
+		cnst.StoreWorkerCount = *storeWorkers
+		cnst.StoreTaskQueueDepth = *storeQueue
+		storePipelineWorkers, storePipelineQueue = cnst.GetStorePipelineTuning(cnst.CONTAINERMODE, cnst.HIERARCHICALINDEX)
+	}
+
+	// Re-initialize the encoder now that the compression level flag is known.
+	if err := cnst.ENCODER.Close(); err != nil {
+		handle(err)
+	}
+	encLevel := zstd.SpeedBestCompression
+	switch cnst.CompressLevel {
+	case "fast":
+		encLevel = zstd.SpeedFastest
+	case "default":
+		encLevel = zstd.SpeedDefault
+	case "best":
+		encLevel = zstd.SpeedBestCompression
+	}
+	var encErr error
+	cnst.ENCODER, encErr = zstd.NewWriter(nil, zstd.WithEncoderLevel(encLevel))
+	handle(encErr)
+
 	if cnst.HASHALGO == "" {
 		cnst.HASHALGO = cnst.BLAKE3
 	}
@@ -134,36 +181,101 @@ func main() {
 		if cnst.HIERARCHICALINDEX {
 			color.Magenta("🏛 hierarchical index enabled (2-level lookup) 🏛")
 		}
+		if cnst.CompressLevel != "default" {
+			color.Yellow("🗜  chunk compression level: %s", cnst.CompressLevel)
+		}
+		if cnst.ENABLESIMHASH {
+			color.Yellow("🔍 simhash enabled (--simhash)")
+		}
+		if parsed == cmdstore.FullCommand() {
+			color.Cyan("⚙ store pipeline: workers=%d queue=%d", storePipelineWorkers, storePipelineQueue)
+		}
 	}
 
 	switch parsed {
 	case cmdversion.FullCommand():
+		logging.GetLogger().Debug("Command: version")
 		printVersionInfo()
 	case cmdtui.FullCommand():
+		logging.GetLogger().Info("Command: tui", zap.String("dbpath", *dbpath))
 		err = cli.TUICmd(*chonkSize, *dbpath, key)
 	case cmdstore.FullCommand():
-		err = cli.StoreData(*chonkSize, *dbpath, *evipath, key, *noIndex, *enableFTS, *enableEnrichment)
+		logging.GetLogger().Info("Command: store",
+			zap.String("file", *evipath),
+			zap.String("dbpath", *dbpath),
+			zap.Int("chonksize_kb", *chonkSize),
+			zap.Bool("sync_index", *syncIndex),
+			zap.Bool("no_index", *noIndex),
+			zap.Bool("fts_enabled", *enableFTS),
+			zap.Bool("enrichment_enabled", *enableEnrichment),
+			zap.Int("store_workers", *storeWorkers),
+			zap.Int("store_queue", *storeQueue),
+			zap.Int("store_workers_effective", storePipelineWorkers),
+			zap.Int("store_queue_effective", storePipelineQueue))
+		err = cli.StoreData(*chonkSize, *dbpath, *evipath, key, *syncIndex, *noIndex, *enableFTS, *enableEnrichment)
 	case cmdrestore.FullCommand():
+		logging.GetLogger().Info("Command: restore",
+			zap.String("hash", *rhash),
+			zap.String("output_path", *rpath),
+			zap.String("dbpath", *dbpath),
+			zap.Int("chonksize_kb", *chonkSize))
 		err = cli.RestoreData(*chonkSize, *dbpath, *rhash, *rpath, key)
 	case cmdlist.FullCommand():
-		err = cli.ListData(*chonkSize, *dbpath, key)
+		logging.GetLogger().Info("Command: list",
+			zap.String("dbpath", *dbpath),
+			zap.Int("chonksize_kb", *chonkSize),
+			zap.String("status", strings.ToLower(*listStatus)))
+		err = cli.ListData(*chonkSize, *dbpath, key, *listStatus)
 	case cmdstats.FullCommand():
+		logging.GetLogger().Info("Command: stats", zap.String("dbpath", *dbpath), zap.Int("chonksize_kb", *chonkSize))
 		err = cli.StatsData(*chonkSize, *dbpath, key)
+	case cmdrepair.FullCommand():
+		logging.GetLogger().Info("Command: repair",
+			zap.String("dbpath", *dbpath),
+			zap.Int("chonksize_kb", *chonkSize),
+			zap.Bool("fix", *repairFix))
+		err = cli.RepairData(*chonkSize, *dbpath, key, *repairFix)
 	case cmdin.FullCommand():
+		logging.GetLogger().Info("Command: near in",
+			zap.String("hash", *inhash),
+			zap.String("dbpath", *dbpath),
+			zap.Bool("deep", *deep),
+			zap.Int("topk", *inTopK),
+			zap.Bool("verify", *inVerify))
 		err = cli.NearInData(*deep, *inVerify, *inTopK, *chonkSize, *dbpath, *inhash, key)
 	case cmdout.FullCommand():
+		logging.GetLogger().Info("Command: near out",
+			zap.String("file_path", *outpath),
+			zap.String("dbpath", *dbpath),
+			zap.Bool("deep", *outDeep),
+			zap.Int("topk", *outTopK),
+			zap.Bool("verify", *outVerify),
+			zap.Bool("explain_exact", *outExplainExact))
 		err = cli.NearOutData(*outDeep, *outExplainExact, *outVerify, *outTopK, *chonkSize, *dbpath, *outpath, key)
 	case cmdsearch.FullCommand():
+		logging.GetLogger().Info("Command: search",
+			zap.String("query", *query),
+			zap.String("dbpath", *dbpath),
+			zap.Float64("rank_alpha", *rankAlpha),
+			zap.Bool("fulltext", *fullText))
 		err = cli.SearchCmd(*chonkSize, *query, *dbpath, key, *rankAlpha, *fullText)
 	case microExtract.FullCommand():
+		logging.GetLogger().Info("Command: micro extract",
+			zap.String("dbpath", *dbpath),
+			zap.Int("topk", *microExtractTopK),
+			zap.Bool("force", *microExtractForce))
 		err = cli.MicroArtefactCmd(*chonkSize, *dbpath, key, *microExtractForce, *microExtractTopK)
 	case microList.FullCommand():
+		logging.GetLogger().Info("Command: micro list", zap.String("dbpath", *dbpath))
 		err = cli.ListMicroArtefactsCmd(*chonkSize, *dbpath, key)
 	case cmdenrich.FullCommand():
+		logging.GetLogger().Info("Command: enrich", zap.String("dbpath", *dbpath))
 		err = cli.EnrichData(*chonkSize, *dbpath, key)
 	case cmdreset.FullCommand():
+		logging.GetLogger().Info("Command: reset", zap.String("dbpath", *dbpath))
 		err = cli.ResetData(*dbpath)
 	case cmdserver.FullCommand():
+		logging.GetLogger().Info("Command: server", zap.String("dbpath", *dbpath), zap.Int("chonksize_kb", *chonkSize))
 		err = api.Server(*chonkSize, *dbpath, key)
 	}
 
@@ -353,10 +465,24 @@ func printRootHelp() {
 
 func printStoreHelp() {
 	printHelpHeader("store")
-	fmt.Println("Usage: dues store FILE [--sync|-s] [--no-index|-n] [--enable-fts] [--enrich] [--hash-algo|-g [sha3|blake3]] [global options]")
+	fmt.Println("Usage: dues store FILE [--sync|-s] [--no-index|-n] [--enable-fts] [--enrich] [--hash-algo|-g [sha3|blake3]] [--simhash] [--store-workers N] [--store-queue N] [global options]")
 	fmt.Println("Stores a file in the DUES database using chunk-level deduplication.")
+	fmt.Println("")
+	printHelpSection("Store Pipeline")
+	fmt.Println("  Fan-out/fan-in model:")
+	fmt.Println("    worker goroutines: hash + materialize chunk payloads in parallel")
+	fmt.Println("    single writer: batch metadata + relation/revrel writes")
+	fmt.Println("  This keeps expensive chunk work parallel while preserving deterministic batch ownership.")
+	fmt.Println("")
+	printHelpSection("Store Tuning")
+	fmt.Println("  --store-workers N   Override worker count (0 = mode-aware default)")
+	fmt.Println("  --store-queue N     Override task queue depth (0 = mode-aware default)")
+	fmt.Println("  Defaults are chosen by storage mode:")
+	fmt.Println("    file mode: higher workers")
+	fmt.Println("    container/hierarchical: lower workers + deeper queue")
 	printExamples(
 		"dues store E01-image.dd",
+		"dues store E01-image.dd --store-workers 24 --store-queue 192",
 		"dues store E01-image.dd --enrich",
 		"dues store evidence.raw --dbpath ./caseA",
 		"dues store memory.dump --no-index --quick",

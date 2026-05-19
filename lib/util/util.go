@@ -301,10 +301,13 @@ func SealAES(key, plaintext []byte) ([]byte, error) {
 		return nil, err
 	}
 
-	nonce := sha256.Sum256(key)
-	ciphertext := gcm.Seal(nil, nonce[:gcm.NonceSize()], plaintext, nil)
+	nonce := make([]byte, gcm.NonceSize())
+	if _, err := rand.Read(nonce); err != nil {
+		return nil, err
+	}
+	ciphertext := gcm.Seal(nil, nonce, plaintext, nil)
 
-	return ciphertext, nil
+	return append(nonce, ciphertext...), nil
 }
 func UnsealAES(key, ciphertext []byte) ([]byte, error) {
 	block, err := aes.NewCipher(key)
@@ -317,8 +320,16 @@ func UnsealAES(key, ciphertext []byte) ([]byte, error) {
 		return nil, err
 	}
 
-	nonce := sha256.Sum256(key)
-	plaintext, err := gcm.Open(nil, nonce[:gcm.NonceSize()], ciphertext, nil)
+	nonceSize := gcm.NonceSize()
+	if len(ciphertext) > nonceSize {
+		plaintext, err := gcm.Open(nil, ciphertext[:nonceSize], ciphertext[nonceSize:], nil)
+		if err == nil {
+			return plaintext, nil
+		}
+	}
+
+	legacyNonce := sha256.Sum256(key)
+	plaintext, err := gcm.Open(nil, legacyNonce[:nonceSize], ciphertext, nil)
 	if err != nil {
 		return nil, err
 	}

@@ -1,6 +1,7 @@
 package store
 
 import (
+	"bytes"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -154,10 +155,21 @@ func gatherStats(db *badger.DB) (*DBStats, error) {
 		}
 		it.Close()
 
-		// --- Shared chunks: rev-rel entries referenced by more than 1 file ---
-		revRelPrefix := []byte(cnst.ReverseRelationNamespace)
+		// --- Shared chunks: logical rev-rel entries referenced by more than 1 file ---
+		sharedByRelation := make(map[string]map[string]struct{})
+
+		appendPrefix := []byte(cnst.ReverseRelationAppendNamespace)
 		it = txn.NewIterator(valOpts)
-		for it.Seek(revRelPrefix); it.ValidForPrefix(revRelPrefix); it.Next() {
+		for it.Seek(appendPrefix); it.ValidForPrefix(appendPrefix); it.Next() {
+			memberKey := it.Item().KeyCopy(nil)
+			split := bytes.Split(memberKey, []byte(cnst.DataSeperator))
+			if len(split) < 4 {
+				it.Close()
+				return fmt.Errorf("invalid reverse-relation append key: %q", string(memberKey))
+			}
+			chash := bytes.TrimPrefix(split[1], []byte(":"))
+			logicalKey := string(util.AppendToBytesSlice(cnst.ReverseRelationNamespace, chash, cnst.DataSeperator, split[2]))
+
 			v, err := it.Item().ValueCopy(nil)
 			if err != nil {
 				it.Close()
@@ -166,12 +178,21 @@ func gatherStats(db *badger.DB) (*DBStats, error) {
 			if dec, err := cnst.DECODER.DecodeAll(v, nil); err == nil {
 				v = dec
 			}
-			var m map[string]struct{}
-			if err := msgpack.Unmarshal(v, &m); err == nil && len(m) > 1 {
+
+			memberSet := sharedByRelation[logicalKey]
+			if memberSet == nil {
+				memberSet = make(map[string]struct{}, 1)
+				sharedByRelation[logicalKey] = memberSet
+			}
+			memberSet[string(v)] = struct{}{}
+		}
+		it.Close()
+
+		for _, memberSet := range sharedByRelation {
+			if len(memberSet) > 1 {
 				s.SharedChunks++
 			}
 		}
-		it.Close()
 
 		return nil
 	})

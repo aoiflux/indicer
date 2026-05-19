@@ -29,20 +29,22 @@ func WriteChonk(dbpath string, data, ckey, key []byte) ([]byte, error) {
 }
 
 func ReadChonk(cfpath, key []byte) ([]byte, error) {
-	var data []byte
-
 	encoded, err := os.ReadFile(string(cfpath))
 	if err != nil {
 		return nil, err
 	}
-	decrypted, err := util.UnsealAES(key, encoded)
-	if err == nil {
-		data = decrypted
-	}
-	decoded, err := cnst.DECODER.DecodeAll(data, nil)
-	if err == nil {
-		data = decoded
+	if cnst.QUICKOPT {
+		return encoded, nil
 	}
 
-	return data, nil
+	decrypted, err := util.UnsealAES(key, encoded)
+	if err != nil {
+		return nil, err
+	}
+	decoded, err := cnst.DECODER.DecodeAll(decrypted, nil)
+	if err != nil {
+		return nil, err
+	}
+
+	return decoded, nil
 }

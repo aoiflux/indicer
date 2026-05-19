@@ -20,6 +20,8 @@
 # Go workspace file
 go.work
 
+bench/
+bench_compare/
 data/
 tdata/
 .vscode

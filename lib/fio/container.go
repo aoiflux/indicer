@@ -67,6 +67,8 @@ type ContainerManager struct {
 	writeQueue       chan *WriteRequest // Lock-free write queue
 	writerDone       chan struct{}      // Signal writer goroutine finished
 	acceptMu         sync.RWMutex
+	seenMu           sync.RWMutex
+	seen             map[string]WriteResponse // in-run dedup by chunk hash
 	closed           bool
 	closeOnce        sync.Once
 }
@@ -78,6 +80,7 @@ func NewContainerManager(dbpath string) *ContainerManager {
 		containerIndex: 0,
 		writeQueue:     make(chan *WriteRequest, 1000), // Buffered channel for batching
 		writerDone:     make(chan struct{}),
+		seen:           make(map[string]WriteResponse),
 	}
 
 	// Start dedicated writer goroutine (lock-free single writer)
@@ -88,7 +91,13 @@ func NewContainerManager(dbpath string) *ContainerManager {
 
 // WriteChunkToContainer writes a chunk to a container file using lock-free queue
 func (cm *ContainerManager) WriteChunkToContainer(data, ckey, key []byte) (containerPath string, offset int64, size int64, err error) {
-	_ = ckey // reserved for future metadata/indexing use
+	hashKey := base64.RawURLEncoding.EncodeToString(ckey)
+	cm.seenMu.RLock()
+	if cached, ok := cm.seen[hashKey]; ok {
+		cm.seenMu.RUnlock()
+		return cached.containerPath, cached.offset, cached.size, cached.err
+	}
+	cm.seenMu.RUnlock()
 
 	// Create write request with response channel
 	req := &WriteRequest{
@@ -109,6 +118,13 @@ func (cm *ContainerManager) WriteChunkToContainer(data, ckey, key []byte) (conta
 
 	// Wait for response from writer goroutine
 	resp := <-req.responseCh
+	if resp.err == nil {
+		cm.seenMu.Lock()
+		if _, exists := cm.seen[hashKey]; !exists {
+			cm.seen[hashKey] = resp
+		}
+		cm.seenMu.Unlock()
+	}
 
 	return resp.containerPath, resp.offset, resp.size, resp.err
 }

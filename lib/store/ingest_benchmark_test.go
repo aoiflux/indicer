@@ -276,7 +276,7 @@ func ingestBatchOwnerWorkerOnce(db *badger.DB, fhash, mappedFile []byte, enableS
 	}
 
 	go runBatchOwnerWriter(fhash, db, taskCh, cancel, writerErrCh)
-	seenChunks := &sync.Map{}
+	seenChunks := newShardedChunkSet()
 
 	active := 0
 	for idx := int64(0); idx < int64(len(mappedFile)); idx += cnst.ChonkSize {

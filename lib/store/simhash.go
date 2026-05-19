@@ -29,6 +29,11 @@ func newSimhashAsyncWriter(db *badger.DB, limit int) *simhashAsyncWriter {
 }
 
 func (w *simhashAsyncWriter) enqueue(cdata, chash []byte) {
+	// Copy cdata here at the async handoff boundary so the goroutine does not
+	// hold a reference to a caller-owned slice (e.g. a mapped file sub-slice)
+	// past the caller's lifetime.
+	cdataCopy := make([]byte, len(cdata))
+	copy(cdataCopy, cdata)
 	w.wg.Add(1)
 	go func() {
 		defer w.wg.Done()
@@ -48,7 +53,7 @@ func (w *simhashAsyncWriter) enqueue(cdata, chash []byte) {
 			return
 		}
 
-		sig := util.ChunkSimHash64(cdata)
+		sig := util.ChunkSimHash64(cdataCopy)
 		if err = dbio.SetChonkSignature(chash, sig, w.db); err != nil {
 			w.captureErr(err)
 		}

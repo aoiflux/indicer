@@ -43,9 +43,9 @@ flowchart LR
     D --> E[evidenceFilePreflight]
     E --> F[storeEvidenceDataBatchOwner]
 
-    F --> G[Workers hash chunks]
+    F --> G[Workers hash + materialize chunks]
     G --> H[Single writer goroutine]
-    H --> I[SetBatchChonkNode + processRel + processRevRel]
+    H --> I[SetBatchNode(cmeta) + processRel + processRevRel]
     I --> J[batch.Flush]
     J --> K[mark evidence FLUSHED]
 
@@ -73,8 +73,8 @@ flowchart LR
 | Hierarchical round-trip validation test                              | Active               | `cli/hierarchical_roundtrip_test.go`                                          |
 | Startup orphan recovery                                              | Active               | `lib/store/recovery.go`, `cli/common.go`                                      |
 | Repair inspect/fix flow                                              | Active               | `lib/store/repair.go`, `cli/cmdrepair.go`                                     |
-| Async simhash writer                                                 | Replaced             | `lib/store/simhash.go` (file retained; type unused in production path)        |
-| Batched inline simhash                                               | Active               | `lib/store/batch_owner.go`, `lib/dbio/dbio.go`                                |
+| Async simhash writer                                                 | Active               | `lib/store/simhash.go`, `lib/store/batch_owner.go`                            |
+| Batched inline simhash                                               | Removed              | Replaced by async writer enqueue path                                         |
 
 ---
 
@@ -263,55 +263,57 @@ sequenceDiagram
 ```mermaid
 flowchart TD
     A[Mapped input file] --> B[Hash workers]
-    B --> C[channel: chunkTask]
-    C --> D[Single writer goroutine]
+  B --> C[shardedChunkSet dedup gate]
+  C --> D[worker materialize chonk metadata]
+  D --> E[channel: chunkTask]
+  E --> F[Single writer goroutine]
 
-    D --> E[seenChunks plain map]
-    D --> F[db WriteBatch owner]
-    D --> G[revRelAppendBuffer owner]
-
-    D --> H[batchOwnerProcessChonk]
-    D --> I[processRel]
-    D --> J[processRevRel]
-    J --> K[buffer add]
-    D --> L[flush revRel buffer]
-    D --> M[batch.Flush]
+  F --> G[db WriteBatch owner]
+  F --> H[revRelAppendBuffer owner]
+  F --> I[SetBatchNode for cmeta]
+  F --> J[processRel]
+  F --> K[processRevRel]
+  K --> L[buffer add]
+  F --> M[flush revRel buffer]
+  F --> N[batch.Flush]
 ```
 
 Key design decisions:
 
 - Only one goroutine owns `*badger.WriteBatch` to avoid internal lock contention
   and race risk.
-- Only writer goroutine mutates `seenChunks` and revrel buffer, allowing plain
-  map/no lock on hot path.
-- Hash workers only compute hash and copy bytes; they do not touch DB batch.
+- Revrel append buffer is single-writer owned; no mutex is required.
+- Worker goroutines share a sharded `seenChunks` set (`shardedChunkSet`) to
+  avoid duplicate chunk materialization work before enqueue to writer.
+- Hash workers perform chunk hash + materialization work and pass `cmeta`
+  payload to the writer, while the writer remains DB-batch owner.
 
 ### 7.2 Chunk Processing Rules
 
-`batchOwnerProcessChonk` behavior:
+`batchOwnerHashWorker` behavior:
 
-1. Skip if chunk data empty (benchmark metadata-only helpers).
-2. Deduplicate in-file via `seenChunks` map.
-3. Probe chunk key existence with `PingNode`.
-4. Write new chunk via `SetBatchChonkNode` when missing.
-5. If `cnst.ENABLESIMHASH` is true, write chunk signature via
-   `SetBatchChonkSignature` in the same batch.
+1. Slice mapped input for chunk bytes and compute `chash`.
+2. Optionally enqueue async simhash write (`simhashAsyncWriter.enqueue`).
+3. Check in-run dedup with `shardedChunkSet.loadOrStore(chash)`.
+4. On first-seen chunk:
+   - file mode: call `MaterializeChonkNode` directly (no `PingNode` pre-probe),
+     relying on idempotent file write behavior.
+   - container mode: keep `PingNode` pre-probe to avoid duplicate cross-run
+     appends where in-process cache cannot detect prior ingests.
+5. Send `chunkTask{index,chash,cmeta}` to writer channel.
 
-Simhash computation is performed in parallel hash workers (step outside the
-writer goroutine) and the result is carried in `chunkTask.sig`. The writer
-goroutine only appends the pre-computed value into the batch, keeping the
-critical write path unblocked.
+`batchOwnerProcessChonk` remains as a benchmark/helper path and is not the
+production ingest hot path.
 
 ### 7.3 SimHash Computation and Storage
 
-- Computed in parallel hash worker goroutines (`util.ChunkSimHash64`) alongside
-  chunk hash.
-- Result carried in `chunkTask.sig` field; zero value when
-  `ENABLESIMHASH=false`.
-- Writer persists signature only for new (first-seen) chunks via
-  `dbio.SetBatchChonkSignature` inside the ingest `*badger.WriteBatch`.
-- Disabled via `--no-simhash` CLI flag; useful for benchmarking ingest without
-  similarity overhead.
+- Computed in `simhashAsyncWriter.enqueue` goroutines using
+  `util.ChunkSimHash64(cdataCopy)`.
+- `enqueue` copies chunk data at async handoff boundary to avoid retaining
+  caller-owned mapped-file slices past lifetime.
+- Writes are idempotent per chunk via simhash key probe (`S|||:` namespace)
+  before `SetChonkSignature`.
+- Controlled by `cnst.ENABLESIMHASH` / `--no-simhash`.
 
 ---
 
@@ -349,7 +351,7 @@ paths.
 
 ```mermaid
 flowchart TD
-    A[SetBatchChonkNode] --> B{container mode?}
+    A[MaterializeChonkNode] --> B{container mode?}
     B -- no --> C[write per-chunk file]
     C --> D[store ChonkMetadata in DB]
 
@@ -392,7 +394,7 @@ Policy:
 - Scan incomplete, non-failed evidence.
 - If `pending`: mark failed.
 - If `flushed`:
-  - validate all relations and chunks are readable
+  - validate relation/chunk key dependencies are present
     (`ValidateFlushedEvidenceMaterialized`).
   - if valid: auto-complete.
   - if invalid: mark failed.
@@ -415,10 +417,10 @@ Report includes counts and per-evidence actions.
 `ValidateFlushedEvidenceMaterialized`:
 
 1. Derive evidence hash from evidence key.
-2. Iterate logical restore indexes.
-3. Ensure each relation key resolves to chunk hash.
-4. Ensure each chunk hash resolves to readable chunk payload.
-5. Fail fast on first missing/unreadable dependency.
+2. Iterate logical restore indexes in one `db.View` and collect relation chunk
+   hashes.
+3. In a second `db.View`, verify each corresponding `C|||:{chash}` key exists.
+4. Fail fast on first missing/unreadable dependency.
 
 ---
 
@@ -535,18 +537,18 @@ increase ingest throughput and reduce storage overhead.
 
 ### 15.1 Fast-Path Mechanisms
 
-| Optimization                       | What it changes                                                                                                                  | Why it is faster                                                                                                           |
-| ---------------------------------- | -------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------- |
-| Parallel chunk materialization     | Worker goroutines now hash + materialize chunk payloads in parallel, then pass encoded chunk metadata to the batch-owner writer. | Moves compression/encryption/container-file work off the single writer so CPU-heavy chunk persistence scales with cores.   |
-| Batch-owner metadata write model   | A single writer goroutine owns `*badger.WriteBatch` for metadata/relation/revrel keys only.                                      | Preserves deterministic DB batching while avoiding multi-goroutine write-batch contention.                                 |
-| In-file dedup (`seenChunks`)       | Duplicate chunk hashes inside the same ingest are skipped before persistence.                                                    | Avoids repeated chunk writes and extra metadata writes for duplicate content.                                              |
-| Existence probe before chunk write | `PingNode` checks whether chunk key already exists before writing.                                                               | Prevents unnecessary write amplification for previously stored chunks.                                                     |
-| Mode-aware pipeline tuning         | Worker count + task queue depth are tuned by storage mode (file vs container vs hierarchical), with CLI overrides available.     | Reduces queue thrash and backpressure mismatch for serialized container/hierarchical components.                           |
-| Reverse-relation append-primary    | Uses append-member keys under `RA                                                                                                |                                                                                                                            |
-| Buffered reverse-relation flush    | Writer accumulates reverse members and flushes in bulk (`SetReverseRelationAppendMembers`).                                      | Reduces per-relation call overhead and improves batch locality.                                                            |
-| Container mode for small chunks    | Multiple chunks are packed into larger container files.                                                                          | Lowers filesystem metadata overhead and tiny-file penalty.                                                                 |
-| Hierarchical BIDX metadata         | In hierarchical mode, chunk location metadata is written to sorted block indexes.                                                | Keeps metadata compact and enables predictable lookup with binary search.                                                  |
-| Batched inline simhash             | Simhash computed in parallel workers; written into the ingest batch for new chunks only; skipped when `--no-simhash` is set.     | Eliminates async goroutine overhead and extra per-chunk DB transactions; flag allows benchmarking without similarity cost. |
+| Optimization                     | What it changes                                                                                                              | Why it is faster                                                                                                         |
+| -------------------------------- | ---------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------ |
+| Parallel chunk materialization   | Worker goroutines hash + materialize chunk payloads in parallel, then pass encoded chunk metadata to the batch-owner writer. | Moves compression/encryption/container-file work off the single writer so CPU-heavy chunk persistence scales with cores. |
+| Batch-owner metadata write model | A single writer goroutine owns `*badger.WriteBatch` for metadata/relation/revrel keys only.                                  | Preserves deterministic DB batching while avoiding multi-goroutine write-batch contention.                               |
+| In-file dedup (`seenChunks`)     | Duplicate chunk hashes inside the same ingest are skipped by a sharded dedup set before materialization.                     | Avoids repeated chunk writes and extra metadata writes for duplicate content.                                            |
+| Conditional existence probe      | `PingNode` is kept only for container-mode first-seen chunks; file-mode writes rely on idempotent `WriteChonk`.              | Removes an extra DB read on file-mode hot path while preserving container-mode correctness on resumed ingests.           |
+| Mode-aware pipeline tuning       | Worker count + task queue depth are tuned by storage mode (file vs container vs hierarchical), with CLI overrides available. | Reduces queue thrash and backpressure mismatch for serialized container/hierarchical components.                         |
+| Reverse-relation append-primary  | Uses append-member keys under `RA                                                                                            |                                                                                                                          |
+| Buffered reverse-relation flush  | Writer accumulates reverse members and flushes in bulk (`SetReverseRelationAppendMembers`).                                  | Reduces per-relation call overhead and improves batch locality.                                                          |
+| Container mode for small chunks  | Multiple chunks are packed into larger container files.                                                                      | Lowers filesystem metadata overhead and tiny-file penalty.                                                               |
+| Hierarchical BIDX metadata       | In hierarchical mode, chunk location metadata is written to sorted block indexes.                                            | Keeps metadata compact and enables predictable lookup with binary search.                                                |
+| Async simhash writer             | Simhash is computed and persisted asynchronously with handoff-copy safety; skipped when `--no-simhash` is set.               | Keeps ingest writer critical path focused on chunk metadata + relation writes.                                           |
 
 ### 15.2 Critical Path vs Side Work
 
@@ -564,7 +566,8 @@ flowchart LR
 
 Notes:
 
-- `ChunkSimHash64` is called inside workers in parallel with chunk hashing.
+- `ChunkSimHash64` runs in `simhashAsyncWriter` goroutines (outside writer
+  critical path).
 - Worker-side chunk materialization uses `dbio.MaterializeChonkNode`; the writer
   persists only encoded metadata + relation/revrel keys in batch.
 - This is still a fan-out pipeline: many workers run concurrently, then fan-in
@@ -629,9 +632,9 @@ runtime call chain in code.
 - [lib/store/batch_owner.go](lib/store/batch_owner.go)
 - Focus functions:
   - `storeEvidenceDataBatchOwner`
+  - `batchOwnerHashWorker`
   - `runBatchOwnerWriter`
   - `batchOwnerWriteLoop`
-  - `batchOwnerProcessChonk`
 
 5. DB/chunk persistence dispatch:
 
@@ -753,17 +756,17 @@ code path and first verification steps.
 
 | Failure signature (message fragment)                   | Most likely source path                                                                                        | What it usually means                                                          | First 3 checks                                                                                                                                                                                  |
 | ------------------------------------------------------ | -------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------ | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| incomplete file                                        | [lib/store/restore.go](lib/store/restore.go), [lib/cnst/const.go](lib/cnst/const.go)                           | Restore was attempted for evidence not marked completed.                       | 1) Check evidence markers completed/failed/ingest_state. 2) Run repair inspect flow. 3) Verify startup recovery ran via [cli/common.go](cli/common.go).                                         |
-| invalid state for flushed validation                   | [lib/store/ingest_validation.go](lib/store/ingest_validation.go)                                               | Flushed validation was called for an evidence record not in flushed state.     | 1) Inspect current ingest_state. 2) Confirm caller is recovery or repair path. 3) Check for out-of-order marker writes in [lib/store/store.go](lib/store/store.go).                             |
-| relation lookup failed at index                        | [lib/store/ingest_validation.go](lib/store/ingest_validation.go), [lib/store/restore.go](lib/store/restore.go) | Missing relation key for one logical chunk offset.                             | 1) Verify processRel ran for that offset. 2) Verify batch flush completed successfully. 3) Confirm no early failure path marked record as flushed incorrectly.                                  |
-| chunk lookup failed at index                           | [lib/store/ingest_validation.go](lib/store/ingest_validation.go), [lib/dbio/dbio.go](lib/dbio/dbio.go)         | Relation exists but chunk node lookup failed.                                  | 1) Validate chunk key namespace and hash bytes. 2) Check container metadata path and offsets. 3) Confirm chunk write path used same key/hash contract.                                          |
-| chunk not found in block                               | [lib/fio/blockindex.go](lib/fio/blockindex.go)                                                                 | Hierarchical BIDX lookup did not find target hash in selected block file.      | 1) Confirm hash normalization to fixed 64-byte compare key. 2) Verify block file exists and was flushed. 3) Check block version/magic compatibility.                                            |
-| block file not found for block                         | [lib/fio/blockindex.go](lib/fio/blockindex.go)                                                                 | Hierarchical lookup routed to block ID with no on-disk block file.             | 1) Verify container + hierarchical mode were active on ingest. 2) Confirm block manager close/flush occurred. 3) Check blob blocks directory state.                                             |
-| unsupported block file version                         | [lib/fio/blockindex.go](lib/fio/blockindex.go)                                                                 | BIDX file version does not match runtime reader expectations.                  | 1) Inspect block header magic/version. 2) Rebuild/re-ingest data for current format. 3) Ensure mixed old/new block files are not present.                                                       |
-| DB_CONNECT_ERROR                                       | [cli/common.go](cli/common.go), [lib/dbio/dbio.go](lib/dbio/dbio.go)                                           | CLI could not open DB path or initialize DB resources.                         | 1) Verify dbpath exists and permissions are valid. 2) Confirm password/key consistency. 3) Check disk space and file lock contention.                                                           |
-| RecoverIncompleteIngests FLUSHED_INVALID_MARKED_FAILED | [lib/store/recovery.go](lib/store/recovery.go)                                                                 | Startup found a flushed record but validation failed, so it was marked failed. | 1) Inspect validation failure index and relation/chunk availability. 2) Confirm prior ingest did not terminate after partial writes. 3) Review storage mode specific metadata (container/BIDX). |
-| RecoverIncompleteIngests MARKED_FAILED                 | [lib/store/recovery.go](lib/store/recovery.go)                                                                 | Startup found pending orphan record and marked it failed.                      | 1) Check last ingest run for interruption. 2) Confirm expected behavior for pending on recovery. 3) Retry ingest for affected evidence.                                                         |
-| RepairData REPAIR_ERROR                                | [cli/cmdrepair.go](cli/cmdrepair.go), [lib/store/repair.go](lib/store/repair.go)                               | Repair command failed while scanning or applying fixes.                        | 1) Run repair without fix to isolate scan issues. 2) Inspect problematic evidence row/action in JSON output. 3) Validate DB read path health for evidence and relation namespaces.              |
+| incomplete file                                        | [lib/store/restore.go](lib/store/restore.go), [lib/cnst/const.go](lib/cnst/const.go)                           | Restore was attempted for evidence not marked completed.                       | 1. Check evidence markers completed/failed/ingest_state. 2. Run repair inspect flow. 3. Verify startup recovery ran via [cli/common.go](cli/common.go).                                         |
+| invalid state for flushed validation                   | [lib/store/ingest_validation.go](lib/store/ingest_validation.go)                                               | Flushed validation was called for an evidence record not in flushed state.     | 1. Inspect current ingest_state. 2. Confirm caller is recovery or repair path. 3. Check for out-of-order marker writes in [lib/store/store.go](lib/store/store.go).                             |
+| relation lookup failed at index                        | [lib/store/ingest_validation.go](lib/store/ingest_validation.go), [lib/store/restore.go](lib/store/restore.go) | Missing relation key for one logical chunk offset.                             | 1. Verify processRel ran for that offset. 2. Verify batch flush completed successfully. 3. Confirm no early failure path marked record as flushed incorrectly.                                  |
+| chunk lookup failed at chunk                           | [lib/store/ingest_validation.go](lib/store/ingest_validation.go), [lib/dbio/dbio.go](lib/dbio/dbio.go)         | Relation exists but chunk node lookup failed.                                  | 1. Validate chunk key namespace and hash bytes. 2. Check container metadata path and offsets. 3. Confirm chunk write path used same key/hash contract.                                          |
+| chunk not found in block                               | [lib/fio/blockindex.go](lib/fio/blockindex.go)                                                                 | Hierarchical BIDX lookup did not find target hash in selected block file.      | 1. Confirm hash normalization to fixed 64-byte compare key. 2. Verify block file exists and was flushed. 3. Check block version/magic compatibility.                                            |
+| block file not found for block                         | [lib/fio/blockindex.go](lib/fio/blockindex.go)                                                                 | Hierarchical lookup routed to block ID with no on-disk block file.             | 1. Verify container + hierarchical mode were active on ingest. 2. Confirm block manager close/flush occurred. 3. Check blob blocks directory state.                                             |
+| unsupported block file version                         | [lib/fio/blockindex.go](lib/fio/blockindex.go)                                                                 | BIDX file version does not match runtime reader expectations.                  | 1. Inspect block header magic/version. 2. Rebuild/re-ingest data for current format. 3. Ensure mixed old/new block files are not present.                                                       |
+| DB_CONNECT_ERROR                                       | [cli/common.go](cli/common.go), [lib/dbio/dbio.go](lib/dbio/dbio.go)                                           | CLI could not open DB path or initialize DB resources.                         | 1. Verify dbpath exists and permissions are valid. 2. Confirm password/key consistency. 3. Check disk space and file lock contention.                                                           |
+| RecoverIncompleteIngests FLUSHED_INVALID_MARKED_FAILED | [lib/store/recovery.go](lib/store/recovery.go)                                                                 | Startup found a flushed record but validation failed, so it was marked failed. | 1. Inspect validation failure index and relation/chunk availability. 2. Confirm prior ingest did not terminate after partial writes. 3. Review storage mode specific metadata (container/BIDX). |
+| RecoverIncompleteIngests MARKED_FAILED                 | [lib/store/recovery.go](lib/store/recovery.go)                                                                 | Startup found pending orphan record and marked it failed.                      | 1. Check last ingest run for interruption. 2. Confirm expected behavior for pending on recovery. 3. Retry ingest for affected evidence.                                                         |
+| RepairData REPAIR_ERROR                                | [cli/cmdrepair.go](cli/cmdrepair.go), [lib/store/repair.go](lib/store/repair.go)                               | Repair command failed while scanning or applying fixes.                        | 1. Run repair without fix to isolate scan issues. 2. Inspect problematic evidence row/action in JSON output. 3. Validate DB read path health for evidence and relation namespaces.              |
 
 Practical use order:
 
@@ -1212,3 +1215,4 @@ DBIO store contracts:
 
 This LLD reflects the current production behavior after Phase 1/2 hardening and
 Phase 4 readability slices completed through May 19, 2026.
+

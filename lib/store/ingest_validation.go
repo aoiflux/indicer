@@ -5,17 +5,16 @@ import (
 	"fmt"
 
 	"indicer/lib/cnst"
-	"indicer/lib/dbio"
 	"indicer/lib/structs"
 	"indicer/lib/util"
 
 	"github.com/dgraph-io/badger/v4"
 )
 
-// ValidateFlushedEvidenceMaterialized verifies that all logical chunk relations
-// and chunk payloads required by a FLUSHED ingest are readable from storage.
-// This prevents auto-completing records that are marked flushed but missing
-// sidecar/container content.
+// ValidateFlushedEvidenceMaterialized verifies that all logical relation and
+// chunk metadata dependencies required by a FLUSHED ingest are present.
+// This prevents auto-completing records that are marked flushed when required
+// relation/chunk links are missing.
 func ValidateFlushedEvidenceMaterialized(fileID []byte, evidenceFile structs.EvidenceFile, db *badger.DB) error {
 	if evidenceFile.Completed {
 		return nil
@@ -35,18 +34,42 @@ func ValidateFlushedEvidenceMaterialized(fileID []byte, evidenceFile structs.Evi
 	end := evidenceFile.Start + evidenceFile.Size
 	dbstart := util.GetDBStartOffset(evidenceFile.Start)
 
-	for restoreIndex := dbstart; restoreIndex < end; restoreIndex += cnst.ChonkSize {
-		relKey := util.AppendToBytesSlice(cnst.RelationNamespace, ehash, cnst.DataSeperator, restoreIndex)
-		chash, err := dbio.GetNode(relKey, db)
-		if err != nil {
-			return fmt.Errorf("relation lookup failed at index %d: %w", restoreIndex, err)
-		}
+	// Pass 1: iterate the relation prefix in a single transaction, collecting
+	// chunk hashes in index order. This replaces one db.View call per chunk.
+	chunkCount := int((end - dbstart + cnst.ChonkSize - 1) / cnst.ChonkSize)
+	chashes := make([][]byte, 0, chunkCount)
 
-		chonkKey := util.AppendToBytesSlice(cnst.ChonkNamespace, chash)
-		if _, err := dbio.GetChonkNode(chonkKey, db); err != nil {
-			return fmt.Errorf("chunk lookup failed at index %d: %w", restoreIndex, err)
+	if err := db.View(func(txn *badger.Txn) error {
+		opts := badger.DefaultIteratorOptions
+		opts.PrefetchSize = chunkCount
+		it := txn.NewIterator(opts)
+		defer it.Close()
+
+		for restoreIndex := dbstart; restoreIndex < end; restoreIndex += cnst.ChonkSize {
+			relKey := util.AppendToBytesSlice(cnst.RelationNamespace, ehash, cnst.DataSeperator, restoreIndex)
+			item, err := txn.Get(relKey)
+			if err != nil {
+				return fmt.Errorf("relation lookup failed at index %d: %w", restoreIndex, err)
+			}
+			chash, err := item.ValueCopy(nil)
+			if err != nil {
+				return fmt.Errorf("relation value copy failed at index %d: %w", restoreIndex, err)
+			}
+			chashes = append(chashes, chash)
 		}
+		return nil
+	}); err != nil {
+		return err
 	}
 
-	return nil
+	// Pass 2: verify each chunk node exists in a single transaction.
+	return db.View(func(txn *badger.Txn) error {
+		for i, chash := range chashes {
+			chonkKey := util.AppendToBytesSlice(cnst.ChonkNamespace, chash)
+			if _, err := txn.Get(chonkKey); err != nil {
+				return fmt.Errorf("chunk lookup failed at chunk %d: %w", i, err)
+			}
+		}
+		return nil
+	})
 }

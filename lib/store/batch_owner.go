@@ -1,11 +1,9 @@
 package store
 
 // batch_owner.go implements the production ingest pipeline.
-// Fan-out algorithm explanation
-
 // Big picture:
-//  1) Worker goroutines read chunk ranges, compute chunk hashes, and copy chunk
-//     bytes.
+//  1) Worker goroutines read chunk ranges, compute chunk hashes, and
+//     materialize chunk metadata.
 //  2) Workers send prepared chunk tasks to one writer goroutine over a channel.
 //  3) The writer goroutine is the only owner of mutable ingest-write state.
 //
@@ -35,15 +33,15 @@ import (
 	"indicer/lib/structs"
 	"indicer/lib/util"
 	"os"
-	"sync"
 
 	"github.com/dgraph-io/badger/v4"
 	"github.com/schollz/progressbar/v3"
 )
 
 // chunkTask carries per-chunk outputs from hash/materialize workers to the
-// single batch owner goroutine. cmeta holds pre-materialized encoded chunk
-// metadata for batch DB persistence.
+// single batch-owner goroutine. cmeta holds pre-materialized encoded chunk
+// metadata for batch DB persistence; cdata is only used by benchmark/helper
+// paths.
 type chunkTask struct {
 	index int64
 	chash []byte
@@ -108,7 +106,7 @@ func storeEvidenceDataBatchOwner(infile structs.InputFile) (err error) {
 	)
 
 	workerResCh := make(chan workerRes, workerCount+1)
-	seenChunks := &sync.Map{}
+	seenChunks := newShardedChunkSet()
 	active := 0
 	mappedFile := infile.GetMappedFile()
 	var firstWorkerErr error
@@ -201,7 +199,7 @@ func batchOwnerHashWorker(
 	db *badger.DB,
 	containerMgr *fio.ContainerManager,
 	blockMgr *fio.BlockManager,
-	seenChunks *sync.Map,
+	seenChunks *shardedChunkSet,
 	taskCh chan<- chunkTask,
 	workerResCh chan<- workerRes,
 	simhashWriter *simhashAsyncWriter,
@@ -218,19 +216,31 @@ func batchOwnerHashWorker(
 	}
 
 	var cmeta []byte
-	hashKey := string(chash)
-	if _, alreadySeen := seenChunks.LoadOrStore(hashKey, struct{}{}); !alreadySeen {
+	if !seenChunks.loadOrStore(chash) {
 		ckey := util.AppendToBytesSlice(cnst.ChonkNamespace, chash)
-		err := dbio.PingNode(ckey, db)
-		if errors.Is(err, badger.ErrKeyNotFound) {
-			cmeta, err = dbio.MaterializeChonkNode(ckey, chunkBytes, db, containerMgr, blockMgr)
-			if err != nil {
+		if containerMgr != nil {
+			// Container mode: WriteChunkToContainer cannot detect chunks from
+			// previous sessions, so we must probe the DB first.
+			err := dbio.PingNode(ckey, db)
+			if errors.Is(err, badger.ErrKeyNotFound) {
+				cmeta, err = dbio.MaterializeChonkNode(ckey, chunkBytes, db, containerMgr, blockMgr)
+				if err != nil {
+					workerResCh <- workerRes{err}
+					return
+				}
+			} else if err != nil {
 				workerResCh <- workerRes{err}
 				return
 			}
-		} else if err != nil {
-			workerResCh <- workerRes{err}
-			return
+		} else {
+			// File mode: WriteChonk is idempotent (os.Stat check); call
+			// MaterializeChonkNode directly without a prior DB probe.
+			var merr error
+			cmeta, merr = dbio.MaterializeChonkNode(ckey, chunkBytes, db, nil, blockMgr)
+			if merr != nil {
+				workerResCh <- workerRes{merr}
+				return
+			}
 		}
 	}
 
@@ -250,9 +260,9 @@ func captureFirstWorkerErr(err error, firstWorkerErr *error, hasWorkerErr *bool)
 	*hasWorkerErr = true
 }
 
-// batchOwnerWriteLoop is the single writer goroutine. It owns the WriteBatch,
-// the seenChunks plain map, and the revRelAppendBuffer exclusively — no
-// synchronisation primitives are needed for those structures here.
+// batchOwnerWriteLoop is the single writer goroutine. It owns the WriteBatch
+// and revRelAppendBuffer exclusively — no synchronisation primitives are
+// needed for those structures here.
 func batchOwnerWriteLoop(
 	fhash []byte,
 	db *badger.DB,
@@ -314,16 +324,25 @@ func batchOwnerProcessChonk(
 	}
 
 	ckey := util.AppendToBytesSlice(cnst.ChonkNamespace, chash)
-	err := dbio.PingNode(ckey, db)
-	if errors.Is(err, badger.ErrKeyNotFound) {
-		if setErr := dbio.SetBatchChonkNode(ckey, cdata, db, batch, containerMgr, blockMgr); setErr != nil {
-			return setErr
+	if containerMgr != nil {
+		// Container mode: requires DB probe to avoid re-appending on resume.
+		err := dbio.PingNode(ckey, db)
+		if errors.Is(err, badger.ErrKeyNotFound) {
+			if setErr := dbio.SetBatchChonkNode(ckey, cdata, db, batch, containerMgr, blockMgr); setErr != nil {
+				return setErr
+			}
+			seenChunks[hashKey] = struct{}{}
+			return nil
 		}
-		seenChunks[hashKey] = struct{}{}
-		return nil
+		if err == nil {
+			seenChunks[hashKey] = struct{}{}
+		}
+		return err
 	}
-	if err == nil {
-		seenChunks[hashKey] = struct{}{}
+	// File mode: WriteChonk is idempotent, call unconditionally.
+	if setErr := dbio.SetBatchChonkNode(ckey, cdata, db, batch, nil, blockMgr); setErr != nil {
+		return setErr
 	}
-	return err
+	seenChunks[hashKey] = struct{}{}
+	return nil
 }

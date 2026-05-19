@@ -24,6 +24,13 @@ func WriteChonk(dbpath string, data, ckey, key []byte) ([]byte, error) {
 	}
 	cfname := base64.RawURLEncoding.EncodeToString(ckhash) + cnst.BLOBEXT
 	cfpath := filepath.Join(util.BlobPath(dbpath), cfname)
+
+	// Idempotent: if the file already exists, its content is identical
+	// (content-addressed by ckey hash), so we can return the path unchanged.
+	if _, serr := os.Stat(cfpath); serr == nil {
+		return []byte(cfpath), nil
+	}
+
 	err = os.WriteFile(cfpath, data, cnst.FilePerm)
 	return []byte(cfpath), err
 }

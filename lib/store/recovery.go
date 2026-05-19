@@ -24,7 +24,12 @@ type RecoveryReport struct {
 // in-progress ingests as failed so retries and repair flows are deterministic.
 func RecoverIncompleteIngests(db *badger.DB) (RecoveryReport, error) {
 	var report RecoveryReport
-	orphans := make([][]byte, 0)
+
+	type orphanRecord struct {
+		key  []byte
+		file structs.EvidenceFile
+	}
+	orphans := make([]orphanRecord, 0)
 	eviPrefix := []byte(cnst.EviFileNamespace)
 
 	err := db.View(func(txn *badger.Txn) error {
@@ -64,7 +69,7 @@ func RecoverIncompleteIngests(db *badger.DB) (RecoveryReport, error) {
 
 			if state == structs.IngestStatePending || state == structs.IngestStateFlushed {
 				report.IncompleteFound++
-				orphans = append(orphans, key)
+				orphans = append(orphans, orphanRecord{key: key, file: evidenceFile})
 			}
 		}
 
@@ -74,22 +79,17 @@ func RecoverIncompleteIngests(db *badger.DB) (RecoveryReport, error) {
 		return report, err
 	}
 
-	for _, orphanID := range orphans {
-		evidenceFile, err := dbio.GetEvidenceFile(orphanID, db)
-		if err != nil {
-			return report, err
-		}
-		if evidenceFile.Completed || evidenceFile.Failed {
-			continue
-		}
+	for _, orphan := range orphans {
+		orphanID := orphan.key
+		evidenceFile := orphan.file
 		if evidenceFile.IngestState == "" {
 			evidenceFile.IngestState = structs.IngestStatePending
 		}
 		if evidenceFile.IngestState == structs.IngestStateFlushed {
 			if err := ValidateFlushedEvidenceMaterialized(orphanID, evidenceFile, db); err == nil {
-				// FLUSHED means all chunk data was committed; only the COMPLETED
-				// marker was not written before the crash. Auto-complete only
-				// after validating required chunk material is readable.
+				// FLUSHED means chunk/relation dependencies were written; only the
+				// COMPLETED marker was not written before the crash. Auto-complete
+				// only after validating required dependencies are present.
 				evidenceFile.Completed = true
 				evidenceFile.IngestState = structs.IngestStateCompleted
 				if err := dbio.SetFile(orphanID, evidenceFile, db); err != nil {

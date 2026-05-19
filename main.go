@@ -61,6 +61,10 @@ func main() {
 
 	cmdrestore := app.Command(cnst.CmdRestore, "Restore file from database")
 	rpath := cmdrestore.Flag(cnst.FlagRestoreFilePath, "Path for restoring the file").Short(cnst.FlagRestoreFilePathShort).Default("restored").String()
+	restoreWorkers := cmdrestore.Flag(cnst.FlagRestoreWorkers, "Override restore worker count (0 = adaptive default)").Default("0").Int()
+	restoreQueue := cmdrestore.Flag(cnst.FlagRestoreQueue, "Override restore pipeline queue depth (0 = adaptive default)").Default("0").Int()
+	restoreProgressMs := cmdrestore.Flag(cnst.FlagRestoreProgressMs, "Restore progress update interval in milliseconds (default: 120)").Default("120").Int()
+	restoreBufferMB := cmdrestore.Flag(cnst.FlagRestoreBufferMB, "Restore output buffer size in MB (0 = mode-aware default: low=32, high=256)").Default("0").Int()
 	rhash := cmdrestore.Arg(cnst.OperandHash, "Hash of file that must be restoed").String()
 
 	cmdlist := app.Command(cnst.CmdList, "List all the saved files in the database")
@@ -129,11 +133,20 @@ func main() {
 	cnst.CompressLevel = strings.ToLower(*compressLevel)
 	storePipelineWorkers := 0
 	storePipelineQueue := 0
+	restorePipelineWorkers := 0
+	restorePipelineQueue := 0
 	if parsed == cmdstore.FullCommand() {
 		cnst.ENABLESIMHASH = *enableSimhash
 		cnst.StoreWorkerCount = *storeWorkers
 		cnst.StoreTaskQueueDepth = *storeQueue
 		storePipelineWorkers, storePipelineQueue = cnst.GetStorePipelineTuning(cnst.CONTAINERMODE, cnst.HIERARCHICALINDEX)
+	}
+	if parsed == cmdrestore.FullCommand() {
+		cnst.RestoreWorkerCount = *restoreWorkers
+		cnst.RestoreTaskQueueDepth = *restoreQueue
+		cnst.RestoreProgressIntervalMs = *restoreProgressMs
+		cnst.RestoreWriteBufferMB = *restoreBufferMB
+		restorePipelineWorkers, restorePipelineQueue = cnst.GetRestorePipelineTuning()
 	}
 
 	// Re-initialize the encoder now that the compression level flag is known.
@@ -190,6 +203,9 @@ func main() {
 		if parsed == cmdstore.FullCommand() {
 			color.Cyan("⚙ store pipeline: workers=%d queue=%d", storePipelineWorkers, storePipelineQueue)
 		}
+		if parsed == cmdrestore.FullCommand() {
+			color.Cyan("⚙ restore pipeline: workers=%d queue=%d progress=%s buffer=%dMB", restorePipelineWorkers, restorePipelineQueue, cnst.GetRestoreProgressInterval(), cnst.GetRestoreWriteBufferSize()/(1024*1024))
+		}
 	}
 
 	switch parsed {
@@ -218,7 +234,13 @@ func main() {
 			zap.String("hash", *rhash),
 			zap.String("output_path", *rpath),
 			zap.String("dbpath", *dbpath),
-			zap.Int("chonksize_kb", *chonkSize))
+			zap.Int("chonksize_kb", *chonkSize),
+			zap.Int("restore_workers", *restoreWorkers),
+			zap.Int("restore_queue", *restoreQueue),
+			zap.Int("restore_progress_ms", *restoreProgressMs),
+			zap.Int("restore_buffer_mb", *restoreBufferMB),
+			zap.Int("restore_workers_effective", restorePipelineWorkers),
+			zap.Int("restore_queue_effective", restorePipelineQueue))
 		err = cli.RestoreData(*chonkSize, *dbpath, *rhash, *rpath, key)
 	case cmdlist.FullCommand():
 		logging.GetLogger().Info("Command: list",

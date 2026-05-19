@@ -165,24 +165,41 @@ func IsLogicalFile(inid []byte) bool {
 }
 
 func AppendToBytesSlice(args ...interface{}) []byte {
-	var buffer bytes.Buffer
+	const unsupported = "Unsupported Type"
 
+	total := 0
 	for _, arg := range args {
 		switch value := arg.(type) {
 		case []byte:
-			buffer.Write(value)
+			total += len(value)
 		case string:
-			buffer.WriteString(value)
+			total += len(value)
 		case int64:
-			buffer.Write(strconv.AppendInt(nil, value, 10))
+			total += len(strconv.FormatInt(value, 10))
 		case int:
-			buffer.Write(strconv.AppendInt(nil, int64(value), 10))
+			total += len(strconv.FormatInt(int64(value), 10))
 		default:
-			buffer.WriteString("Unsupported Type")
+			total += len(unsupported)
 		}
 	}
 
-	return buffer.Bytes()
+	out := make([]byte, 0, total)
+	for _, arg := range args {
+		switch value := arg.(type) {
+		case []byte:
+			out = append(out, value...)
+		case string:
+			out = append(out, value...)
+		case int64:
+			out = strconv.AppendInt(out, value, 10)
+		case int:
+			out = strconv.AppendInt(out, int64(value), 10)
+		default:
+			out = append(out, unsupported...)
+		}
+	}
+
+	return out
 }
 
 func HashPassword(password string) []byte {

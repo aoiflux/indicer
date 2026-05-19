@@ -5,6 +5,7 @@ import (
 	"errors"
 	"hash"
 	"runtime"
+	"time"
 
 	"github.com/dgraph-io/badger/v4"
 	"github.com/klauspost/compress/zstd"
@@ -53,6 +54,10 @@ var ENABLESIMHASH = false  // compute and persist per-chunk simhash signatures d
 var CompressLevel = "best" // per-chunk zstd ingest level: fast | default | best
 var StoreWorkerCount = 0
 var StoreTaskQueueDepth = 0
+var RestoreWorkerCount = 0
+var RestoreTaskQueueDepth = 0
+var RestoreProgressIntervalMs = 0
+var RestoreWriteBufferMB = 0
 var DB *badger.DB
 
 const (
@@ -157,6 +162,10 @@ const (
 	FlagSimhash              = "simhash"
 	FlagStoreWorkers         = "store-workers"
 	FlagStoreQueue           = "store-queue"
+	FlagRestoreWorkers       = "restore-workers"
+	FlagRestoreQueue         = "restore-queue"
+	FlagRestoreProgressMs    = "restore-progress-ms"
+	FlagRestoreBufferMB      = "restore-buffer-mb"
 
 	OperandFile  = "FILE"
 	OperandHash  = "HASH"
@@ -232,6 +241,69 @@ func GetStorePipelineTuning(containerMode bool, hierarchicalMode bool) (int, int
 
 	return workers, queueDepth
 }
+
+// GetRestorePipelineTuning returns worker count and queue depth for restore.
+// Restore is read/decode heavy, so defaults are moderately parallel and bounded.
+func GetRestorePipelineTuning() (int, int) {
+	workers := runtime.NumCPU()
+	if MEMOPT {
+		workers = workers / 2
+	}
+	if workers < 2 {
+		workers = 2
+	}
+	if workers > 16 {
+		workers = 16
+	}
+
+	queueDepth := workers * 4
+
+	if RestoreWorkerCount > 0 {
+		workers = RestoreWorkerCount
+	}
+	if RestoreTaskQueueDepth > 0 {
+		queueDepth = RestoreTaskQueueDepth
+	}
+
+	if workers < 1 {
+		workers = 1
+	}
+	if queueDepth < workers {
+		queueDepth = workers
+	}
+
+	return workers, queueDepth
+}
+
+func GetRestoreProgressInterval() time.Duration {
+	if RestoreProgressIntervalMs <= 0 {
+		return 120 * time.Millisecond
+	}
+	if RestoreProgressIntervalMs < 20 {
+		return 20 * time.Millisecond
+	}
+	if RestoreProgressIntervalMs > 2000 {
+		return 2000 * time.Millisecond
+	}
+	return time.Duration(RestoreProgressIntervalMs) * time.Millisecond
+}
+
+func GetRestoreWriteBufferSize() int {
+	if RestoreWriteBufferMB <= 0 {
+		if MEMOPT {
+			return 32 * 1024 * 1024
+		}
+		return 256 * 1024 * 1024
+	}
+	if RestoreWriteBufferMB < 1 {
+		return 1 * 1024 * 1024
+	}
+	if RestoreWriteBufferMB > 256 {
+		return 256 * 1024 * 1024
+	}
+	return RestoreWriteBufferMB * 1024 * 1024
+}
+
 func GetCacheLimit() (int64, error) {
 	if MEMOPT {
 		return 64 * MB, nil

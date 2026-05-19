@@ -103,8 +103,6 @@ func storeEvidenceDataBatchOwner(infile structs.InputFile) (err error) {
 		infile.GetHash(),
 		infile.GetDB(),
 		taskCh,
-		containerMgr,
-		blockMgr,
 		cancel,
 		writerErrCh,
 	)
@@ -186,12 +184,10 @@ func runBatchOwnerWriter(
 	fhash []byte,
 	db *badger.DB,
 	taskCh <-chan chunkTask,
-	containerMgr *fio.ContainerManager,
-	blockMgr *fio.BlockManager,
 	cancel context.CancelFunc,
 	writerErrCh chan<- error,
 ) {
-	werr := batchOwnerWriteLoop(fhash, db, taskCh, containerMgr, blockMgr)
+	werr := batchOwnerWriteLoop(fhash, db, taskCh)
 	if werr != nil {
 		cancel()
 	}
@@ -210,18 +206,15 @@ func batchOwnerHashWorker(
 	workerResCh chan<- workerRes,
 	simhashWriter *simhashAsyncWriter,
 ) {
-	lostChonk := mappedFile[idx:chonkEnd]
-	chash, herr := util.GetChonkHash(lostChonk, cnst.GetHashAlgo())
+	chunkBytes := mappedFile[idx:chonkEnd]
+	chash, herr := util.GetChonkHash(chunkBytes, cnst.GetHashAlgo())
 	if herr != nil {
 		workerResCh <- workerRes{herr}
 		return
 	}
 
-	cdata := make([]byte, len(lostChonk))
-	copy(cdata, lostChonk)
-
 	if simhashWriter != nil {
-		simhashWriter.enqueue(cdata, chash)
+		simhashWriter.enqueue(chunkBytes, chash)
 	}
 
 	var cmeta []byte
@@ -230,7 +223,7 @@ func batchOwnerHashWorker(
 		ckey := util.AppendToBytesSlice(cnst.ChonkNamespace, chash)
 		err := dbio.PingNode(ckey, db)
 		if errors.Is(err, badger.ErrKeyNotFound) {
-			cmeta, err = dbio.MaterializeChonkNode(ckey, cdata, db, containerMgr, blockMgr)
+			cmeta, err = dbio.MaterializeChonkNode(ckey, chunkBytes, db, containerMgr, blockMgr)
 			if err != nil {
 				workerResCh <- workerRes{err}
 				return
@@ -264,8 +257,6 @@ func batchOwnerWriteLoop(
 	fhash []byte,
 	db *badger.DB,
 	taskCh <-chan chunkTask,
-	containerMgr *fio.ContainerManager,
-	blockMgr *fio.BlockManager,
 ) error {
 	batch, err := util.InitBatch(db)
 	if err != nil {

@@ -54,7 +54,7 @@ func main() {
 	noIndex := cmdstore.Flag(cnst.FlagNoIndex, "Don't run indexer").Short(cnst.FlagNoIndexShort).Default("false").Bool()
 	enableFTS := cmdstore.Flag(cnst.FlagEnableFts, "Enable full-text search indexing (sidecar Bleve index)").Default("false").Bool()
 	enableEnrichment := cmdstore.Flag(cnst.FlagEnableEnrichment, "Upsert disk/partition/indexed-file metadata nodes into graphdb during store").Default("false").Bool()
-	hashAlgo := cmdstore.Flag(cnst.FlagHashAlgo, "Hashing algorithm to use [sha3|blake3] (default: BLAKE3)").Short(cnst.FlagHashAlgoShort).Default(cnst.BLAKE3).String()
+	storeHashAlgo := cmdstore.Flag(cnst.FlagHashAlgo, "Hashing algorithm to use [sha3|blake3] (default: BLAKE3)").Short(cnst.FlagHashAlgoShort).Default(cnst.BLAKE3).String()
 	enableSimhash := cmdstore.Flag(cnst.FlagSimhash, "Compute and store per-chunk simhash signatures during ingest (enables NeAR chunk-level similarity; off by default)").Default("false").Bool()
 	storeWorkers := cmdstore.Flag(cnst.FlagStoreWorkers, "Override batch-owner worker count (0 = mode-aware default)").Default("0").Int()
 	storeQueue := cmdstore.Flag(cnst.FlagStoreQueue, "Override batch-owner task queue depth (0 = mode-aware default)").Default("0").Int()
@@ -101,7 +101,7 @@ func main() {
 	cmdenrich := app.Command(cnst.CmdEnrich, "Backfill file hierarchy metadata enrichment into graphdb")
 
 	cmdserver := app.Command(cnst.CmdServer, "Run gRPC / Web combined DUES server")
-	hashAlgo = cmdserver.Flag(cnst.FlagHashAlgo, "Hashing algorithm to use [sha3|blake3] (default: BLAKE3)").Short(cnst.FlagHashAlgoShort).Default("blake3").String()
+	serverHashAlgo := cmdserver.Flag(cnst.FlagHashAlgo, "Hashing algorithm to use [sha3|blake3] (default: BLAKE3)").Short(cnst.FlagHashAlgoShort).Default(cnst.BLAKE3).String()
 
 	cmdreset := app.Command(cnst.CmdReset, "Delete the database").Alias(cnst.CmdPurge).Alias(cnst.CmdDelete).Alias(cnst.CmdDestroy)
 
@@ -129,8 +129,17 @@ func main() {
 	cnst.QUICKOPT = *QUICKOPT
 	cnst.CONTAINERMODE = *containerMode
 	cnst.HIERARCHICALINDEX = *hierarchicalIndex
-	cnst.HASHALGO = strings.ToLower(*hashAlgo)
 	cnst.CompressLevel = strings.ToLower(*compressLevel)
+	selectedHashAlgo := cnst.BLAKE3
+	switch parsed {
+	case cmdstore.FullCommand():
+		selectedHashAlgo = *storeHashAlgo
+	case cmdserver.FullCommand():
+		selectedHashAlgo = *serverHashAlgo
+	}
+	if err := cnst.SetHashAlgo(selectedHashAlgo); err != nil {
+		handle(err)
+	}
 	storePipelineWorkers := 0
 	storePipelineQueue := 0
 	restorePipelineWorkers := 0
@@ -165,10 +174,6 @@ func main() {
 	var encErr error
 	cnst.ENCODER, encErr = zstd.NewWriter(nil, zstd.WithEncoderLevel(encLevel))
 	handle(encErr)
-
-	if cnst.HASHALGO == "" {
-		cnst.HASHALGO = cnst.BLAKE3
-	}
 
 	// Hierarchical index requires container mode
 	if cnst.HIERARCHICALINDEX && !cnst.CONTAINERMODE {

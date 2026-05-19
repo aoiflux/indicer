@@ -375,8 +375,26 @@ func indexEvidenceFile(eviFile structs.InputFile, db *badger.DB, enableFTS bool,
 			return err
 		}
 	}
+	if err := persistEvidenceInternalObjects(eviFile.GetID(), eviFile.GetInternalObjects(), db); err != nil {
+		logging.GetLogger().Error("indexEvidenceFile PERSIST_INTERNAL_OBJECTS_ERROR", zap.Error(err))
+		return err
+	}
 	logging.GetLogger().Info("indexEvidenceFile COMPLETE", zap.Int("partition_count", len(partitions)))
 	return nil
+}
+
+func persistEvidenceInternalObjects(fileID []byte, internalObjects map[string]structs.InternalOffset, db *badger.DB) error {
+	evidenceFile, err := dbio.GetEvidenceFile(fileID, db)
+	if err != nil {
+		return err
+	}
+
+	evidenceFile.InternalObjects = make(map[string]structs.InternalOffset, len(internalObjects))
+	for key, offset := range internalObjects {
+		evidenceFile.InternalObjects[key] = offset
+	}
+
+	return dbio.SetFile(fileID, evidenceFile, db)
 }
 
 func upsertPartitionNodeForUnparsedPartition(repo *enrichment.GrapheneRepository, eviFile structs.InputFile, pfile structs.InputFile) error {

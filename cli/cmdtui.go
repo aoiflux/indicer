@@ -50,7 +50,9 @@ func TUICmd(chonkSize int, dbpath string, key []byte) error {
 	actions := tui.Actions{
 		Store: func(filePath string, syncIndex bool, noIndex bool, hashAlgo string) error {
 			return runQuiet(func() error {
-				cnst.HASHALGO = hashAlgo
+				if err := cnst.SetHashAlgo(hashAlgo); err != nil {
+					return err
+				}
 				if err := util.EnsureBlobPath(db.Opts().Dir); err != nil {
 					return err
 				}

@@ -5,6 +5,7 @@ import (
 	"errors"
 	"hash"
 	"runtime"
+	"strings"
 	"time"
 
 	"github.com/dgraph-io/badger/v4"
@@ -176,6 +177,26 @@ const IgnoreVar int64 = -1
 
 var DECODER *zstd.Decoder
 var ENCODER *zstd.Encoder
+
+func NormalizeHashAlgo(algo string) string {
+	switch strings.ToLower(strings.TrimSpace(algo)) {
+	case SHA3:
+		return SHA3
+	case BLAKE3, "":
+		return BLAKE3
+	default:
+		return ""
+	}
+}
+
+func SetHashAlgo(algo string) error {
+	normalized := NormalizeHashAlgo(algo)
+	if normalized == "" {
+		return errors.New("invalid hash algorithm: must be sha3 or blake3")
+	}
+	HASHALGO = normalized
+	return nil
+}
 
 func GetHashAlgo(bigFile ...bool) hash.Hash {
 	flag := false

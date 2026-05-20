@@ -11,24 +11,102 @@
 DUES is a digital forensics data platform for ingesting, deduplicating,
 indexing, searching, restoring, and comparing large evidence sets.
 
+Version: 0.38 Codename: <jackfruit> spacebar
+
+## Important upgrade notice (breaking)
+
+v0.38 introduces structural changes in on-disk DB and index layouts.
+
+- Older DB directories may not be fully compatible with this release.
+- Reusing older DB paths without migration or rebuild can cause read/startup
+  failures.
+- Back up existing DB paths before upgrading.
+- After upgrade, run repair and reindex/restore workflows to rebuild state in
+  the new format.
+
+## Release summary
+
+This release is a large cross-cutting update focused on reliability, retrieval
+quality, and investigation speed.
+
+- Storage pipeline improvements with better reliability and throughput tuning.
+- Restore pipeline upgrades, including multithreaded restore controls.
+- Search relevance improvements with BM25 and hybrid full-text fallback.
+- New enrichment pipeline for evidence, partition, and indexed-file metadata.
+- New micro-artefact extraction and graph workflows.
+- Near-similarity and SimHash enhancements for in-db and out-of-db matching.
+- Expanded server capabilities for browser upload sessions.
+- Wider test and benchmark coverage across core subsystems.
+
 Patent information: this software has led to two derivative inventions protected
 by patents 567877 and 556272 registered at the Indian Patent Office.
 
-## Feature Highlights
+## Feature highlights
 
-- Chunk-level deduplication with SHA3-256 integrity checks.
-- Optional password-based encryption for stored chunks and metadata.
-- Zstandard-backed compression.
-- Partition-aware indexing for supported images and filesystems.
-- Full-text search with report generation (`report.json`).
-- Occurrence-aware ranking with configurable weighting (`--rank-alpha`).
-- NeAR (near-duplicate analysis) for files inside (`near in`) and outside
-  (`near out`) the DB.
-- Graph generation for similarity analysis (`graph.html`).
-- Container mode for blob packing (`--container`).
-- Hierarchical block index mode (`--hierarchical`, auto-enables container mode).
-- Rich interactive TUI command (`dues tui`) built on Bubble Tea v2.
-- Connect/gRPC/gRPC-Web server mode (`dues server`) with CORS support.
+### 1) Ingest, dedup, and storage
+
+- Chunk-level deduplication with configurable hash algorithm.
+- Default hashing is BLAKE3; SHA3 is also supported.
+- Optional password-based encrypted DB operation.
+- Per-chunk zstd compression with tunable compression level.
+- Container mode for large-scale blob packing.
+- Hierarchical block index mode for scalable lookup paths.
+- Ingest validation and startup recovery for incomplete ingests.
+- Repair tooling to inspect and optionally mark partial ingests as failed.
+
+### 2) Image parsing with libtsk (via libtusk)
+
+- DUES now uses libtusk (a C wrapper over The Sleuth Kit) for partition table
+  and filesystem parsing on supported targets.
+- This enables richer partition/filesystem-aware indexing behavior aligned with
+  forensic image analysis use cases.
+- Current CGO/libtusk-enabled targets: windows/amd64 and linux/amd64.
+- On unsupported targets, DUES falls back to internal parsing (MBR/exFAT path).
+- Fragmented-file handling remains limited in current parser flow; fragmented
+  entries are reported and skipped by the libtusk indexing path.
+
+See also:
+
+- [TOOLCHAIN_NOTES.md](TOOLCHAIN_NOTES.md)
+- [clib/LIBTUSK_ABI.md](clib/LIBTUSK_ABI.md)
+
+### 3) Search and ranking
+
+- Query parsing with AND/OR/phrase search behaviors.
+- BM25-driven ranking support.
+- Occurrence-aware rank adjustment via rank-alpha.
+- Hybrid mode: full-text sidecar first, automatic fallback to scan search.
+- Search output generation for report workflows.
+
+### 4) Near similarity
+
+- Near in: compare objects already stored in DUES.
+- Near out: compare external files against DUES content.
+- SimHash-enabled workflows and top-K verification options.
+- Optional deep and explain-exact behaviors for investigation workflows.
+
+### 5) Enrichment and micro-artefacts
+
+- Graph enrichment command to backfill hierarchy metadata.
+- Micro-artefact extraction pipeline across indexed files.
+- Detector and parser expansion for common forensic artefact patterns.
+- Graph export support, including interactive HTML output.
+
+### 6) API, server, and browser upload path
+
+- Connect + gRPC + gRPC-Web server mode on port 50051.
+- Localhost-aware CORS behavior for browser clients.
+- Browser upload session endpoints:
+  - POST /web/upload/start
+  - POST /web/upload/chunk
+  - POST /web/upload/finalize
+- Health endpoint at GET /
+
+### 7) TUI and operator workflow
+
+- Bubble Tea v2 based TUI with integrated store/list/search/restore/near/reset
+  flows.
+- Improvements to command-line operational ergonomics and status visibility.
 
 ## Installation
 
@@ -42,192 +120,145 @@ by patents 567877 and 556272 registered at the Indian Patent Office.
 ```bash
 git clone https://github.com/aoiflux/indicer.git
 cd indicer
+go build -o dues .
+```
+
+Windows users may prefer:
+
+```powershell
 go build -o dues.exe .
 ```
 
-## Quick Start
+## Quick start
 
 ```powershell
-# Store evidence
-dues store E01-image.dd
+# Store evidence (file or folder)
+dues store E01-image.dd --enable-enrichment --enable-fts
 
-# List stored entries
+# List entries
 dues list
 
-# Search indexed content/metadata
-dues search "invoice"
-
-# Search with multiple terms (AND by default)
+# Search (scan ranking)
 dues search "invoice payment"
 
-# Search with OR semantics
-dues search "invoice|receipt"
-
-# Increase the influence of raw occurrence counts in ranking
-dues search --rank-alpha 0.8 "invoice payment"
-
-# Try sidecar full-text mode first, fallback to scan search
+# Hybrid full-text first, then fallback
 dues search --enable-fts "invoice|receipt"
 
 # Restore by hash
 dues restore <hash> --filepath restored.bin
 
-# NeAR analysis from DB entry
-dues near in <hash>
+# Near similarity from DB object
+dues near in <hash> --advanced-deep --topk 50
 
-# Launch interactive TUI
+# Near similarity for external file
+dues near out suspect.bin --explain-exact
+
+# Backfill hierarchy enrichment in graphdb
+dues enrich
+
+# Extract micro-artefacts and export graph.html
+dues micro extract --top-k 25
+
+# Inspect/repair pending ingests
+dues repair
+dues repair --fix
+
+# Launch TUI
 dues tui
 ```
 
-## Commands
+## Command summary
 
-### Core
+Core commands:
 
-- `dues store FILE`: Store one file or recursively store a directory.
-- `dues list`: List completed evidence entries in the database.
-- `dues restore HASH`: Restore a stored file by hash.
-- `dues search QUERY`: Run search and emit `report.json`.
-  - Supports AND queries (`foo bar`), OR queries (`foo|bar`), and quoted phrases
-    (`"foo bar"`).
-  - `--rank-alpha` tunes how strongly raw occurrence counts influence ranking
-    while BM25 remains the primary relevance signal.
-  - `--enable-fts` attempts sidecar full-text retrieval first and automatically
-    falls back to scan search when sidecar results are unavailable or empty.
-- `dues near in HASH`: Find similar files for a stored object.
-- `dues near out FILE`: Compare an external file against DB objects.
-- `dues reset`: Delete database after confirmation.
+- dues store FILE
+- dues list
+- dues search QUERY
+- dues restore HASH
+- dues near in HASH
+- dues near out FILE
+- dues stats
+- dues repair [--fix]
+- dues enrich
+- dues micro extract
+- dues micro list
+- dues server
+- dues tui
+- dues version
+- dues reset
 
-### Extended
+## Important flags
 
-- `dues tui`: Launch Bubble Tea v2 based interactive terminal UI.
-- `dues server`: Start Connect + gRPC + gRPC-Web API server on port `50051`.
-- `dues version`: Show version details and capability highlights.
+Global:
 
-## Global Flags
+- --dbpath, -d: custom database path
+- --password, -p: password for encrypted DB access
+- --chonksize, -c: chunk size in KB (default 256)
+- --low, -l: low-resource mode
+- --quick, -q: throughput-first mode
+- --container, -x: container blob mode
+- --hierarchical, -i: hierarchical index mode
+- --compress-level: fast, default, or best
 
-| Flag             | Short | Description                                         | Default   |
-| ---------------- | ----- | --------------------------------------------------- | --------- |
-| `--dbpath`       | `-d`  | Database path                                       | `~/.dues` |
-| `--password`     | `-p`  | Password for DB encryption                          | none      |
-| `--chonksize`    | `-c`  | Chunk size in KB                                    | `256`     |
-| `--low`          | `-l`  | Low-resource mode                                   | `false`   |
-| `--quick`        | `-q`  | Throughput-first mode (less protection/compression) | `false`   |
-| `--container`    | `-x`  | Container blob storage mode                         | `false`   |
-| `--hierarchical` | `-i`  | Hierarchical block index mode                       | `false`   |
+Store-specific highlights:
 
-### search
+- --sync, -s: synchronous indexing
+- --no-index, -n: skip indexing
+- --enable-fts: build sidecar full-text index
+- --enable-enrichment: upsert hierarchy metadata to graphdb
+- --hashalgo, -a: sha3 or blake3
+- --simhash: compute chunk SimHash signatures during ingest
+- --store-workers and --store-queue: override ingest pipeline tuning
 
-| Flag           | Short | Description                                            | Default |
-| -------------- | ----- | ------------------------------------------------------ | ------- |
-| `--rank-alpha` | none  | Weight for occurrence-aware ranking influence (`>= 0`) | `0.35`  |
-| `--enable-fts`   | none  | Try sidecar full-text first, then fallback to scan     | `false` |
+Restore-specific highlights:
 
-If `--hierarchical` is set without `--container`, DUES enables container mode
-automatically.
+- --filepath, -f: output path
+- --restore-workers, --restore-queue: pipeline tuning
+- --restore-progress-ms: progress update interval
+- --restore-buffer-mb: write buffer sizing
 
-## Memory and Cache Tuning
+Search-specific highlights:
 
-High RAM usage is often cache-driven and expected in throughput-first operation.
-With large datasets (for example, ~100 GB on disk), seeing multi-GB process
-memory can be normal when caches are intentionally kept warm.
+- --rank-alpha: occurrence boost weighting
+- --enable-fts: hybrid full-text + fallback scan path
 
-Quick guidance:
+Near-specific highlights:
 
-- Use default mode for speed on high-memory hosts.
-- Use `--low` on constrained hosts to reduce worker and cache pressure.
-- During restore, container read cache improves repeated-read performance and is
-  bounded.
+- --deep, -e: partial chunk matching
+- --advanced-deep, -a: phase-2 full-file SimHash rerank
+- --topk, -k: top-K candidates for phase-2 rerank
+- --explain-exact, -x: force chunk drilldown for exact out-file match
 
-Current cache policy summary:
+## Migration checklist (pre-0.38 to 0.38)
 
-- Badger cache budget targets `25%` of available RAM.
-- Budget is bounded (`64 MB` minimum, `8 GB` maximum) with fallback (`256 MB`)
-  if memory probing fails.
-- Badger budget is split by role (block cache `75%`, index cache `25%`) to avoid
-  double budgeting.
-- Restore container cache uses the same baseline and is capped at `4 GB`.
+1. Back up current DB directory.
+2. Upgrade binary to v0.38.
+3. Run dues repair and review pending/failed evidence.
+4. Re-run store/index paths where needed for format alignment.
+5. Re-run enrichment and micro extract if graph metadata is required.
+6. Validate search and restore outputs on representative samples.
 
-For detailed rationale and implementation notes, see:
+## Architecture and design docs
 
-- [Container Mode LLD](CONTAINER_MODE_LLD.md)
-- [Container Manager (Current Implementation)](CONTAINER_MANAGER_CURRENT.md)
-- [Search LLD and Developer Guide](SEARCH_LLD.md)
+- [STORE_LLD.md](STORE_LLD.md)
+- [STORE_BOTTLENECKS.md](STORE_BOTTLENECKS.md)
+- [SEARCH_LLD.md](SEARCH_LLD.md)
+- [ENRICHMENT_LLD.md](ENRICHMENT_LLD.md)
+- [MICRO_ARTEFACT_DEEP_DIVE.md](MICRO_ARTEFACT_DEEP_DIVE.md)
+- [NEAR_SIMILARITY_LLD.md](NEAR_SIMILARITY_LLD.md)
+- [HIERARCHICAL_INDEX.md](HIERARCHICAL_INDEX.md)
+- [CONTAINER_MODE_LLD.md](CONTAINER_MODE_LLD.md)
+- [CONTAINER_MANAGER_CURRENT.md](CONTAINER_MANAGER_CURRENT.md)
+- [restore_lld.md](restore_lld.md)
+- [BENCHMARKING.md](BENCHMARKING.md)
+- [TUI_QUICKSTART.md](TUI_QUICKSTART.md)
+- [TUI_IMPLEMENTATION.md](TUI_IMPLEMENTATION.md)
 
-## Command Flags
+## Output artefacts
 
-### store
-
-| Flag         | Short | Description               | Default |
-| ------------ | ----- | ------------------------- | ------- |
-| `--sync`     | `-s`  | Run indexer synchronously | `false` |
-| `--no-index` | `-n`  | Skip indexing             | `false` |
-
-### restore
-
-| Flag         | Short | Description         | Default    |
-| ------------ | ----- | ------------------- | ---------- |
-| `--filepath` | `-f`  | Output restore path | `restored` |
-
-### near in
-
-| Flag     | Short | Description                   | Default |
-| -------- | ----- | ----------------------------- | ------- |
-| `--deep` | `-e`  | Enable partial chunk matching | `false` |
-
-## TUI (Bubble Tea v2)
-
-DUES TUI now uses:
-
-- `charm.land/bubbletea/v2`
-- `charm.land/bubbles/v2`
-- `charm.land/lipgloss/v2`
-
-From the menu you can run Store, List, Search, Restore, NeAR, and Reset flows in
-one interactive session. See:
-
-- [TUI Quickstart](TUI_QUICKSTART.md)
-- [TUI Implementation Notes](TUI_IMPLEMENTATION.md)
-
-## Server Mode
-
-`dues server` starts a service that supports Connect, gRPC, and gRPC-Web:
-
-- Port: `50051`
-- Health endpoint: `GET /`
-- Service path: `/dues.DuesService/*`
-- Upload staging folder: `<dbpath>/uploads`
-
-## Storage and Indexing Notes
-
-High-level model:
-
-```text
-Evidence File
-  -> Partitions
-    -> Indexed Files
-      -> Chunk Relations
-```
-
-Namespaces used internally:
-
-- `E|||:` evidence files
-- `P|||:` partition files
-- `I|||:` indexed files
-- `C|||:` chunks
-- `R|||:` chunk -> file relations
-- `Я|||:` file -> chunk reverse relations
-
-## Architecture Docs
-
-- [Container Manager (Current Implementation)](CONTAINER_MANAGER_CURRENT.md)
-- [Container Mode LLD](CONTAINER_MODE_LLD.md)
-- [Hierarchical Block Index](HIERARCHICAL_INDEX.md)
-
-## Output Artifacts
-
-- `report.json`: Search output with matches and summary.
-- `graph.html`: Relationship graph output from NeAR workflows.
-- `BLOBS/*.blob`: Deduplicated chunk/container data.
+- report.json: search report output
+- graph.html: similarity and micro-artefact graph visualisations
+- BLOBS/*.blob: deduplicated chunk/container data
 
 ## License
 

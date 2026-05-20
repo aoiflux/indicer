@@ -146,7 +146,8 @@ func StoreFile(chonkSize int, evipath string, key []byte, syncIndex bool, noInde
 	if err == nil {
 		if enableEnrichment {
 			logging.GetLogger().Debug("StoreFile ENRICH_EXISTING_EVIDENCE")
-			if err := enrichEvidenceNode(db, eviFile, evipath); err != nil {
+			err := enrichEvidenceNode(db, eviFile, evipath)
+			if err != nil {
 				logging.GetLogger().Error("StoreFile ENRICH_EXISTING_EVIDENCE_ERROR", zap.Error(err))
 				return err
 			}
@@ -158,21 +159,10 @@ func StoreFile(chonkSize int, evipath string, key []byte, syncIndex bool, noInde
 		return nil
 	}
 
-	var idxErrCh chan error
-	if !noIndex {
-		if syncIndex {
-			logging.GetLogger().Info("StoreFile INDEX_EXECUTE_SYNC")
-			if err = indexEvidenceFile(eviFile, db, enableFTS, enableEnrichment); err != nil {
-				logging.GetLogger().Error("StoreFile INDEX_ERROR", zap.Error(err))
-				return err
-			}
-		} else {
-			logging.GetLogger().Info("StoreFile INDEX_EXECUTE_ASYNC")
-			idxErrCh = make(chan error, 1)
-			go func() {
-				idxErrCh <- indexEvidenceFile(eviFile, db, enableFTS, enableEnrichment)
-			}()
-		}
+	idxErrCh, err := startIndexing(eviFile, db, noIndex, syncIndex, enableFTS, enableEnrichment)
+	if err != nil {
+		logging.GetLogger().Error("StoreFile INDEX_ERROR", zap.Error(err))
+		return err
 	}
 
 	eviname := filepath.Base(evipath)
@@ -182,87 +172,142 @@ func StoreFile(chonkSize int, evipath string, key []byte, syncIndex bool, noInde
 	go store.Store(eviFile, echan)
 	err = <-echan
 	if err != nil {
-		if idxErrCh != nil {
-			<-idxErrCh
-		}
-		if markErr := store.MarkEvidenceFileFailedUnlessFlushed(eviFile.GetID(), db); markErr != nil {
-			logging.GetLogger().Error("StoreFile MARK_FAILED_ERROR", zap.Error(markErr))
-		}
+		drainIndexError(idxErrCh)
+		markEvidenceFileFailed(eviFile.GetID(), db)
 		logging.GetLogger().Error("StoreFile STORE_ERROR", zap.Error(err))
 		return err
 	}
 
-	// Verify that all chunk data has been flushed to persistent storage
-	eviNode, err := dbio.GetEvidenceFile(eviFile.GetID(), eviFile.GetDB())
+	err = transitionEvidenceFileToCompleted(eviFile, eviname, db, idxErrCh)
 	if err != nil {
-		if markErr := store.MarkEvidenceFileFailedUnlessFlushed(eviFile.GetID(), db); markErr != nil {
-			logging.GetLogger().Error("StoreFile MARK_FAILED_ERROR", zap.Error(markErr))
-		}
-		logging.GetLogger().Error("StoreFile GET_EVIDENCE_NODE_ERROR", zap.Error(err))
 		return err
 	}
 
-	if eviNode.IngestState != structs.IngestStateFlushed {
-		if markErr := store.MarkEvidenceFileFailedUnlessFlushed(eviFile.GetID(), db); markErr != nil {
-			logging.GetLogger().Error("StoreFile MARK_FAILED_ERROR", zap.Error(markErr))
-		}
-		stateErr := fmt.Errorf("ingest state transition violation: expected %s, got %s", structs.IngestStateFlushed, eviNode.IngestState)
-		logging.GetLogger().Error("StoreFile INGEST_STATE_VIOLATION", zap.Error(stateErr))
-		return stateErr
-	}
-
-	// Atomically transition to COMPLETED state
-	// This ensures that if a crash occurs before this point, recovery can detect the incomplete ingest
-	eviNode.Completed = true
-	eviNode.Failed = false
-	eviNode.IngestState = structs.IngestStateCompleted
-	err = dbio.SetFile(eviFile.GetID(), eviNode, eviFile.GetDB())
-	if err != nil {
-		if idxErrCh != nil {
-			<-idxErrCh
-		}
-		if markErr := store.MarkEvidenceFileFailedUnlessFlushed(eviFile.GetID(), db); markErr != nil {
-			logging.GetLogger().Error("StoreFile MARK_FAILED_ERROR", zap.Error(markErr))
-		}
-		logging.GetLogger().Error("StoreFile SET_EVIDENCE_NODE_ERROR", zap.Error(err))
-		return err
-	}
-	logging.GetLogger().Debug("StoreFile INGEST_ATOMIC_COMMITTED",
-		zap.String("file_name", eviname),
-		zap.String("ingest_state", string(structs.IngestStateCompleted)),
-	)
-
-	if idxErrCh != nil {
-		if idxErr := <-idxErrCh; idxErr != nil && !errors.Is(idxErr, cnst.ErrIncompatibleFileSystem) {
-			logging.GetLogger().Error("StoreFile INDEX_ERROR", zap.Error(idxErr))
-			return idxErr
-		}
+	if idxErr := awaitIndexError(idxErrCh); idxErr != nil {
+		logging.GetLogger().Error("StoreFile INDEX_ERROR", zap.Error(idxErr))
+		return idxErr
 	}
 
 	if enableEnrichment {
 		logging.GetLogger().Debug("StoreFile ENRICH_NEW_EVIDENCE")
-		if err := enrichEvidenceNode(db, eviFile, evipath); err != nil {
+		err := enrichEvidenceNode(db, eviFile, evipath)
+		if err != nil {
 			logging.GetLogger().Error("StoreFile ENRICH_NEW_EVIDENCE_ERROR", zap.Error(err))
 			return err
 		}
 	}
 
-	mappedFile := eviFile.GetMappedFile()
-	err = mappedFile.Unmap()
+	err = closeInputFileResources(eviFile)
 	if err != nil {
-		logging.GetLogger().Error("StoreFile UNMAP_ERROR", zap.Error(err))
 		return err
 	}
-	err = eviFile.GetHandle().Close()
-	if err != nil {
-		logging.GetLogger().Error("StoreFile HANDLE_CLOSE_ERROR", zap.Error(err))
-		return err
-	}
+
 	fmt.Printf("\nStored in: %v\n\n", time.Since(start))
 	logging.GetLogger().Info("StoreFile COMPLETE",
 		zap.Int64("duration_ms", time.Since(start).Milliseconds()),
 		zap.String("result", "stored"),
 	)
+	return nil
+}
+
+func startIndexing(eviFile structs.InputFile, db *badger.DB, noIndex bool, syncIndex bool, enableFTS bool, enableEnrichment bool) (chan error, error) {
+	if noIndex {
+		return nil, nil
+	}
+
+	if syncIndex {
+		logging.GetLogger().Info("StoreFile INDEX_EXECUTE_SYNC")
+		err := indexEvidenceFile(eviFile, db, enableFTS, enableEnrichment)
+		if err != nil {
+			return nil, err
+		}
+		return nil, nil
+	}
+
+	logging.GetLogger().Info("StoreFile INDEX_EXECUTE_ASYNC")
+	idxErrCh := make(chan error, 1)
+	go func() {
+		idxErrCh <- indexEvidenceFile(eviFile, db, enableFTS, enableEnrichment)
+	}()
+
+	return idxErrCh, nil
+}
+
+func transitionEvidenceFileToCompleted(eviFile structs.InputFile, eviname string, db *badger.DB, idxErrCh chan error) error {
+	// Verify that all chunk data has been flushed to persistent storage.
+	eviNode, err := dbio.GetEvidenceFile(eviFile.GetID(), eviFile.GetDB())
+	if err != nil {
+		markEvidenceFileFailed(eviFile.GetID(), db)
+		logging.GetLogger().Error("StoreFile GET_EVIDENCE_NODE_ERROR", zap.Error(err))
+		return err
+	}
+
+	if eviNode.IngestState != structs.IngestStateFlushed {
+		markEvidenceFileFailed(eviFile.GetID(), db)
+		stateErr := fmt.Errorf("ingest state transition violation: expected %s, got %s", structs.IngestStateFlushed, eviNode.IngestState)
+		logging.GetLogger().Error("StoreFile INGEST_STATE_VIOLATION", zap.Error(stateErr))
+		return stateErr
+	}
+
+	// Atomically transition to COMPLETED state so recovery can detect incomplete ingest.
+	eviNode.Completed = true
+	eviNode.Failed = false
+	eviNode.IngestState = structs.IngestStateCompleted
+	err = dbio.SetFile(eviFile.GetID(), eviNode, eviFile.GetDB())
+	if err != nil {
+		drainIndexError(idxErrCh)
+		markEvidenceFileFailed(eviFile.GetID(), db)
+		logging.GetLogger().Error("StoreFile SET_EVIDENCE_NODE_ERROR", zap.Error(err))
+		return err
+	}
+
+	logging.GetLogger().Debug("StoreFile INGEST_ATOMIC_COMMITTED",
+		zap.String("file_name", eviname),
+		zap.String("ingest_state", string(structs.IngestStateCompleted)),
+	)
+
+	return nil
+}
+
+func awaitIndexError(idxErrCh chan error) error {
+	if idxErrCh == nil {
+		return nil
+	}
+
+	idxErr := <-idxErrCh
+	if idxErr != nil && !errors.Is(idxErr, cnst.ErrIncompatibleFileSystem) {
+		return idxErr
+	}
+
+	return nil
+}
+
+func drainIndexError(idxErrCh chan error) {
+	if idxErrCh != nil {
+		<-idxErrCh
+	}
+}
+
+func markEvidenceFileFailed(fileID []byte, db *badger.DB) {
+	if markErr := store.MarkEvidenceFileFailedUnlessFlushed(fileID, db); markErr != nil {
+		logging.GetLogger().Error("StoreFile MARK_FAILED_ERROR", zap.Error(markErr))
+	}
+}
+
+func closeInputFileResources(eviFile structs.InputFile) error {
+	mappedFile := eviFile.GetMappedFile()
+	err := mappedFile.Unmap()
+	if err != nil {
+		logging.GetLogger().Error("StoreFile UNMAP_ERROR", zap.Error(err))
+		return err
+	}
+
+	err = eviFile.GetHandle().Close()
+	if err != nil {
+		logging.GetLogger().Error("StoreFile HANDLE_CLOSE_ERROR", zap.Error(err))
+		return err
+	}
+
 	return nil
 }
 
@@ -348,7 +393,8 @@ func indexEvidenceFile(eviFile structs.InputFile, db *badger.DB, enableFTS bool,
 		)
 
 		if enableEnrichment {
-			if err := upsertPartitionNodeForUnparsedPartition(enrichRepo, eviFile, pfile); err != nil {
+			err := upsertPartitionNodeForUnparsedPartition(enrichRepo, eviFile, pfile)
+			if err != nil {
 				logging.GetLogger().Error("indexEvidenceFile UPSERT_PARTITION_ERROR", zap.Error(err), zap.Int("partition_index", index))
 				return err
 			}
@@ -375,7 +421,9 @@ func indexEvidenceFile(eviFile structs.InputFile, db *badger.DB, enableFTS bool,
 			return err
 		}
 	}
-	if err := persistEvidenceInternalObjects(eviFile.GetID(), eviFile.GetInternalObjects(), db); err != nil {
+
+	err := persistEvidenceInternalObjects(eviFile.GetID(), eviFile.GetInternalObjects(), db)
+	if err != nil {
 		logging.GetLogger().Error("indexEvidenceFile PERSIST_INTERNAL_OBJECTS_ERROR", zap.Error(err))
 		return err
 	}

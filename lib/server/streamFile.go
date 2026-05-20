@@ -117,12 +117,12 @@ func getFileHandle(db *badger.DB) (*os.File, error) {
 		return nil, err
 	}
 
-	upladsDir := filepath.Join(db.Opts().Dir, cnst.UploadsDir)
+	upladsDir := filepath.Join(util.ResolveDataRoot(db.Opts().Dir), cnst.UploadsDir)
 	fpath := filepath.Join(upladsDir, fid.String())
 	fpath, err = filepath.Abs(fpath)
 	if err != nil {
 		return nil, err
 	}
 
-	return os.Create(fpath)
+	return os.OpenFile(fpath, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, cnst.FilePerm)
 }

@@ -1,23 +1,29 @@
 package structs
 
+const SearchReportSchemaVersion = "v1"
+
 type SearchReport struct {
-	Query            string          `json:"query"`
-	ExecutiveSummary string          `json:"executive_summary"`
-	Occurances       []OccuranceData `json:"occurances"`
+	SchemaVersion    string           `json:"schema_version,omitempty"`
+	Query            string           `json:"query"`
+	ExecutiveSummary string           `json:"executive_summary"`
+	Occurrences      []OccurrenceData `json:"occurances"`
 }
 
-type OccuranceData struct {
-	ArtefactHash string     `json:"artefact"`
-	Count        int        `json:"count"`
-	FileNames    []string   `json:"files,omitempty"`
-	Matches      []string   `json:"matches"`
-	Disk         *DiskImage `json:"disk,omitempty"`
+type OccurrenceData struct {
+	ArtefactHash string            `json:"artefact"`
+	Count        int               `json:"count"`
+	BM25Score    float64           `json:"bm25_score,omitempty"`
+	FileNames    []string          `json:"files,omitempty"`
+	EvidenceFile *EvidenceFilePart `json:"evidence_file,omitempty"`
 }
 
-type DiskImage struct {
-	DiskImageHash  string         `json:"disk_image_hash,omitempty"`
-	DiskImageNames []string       `json:"disk_image_names,omitempty"`
-	Partition      *PartitionPart `json:"partition,omitempty"`
+// Backward-compatible alias for older references.
+type OccuranceData = OccurrenceData
+
+type EvidenceFilePart struct {
+	EvidenceFileHash  string         `json:"evidence_file_hash,omitempty"`
+	EvidenceFileNames []string       `json:"evidence_file_names,omitempty"`
+	Partition         *PartitionPart `json:"partition,omitempty"`
 }
 
 type PartitionPart struct {
@@ -31,9 +37,9 @@ type IndexedPart struct {
 	IndexedFileNames []string `json:"indexed_file_names,omitempty"`
 }
 
-func NewDiskImage() *DiskImage {
-	return &DiskImage{
-		DiskImageNames: []string{},
+func NewEvidenceFilePart() *EvidenceFilePart {
+	return &EvidenceFilePart{
+		EvidenceFileNames: []string{},
 		Partition: &PartitionPart{
 			PartitionPartNames: []string{},
 			Indexed: &IndexedPart{

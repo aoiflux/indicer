@@ -4,10 +4,13 @@ import (
 	"fmt"
 	"indicer/lib/cnst"
 	"indicer/lib/dbio"
+	"indicer/lib/logging"
+	"indicer/lib/store"
 	"indicer/lib/util"
 
 	"github.com/dgraph-io/badger/v4"
 	"github.com/fatih/color"
+	"go.uber.org/zap"
 )
 
 func Common(chonkSize int, dbpath string, key []byte) (*badger.DB, string, error) {
@@ -29,5 +32,21 @@ func Common(chonkSize int, dbpath string, key []byte) (*badger.DB, string, error
 	}
 
 	db, err := dbio.ConnectDB(dbpath, key)
-	return db, dbpath, err
+	if err != nil {
+		return nil, "", err
+	}
+
+	recoveryReport, err := store.RecoverIncompleteIngests(db)
+	if err != nil {
+		_ = db.Close()
+		return nil, "", err
+	}
+	if recoveryReport.MarkedFailed > 0 {
+		logging.GetLogger().Warn("Common STARTUP_RECOVERY_MARKED_FAILED",
+			zap.Int("marked_failed", recoveryReport.MarkedFailed),
+			zap.Int("incomplete_found", recoveryReport.IncompleteFound),
+		)
+	}
+
+	return db, dbpath, nil
 }

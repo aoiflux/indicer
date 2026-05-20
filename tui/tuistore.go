@@ -46,7 +46,7 @@ func NewStoreModel(db *badger.DB, storeFn func(filePath string, syncIndex bool, 
 		storeFn:   storeFn,
 		width:     80,
 		height:    24,
-		hashAlgo:  cnst.SHA3,
+		hashAlgo:  cnst.BLAKE3,
 	}
 }
 
@@ -217,10 +217,10 @@ func (m StoreModel) View() tea.View {
 	sha3Badge := lipgloss.NewStyle().Foreground(lipgloss.Color("42")).Bold(true).Render("SHA3")
 	blake3Badge := lipgloss.NewStyle().Foreground(lipgloss.Color("214")).Bold(true).Render("BLAKE3")
 	var hashLabel string
-	if m.hashAlgo == cnst.BLAKE3 {
-		hashLabel = "Hash Algo: " + blake3Badge + lipgloss.NewStyle().Foreground(lipgloss.Color("240")).Render(" (SHA3)")
-	} else {
+	if m.hashAlgo == cnst.SHA3 {
 		hashLabel = "Hash Algo: " + sha3Badge + lipgloss.NewStyle().Foreground(lipgloss.Color("240")).Render(" (BLAKE3)")
+	} else {
+		hashLabel = "Hash Algo: " + blake3Badge + lipgloss.NewStyle().Foreground(lipgloss.Color("240")).Render(" (SHA3)")
 	}
 	if m.focusedField == 3 {
 		hashLabel = SelectedItemStyle.Render("Hash Algo:") + " " + func() string {

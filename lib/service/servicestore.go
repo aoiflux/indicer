@@ -8,11 +8,12 @@ import (
 	"indicer/lib/structs"
 	"indicer/lib/util"
 	"indicer/pb"
+	"strings"
 )
 
 func StoreStreamedFile(fpath string) error {
 	key := util.HashPassword("")
-	return cli.StoreFile(int(cnst.DefaultChonkSize), fpath, key, false, false, cnst.DB)
+	return cli.StoreFile(int(cnst.DefaultChonkSize), fpath, key, false, false, false, false, cnst.DB)
 }
 
 func AddEvidenceMetadata(meta *pb.StreamFileMeta) (structs.EvidenceFile, error) {
@@ -20,7 +21,10 @@ func AddEvidenceMetadata(meta *pb.StreamFileMeta) (structs.EvidenceFile, error) 
 	if err != nil {
 		return efile, err
 	}
-	efile.EvidenceType = meta.FileType
+	fileType := strings.ToLower(strings.TrimSpace(meta.FileType))
+	if fileType != "" && fileType != cnst.UnknownEvidenceType {
+		efile.EvidenceType = fileType
+	}
 
 	fileHash, err := base64.StdEncoding.DecodeString(meta.FileHash)
 	if err != nil {

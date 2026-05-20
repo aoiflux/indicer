@@ -3,18 +3,18 @@ package store
 import (
 	"bytes"
 	"encoding/base64"
+	"encoding/json"
 	"fmt"
+
 	"indicer/lib/cnst"
 	"indicer/lib/structs"
-	"indicer/lib/util"
-	"strings"
 
 	"github.com/dgraph-io/badger/v4"
-	"github.com/dustin/go-humanize"
 	"github.com/vmihailenco/msgpack/v5"
 )
 
-func List(db *badger.DB) error {
+func List(db *badger.DB, statusFilter string) error {
+	statusFilter = normalizeStatusFilter(statusFilter)
 	return db.View(func(txn *badger.Txn) error {
 		opts := badger.DefaultIteratorOptions
 		opts.PrefetchSize = 1000
@@ -22,6 +22,9 @@ func List(db *badger.DB) error {
 		defer it.Close()
 
 		eviPrefix := []byte(cnst.EviFileNamespace)
+		var evidenceFiles []map[string]interface{}
+		var completedCount, pendingCount, failedCount int
+
 		for it.Seek(eviPrefix); it.ValidForPrefix(eviPrefix); it.Next() {
 			item := it.Item()
 			k := item.KeyCopy(nil)
@@ -41,103 +44,88 @@ func List(db *badger.DB) error {
 				return err
 			}
 
-			if !evidata.Completed {
+			status := evidenceStatus(evidata.Completed, evidata.Failed)
+			switch status {
+			case "completed":
+				completedCount++
+			case "failed":
+				failedCount++
+			default:
+				pendingCount++
+			}
+			if !matchesStatusFilter(statusFilter, status) {
 				continue
 			}
 
 			evihash := bytes.Split(k, eviPrefix)[1]
-			fmt.Println(base64.StdEncoding.EncodeToString(evihash))
-			fmt.Printf("\tNames: %v\n", evidata.Names)
-			fmt.Printf("\tSize: %v\n", humanize.Bytes(uint64(evidata.Size)))
-			for phash := range evidata.InternalObjects {
-				err = listPartitions(phash, txn)
+			hashStr := base64.StdEncoding.EncodeToString(evihash)
+
+			// Build partition data
+			var partitions []map[string]interface{}
+			if evidata.Completed {
+				partitionHashes, err := getEvidencePartitionHashes(txn, hashStr, evidata)
 				if err != nil {
 					return err
 				}
+				for _, phash := range partitionHashes {
+					partData, err := buildPartitionData(phash, txn)
+					if err != nil {
+						return err
+					}
+					partitions = append(partitions, partData)
+				}
+			}
+
+			eviFile := map[string]interface{}{
+				"hash":           hashStr,
+				"name":           normalizeEvidenceFileName(firstCleanNameFromMap(evidata.Names)),
+				"type":           evidata.EvidenceType,
+				"size":           evidata.Size,
+				"completed":      evidata.Completed,
+				"failed":         evidata.Failed,
+				"status":         status,
+				"files":          getMapKeys(evidata.Names),
+				"fileCount":      len(evidata.Names),
+				"partitions":     partitions,
+				"partitionCount": len(partitions),
+			}
+			evidenceFiles = append(evidenceFiles, eviFile)
+		}
+
+		visibleCompleted := 0
+		visiblePending := 0
+		visibleFailed := 0
+		for _, evidence := range evidenceFiles {
+			status, _ := evidence["status"].(string)
+			switch status {
+			case "completed":
+				visibleCompleted++
+			case "failed":
+				visibleFailed++
+			default:
+				visiblePending++
 			}
 		}
 
-		return nil
-	})
-}
+		// Output as JSON
+		output := map[string]interface{}{
+			"statusFilter":      statusFilter,
+			"totalEvidence":     len(evidenceFiles),
+			"completedEvidence": visibleCompleted,
+			"pendingEvidence":   visiblePending,
+			"failedEvidence":    visibleFailed,
+			"scanCompleted":     completedCount,
+			"scanPending":       pendingCount,
+			"scanFailed":        failedCount,
+			"evidence":          evidenceFiles,
+		}
 
-func listPartitions(phash string, txn *badger.Txn) error {
-	fmt.Printf("\tPartition: %v\n", phash)
-	decodedPhash, err := base64.StdEncoding.DecodeString(phash)
-	if err != nil {
-		return err
-	}
-
-	pid := util.AppendToBytesSlice(cnst.PartiFileNamespace, decodedPhash)
-	item, err := txn.Get(pid)
-	if err != nil {
-		return err
-	}
-	v, err := item.ValueCopy(nil)
-	if err != nil {
-		return err
-	}
-
-	decoded, err := cnst.DECODER.DecodeAll(v, nil)
-	if err == nil {
-		v = decoded
-	}
-
-	var pdata structs.PartitionFile
-	err = msgpack.Unmarshal(v, &pdata)
-	if err != nil {
-		return err
-	}
-
-	var index int
-	for ihash := range pdata.InternalObjects {
-		err = listIndexedFiles(index, ihash, txn)
+		jsonData, err := json.MarshalIndent(output, "", "  ")
 		if err != nil {
 			return err
 		}
-		index++
-	}
 
-	return nil
-}
-
-func listIndexedFiles(index int, ihash string, txn *badger.Txn) error {
-	fmt.Printf("\t\tIndexed %d ---> %s\n", index, ihash)
-	decodedIhash, err := base64.StdEncoding.DecodeString(ihash)
-	if err != nil {
-		return err
-	}
-
-	iid := util.AppendToBytesSlice(cnst.IdxFileNamespace, decodedIhash)
-	item, err := txn.Get(iid)
-	if err != nil {
-		return err
-	}
-	v, err := item.ValueCopy(nil)
-	if err != nil {
-		return err
-	}
-
-	decoded, err := cnst.DECODER.DecodeAll(v, nil)
-	if err == nil {
-		v = decoded
-	}
-
-	var idata structs.IndexedFile
-	err = msgpack.Unmarshal(v, &idata)
-	if err != nil {
-		return err
-	}
-
-	for i := range idata.Names {
-		if !strings.Contains(i, cnst.DataSeperator) {
-			continue
-		}
-		delete(idata.Names, i)
-		name := strings.Split(i, cnst.DataSeperator)[2]
-		idata.Names[name] = struct{}{}
-	}
-	fmt.Printf("\t\tNames: %v\n\n", idata.Names)
-
-	return nil
+		fmt.Println(string(jsonData))
+		return nil
+	})
 }

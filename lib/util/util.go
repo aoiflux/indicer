@@ -11,8 +11,10 @@ import (
 	"encoding/base64"
 	"fmt"
 	"hash"
+	"hash/fnv"
 	"indicer/lib/cnst"
 	"io"
+	"math/bits"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -41,7 +43,7 @@ func GetDBPath() (string, error) {
 	}
 
 	dbpath := filepath.Join(fullpath, dbdir)
-	err = os.MkdirAll(dbpath, 0x700)
+	err = os.MkdirAll(dbpath, cnst.DirPerm)
 	if err != nil {
 		return "", err
 	}
@@ -50,7 +52,7 @@ func GetDBPath() (string, error) {
 }
 
 func EnsureBlobPath(dbpath string) error {
-	blobpath := filepath.Join(dbpath, cnst.BLOBSDIR)
+	blobpath := BlobPath(dbpath)
 	_, err := os.Stat(blobpath)
 	if err != nil && !os.IsNotExist(err) {
 		return err
@@ -58,7 +60,31 @@ func EnsureBlobPath(dbpath string) error {
 	if os.IsExist(err) {
 		return nil
 	}
-	return os.MkdirAll(blobpath, os.ModeDir)
+	return os.MkdirAll(blobpath, cnst.DirPerm)
+}
+
+func ResolveDataRoot(path string) string {
+	clean := filepath.Clean(path)
+	if filepath.Base(clean) == cnst.KVDBDIR {
+		return filepath.Dir(clean)
+	}
+	return clean
+}
+
+func KVDBPath(path string) string {
+	return filepath.Join(ResolveDataRoot(path), cnst.KVDBDIR)
+}
+
+func BlobPath(path string) string {
+	return filepath.Join(ResolveDataRoot(path), cnst.BLOBSDIR)
+}
+
+func GraphPath(path string) string {
+	return filepath.Join(ResolveDataRoot(path), cnst.GRAPHDIR)
+}
+
+func FTSPath(path string) string {
+	return filepath.Join(ResolveDataRoot(path), cnst.FTSDIR)
 }
 
 func SetChonkSize(chonkSize int) {
@@ -139,24 +165,41 @@ func IsLogicalFile(inid []byte) bool {
 }
 
 func AppendToBytesSlice(args ...interface{}) []byte {
-	var buffer bytes.Buffer
+	const unsupported = "Unsupported Type"
 
+	total := 0
 	for _, arg := range args {
 		switch value := arg.(type) {
 		case []byte:
-			buffer.Write(value)
+			total += len(value)
 		case string:
-			buffer.WriteString(value)
+			total += len(value)
 		case int64:
-			buffer.Write(strconv.AppendInt(nil, value, 10))
+			total += len(strconv.FormatInt(value, 10))
 		case int:
-			buffer.Write(strconv.AppendInt(nil, int64(value), 10))
+			total += len(strconv.FormatInt(int64(value), 10))
 		default:
-			buffer.WriteString("Unsupported Type")
+			total += len(unsupported)
 		}
 	}
 
-	return buffer.Bytes()
+	out := make([]byte, 0, total)
+	for _, arg := range args {
+		switch value := arg.(type) {
+		case []byte:
+			out = append(out, value...)
+		case string:
+			out = append(out, value...)
+		case int64:
+			out = strconv.AppendInt(out, value, 10)
+		case int:
+			out = strconv.AppendInt(out, int64(value), 10)
+		default:
+			out = append(out, unsupported...)
+		}
+	}
+
+	return out
 }
 
 func HashPassword(password string) []byte {
@@ -166,19 +209,67 @@ func HashPassword(password string) []byte {
 }
 
 func PartialMatchConfidence(s1, s2 []byte) float64 {
+	if len(s1) == 0 || len(s2) == 0 {
+		return 0
+	}
+
 	minLength := len(s1)
 	if len(s2) < minLength {
 		minLength = len(s2)
 	}
+	if minLength == 0 {
+		return 0
+	}
 
-	similarCount := 0
+	var matchedBits int
 	for i := 0; i < minLength; i++ {
-		if s1[i] == s2[i] {
-			similarCount++
+		x := s1[i] ^ s2[i]
+		matchedBits += 8 - bits.OnesCount8(x)
+	}
+
+	totalBits := minLength * 8
+	return float64(matchedBits) / float64(totalBits)
+}
+
+func ChunkSimHash64(data []byte) uint64 {
+	if len(data) == 0 {
+		return 0
+	}
+
+	window := 4
+	if len(data) < window {
+		window = len(data)
+	}
+
+	weights := [64]int{}
+	hasher := fnv.New64a()
+	for i := 0; i+window <= len(data); i++ {
+		hasher.Reset()
+		_, _ = hasher.Write(data[i : i+window])
+		h := hasher.Sum64()
+
+		for bit := 0; bit < 64; bit++ {
+			if (h & (uint64(1) << bit)) != 0 {
+				weights[bit]++
+			} else {
+				weights[bit]--
+			}
 		}
 	}
 
-	return float64(similarCount) / float64(minLength)
+	var sig uint64
+	for bit := 0; bit < 64; bit++ {
+		if weights[bit] >= 0 {
+			sig |= uint64(1) << bit
+		}
+	}
+
+	return sig
+}
+
+func HammingSimilarity64(a, b uint64) float64 {
+	distance := bits.OnesCount64(a ^ b)
+	return float64(64-distance) / 64
 }
 
 func GetDBStartOffset(startIndex int64) int64 {
@@ -227,10 +318,13 @@ func SealAES(key, plaintext []byte) ([]byte, error) {
 		return nil, err
 	}
 
-	nonce := sha256.Sum256(key)
-	ciphertext := gcm.Seal(nil, nonce[:gcm.NonceSize()], plaintext, nil)
+	nonce := make([]byte, gcm.NonceSize())
+	if _, err := rand.Read(nonce); err != nil {
+		return nil, err
+	}
+	ciphertext := gcm.Seal(nil, nonce, plaintext, nil)
 
-	return ciphertext, nil
+	return append(nonce, ciphertext...), nil
 }
 func UnsealAES(key, ciphertext []byte) ([]byte, error) {
 	block, err := aes.NewCipher(key)
@@ -243,8 +337,16 @@ func UnsealAES(key, ciphertext []byte) ([]byte, error) {
 		return nil, err
 	}
 
-	nonce := sha256.Sum256(key)
-	plaintext, err := gcm.Open(nil, nonce[:gcm.NonceSize()], ciphertext, nil)
+	nonceSize := gcm.NonceSize()
+	if len(ciphertext) > nonceSize {
+		plaintext, err := gcm.Open(nil, ciphertext[:nonceSize], ciphertext[nonceSize:], nil)
+		if err == nil {
+			return plaintext, nil
+		}
+	}
+
+	legacyNonce := sha256.Sum256(key)
+	plaintext, err := gcm.Open(nil, legacyNonce[:nonceSize], ciphertext, nil)
 	if err != nil {
 		return nil, err
 	}

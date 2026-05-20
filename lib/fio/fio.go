@@ -23,26 +23,35 @@ func WriteChonk(dbpath string, data, ckey, key []byte) ([]byte, error) {
 		return nil, err
 	}
 	cfname := base64.RawURLEncoding.EncodeToString(ckhash) + cnst.BLOBEXT
-	cfpath := filepath.Join(dbpath, cnst.BLOBSDIR, cfname)
-	err = os.WriteFile(cfpath, data, os.ModePerm)
+	cfpath := filepath.Join(util.BlobPath(dbpath), cfname)
+
+	// Idempotent: if the file already exists, its content is identical
+	// (content-addressed by ckey hash), so we can return the path unchanged.
+	if _, serr := os.Stat(cfpath); serr == nil {
+		return []byte(cfpath), nil
+	}
+
+	err = os.WriteFile(cfpath, data, cnst.FilePerm)
 	return []byte(cfpath), err
 }
 
 func ReadChonk(cfpath, key []byte) ([]byte, error) {
-	var data []byte
-
 	encoded, err := os.ReadFile(string(cfpath))
 	if err != nil {
 		return nil, err
 	}
-	decrypted, err := util.UnsealAES(key, encoded)
-	if err == nil {
-		data = decrypted
-	}
-	decoded, err := cnst.DECODER.DecodeAll(data, nil)
-	if err == nil {
-		data = decoded
+	if cnst.QUICKOPT {
+		return encoded, nil
 	}
 
-	return data, nil
+	decrypted, err := util.UnsealAES(key, encoded)
+	if err != nil {
+		return nil, err
+	}
+	decoded, err := cnst.DECODER.DecodeAll(decrypted, nil)
+	if err != nil {
+		return nil, err
+	}
+
+	return decoded, nil
 }

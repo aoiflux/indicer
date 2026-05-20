@@ -67,6 +67,8 @@ type ContainerManager struct {
 	writeQueue       chan *WriteRequest // Lock-free write queue
 	writerDone       chan struct{}      // Signal writer goroutine finished
 	acceptMu         sync.RWMutex
+	seenMu           sync.RWMutex
+	seen             map[string]WriteResponse // in-run dedup by chunk hash
 	closed           bool
 	closeOnce        sync.Once
 }
@@ -78,6 +80,7 @@ func NewContainerManager(dbpath string) *ContainerManager {
 		containerIndex: 0,
 		writeQueue:     make(chan *WriteRequest, 1000), // Buffered channel for batching
 		writerDone:     make(chan struct{}),
+		seen:           make(map[string]WriteResponse),
 	}
 
 	// Start dedicated writer goroutine (lock-free single writer)
@@ -88,7 +91,13 @@ func NewContainerManager(dbpath string) *ContainerManager {
 
 // WriteChunkToContainer writes a chunk to a container file using lock-free queue
 func (cm *ContainerManager) WriteChunkToContainer(data, ckey, key []byte) (containerPath string, offset int64, size int64, err error) {
-	_ = ckey // reserved for future metadata/indexing use
+	hashKey := base64.RawURLEncoding.EncodeToString(ckey)
+	cm.seenMu.RLock()
+	if cached, ok := cm.seen[hashKey]; ok {
+		cm.seenMu.RUnlock()
+		return cached.containerPath, cached.offset, cached.size, cached.err
+	}
+	cm.seenMu.RUnlock()
 
 	// Create write request with response channel
 	req := &WriteRequest{
@@ -109,6 +118,13 @@ func (cm *ContainerManager) WriteChunkToContainer(data, ckey, key []byte) (conta
 
 	// Wait for response from writer goroutine
 	resp := <-req.responseCh
+	if resp.err == nil {
+		cm.seenMu.Lock()
+		if _, exists := cm.seen[hashKey]; !exists {
+			cm.seen[hashKey] = resp
+		}
+		cm.seenMu.Unlock()
+	}
 
 	return resp.containerPath, resp.offset, resp.size, resp.err
 }
@@ -200,17 +216,17 @@ func (cm *ContainerManager) createNewContainer() error {
 		return err
 	}
 	cfname := base64.RawURLEncoding.EncodeToString(ckhash)[:cnst.FileNameLen] + cnst.BLOBEXT
-	cfpath := filepath.Join(cm.dbpath, cnst.BLOBSDIR, cfname)
+	cfpath := filepath.Join(util.BlobPath(cm.dbpath), cfname)
 
 	// Ensure BLOBS directory exists
-	blobsDir := filepath.Join(cm.dbpath, cnst.BLOBSDIR)
-	err = os.MkdirAll(blobsDir, os.ModePerm)
+	blobsDir := util.BlobPath(cm.dbpath)
+	err = os.MkdirAll(blobsDir, cnst.DirPerm)
 	if err != nil {
 		return err
 	}
 
 	// Open new container file
-	file, err := os.OpenFile(cfpath, os.O_CREATE|os.O_WRONLY|os.O_APPEND, os.ModePerm)
+	file, err := os.OpenFile(cfpath, os.O_CREATE|os.O_WRONLY|os.O_APPEND, cnst.FilePerm)
 	if err != nil {
 		return err
 	}
@@ -267,6 +283,16 @@ func (cm *ContainerManager) compressContainer(containerPath string) error {
 		return nil
 	}
 
+	// In non-QUICKOPT mode each chunk is already zstd-compressed then AES-GCM
+	// encrypted before being written to the container.  AES-GCM output is
+	// statistically indistinguishable from random bytes and cannot be further
+	// compressed.  Running a full container-level zstd pass would read and
+	// rewrite the entire file for zero compression benefit while burning
+	// significant CPU and I/O.  Skip it and keep the plain .blob file.
+	if !cnst.QUICKOPT {
+		return nil
+	}
+
 	// Open source file
 	srcFile, err := os.Open(containerPath)
 	if err != nil {
@@ -276,7 +302,7 @@ func (cm *ContainerManager) compressContainer(containerPath string) error {
 	// Create compressed file (temp + rename for safer replacement)
 	compressedPath := strings.TrimSuffix(containerPath, cnst.BLOBEXT) + cnst.BLOBZSTEXT
 	tempCompressedPath := compressedPath + ".tmp"
-	dstFile, err := os.Create(tempCompressedPath)
+	dstFile, err := os.OpenFile(tempCompressedPath, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, cnst.FilePerm)
 	if err != nil {
 		srcFile.Close()
 		return err

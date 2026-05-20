@@ -1,6 +1,7 @@
 package tui
 
 import (
+	"context"
 	"fmt"
 	"io"
 	"strings"
@@ -25,6 +26,7 @@ type Model struct {
 	nearModel    *NearModel
 	resetModel   *ResetModel
 	statsModel   *StatsModel
+	microModel   *MicroModel
 	menuStatus   string
 	err          error
 	prevState    State
@@ -32,7 +34,7 @@ type Model struct {
 
 type Actions struct {
 	Store   func(filePath string, syncIndex bool, noIndex bool, hashAlgo string) error
-	Search  func(query string) error
+	Search  func(ctx context.Context, query string) error
 	Restore func(hash string, restorePath string) error
 	NearIn  func(hash string, deep bool) error
 	NearOut func(filePath string) error
@@ -50,6 +52,7 @@ const (
 	StateNear
 	StateReset
 	StateStats
+	StateMicro
 	StateLoading
 	StateError
 	StateSuccess
@@ -118,6 +121,11 @@ func NewModel(db *badger.DB, actions Actions) *Model {
 			description: "Show database statistics",
 			action:      StateStats,
 		},
+		Item{
+			title:       "🔬 Micro-Artefacts",
+			description: "Visualise the micro-artefact graph hierarchy",
+			action:      StateMicro,
+		},
 	}
 
 	const defaultWidth = 80
@@ -141,6 +149,7 @@ func NewModel(db *badger.DB, actions Actions) *Model {
 		nearModel:    NewNearModel(db, actions.NearIn, actions.NearOut),
 		resetModel:   NewResetModel(db, actions.Reset),
 		statsModel:   NewStatsModel(db),
+		microModel:   NewMicroModel(db),
 	}
 }
 
@@ -173,6 +182,11 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case statsBackToMenuMsg:
 		m.state = StateMenu
 		m.statsModel = NewStatsModel(m.db)
+		m.applyWindowSize()
+		return m, nil
+	case microBackToMenuMsg:
+		m.state = StateMenu
+		m.microModel = NewMicroModel(m.db)
 		m.applyWindowSize()
 		return m, nil
 	case tea.KeyMsg:
@@ -221,6 +235,10 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					return m, m.nearModel.Init()
 				case StateStats:
 					return m, m.statsModel.Init()
+				case StateMicro:
+					m.microModel = NewMicroModel(m.db)
+					m.microModel.Resize(m.width, m.height)
+					return m, m.microModel.Init()
 				default:
 					// Avoid key carry-over into child screen on the same Enter press.
 					return m, nil
@@ -279,6 +297,12 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.statsModel = &model
 		}
 		cmd = updateCmd
+	case StateMicro:
+		updated, updateCmd := m.microModel.Update(msg)
+		if model, ok := updated.(MicroModel); ok {
+			m.microModel = &model
+		}
+		cmd = updateCmd
 	}
 
 	return m, cmd
@@ -307,6 +331,7 @@ func (m *Model) applyWindowSize() {
 	m.nearModel.Resize(m.width, m.height)
 	m.resetModel.Resize(m.width, m.height)
 	m.statsModel.Resize(m.width, m.height)
+	m.microModel.Resize(m.width, m.height)
 }
 
 func (m Model) View() tea.View {
@@ -328,6 +353,8 @@ func (m Model) View() tea.View {
 		v = m.resetModel.View()
 	case StateStats:
 		v = m.statsModel.View()
+	case StateMicro:
+		v = m.microModel.View()
 	case StateError:
 		v = tea.NewView(m.viewError())
 	case StateSuccess:

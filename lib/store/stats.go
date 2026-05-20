@@ -1,6 +1,7 @@
 package store
 
 import (
+	"bytes"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -8,6 +9,7 @@ import (
 
 	"indicer/lib/cnst"
 	"indicer/lib/structs"
+	"indicer/lib/util"
 
 	"github.com/dgraph-io/badger/v4"
 	"github.com/dustin/go-humanize"
@@ -16,15 +18,20 @@ import (
 )
 
 type DBStats struct {
-	TotalFiles        int64
-	CompletedFiles    int64
-	TotalLogicalSize  int64
-	TotalPartitions   int64
-	TotalIndexedFiles int64
-	UniqueChunks      int64
-	TotalChunkRefs    int64
-	SharedChunks      int64 // chunk positions referenced by more than 1 file
-	OnDiskBytes       int64
+	TotalFiles             int64
+	CompletedFiles         int64
+	TotalLogicalSize       int64
+	TotalPartitions        int64
+	TotalIndexedFiles      int64
+	TotalIndexedNames      int64
+	DeletedIndexedFiles    int64
+	FragmentedIndexedFiles int64
+	DeletedIndexedNames    int64
+	FragmentedIndexedNames int64
+	UniqueChunks           int64
+	TotalChunkRefs         int64
+	SharedChunks           int64 // chunk positions referenced by more than 1 file
+	OnDiskBytes            int64
 }
 
 func Stats(db *badger.DB) error {
@@ -84,11 +91,51 @@ func gatherStats(db *badger.DB) (*DBStats, error) {
 		}
 		it.Close()
 
-		// --- Indexed files (keys only) ---
+		// --- Indexed files (values for metadata-aware stats) ---
 		idxPrefix := []byte(cnst.IdxFileNamespace)
-		it = txn.NewIterator(keyOpts)
+		it = txn.NewIterator(valOpts)
 		for it.Seek(idxPrefix); it.ValidForPrefix(idxPrefix); it.Next() {
+			v, err := it.Item().ValueCopy(nil)
+			if err != nil {
+				it.Close()
+				return err
+			}
+			if dec, err := cnst.DECODER.DecodeAll(v, nil); err == nil {
+				v = dec
+			}
+
+			var ifile structs.IndexedFile
+			if err := msgpack.Unmarshal(v, &ifile); err != nil {
+				it.Close()
+				return err
+			}
+
 			s.TotalIndexedFiles++
+			s.TotalIndexedNames += int64(len(ifile.Names))
+
+			objDeleted := ifile.IsDeleted
+			var objFragmented bool
+			for name := range ifile.Names {
+				meta, ok := ifile.NameMeta[name]
+				if !ok {
+					meta = structs.IndexedNameMeta{IsDeleted: ifile.IsDeleted}
+				}
+				if meta.IsDeleted {
+					s.DeletedIndexedNames++
+					objDeleted = true
+				}
+				if meta.IsFragmented {
+					s.FragmentedIndexedNames++
+					objFragmented = true
+				}
+			}
+
+			if objDeleted {
+				s.DeletedIndexedFiles++
+			}
+			if objFragmented {
+				s.FragmentedIndexedFiles++
+			}
 		}
 		it.Close()
 
@@ -108,10 +155,21 @@ func gatherStats(db *badger.DB) (*DBStats, error) {
 		}
 		it.Close()
 
-		// --- Shared chunks: rev-rel entries referenced by more than 1 file ---
-		revRelPrefix := []byte(cnst.ReverseRelationNamespace)
+		// --- Shared chunks: logical rev-rel entries referenced by more than 1 file ---
+		sharedByRelation := make(map[string]map[string]struct{})
+
+		appendPrefix := []byte(cnst.ReverseRelationAppendNamespace)
 		it = txn.NewIterator(valOpts)
-		for it.Seek(revRelPrefix); it.ValidForPrefix(revRelPrefix); it.Next() {
+		for it.Seek(appendPrefix); it.ValidForPrefix(appendPrefix); it.Next() {
+			memberKey := it.Item().KeyCopy(nil)
+			split := bytes.Split(memberKey, []byte(cnst.DataSeperator))
+			if len(split) < 4 {
+				it.Close()
+				return fmt.Errorf("invalid reverse-relation append key: %q", string(memberKey))
+			}
+			chash := bytes.TrimPrefix(split[1], []byte(":"))
+			logicalKey := string(util.AppendToBytesSlice(cnst.ReverseRelationNamespace, chash, cnst.DataSeperator, split[2]))
+
 			v, err := it.Item().ValueCopy(nil)
 			if err != nil {
 				it.Close()
@@ -120,12 +178,21 @@ func gatherStats(db *badger.DB) (*DBStats, error) {
 			if dec, err := cnst.DECODER.DecodeAll(v, nil); err == nil {
 				v = dec
 			}
-			var m map[string]struct{}
-			if err := msgpack.Unmarshal(v, &m); err == nil && len(m) > 1 {
+
+			memberSet := sharedByRelation[logicalKey]
+			if memberSet == nil {
+				memberSet = make(map[string]struct{}, 1)
+				sharedByRelation[logicalKey] = memberSet
+			}
+			memberSet[string(v)] = struct{}{}
+		}
+		it.Close()
+
+		for _, memberSet := range sharedByRelation {
+			if len(memberSet) > 1 {
 				s.SharedChunks++
 			}
 		}
-		it.Close()
 
 		return nil
 	})
@@ -139,7 +206,7 @@ func gatherStats(db *badger.DB) (*DBStats, error) {
 
 func calcBlobDirBytes(dbDir string) int64 {
 	var total int64
-	blobsDir := filepath.Join(dbDir, cnst.BLOBSDIR)
+	blobsDir := util.BlobPath(dbDir)
 	_ = filepath.Walk(blobsDir, func(_ string, info os.FileInfo, err error) error {
 		if err == nil && !info.IsDir() {
 			total += info.Size()
@@ -225,6 +292,29 @@ func printStats(s *DBStats) {
 
 	statRow("Partition files", humanize.Comma(s.TotalPartitions), val)
 	statRow("Indexed FS objects", humanize.Comma(s.TotalIndexedFiles), val)
+	statRow("Indexed names", humanize.Comma(s.TotalIndexedNames), val)
+
+	if s.TotalIndexedFiles > 0 {
+		deletedPct := float64(s.DeletedIndexedFiles) / float64(s.TotalIndexedFiles) * 100
+		fragmentedPct := float64(s.FragmentedIndexedFiles) / float64(s.TotalIndexedFiles) * 100
+		statRow("Deleted indexed objects", fmt.Sprintf("%s (%.1f%%)", humanize.Comma(s.DeletedIndexedFiles), deletedPct), val)
+		if s.FragmentedIndexedFiles > 0 {
+			statRow("Fragmented indexed objects", fmt.Sprintf("%s (%.1f%%)", humanize.Comma(s.FragmentedIndexedFiles), fragmentedPct), warn)
+		} else {
+			statRow("Fragmented indexed objects", "0 (currently skipped by parser)", dim)
+		}
+	}
+
+	if s.TotalIndexedNames > 0 {
+		deletedNamePct := float64(s.DeletedIndexedNames) / float64(s.TotalIndexedNames) * 100
+		fragmentedNamePct := float64(s.FragmentedIndexedNames) / float64(s.TotalIndexedNames) * 100
+		statRow("Deleted indexed names", fmt.Sprintf("%s (%.1f%%)", humanize.Comma(s.DeletedIndexedNames), deletedNamePct), val)
+		if s.FragmentedIndexedNames > 0 {
+			statRow("Fragmented indexed names", fmt.Sprintf("%s (%.1f%%)", humanize.Comma(s.FragmentedIndexedNames), fragmentedNamePct), warn)
+		} else {
+			statRow("Fragmented indexed names", "0 (currently skipped by parser)", dim)
+		}
+	}
 
 	// ── STORAGE ────────────────────────────────────────────────────────────
 	fmt.Println()

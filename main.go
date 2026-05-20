@@ -5,6 +5,7 @@ import (
 	"indicer/api"
 	"indicer/cli"
 	"indicer/lib/cnst"
+	"indicer/lib/logging"
 	"indicer/lib/util"
 	"os"
 	"strings"
@@ -12,11 +13,12 @@ import (
 	"github.com/alecthomas/kingpin/v2"
 	"github.com/fatih/color"
 	"github.com/klauspost/compress/zstd"
+	"go.uber.org/zap"
 )
 
 const (
-	duesVersion  = "0.37"
-	duesCodename = "<starfruit> spacebar"
+	duesVersion  = "0.38"
+	duesCodename = "<jackfruit> spacebar"
 )
 
 func init() {
@@ -25,7 +27,7 @@ func init() {
 	cnst.DECODER, err = zstd.NewReader(nil, zstd.WithDecoderConcurrency(0))
 	handle(err)
 
-	cnst.ENCODER, err = zstd.NewWriter(nil, zstd.WithEncoderLevel(zstd.EncoderLevel(zstd.SpeedBestCompression)))
+	cnst.ENCODER, err = zstd.NewWriter(nil, zstd.WithEncoderLevel(zstd.SpeedBestCompression))
 	handle(err)
 }
 
@@ -41,36 +43,67 @@ func main() {
 	QUICKOPT := app.Flag(cnst.FlagFastMode, "Quick mode, forgoes encryption, intra-chunk & overall db compression in favour of higher throughput").Short(cnst.FlagFastModeShort).Default("false").Bool()
 	containerMode := app.Flag(cnst.FlagContainerMode, "Use container-based storage (packs multiple chunks into 1GB containers)").Short(cnst.FlagContainerModeShort).Default("false").Bool()
 	hierarchicalIndex := app.Flag(cnst.FlagHierarchicalIndex, "Use hierarchical block index (groups 1000 chunks per block, requires container mode)").Short(cnst.FlagHierarchicalShort).Default("false").Bool()
+	compressLevel := app.Flag(cnst.FlagCompressLevel, "Per-chunk zstd compression level [fast|default|best] (default: best)").Default("best").String()
 	cmdversion := app.Command(cnst.CmdVeresion, "Show version details and quick feature overview")
 
 	cmdtui := app.Command(cnst.CmdTui, "Launch interactive TUI interface")
 
 	cmdstore := app.Command(cnst.CmdStore, "Store file in database")
 	evipath := cmdstore.Arg(cnst.OperandFile, "Path of file that must be saved").Required().String()
-	syncIndex := cmdstore.Flag(cnst.FlagSyncIndex, "Run file indexer synchronously, this will block dedup").Short(cnst.FlagSyncIndexShort).Default("false").Bool()
+	syncIndex := cmdstore.Flag(cnst.FlagSyncIndex, "Run indexer synchronously (disables overlap with chunk ingest; slower but deterministic ordering)").Short(cnst.FlagSyncIndexShort).Default("false").Bool()
 	noIndex := cmdstore.Flag(cnst.FlagNoIndex, "Don't run indexer").Short(cnst.FlagNoIndexShort).Default("false").Bool()
-	hashAlgo := cmdstore.Flag(cnst.FlagHashAlgo, "Hashing algorithm to use [sha3|blake3] (default: SHA3)").Short(cnst.FlagHashAlgoShort).Default("sha3").String()
+	enableFTS := cmdstore.Flag(cnst.FlagEnableFts, "Enable full-text search indexing (sidecar Bleve index)").Default("false").Bool()
+	enableEnrichment := cmdstore.Flag(cnst.FlagEnableEnrichment, "Upsert disk/partition/indexed-file metadata nodes into graphdb during store").Default("false").Bool()
+	storeHashAlgo := cmdstore.Flag(cnst.FlagHashAlgo, "Hashing algorithm to use [sha3|blake3] (default: BLAKE3)").Short(cnst.FlagHashAlgoShort).Default(cnst.BLAKE3).String()
+	enableSimhash := cmdstore.Flag(cnst.FlagSimhash, "Compute and store per-chunk simhash signatures during ingest (enables NeAR chunk-level similarity; off by default)").Default("false").Bool()
+	storeWorkers := cmdstore.Flag(cnst.FlagStoreWorkers, "Override batch-owner worker count (0 = mode-aware default)").Default("0").Int()
+	storeQueue := cmdstore.Flag(cnst.FlagStoreQueue, "Override batch-owner task queue depth (0 = mode-aware default)").Default("0").Int()
 
 	cmdrestore := app.Command(cnst.CmdRestore, "Restore file from database")
 	rpath := cmdrestore.Flag(cnst.FlagRestoreFilePath, "Path for restoring the file").Short(cnst.FlagRestoreFilePathShort).Default("restored").String()
+	restoreWorkers := cmdrestore.Flag(cnst.FlagRestoreWorkers, "Override restore worker count (0 = adaptive default)").Default("0").Int()
+	restoreQueue := cmdrestore.Flag(cnst.FlagRestoreQueue, "Override restore pipeline queue depth (0 = adaptive default)").Default("0").Int()
+	restoreProgressMs := cmdrestore.Flag(cnst.FlagRestoreProgressMs, "Restore progress update interval in milliseconds (default: 120)").Default("120").Int()
+	restoreBufferMB := cmdrestore.Flag(cnst.FlagRestoreBufferMB, "Restore output buffer size in MB (0 = mode-aware default: low=32, high=256)").Default("0").Int()
 	rhash := cmdrestore.Arg(cnst.OperandHash, "Hash of file that must be restoed").String()
 
 	cmdlist := app.Command(cnst.CmdList, "List all the saved files in the database")
+	listStatus := cmdlist.Flag(cnst.FlagListStatus, "Filter evidence by status [all|completed|pending|failed]").Default("all").String()
 	cmdstats := app.Command(cnst.CmdStats, "Show database statistics")
+	cmdrepair := app.Command(cnst.CmdRepair, "Inspect and optionally mark partial evidence ingests as failed")
+	repairFix := cmdrepair.Flag(cnst.FlagRepairFix, "Mark pending evidence ingests as failed so they are visible and retryable").Default("false").Bool()
 
 	cmdnear := app.Command(cnst.CmdNear, "Get NeAR file objects")
 	cmdin := cmdnear.Command(cnst.SubCmdIn, "Finds NeAR objects & generates GReAt graph for file INside of the database")
 	deep := cmdin.Flag(cnst.FlagDeep, "Enable/Disable partial chunk match").Short(cnst.FlagDeepShort).Default("false").Bool()
+	inVerify := cmdin.Flag(cnst.FlagAdvancedDeep, "Phase 2: full-file SimHash re-ranking of top K candidates").Short(cnst.FlagAdvancedDeepShort).Default("false").Bool()
+	inTopK := cmdin.Flag(cnst.FlagTopK, "Top K candidates for Phase 2 re-ranking (0 = auto-select based on available resources)").Short(cnst.FlagTopKShort).Default("0").Int()
 	inhash := cmdin.Arg(cnst.OperandHash, "Hash of the file in DUES DB for which you need to run NeAR").String()
 
 	cmdout := cmdnear.Command(cnst.SubCmdOut, "Finds NeAR objects & generates GReAt graph for file OUTside of the database")
+	outDeep := cmdout.Flag(cnst.FlagDeep, "Enable/Disable partial chunk match").Short(cnst.FlagDeepShort).Default("false").Bool()
+	outExplainExact := cmdout.Flag(cnst.FlagExplainExact, "Force chunk-level drilldown even when an exact file hash match exists").Short(cnst.FlagExplainExactShort).Default("false").Bool()
+	outVerify := cmdout.Flag(cnst.FlagAdvancedDeep, "Phase 2: full-file SimHash re-ranking of top K candidates").Short(cnst.FlagAdvancedDeepShort).Default("false").Bool()
+	outTopK := cmdout.Flag(cnst.FlagTopK, "Top K candidates for Phase 2 re-ranking (0 = auto-select based on available resources)").Short(cnst.FlagTopKShort).Default("0").Int()
 	outpath := cmdout.Arg(cnst.OperandFile, "Path to the file for which you need to run NeAR").String()
 
 	cmdsearch := app.Command(cnst.CmdSearch, "Search anything in DUES DB")
 	query := cmdsearch.Arg(cnst.OperandQuery, "Search query string").String()
+	rankAlpha := cmdsearch.Flag("rank-alpha", "Occurrence boost weight for ranking (>= 0, default: 0.35)").Default("0.35").Float64()
+	fullText := cmdsearch.Flag(cnst.FlagEnableFts, "Enable sidecar full-text search first, then fallback to scan path").Default("false").Bool()
 
-	apiserver := app.Command(cnst.CmdServer, "Run gRPC / Web combined DUES server")
-	cmdreset := app.Command(cnst.CmdReset, "Delete the database")
+	cmdmicro := app.Command(cnst.CmdMicro, "Manage micro-artefacts")
+	microExtract := cmdmicro.Command("extract", "Extract micro-artefacts from all indexed files and populate graph database")
+	microExtractForce := microExtract.Flag("force", "Re-process indexed files even when micro-artefacts already exist in graph").Default("false").Bool()
+	microExtractTopK := microExtract.Flag("top-k", "Top-K indexed files (by artefact count) to include in exported HTML graph (0 = all)").Default("1").Int()
+
+	microList := cmdmicro.Command(cnst.CmdList, "List all micro-artefacts in JSON format")
+	cmdenrich := app.Command(cnst.CmdEnrich, "Backfill file hierarchy metadata enrichment into graphdb")
+
+	cmdserver := app.Command(cnst.CmdServer, "Run gRPC / Web combined DUES server")
+	serverHashAlgo := cmdserver.Flag(cnst.FlagHashAlgo, "Hashing algorithm to use [sha3|blake3] (default: BLAKE3)").Short(cnst.FlagHashAlgoShort).Default(cnst.BLAKE3).String()
+
+	cmdreset := app.Command(cnst.CmdReset, "Delete the database").Alias(cnst.CmdPurge).Alias(cnst.CmdDelete).Alias(cnst.CmdDestroy)
 
 	var err error
 
@@ -81,12 +114,66 @@ func main() {
 		return
 	}
 
+	// Initialize structured logging
+	debugMode := os.Getenv("DUES_DEBUG") != ""
+	logErr := logging.InitLogger(debugMode)
+	_ = logErr
+	defer logging.Sync()
+
+	logging.GetLogger().Info("DUES starting",
+		zap.String("version", duesVersion),
+		zap.String("codename", duesCodename))
+
 	parsed := kingpin.MustParse(app.Parse(os.Args[1:]))
 	cnst.MEMOPT = *memopt
 	cnst.QUICKOPT = *QUICKOPT
 	cnst.CONTAINERMODE = *containerMode
 	cnst.HIERARCHICALINDEX = *hierarchicalIndex
-	cnst.HASHALGO = strings.ToUpper(*hashAlgo)
+	cnst.CompressLevel = strings.ToLower(*compressLevel)
+	selectedHashAlgo := cnst.BLAKE3
+	switch parsed {
+	case cmdstore.FullCommand():
+		selectedHashAlgo = *storeHashAlgo
+	case cmdserver.FullCommand():
+		selectedHashAlgo = *serverHashAlgo
+	}
+	if err := cnst.SetHashAlgo(selectedHashAlgo); err != nil {
+		handle(err)
+	}
+	storePipelineWorkers := 0
+	storePipelineQueue := 0
+	restorePipelineWorkers := 0
+	restorePipelineQueue := 0
+	if parsed == cmdstore.FullCommand() {
+		cnst.ENABLESIMHASH = *enableSimhash
+		cnst.StoreWorkerCount = *storeWorkers
+		cnst.StoreTaskQueueDepth = *storeQueue
+		storePipelineWorkers, storePipelineQueue = cnst.GetStorePipelineTuning(cnst.CONTAINERMODE, cnst.HIERARCHICALINDEX)
+	}
+	if parsed == cmdrestore.FullCommand() {
+		cnst.RestoreWorkerCount = *restoreWorkers
+		cnst.RestoreTaskQueueDepth = *restoreQueue
+		cnst.RestoreProgressIntervalMs = *restoreProgressMs
+		cnst.RestoreWriteBufferMB = *restoreBufferMB
+		restorePipelineWorkers, restorePipelineQueue = cnst.GetRestorePipelineTuning()
+	}
+
+	// Re-initialize the encoder now that the compression level flag is known.
+	if err := cnst.ENCODER.Close(); err != nil {
+		handle(err)
+	}
+	encLevel := zstd.SpeedBestCompression
+	switch cnst.CompressLevel {
+	case "fast":
+		encLevel = zstd.SpeedFastest
+	case "default":
+		encLevel = zstd.SpeedDefault
+	case "best":
+		encLevel = zstd.SpeedBestCompression
+	}
+	var encErr error
+	cnst.ENCODER, encErr = zstd.NewWriter(nil, zstd.WithEncoderLevel(encLevel))
+	handle(encErr)
 
 	// Hierarchical index requires container mode
 	if cnst.HIERARCHICALINDEX && !cnst.CONTAINERMODE {
@@ -112,30 +199,110 @@ func main() {
 		if cnst.HIERARCHICALINDEX {
 			color.Magenta("🏛 hierarchical index enabled (2-level lookup) 🏛")
 		}
+		if cnst.CompressLevel != "default" {
+			color.Yellow("🗜  chunk compression level: %s", cnst.CompressLevel)
+		}
+		if cnst.ENABLESIMHASH {
+			color.Yellow("🔍 simhash enabled (--simhash)")
+		}
+		if parsed == cmdstore.FullCommand() {
+			color.Cyan("⚙ store pipeline: workers=%d queue=%d", storePipelineWorkers, storePipelineQueue)
+		}
+		if parsed == cmdrestore.FullCommand() {
+			color.Cyan("⚙ restore pipeline: workers=%d queue=%d progress=%s buffer=%dMB", restorePipelineWorkers, restorePipelineQueue, cnst.GetRestoreProgressInterval(), cnst.GetRestoreWriteBufferSize()/(1024*1024))
+		}
 	}
 
 	switch parsed {
 	case cmdversion.FullCommand():
+		logging.GetLogger().Debug("Command: version")
 		printVersionInfo()
 	case cmdtui.FullCommand():
+		logging.GetLogger().Info("Command: tui", zap.String("dbpath", *dbpath))
 		err = cli.TUICmd(*chonkSize, *dbpath, key)
 	case cmdstore.FullCommand():
-		err = cli.StoreData(*chonkSize, *dbpath, *evipath, key, *syncIndex, *noIndex)
+		logging.GetLogger().Info("Command: store",
+			zap.String("file", *evipath),
+			zap.String("dbpath", *dbpath),
+			zap.Int("chonksize_kb", *chonkSize),
+			zap.Bool("sync_index", *syncIndex),
+			zap.Bool("no_index", *noIndex),
+			zap.Bool("fts_enabled", *enableFTS),
+			zap.Bool("enrichment_enabled", *enableEnrichment),
+			zap.Int("store_workers", *storeWorkers),
+			zap.Int("store_queue", *storeQueue),
+			zap.Int("store_workers_effective", storePipelineWorkers),
+			zap.Int("store_queue_effective", storePipelineQueue))
+		err = cli.StoreData(*chonkSize, *dbpath, *evipath, key, *syncIndex, *noIndex, *enableFTS, *enableEnrichment)
 	case cmdrestore.FullCommand():
+		logging.GetLogger().Info("Command: restore",
+			zap.String("hash", *rhash),
+			zap.String("output_path", *rpath),
+			zap.String("dbpath", *dbpath),
+			zap.Int("chonksize_kb", *chonkSize),
+			zap.Int("restore_workers", *restoreWorkers),
+			zap.Int("restore_queue", *restoreQueue),
+			zap.Int("restore_progress_ms", *restoreProgressMs),
+			zap.Int("restore_buffer_mb", *restoreBufferMB),
+			zap.Int("restore_workers_effective", restorePipelineWorkers),
+			zap.Int("restore_queue_effective", restorePipelineQueue))
 		err = cli.RestoreData(*chonkSize, *dbpath, *rhash, *rpath, key)
 	case cmdlist.FullCommand():
-		err = cli.ListData(*chonkSize, *dbpath, key)
+		logging.GetLogger().Info("Command: list",
+			zap.String("dbpath", *dbpath),
+			zap.Int("chonksize_kb", *chonkSize),
+			zap.String("status", strings.ToLower(*listStatus)))
+		err = cli.ListData(*chonkSize, *dbpath, key, *listStatus)
 	case cmdstats.FullCommand():
+		logging.GetLogger().Info("Command: stats", zap.String("dbpath", *dbpath), zap.Int("chonksize_kb", *chonkSize))
 		err = cli.StatsData(*chonkSize, *dbpath, key)
+	case cmdrepair.FullCommand():
+		logging.GetLogger().Info("Command: repair",
+			zap.String("dbpath", *dbpath),
+			zap.Int("chonksize_kb", *chonkSize),
+			zap.Bool("fix", *repairFix))
+		err = cli.RepairData(*chonkSize, *dbpath, key, *repairFix)
 	case cmdin.FullCommand():
-		err = cli.NearInData(*deep, *chonkSize, *dbpath, *inhash, key)
+		logging.GetLogger().Info("Command: near in",
+			zap.String("hash", *inhash),
+			zap.String("dbpath", *dbpath),
+			zap.Bool("deep", *deep),
+			zap.Int("topk", *inTopK),
+			zap.Bool("verify", *inVerify))
+		err = cli.NearInData(*deep, *inVerify, *inTopK, *chonkSize, *dbpath, *inhash, key)
 	case cmdout.FullCommand():
-		err = cli.NearOutData(*chonkSize, *dbpath, *outpath, key)
+		logging.GetLogger().Info("Command: near out",
+			zap.String("file_path", *outpath),
+			zap.String("dbpath", *dbpath),
+			zap.Bool("deep", *outDeep),
+			zap.Int("topk", *outTopK),
+			zap.Bool("verify", *outVerify),
+			zap.Bool("explain_exact", *outExplainExact))
+		err = cli.NearOutData(*outDeep, *outExplainExact, *outVerify, *outTopK, *chonkSize, *dbpath, *outpath, key)
 	case cmdsearch.FullCommand():
-		err = cli.SearchCmd(*chonkSize, *query, *dbpath, key)
+		logging.GetLogger().Info("Command: search",
+			zap.String("query", *query),
+			zap.String("dbpath", *dbpath),
+			zap.Float64("rank_alpha", *rankAlpha),
+			zap.Bool("fulltext", *fullText))
+		err = cli.SearchCmd(*chonkSize, *query, *dbpath, key, *rankAlpha, *fullText)
+	case microExtract.FullCommand():
+		logging.GetLogger().Info("Command: micro extract",
+			zap.String("dbpath", *dbpath),
+			zap.Int("topk", *microExtractTopK),
+			zap.Bool("force", *microExtractForce))
+		err = cli.MicroArtefactCmd(*chonkSize, *dbpath, key, *microExtractForce, *microExtractTopK)
+	case microList.FullCommand():
+		logging.GetLogger().Info("Command: micro list", zap.String("dbpath", *dbpath))
+		err = cli.ListMicroArtefactsCmd(*chonkSize, *dbpath, key)
+	case cmdenrich.FullCommand():
+		logging.GetLogger().Info("Command: enrich", zap.String("dbpath", *dbpath))
+		err = cli.EnrichData(*chonkSize, *dbpath, key)
 	case cmdreset.FullCommand():
+		logging.GetLogger().Info("Command: reset", zap.String("dbpath", *dbpath))
 		err = cli.ResetData(*dbpath)
-	case apiserver.FullCommand():
+	case cmdserver.FullCommand():
+		logging.GetLogger().Info("Command: server", zap.String("dbpath", *dbpath), zap.Int("chonksize_kb", *chonkSize))
 		err = api.Server(*chonkSize, *dbpath, key)
 	}
 
@@ -248,8 +415,14 @@ func printHelpForPath(path []string) {
 		printRestoreHelp()
 	case cnst.CmdList:
 		printListHelp()
+	case cnst.CmdStats:
+		printStatsHelp()
 	case cnst.CmdSearch:
 		printSearchHelp()
+	case cnst.CmdMicro:
+		printMicroArtefactsHelp()
+	case cnst.CmdEnrich:
+		printEnrichHelp()
 	case cnst.CmdServer:
 		printServerHelp()
 	case cnst.CmdReset:
@@ -287,15 +460,18 @@ func printRootHelp() {
 	fmt.Printf("  %s, %s   Hierarchical index (requires container mode)\n", cmd("--hierarchical"), cmd("-i"))
 
 	printHelpSection("Commands")
-	fmt.Printf("  %s    Launch interactive TUI interface\n", cmd(cnst.CmdTui))
-	fmt.Printf("  %s    Store file in database\n", cmd(cnst.CmdStore))
-	fmt.Printf("  %s  Restore file from database\n", cmd(cnst.CmdRestore))
-	fmt.Printf("  %s     List saved files\n", cmd(cnst.CmdList))
-	fmt.Printf("  %s     Search metadata/content index\n", cmd(cnst.CmdSearch))
-	fmt.Printf("  %s       Find NeAR file objects\n", cmd(cnst.CmdNear))
-	fmt.Printf("  %s     Run gRPC/Web server\n", cmd(cnst.CmdServer))
-	fmt.Printf("  %s      Delete database\n", cmd(cnst.CmdReset))
-	fmt.Printf("  %s    Show version details\n", cmd(cnst.CmdVeresion))
+	fmt.Printf("  %-20s %s\n", cmd(cnst.CmdTui), "Launch interactive TUI interface")
+	fmt.Printf("  %-20s %s\n", cmd(cnst.CmdStore), "Store file in database")
+	fmt.Printf("  %-20s %s\n", cmd(cnst.CmdRestore), "Restore file from database")
+	fmt.Printf("  %-20s %s\n", cmd(cnst.CmdList), "List saved files")
+	fmt.Printf("  %-20s %s\n", cmd(cnst.CmdSearch), "Search metadata/content index")
+	fmt.Printf("  %-20s %s\n", cmd(cnst.CmdMicro), "Manage micro-artefacts (extract, list)")
+	fmt.Printf("  %-20s %s\n", cmd(cnst.CmdEnrich), "Backfill file hierarchy metadata into graphdb")
+	fmt.Printf("  %-20s %s\n", cmd(cnst.CmdNear), "Find NeAR file objects")
+	fmt.Printf("  %-20s %s\n", cmd(cnst.CmdServer), "Run gRPC/Web server")
+	fmt.Printf("  %-20s %s\n", cmd(cnst.CmdReset), "Delete database")
+	fmt.Printf("  %-20s %s\n", cmd(cnst.CmdVeresion), "Show version details")
+	fmt.Printf("  %-20s %s\n", cmd(cnst.CmdStats), "Show stats about data")
 
 	printHelpSection("Command-Level Help")
 	fmt.Println("  Root help and command help are both available.")
@@ -308,18 +484,45 @@ func printRootHelp() {
 	fmt.Println("  dues store evidence.img --dbpath ./dues-data")
 	fmt.Println("  dues restore <hash> --filepath recovered.bin")
 	fmt.Println("  dues search \"invoice\"")
+	fmt.Println("  dues enrich --dbpath ./dues-data")
+	fmt.Println("  dues microartefacts")
 	fmt.Println("  dues near in <hash> --deep")
 	fmt.Println("")
 }
 
 func printStoreHelp() {
 	printHelpHeader("store")
-	fmt.Println("Usage: dues store FILE [--sync|-s] [--no-index|-n] [--hash-algo|-g [sha3|blake3]] [global options]")
+	fmt.Println("Usage: dues store FILE [--sync|-s] [--no-index|-n] [--enable-fts] [--enrich] [--hash-algo|-g [sha3|blake3]] [--simhash] [--store-workers N] [--store-queue N] [global options]")
 	fmt.Println("Stores a file in the DUES database using chunk-level deduplication.")
+	fmt.Println("")
+	printHelpSection("Store Pipeline")
+	fmt.Println("  Fan-out/fan-in model:")
+	fmt.Println("    worker goroutines: hash + materialize chunk payloads in parallel")
+	fmt.Println("    single writer: batch metadata + relation/revrel writes")
+	fmt.Println("  This keeps expensive chunk work parallel while preserving deterministic batch ownership.")
+	fmt.Println("")
+	printHelpSection("Store Tuning")
+	fmt.Println("  --store-workers N   Override worker count (0 = mode-aware default)")
+	fmt.Println("  --store-queue N     Override task queue depth (0 = mode-aware default)")
+	fmt.Println("  Defaults are chosen by storage mode:")
+	fmt.Println("    file mode: higher workers")
+	fmt.Println("    container/hierarchical: lower workers + deeper queue")
 	printExamples(
 		"dues store E01-image.dd",
+		"dues store E01-image.dd --store-workers 24 --store-queue 192",
+		"dues store E01-image.dd --enrich",
 		"dues store evidence.raw --dbpath ./caseA",
 		"dues store memory.dump --no-index --quick",
+	)
+}
+
+func printEnrichHelp() {
+	printHelpHeader("enrich")
+	fmt.Println("Usage: dues enrich [global options]")
+	fmt.Println("Backfills file-level hierarchy nodes into graphdb: evidence file -> partition -> indexed file.")
+	printExamples(
+		"dues enrich",
+		"dues enrich --dbpath ./caseA",
 	)
 }
 
@@ -344,6 +547,25 @@ func printListHelp() {
 	)
 }
 
+func printStatsHelp() {
+	printHelpHeader("stats")
+	fmt.Println("Usage: dues stats [global options]")
+	fmt.Println("Displays statistics about the DUES database.")
+	fmt.Println()
+	printHelpSection("Output includes")
+	fmt.Println("  Total / completed evidence files")
+	fmt.Println("  Total partitions and indexed files")
+	fmt.Println("  Indexed deleted/fragmented stats (fragmented is 0 until fragmented ingestion is enabled)")
+	fmt.Println("  Total logical size (sum of all stored file sizes)")
+	fmt.Println("  Unique chunks vs total chunk references")
+	fmt.Println("  Shared chunks (referenced by more than one file)")
+	fmt.Println("  On-disk bytes and deduplication ratio")
+	printExamples(
+		"dues stats",
+		"dues stats --dbpath ./caseA",
+	)
+}
+
 func printSearchHelp() {
 	printHelpHeader("search")
 	fmt.Println("Usage: dues search QUERY [global options]")
@@ -354,34 +576,100 @@ func printSearchHelp() {
 	)
 }
 
+func printMicroArtefactsHelp() {
+	printHelpHeader("micro")
+	fmt.Println("Usage: dues micro <extract|list> [options] [global options]")
+	fmt.Println("Manage micro-artefacts extracted from indexed files in the database.")
+	fmt.Println()
+	fmt.Println("  micro extract  — Extract micro-artefacts from all indexed files and populate graph database")
+	fmt.Println("  micro list     — List all micro-artefacts in JSON format")
+	fmt.Println()
+	fmt.Println("Try: dues help micro extract")
+	fmt.Println("or : dues help micro list")
+}
+
 func printNearHelp() {
 	printHelpHeader("near")
 	fmt.Println("Usage: dues near <in|out> ... [global options]")
-	fmt.Println("Finds NeAR file objects.")
+	fmt.Println("Finds NeAR (Near Artefact Relation) file objects and generates a similarity report.")
+	fmt.Println()
+	fmt.Println("  near in   — query file is already stored in the DUES database (identified by hash)")
+	fmt.Println("  near out  — query file is on disk outside the database (identified by path)")
+	fmt.Println()
+	fmt.Println("Both sub-commands produce a near_report.json with a ranked list of matching artefacts.")
+	fmt.Println("Each match includes an overall_relatedness score that combines all active phases.")
+	fmt.Println()
 	fmt.Println("Try: dues help near in")
 	fmt.Println("Try: dues help near out")
 	printExamples(
 		"dues near in <hash>",
+		"dues near in <hash> --deep --advanced-deep",
 		"dues near out ./suspect.bin",
+		"dues near out ./suspect.bin --deep --advanced-deep",
 	)
 }
 
 func printNearInHelp() {
+	cmd := color.New(color.FgBlue, color.Bold).SprintFunc()
 	printHelpHeader("near in")
-	fmt.Println("Usage: dues near in HASH [--deep|-e] [global options]")
-	fmt.Println("Finds NeAR objects for files inside the DUES database.")
+	fmt.Println("Usage: dues near in HASH [--deep|-e] [--advanced-deep|-a] [--top-k|-k N] [global options]")
+	fmt.Println()
+	fmt.Println("Finds NeAR objects for a file already stored in the DUES database.")
+	fmt.Println("Produces near_report.json with ranked matches and an overall_relatedness score per match.")
+
+	printHelpSection("Options")
+	fmt.Printf("  %s, %s   Phase 1: enable partial chunk SimHash matching (slower, finds more candidates)\n", cmd("--deep"), cmd("-e"))
+	fmt.Printf("  %s, %s   Phase 2: full-file SimHash re-ranking of top-K candidates\n", cmd("--advanced-deep"), cmd("-a"))
+	fmt.Printf("              Eliminates chunk-alignment noise from Phase 1 scores.\n")
+	fmt.Printf("              Results are cached in the DB (F|||: namespace) — subsequent runs are O(1).\n")
+	fmt.Printf("  %s, %s      Number of candidates for Phase 2 (default 0 = auto-select)\n", cmd("--top-k"), cmd("-k"))
+	fmt.Printf("              Auto-selection scales with available memory × CPU threads, bounded [5, 100].\n")
+
+	printHelpSection("Report Fields (per match)")
+	fmt.Println("  overall_relatedness       Single score [0.0–1.0] combining all active phases")
+	fmt.Println("  overall_relatedness_pct   Same value as a percentage")
+	fmt.Println("  relatedness_basis         Which signals were used: exact | phase1 | phase1+phase2")
+	fmt.Println("  phase1_deviation_estimate Fraction of chunk comparisons affected by edge-alignment noise")
+	fmt.Println("  phase2_file_similarity    Full-file SimHash similarity (only present when --advanced-deep used)")
+
 	printExamples(
 		"dues near in <hash>",
 		"dues near in <hash> --deep",
+		"dues near in <hash> --deep --advanced-deep",
+		"dues near in <hash> --deep --advanced-deep --top-k 20",
 	)
 }
 
 func printNearOutHelp() {
+	cmd := color.New(color.FgBlue, color.Bold).SprintFunc()
 	printHelpHeader("near out")
-	fmt.Println("Usage: dues near out FILE [global options]")
-	fmt.Println("Finds NeAR objects for files outside the DUES database.")
+	fmt.Println("Usage: dues near out FILE [--deep|-e] [--explain-exact|-t] [--advanced-deep|-a] [--top-k|-k N] [global options]")
+	fmt.Println()
+	fmt.Println("Finds NeAR objects for a file on disk that is outside the DUES database.")
+	fmt.Println("Produces near_report.json with ranked matches and an overall_relatedness score per match.")
+
+	printHelpSection("Options")
+	fmt.Printf("  %s, %s   Phase 1: enable partial chunk SimHash matching (slower, finds more candidates)\n", cmd("--deep"), cmd("-e"))
+	fmt.Printf("  %s, %s   Force chunk drilldown even when an exact file hash match exists\n", cmd("--explain-exact"), cmd("-t"))
+	fmt.Printf("  %s, %s   Phase 2: full-file SimHash re-ranking of top-K candidates\n", cmd("--advanced-deep"), cmd("-a"))
+	fmt.Printf("              Eliminates chunk-alignment noise from Phase 1 scores.\n")
+	fmt.Printf("              Note: the query file is external, so its signature is computed fresh each run.\n")
+	fmt.Printf("              Candidate signatures are cached in the DB and reused on subsequent runs.\n")
+	fmt.Printf("  %s, %s      Number of candidates for Phase 2 (default 0 = auto-select)\n", cmd("--top-k"), cmd("-k"))
+	fmt.Printf("              Auto-selection scales with available memory × CPU threads, bounded [5, 100].\n")
+
+	printHelpSection("Report Fields (per match)")
+	fmt.Println("  overall_relatedness       Single score [0.0–1.0] combining all active phases")
+	fmt.Println("  overall_relatedness_pct   Same value as a percentage")
+	fmt.Println("  relatedness_basis         Which signals were used: exact | phase1 | phase1+phase2")
+	fmt.Println("  phase1_deviation_estimate Fraction of chunk comparisons affected by edge-alignment noise")
+	fmt.Println("  phase2_file_similarity    Full-file SimHash similarity (only present when --advanced-deep used)")
+
 	printExamples(
 		"dues near out ./unknown.bin",
+		"dues near out ./unknown.bin --deep",
+		"dues near out ./unknown.bin --deep --advanced-deep",
+		"dues near out ./unknown.bin --deep --advanced-deep --top-k 20",
 		"dues near out ./unknown.bin --dbpath ./caseA",
 	)
 }

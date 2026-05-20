@@ -1,6 +1,7 @@
 # Container Mode - Low-Level Design Document
 
 ## Table of Contents
+
 1. [Overview](#overview)
 2. [Architecture](#architecture)
 3. [Components](#components)
@@ -19,19 +20,30 @@
 ## Overview
 
 ### Purpose
-Container Mode is an optimization for the indicer deduplication system that reduces filesystem overhead by packing multiple data chunks into large container files (max 1GB each) instead of creating one file per chunk.
+
+Container Mode is an optimization for the indicer deduplication system that
+reduces filesystem overhead by packing multiple data chunks into large container
+files (max 1GB each) instead of creating one file per chunk.
 
 ### Key Benefits
-- **Reduced filesystem overhead**: From ~4000 files to 1 file per GB of unique data
-- **Better compression ratios**: Compressing entire containers (1GB) vs individual chunks (256KB)
-- **Sequential I/O patterns**: Appending chunks to containers instead of random file creation
-- **Efficient storage**: Automatic zstd compression when containers are finalized
-- **Lock-free concurrency**: Channel-based architecture eliminates mutex contention
-- **High throughput**: CPU × 2 workers for optimal I/O-bound performance (20-40% faster)
+
+- **Reduced filesystem overhead**: From ~4000 files to 1 file per GB of unique
+  data
+- **Better compression ratios**: Compressing entire containers (1GB) vs
+  individual chunks (256KB)
+- **Sequential I/O patterns**: Appending chunks to containers instead of random
+  file creation
+- **Efficient storage**: Automatic zstd compression when containers are
+  finalized
+- **Lock-free concurrency**: Channel-based architecture eliminates mutex
+  contention
+- **High throughput**: CPU × 2 workers for optimal I/O-bound performance (20-40%
+  faster)
 
 ### Recent Improvements (v2.0)
 
 **Lock-Free Channel Architecture**:
+
 - Replaced mutex-based writes with Go channel CSP pattern
 - Zero lock contention between worker goroutines
 - Buffered ring buffer (1000 requests) for burst handling
@@ -39,14 +51,17 @@ Container Mode is an optimization for the indicer deduplication system that redu
 - CPU × 2 worker configuration in high performance mode
 
 **Performance Impact**:
+
 - **8-core CPU**: 16 workers vs 8 → 25-40% throughput improvement
 - **16-core CPU**: 32 workers vs 16 → 30-50% throughput improvement
 - Reduced context switches from ~50k/sec to ~10k/sec
 - Better CPU utilization for I/O-bound operations
 
 ### Use Cases
+
 - **Optimal**: Small chunk sizes (< 128KB) where file count becomes problematic
-- **Beneficial**: Large datasets with high deduplication where unique data is limited
+- **Beneficial**: Large datasets with high deduplication where unique data is
+  limited
 - **Standard**: Default 256KB chunks when filesystem can handle the file count
 
 ---
@@ -121,7 +136,9 @@ Container Mode is an optimization for the indicer deduplication system that redu
 
 ### Sequence Diagrams (Current Code)
 
-The following diagrams reflect the **current** implementation in `lib/fio/container.go` (queue-close draining, idempotent close, streaming container compression).
+The following diagrams reflect the **current** implementation in
+`lib/fio/container.go` (queue-close draining, idempotent close, streaming
+container compression).
 
 #### A) Store path (new chunk in container mode)
 
@@ -210,9 +227,11 @@ sequenceDiagram
 
 ### 1. ContainerManager (`lib/fio/container.go`)
 
-**Responsibility**: Manages writing chunks to container files using lock-free channel-based concurrency.
+**Responsibility**: Manages writing chunks to container files using lock-free
+channel-based concurrency.
 
 **Key Fields**:
+
 ```go
 type ContainerManager struct {
     currentContainer string              // Path to active container
@@ -227,6 +246,7 @@ type ContainerManager struct {
 ```
 
 **Architecture**: Lock-free ring buffer using Go channels
+
 - **No mutex**: Uses channel-based CSP (Communicating Sequential Processes)
 - **Single writer goroutine**: Eliminates lock contention
 - **Buffered queue**: 1000 request capacity for burst handling
@@ -234,39 +254,47 @@ type ContainerManager struct {
 **Key Methods**:
 
 #### `NewContainerManager(dbpath string) *ContainerManager`
+
 - Initializes a new container manager
 - Sets initial container index to 0
 - No files created until first write
 
 #### `WriteChunkToContainer(data, ckey, key []byte) (string, int64, int64, error)`
+
 - **Lock-free**: Enqueues write request via buffered channel
 - **Non-blocking**: Worker goroutines don't wait for locks
-- **Returns**: `(containerPath, offset, sizeWritten, error)` via response channel
+- **Returns**: `(containerPath, offset, sizeWritten, error)` via response
+  channel
 
 **Flow**:
+
 1. Worker creates WriteRequest with response channel
 2. Enqueues to writeQueue (lock-free operation)
 3. Waits for response from writer goroutine
 4. Returns result to caller
 
 #### `writerLoop()`
+
 - **Dedicated goroutine**: Processes all writes sequentially
 - **No contention**: Single writer = no lock needed
 - **Graceful shutdown**: Drains pending requests on Close()
 
 **Processing**:
+
 - Compresses (zstd) and encrypts (AES) chunk data
 - Space check: Creates new container if current is full
 - Appends processed data to current container
 - Sends response back to caller's channel
 
 #### `createNewContainer() error`
+
 - Closes and compresses previous container
 - Generates unique container filename using hash
 - Creates new `.blob` file in `BLOBS/` directory
 - Resets offset to 0
 
 #### `compressContainer(containerPath string) error`
+
 - Reads entire uncompressed container file
 - Compresses using zstd encoder (`cnst.ENCODER`)
 - Writes to `.blob.zst` file
@@ -274,6 +302,7 @@ type ContainerManager struct {
 - Atomic operation to prevent corruption
 
 #### `Close() error`
+
 - Syncs and closes current file handle
 - Compresses the final container
 - Called via `defer` in storage flow
@@ -298,6 +327,7 @@ if containerMgr != nil {
 ```
 
 **Database Key-Value Mapping**:
+
 - **Key**: `C|||:<chunk_hash>` (chunk namespace + SHA3-512 hash)
 - **Value (Container)**: `"/path/to/container.blob.zst|offset|size"`
 - **Value (Original)**: `"/path/to/chunk.blob"`
@@ -338,6 +368,7 @@ tio.ContainerMgr = containerMgr  // Passed to worker goroutines
 ```
 
 **Worker Pool Pattern**:
+
 - Spawns concurrent `storeWorker()` goroutines
 - Limited by `cnst.GetMaxThreadCount()` (CPU × 2 in high performance mode)
 - Each worker processes chunks independently
@@ -346,6 +377,7 @@ tio.ContainerMgr = containerMgr  // Passed to worker goroutines
 #### `processChonk(cdata, chash []byte, db *badger.DB, batch *badger.WriteBatch, containerMgr *fio.ContainerManager) error`
 
 **Deduplication Check**:
+
 1. Check if chunk hash exists in database
 2. If exists: skip (already stored)
 3. If new: write via `SetBatchChonkNode()`
@@ -372,6 +404,7 @@ type ThreadIO struct {
 ### Metadata Format
 
 #### Container Mode
+
 ```
 Format: "containerPath|offset|size"
 Example: "/data/BLOBS/Ax7bQ2.blob.zst|268435456|262144"
@@ -383,6 +416,7 @@ Example: "/data/BLOBS/Ax7bQ2.blob.zst|268435456|262144"
 - **size**: Size of chunk in bytes after compression/encryption (int64)
 
 #### Original Mode
+
 ```
 Format: "filePath"
 Example: "/data/BLOBS/Bx9cD4f5g6h7i8j9k0l1m2n3o4.blob"
@@ -624,6 +658,7 @@ func (cm *ContainerManager) writerLoop() {
 ```
 
 **Why Lock-Free Channels**:
+
 - ✅ **Zero lock contention**: Workers never block each other
 - ✅ **Go-idiomatic**: Channels use lock-free operations internally
 - ✅ **Better throughput**: 20-40% improvement with CPU×2 workers
@@ -631,10 +666,12 @@ func (cm *ContainerManager) writerLoop() {
 - ✅ **Simple reasoning**: Single writer = no race conditions
 
 **vs. Mutex Approach**:
+
 - **Mutex**: All workers serialize at lock, context switches, wasted CPU cycles
 - **Channels**: Lock-free enqueue, workers stay productive doing I/O-bound work
 
 **Worker Configuration**:
+
 - **High Performance Mode** (default): `runtime.NumCPU() × 2` workers
 - **Rationale**: Workers are I/O-bound (file writes, DB ops, compression)
 - **Benefit**: More workers keep pipeline full when some are blocked on I/O
@@ -681,12 +718,15 @@ func (cm *ContainerManager) writerLoop() {
 ```
 
 **Parallelism Benefits**:
+
 - **CPU**: Hash computation (SHA3-512) fully parallelized across workers
 - **I/O**: Memory-map reads (parallel from OS page cache)
 - **No contention**: Workers never block each other on container writes
-- **CPU × 2 workers**: Optimal for I/O-bound operations (compression, encryption, disk I/O)
+- **CPU × 2 workers**: Optimal for I/O-bound operations (compression,
+  encryption, disk I/O)
 
 **Throughput Improvement**:
+
 - **8 cores**: 16 workers vs 8 with mutex (25-40% faster)
 - **16 cores**: 32 workers vs 16 with mutex (30-50% faster)
 - **Reason**: More workers compensate for I/O wait time
@@ -742,6 +782,7 @@ No header, no footer, no index
 ```
 
 **Key Properties**:
+
 - **No metadata**: Pure data storage, metadata in database
 - **Append-only**: Sequential writes, no random updates
 - **Variable chunk sizes**: Compression creates different sizes
@@ -768,6 +809,7 @@ Compression Level: 15 (zstd.SpeedBestCompression)
 ```
 
 **Creation Process**:
+
 ```go
 // 1. Read entire uncompressed container
 data := io.ReadAll(srcFile)  // ~1GB in memory
@@ -785,21 +827,25 @@ os.Remove(srcFile)
 ### Chunk Format (Inside Container)
 
 #### Layer 1: Raw Chunk Data
+
 ```
 Original chunk from file: 256KB raw bytes
 ```
 
 #### Layer 2: After Compression
+
 ```
 ZSTD compressed: ~40-200KB (varies by entropy)
 ```
 
 #### Layer 3: After Encryption
+
 ```
 AES-256-GCM encrypted: compressed_size + 28 bytes (GCM overhead)
 ```
 
 #### Final Format in Container
+
 ```
 [Encrypted(Compressed(RawData))] + [Next Chunk] + ...
 ```
@@ -809,6 +855,7 @@ AES-256-GCM encrypted: compressed_size + 28 bytes (GCM overhead)
 #### Chunk Metadata Entry
 
 **Key Structure**:
+
 ```
 Namespace: "C|||:"
 Hash: SHA3-512 (64 bytes)
@@ -816,6 +863,7 @@ Full Key: "C|||:" + base64(hash)
 ```
 
 **Value Structure (Container Mode)**:
+
 ```
 Format: ASCII string
 Pattern: "/absolute/path/to/container.blob.zst|offset|size"
@@ -829,6 +877,7 @@ Delimiter: "|" (pipe character, ASCII 124)
 ```
 
 **Value Structure (Original Mode)**:
+
 ```
 Format: ASCII string
 Pattern: "/absolute/path/to/chunk.blob"
@@ -901,6 +950,7 @@ func common(chonkSize int, ...) {
 ```
 
 **Logic**:
+
 - Chunk size < 128KB → recommend container mode
 - No forced behavior, user decides
 - Warning shown once per execution
@@ -911,7 +961,8 @@ func common(chonkSize int, ...) {
 
 ### Multi-Format Support
 
-The system maintains **full backward compatibility** through intelligent format detection:
+The system maintains **full backward compatibility** through intelligent format
+detection:
 
 ```go
 func GetChonkNode(key []byte, db *badger.DB) ([]byte, error) {
@@ -939,6 +990,7 @@ func GetChonkNode(key []byte, db *badger.DB) ([]byte, error) {
 ### Migration Scenarios
 
 #### Scenario 1: Read Old Database (Original → Container Mode)
+
 ```
 User Action: Enable --container flag on existing database
 Database: Contains chunks stored in original format
@@ -949,6 +1001,7 @@ Result:
 ```
 
 #### Scenario 2: Read New Database (Container → Original Mode)
+
 ```
 User Action: Disable --container flag on container-mode database
 Database: Contains chunks stored in container format
@@ -959,6 +1012,7 @@ Result:
 ```
 
 #### Scenario 3: Database Migration (Optional)
+
 ```
 Not implemented (deferred to future version)
 
@@ -989,6 +1043,7 @@ Direct Path ──> Original Read
 ```
 
 **No Configuration Needed**:
+
 - System detects format per-chunk
 - No database-level flag required
 - Transparent to user
@@ -1002,6 +1057,7 @@ Direct Path ──> Original Read
 #### File Creation Overhead
 
 **Original Mode**:
+
 ```
 Chunks:        1,000,000
 Chunk Size:    256 KB
@@ -1017,6 +1073,7 @@ Estimated Time (ext4, SSD): ~30-60 seconds (pure file creation)
 ```
 
 **Container Mode (Lock-Free)**:
+
 ```
 Chunks:        1,000,000
 Chunk Size:    256 KB
@@ -1039,6 +1096,7 @@ Estimated Time (ext4, SSD): ~1-2 seconds (file operations)
 #### Lock-Free Channel vs Mutex Benchmarks (8-core CPU)
 
 **Mutex Implementation**:
+
 ```
 Workers:          8 (CPU count)
 Throughput:       ~100 MB/s
@@ -1047,6 +1105,7 @@ Context switches: ~50,000/sec
 ```
 
 **Lock-Free Channel Implementation**:
+
 ```
 Workers:          16 (CPU × 2)
 Throughput:       ~120-140 MB/s
@@ -1059,6 +1118,7 @@ Context switches: ~10,000/sec
 #### Compression Performance
 
 **Per-Chunk Compression (Original)**:
+
 ```
 Operation:      Compress each 256KB chunk
 Compression:    zstd level 15
@@ -1070,6 +1130,7 @@ Parallelization: Limited by worker count
 ```
 
 **Container Compression (Container Mode)**:
+
 ```
 Operation:      Compress per 1GB container (after finalized)
 Compression:    zstd level 15
@@ -1080,11 +1141,13 @@ Total Time:     7,500-30,000 seconds (2.0-8.3 hours)
 Benefit: Post-processing, doesn't block writes
 ```
 
-**Note**: Container compression happens asynchronously (new container while old compresses)
+**Note**: Container compression happens asynchronously (new container while old
+compresses)
 
 ### Space Efficiency
 
 #### Original Mode
+
 ```
 Chunk Size:       256 KB
 Compressed:       ~100 KB (varies)
@@ -1096,6 +1159,7 @@ Per-Chunk Total:  ~104 KB
 ```
 
 #### Container Mode
+
 ```
 Chunk Size:       256 KB
 Compressed:       ~100 KB (within container)
@@ -1115,6 +1179,7 @@ Metadata:         ~4 KB × 250 containers
 ### Memory Usage
 
 #### Original Mode
+
 ```
 Per Worker:
   - Chunk buffer: 256 KB
@@ -1127,6 +1192,7 @@ Database: Managed by BadgerDB (configurable)
 ```
 
 #### Container Mode
+
 ```
 Per Worker:
   - Chunk buffer: 256 KB
@@ -1146,9 +1212,84 @@ Total (8 workers + compression): ~1.6 GB peak
 
 **Trade-off**: Higher peak memory for better compression and I/O
 
+### Runtime Memory Accounting and Cache Policy (2026-05)
+
+High resident memory in large deployments is often expected and is mostly
+cache-driven. For example, with ~100 GB of on-disk data, seeing 2-3 GB process
+memory can be normal when caches are intentionally configured for throughput.
+
+#### 1) BadgerDB cache policy (metadata path)
+
+Badger cache sizing is derived from available system memory using
+`GetCacheLimit()`.
+
+Policy:
+
+- Target budget: 25% of available RAM
+- Reliability floor: 64 MB
+- Reliability cap: 8 GB
+- Probe failure fallback: 256 MB (non-fatal)
+
+Allocation strategy:
+
+- The computed budget is treated as a total cache budget, not per-cache budget.
+- Budget is split as:
+  - Block cache: 75%
+  - Index cache: 25%
+- Minimum split floors:
+  - Block cache >= 64 MB
+  - Index cache >= 32 MB
+
+Rationale:
+
+- Keeps strong cache locality on high-memory hosts (speed-oriented).
+- Avoids accidental double budgeting where both caches were set to the full
+  limit.
+- Prevents memory-probe failures from blocking DB startup.
+
+#### 2) Container read cache policy (restore path)
+
+Restore flow uses a separate container read cache.
+
+Policy:
+
+- Uses `GetCacheLimit()` as baseline budget
+- Explicit restore cap: 4 GB
+- Probe failure fallback: 256 MB (non-fatal)
+
+Rationale:
+
+- Fast repeated reads for compressed container restores.
+- Bounded memory use with LRU eviction and optional disk spill path.
+
+#### 3) Interpreting high memory correctly
+
+When profiling memory, separate:
+
+- Expected cache usage:
+  - Badger block/index caches
+  - Container read cache during restore
+  - OS file cache effects
+- Unexpected growth:
+  - Monotonic heap growth without steady-state plateau
+  - Cache bypassing configured bounds
+
+Operationally, high memory is acceptable when:
+
+- Throughput improves measurably, and
+- Memory remains bounded by configured policies.
+
+#### 4) Reliability guarantees from current policy
+
+- Cache-size probing failure does not abort core operations.
+- All cache paths have practical lower and upper bounds.
+- High-memory machines can still leverage large caches for speed.
+- Low-resource mode remains available for constrained environments.
+
 ### I/O Patterns
 
 #### Original Mode
+
 ```
 Pattern:   Random writes (new files)
 Seeks:     None (sequential within file)
@@ -1160,6 +1301,7 @@ Cache Efficiency: Poor (many small files)
 ```
 
 #### Container Mode
+
 ```
 Pattern:   Sequential appends
 Seeks:     None (append-only)
@@ -1175,6 +1317,7 @@ Cache Efficiency: Excellent (few large files)
 #### Key-Value Size
 
 **Original Mode**:
+
 ```
 Key:   ~70 bytes ("C|||:" + base64(hash))
 Value: ~50 bytes (file path)
@@ -1184,6 +1327,7 @@ Total: 120 bytes per chunk
 ```
 
 **Container Mode**:
+
 ```
 Key:   ~70 bytes ("C|||:" + base64(hash))
 Value: ~100 bytes (path + "|" + offset + "|" + size)
@@ -1226,12 +1370,12 @@ Total: 170 bytes per chunk
 1. **Memory Usage**
    - ❌ Peak memory: ~1.6GB during compression
    - ❌ Container decompression: 1GB per read
-   - ⚠️  Not ideal for memory-constrained systems
+   - ⚠️ Not ideal for memory-constrained systems
 
 2. **Read Performance**
    - ❌ Must decompress entire container for single chunk
    - ❌ No random access to compressed containers
-   - ⚠️  Future optimization: container caching
+   - ⚠️ Future optimization: container caching
 
 3. **Complexity**
    - ❌ More complex code paths
@@ -1241,15 +1385,16 @@ Total: 170 bytes per chunk
 4. **Write Latency**
    - ✅ Lock-free channel serializes writes naturally
    - ✅ Single writer goroutine eliminates contention
-   - ⚠️  Negligible vs. I/O time in practice
+   - ⚠️ Negligible vs. I/O time in practice
 
 5. **Container Corruption Risk**
    - ❌ Single container failure affects ~4000 chunks
-   - ⚠️  Mitigated by: zstd checksums, atomic writes
+   - ⚠️ Mitigated by: zstd checksums, atomic writes
 
 ### When to Use Container Mode
 
 #### Recommended
+
 - ✅ Chunk size < 128KB
 - ✅ Large datasets (> 100GB)
 - ✅ Filesystem with file count limits
@@ -1257,6 +1402,7 @@ Total: 170 bytes per chunk
 - ✅ Backup/archival scenarios
 
 #### Not Recommended
+
 - ❌ Memory < 4GB
 - ❌ Frequent random chunk access
 - ❌ Real-time low-latency requirements
@@ -1265,7 +1411,7 @@ Total: 170 bytes per chunk
 ### Comparison Matrix
 
 | Aspect                | Original Mode | Container Mode |
-|-----------------------|---------------|----------------|
+| --------------------- | ------------- | -------------- |
 | File Count            | Very High     | Very Low       |
 | Filesystem Overhead   | High          | Low            |
 | Write Performance     | Good          | Excellent      |
@@ -1364,14 +1510,14 @@ Total: 170 bytes per chunk
 
 ### Code References
 
-| Component          | File Path                       | Key Functions                          |
-|--------------------|---------------------------------|----------------------------------------|
-| Container Manager  | `lib/fio/container.go`          | `NewContainerManager`, `WriteChunkToContainer`, `compressContainer` |
-| Database Layer     | `lib/dbio/dbio.go`              | `SetBatchChonkNode`, `GetChonkNode`    |
-| Storage Flow       | `lib/store/store.go`            | `storeEvidenceData`, `processChonk`    |
-| CLI Integration    | `main.go`, `cli/common.go`      | Flag parsing, recommendations          |
-| Constants          | `lib/cnst/const.go`             | `CONTAINERMODE`, `MaxContainerSize`    |
-| Thread Structures  | `lib/structs/thread.go`         | `ThreadIO`                             |
+| Component         | File Path                  | Key Functions                                                       |
+| ----------------- | -------------------------- | ------------------------------------------------------------------- |
+| Container Manager | `lib/fio/container.go`     | `NewContainerManager`, `WriteChunkToContainer`, `compressContainer` |
+| Database Layer    | `lib/dbio/dbio.go`         | `SetBatchChonkNode`, `GetChonkNode`                                 |
+| Storage Flow      | `lib/store/store.go`       | `storeEvidenceData`, `processChonk`                                 |
+| CLI Integration   | `main.go`, `cli/common.go` | Flag parsing, recommendations                                       |
+| Constants         | `lib/cnst/const.go`        | `CONTAINERMODE`, `MaxContainerSize`                                 |
+| Thread Structures | `lib/structs/thread.go`    | `ThreadIO`                                                          |
 
 ### Testing Scenarios
 
@@ -1413,19 +1559,23 @@ Total: 170 bytes per chunk
 - **Chunk**: Fixed-size block of data (default 256KB) used for deduplication
 - **Container**: Large file (max 1GB) containing multiple packed chunks
 - **Deduplication**: Process of storing identical chunks only once
-- **Lock-Free**: Concurrency approach using channels instead of mutexes, eliminating contention
-- **Ring Buffer**: Buffered channel queue for lock-free write request handling (1000 capacity)
-- **Writer Goroutine**: Dedicated goroutine for sequential container writes (no contention)
+- **Lock-Free**: Concurrency approach using channels instead of mutexes,
+  eliminating contention
+- **Ring Buffer**: Buffered channel queue for lock-free write request handling
+  (1000 capacity)
+- **Writer Goroutine**: Dedicated goroutine for sequential container writes (no
+  contention)
 - **Thread IO**: Structure passed to worker goroutines for concurrent processing
 - **BadgerDB**: Embedded key-value database used for metadata storage
 - **Zstd**: Zstandard compression algorithm (by Facebook)
 - **AES-256-GCM**: Advanced Encryption Standard with Galois/Counter Mode
-- **Memory-mapped file**: File accessed directly through memory addresses (zero-copy)
-- **CSP**: Communicating Sequential Processes - Go's concurrency model using channels
+- **Memory-mapped file**: File accessed directly through memory addresses
+  (zero-copy)
+- **CSP**: Communicating Sequential Processes - Go's concurrency model using
+  channels
 
 ---
 
-**Document Version**: 2.0
-**Last Updated**: February 17, 2026
-**Author**: Indicer Development Team
-**Status**: Production Ready - Lock-Free Channel Architecture
+**Document Version**: 2.0 **Last Updated**: February 17, 2026 **Author**:
+Indicer Development Team **Status**: Production Ready - Lock-Free Channel
+Architecture

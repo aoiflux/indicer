@@ -10,6 +10,7 @@ import (
 	"indicer/lib/util"
 	"indicer/pb/pbconnect"
 	"net/http"
+	"net/url"
 	"os"
 	"os/signal"
 	"path/filepath"
@@ -64,6 +65,11 @@ func Server(chonkSize int, dbpath string, key []byte) error {
 		server.NewConnectService(),
 	)
 	mux.Handle(path, handler)
+
+	// Unary web upload endpoints (browser-compatible alternative to client-streaming RPC).
+	mux.HandleFunc("/web/upload/start", server.HandleUploadStart)
+	mux.HandleFunc("/web/upload/chunk", server.HandleUploadChunk)
+	mux.HandleFunc("/web/upload/finalize", server.HandleUploadFinalize)
 
 	// Add a health check endpoint
 	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
@@ -178,32 +184,47 @@ func printSection(icon, title string, lines []string, c *color.Color) {
 	fmt.Println()
 }
 
+func isLocalhostOrigin(origin string) bool {
+	if origin == "" {
+		return false
+	}
+	u, err := url.Parse(origin)
+	if err != nil {
+		return false
+	}
+	host := u.Hostname()
+	return host == "localhost" || host == "127.0.0.1" || host == "::1"
+}
+
 func corsMiddleware(next http.Handler) http.Handler {
+	const allowMethods = "POST, OPTIONS"
+	const allowHeaders = "content-type,x-grpc-web,grpc-timeout,x-user-agent,connect-protocol-version,upload-id"
+	const exposeHeaders = "grpc-status,grpc-message,grpc-status-details-bin"
+
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		// Set CORS headers for web clients
+		isPreflight := r.Method == http.MethodOptions
+		isGRPCWeb := r.Header.Get("X-Grpc-Web") != ""
 		origin := r.Header.Get("Origin")
-		if origin != "" {
-			// Allow all origins - customize this for production to restrict to specific domains
-			w.Header().Set("Access-Control-Allow-Origin", origin)
-			w.Header().Set("Access-Control-Allow-Credentials", "true")
+
+		// Only attach CORS headers for browser-originated traffic, preflight, or grpc-web.
+		if isPreflight || isGRPCWeb || isLocalhostOrigin(origin) {
+			allowedOrigin := origin
+			if allowedOrigin == "" {
+				allowedOrigin = "*"
+			}
+			w.Header().Set("Access-Control-Allow-Origin", allowedOrigin)
+			w.Header().Set("Access-Control-Allow-Methods", allowMethods)
+			w.Header().Set("Access-Control-Allow-Headers", allowHeaders)
+			w.Header().Set("Access-Control-Expose-Headers", exposeHeaders)
+			w.Header().Add("Vary", "Origin")
+			w.Header().Add("Vary", "Access-Control-Request-Method")
+			w.Header().Add("Vary", "Access-Control-Request-Headers")
 		}
 
-		// Handle preflight requests
-		if r.Method == http.MethodOptions {
-			w.Header().Set("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS")
-			w.Header().Set("Access-Control-Allow-Headers",
-				"Content-Type, Connect-Protocol-Version, Connect-Timeout-Ms, "+
-					"Connect-Accept-Encoding, Connect-Content-Encoding, "+
-					"Grpc-Timeout, X-Grpc-Web, X-User-Agent")
-			w.Header().Set("Access-Control-Max-Age", "7200")
+		if isPreflight {
 			w.WriteHeader(http.StatusNoContent)
 			return
 		}
-
-		// Expose headers for web clients
-		w.Header().Set("Access-Control-Expose-Headers",
-			"Connect-Protocol-Version, Connect-Content-Encoding, "+
-				"Grpc-Status, Grpc-Message, Grpc-Status-Details-Bin")
 
 		next.ServeHTTP(w, r)
 	})
@@ -212,7 +233,7 @@ func corsMiddleware(next http.Handler) http.Handler {
 func ensureUploadDir(uploadsDir string) error {
 	_, err := os.Stat(uploadsDir)
 	if os.IsNotExist(err) {
-		return os.MkdirAll(uploadsDir, 0o755)
+		return os.MkdirAll(uploadsDir, cnst.DirPerm)
 	}
 	return nil
 }

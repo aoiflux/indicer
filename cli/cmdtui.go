@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"context"
 	"fmt"
 	"indicer/lib/cnst"
 	"indicer/lib/near"
@@ -9,7 +10,6 @@ import (
 	"indicer/lib/util"
 	"indicer/tui"
 	"os"
-	"path/filepath"
 	"strings"
 	"sync"
 )
@@ -50,7 +50,9 @@ func TUICmd(chonkSize int, dbpath string, key []byte) error {
 	actions := tui.Actions{
 		Store: func(filePath string, syncIndex bool, noIndex bool, hashAlgo string) error {
 			return runQuiet(func() error {
-				cnst.HASHALGO = hashAlgo
+				if err := cnst.SetHashAlgo(hashAlgo); err != nil {
+					return err
+				}
 				if err := util.EnsureBlobPath(db.Opts().Dir); err != nil {
 					return err
 				}
@@ -61,23 +63,23 @@ func TUICmd(chonkSize int, dbpath string, key []byte) error {
 				}
 
 				if info.IsDir() {
-					return StoreFolder(chonkSize, filePath, key, syncIndex, noIndex, db)
+					return StoreFolder(chonkSize, filePath, key, syncIndex, noIndex, false, false, db)
 				}
 
-				return StoreFile(chonkSize, filePath, key, syncIndex, noIndex, db)
+				return StoreFile(chonkSize, filePath, key, syncIndex, noIndex, false, false, db)
 			})
 		},
-		Search: func(query string) error {
+		Search: func(ctx context.Context, query string) error {
 			if len(query) < 2 {
 				return fmt.Errorf("query must be at least 2 characters")
 			}
 			return runQuiet(func() error {
-				return search.Search(strings.ToLower(query), db)
+				return search.SearchWithContext(ctx, strings.ToLower(query), db)
 			})
 		},
 		Restore: func(hash string, restorePath string) error {
 			return runQuiet(func() error {
-				fhandle, err := os.Create(restorePath)
+				fhandle, err := os.OpenFile(restorePath, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, cnst.FilePerm)
 				if err != nil {
 					return err
 				}
@@ -87,12 +89,12 @@ func TUICmd(chonkSize int, dbpath string, key []byte) error {
 		},
 		NearIn: func(hash string, deep bool) error {
 			return runQuiet(func() error {
-				return near.NearInFile(hash, db, deep)
+				return near.NearInFile(hash, db, deep, false, 0)
 			})
 		},
 		NearOut: func(filePath string) error {
 			return runQuiet(func() error {
-				return near.NearOutFile(filePath, db)
+				return near.NearOutFile(filePath, db, false, false, false, 0)
 			})
 		},
 		Reset: func() error {
@@ -101,7 +103,7 @@ func TUICmd(chonkSize int, dbpath string, key []byte) error {
 					return err
 				}
 
-				blobDir := filepath.Join(db.Opts().Dir, cnst.BLOBSDIR)
+				blobDir := util.BlobPath(db.Opts().Dir)
 				if err := os.RemoveAll(blobDir); err != nil {
 					return err
 				}

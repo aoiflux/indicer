@@ -5,6 +5,8 @@ import (
 	"errors"
 	"hash"
 	"runtime"
+	"strings"
+	"time"
 
 	"github.com/dgraph-io/badger/v4"
 	"github.com/klauspost/compress/zstd"
@@ -13,12 +15,19 @@ import (
 )
 
 const (
-	FILE_EXISTS   = "EXISTS"
-	FILE_APPENDED = "APPENDED"
-	DefaultDBPath = "./data"
-	UploadsDir    = "uploads"
-	SHA3          = "SHA3"
-	BLAKE3        = "BLAKE3"
+	FILE_EXISTS         = "EXISTS"
+	FILE_APPENDED       = "APPENDED"
+	UnknownEvidenceType = "unknown"
+	DefaultDBPath       = "./data"
+	DirPerm             = 0o755
+	FilePerm            = 0o644
+	KVDBDIR             = "kvdb"
+	GRAPHDIR            = "graph"
+	BLOBSDIR            = "blob"
+	FTSDIR              = "fts"
+	UploadsDir          = "uploads"
+	SHA3                = "sha3"
+	BLAKE3              = "blake3"
 )
 
 const (
@@ -36,29 +45,40 @@ const (
 	KeySize                 = 32
 )
 
-var HASHALGO string
+var HASHALGO = BLAKE3
 var ChonkSize = DefaultChonkSize
 var MEMOPT bool
 var QUICKOPT bool
 var CONTAINERMODE bool
 var HIERARCHICALINDEX bool
+var ENABLESIMHASH = false  // compute and persist per-chunk simhash signatures during ingest (opt-in via --simhash)
+var CompressLevel = "best" // per-chunk zstd ingest level: fast | default | best
+var StoreWorkerCount = 0
+var StoreTaskQueueDepth = 0
+var RestoreWorkerCount = 0
+var RestoreTaskQueueDepth = 0
+var RestoreProgressIntervalMs = 0
+var RestoreWriteBufferMB = 0
 var DB *badger.DB
 
 const (
-	EviFileNamespace         = "E|||:"
-	PartiFileNamespace       = "P|||:"
-	IdxFileNamespace         = "I|||:"
-	RelationNamespace        = "R|||:"
-	ReverseRelationNamespace = "Я|||:"
-	ChonkNamespace           = "C|||:"
-	NamespaceSeperator       = "|||:"
-	RangeSeperator           = "-"
-	DataSeperator            = "|||"
-	PartitionIndexPrefix     = "p"
+	EviFileNamespace                = "E|||:"
+	PartiFileNamespace              = "P|||:"
+	IdxFileNamespace                = "I|||:"
+	RelationNamespace               = "R|||:"
+	ReverseRelationNamespace        = "Я|||:"
+	ReverseRelationAppendNamespace  = "RA|||:"
+	ChonkNamespace                  = "C|||:"
+	ChonkSimhashNamespace           = "S|||:"
+	FileSimhashNamespace            = "F|||:"
+	NamespaceSeperator              = "|||:"
+	RangeSeperator                  = "-"
+	DataSeperator                   = "|||"
+	PartitionIndexPrefix            = "p"
+	ReverseRelationAppendShardCount = 16
 )
 
 const (
-	BLOBSDIR    = "BLOBS"
 	BLOBEXT     = ".blob"
 	BLOBZSTEXT  = ".blob.zst"
 	FileNameLen = 25
@@ -87,12 +107,18 @@ const (
 	CmdStore    = "store"
 	CmdList     = "list"
 	CmdStats    = "stats"
+	CmdRepair   = "repair"
 	CmdRestore  = "restore"
 	CmdNear     = "near"
 	CmdReset    = "reset"
+	CmdPurge    = "purge"
+	CmdDelete   = "delete"
+	CmdDestroy  = "destroy"
 	SubCmdIn    = "in"
 	SubCmdOut   = "out"
 	CmdSearch   = "search"
+	CmdMicro    = "micro"
+	CmdEnrich   = "enrich"
 	CmdServer   = "server"
 	CmdVeresion = "version"
 
@@ -122,6 +148,25 @@ const (
 	FlagNoIndexShort         = 'n'
 	FlagHashAlgo             = "hash-algo"
 	FlagHashAlgoShort        = 'g'
+	FlagExplainExact         = "explain-exact"
+	FlagExplainExactShort    = 't'
+	FlagAdvancedDeep         = "advanced-deep"
+	FlagAdvancedDeepShort    = 'a'
+	FlagRepairFix            = "fix"
+	FlagRepairMigrateRevRel  = "migrate-revrel"
+	FlagTopK                 = "top-k"
+	FlagTopKShort            = 'k'
+	FlagEnableFts            = "enable-fts"
+	FlagEnableEnrichment     = "enrich"
+	FlagListStatus           = "status"
+	FlagCompressLevel        = "compress-level"
+	FlagSimhash              = "simhash"
+	FlagStoreWorkers         = "store-workers"
+	FlagStoreQueue           = "store-queue"
+	FlagRestoreWorkers       = "restore-workers"
+	FlagRestoreQueue         = "restore-queue"
+	FlagRestoreProgressMs    = "restore-progress-ms"
+	FlagRestoreBufferMB      = "restore-buffer-mb"
 
 	OperandFile  = "FILE"
 	OperandHash  = "HASH"
@@ -132,6 +177,26 @@ const IgnoreVar int64 = -1
 
 var DECODER *zstd.Decoder
 var ENCODER *zstd.Encoder
+
+func NormalizeHashAlgo(algo string) string {
+	switch strings.ToLower(strings.TrimSpace(algo)) {
+	case SHA3:
+		return SHA3
+	case BLAKE3, "":
+		return BLAKE3
+	default:
+		return ""
+	}
+}
+
+func SetHashAlgo(algo string) error {
+	normalized := NormalizeHashAlgo(algo)
+	if normalized == "" {
+		return errors.New("invalid hash algorithm: must be sha3 or blake3")
+	}
+	HASHALGO = normalized
+	return nil
+}
 
 func GetHashAlgo(bigFile ...bool) hash.Hash {
 	flag := false
@@ -149,10 +214,7 @@ func GetHashAlgo(bigFile ...bool) hash.Hash {
 		return blake3.New()
 	}
 
-	if flag {
-		return sha3.New256()
-	}
-	return sha3.New512()
+	return blake3.New()
 }
 
 func GetMaxThreadCount() int {
@@ -164,12 +226,131 @@ func GetMaxThreadCount() int {
 	// (waiting on file writes, DB operations, compression, etc.)
 	return runtime.NumCPU() * 2
 }
+
+// GetStorePipelineTuning returns worker count and task queue depth for the
+// batch-owner ingest pipeline. Non-container mode benefits from higher worker
+// parallelism for chunk materialization, while container/hierarchical modes
+// involve additional serialized components and are tuned for steadier flow.
+func GetStorePipelineTuning(containerMode bool, hierarchicalMode bool) (int, int) {
+	workers := GetMaxThreadCount()
+	queueDepth := workers * 2
+
+	if containerMode {
+		workers = workers / 2
+		if workers < 2 {
+			workers = 2
+		}
+		queueDepth = workers * 4
+		if hierarchicalMode {
+			queueDepth = workers * 6
+		}
+	}
+
+	if StoreWorkerCount > 0 {
+		workers = StoreWorkerCount
+	}
+	if StoreTaskQueueDepth > 0 {
+		queueDepth = StoreTaskQueueDepth
+	}
+
+	if workers < 1 {
+		workers = 1
+	}
+	if queueDepth < workers {
+		queueDepth = workers
+	}
+
+	return workers, queueDepth
+}
+
+// GetRestorePipelineTuning returns worker count and queue depth for restore.
+// Restore is read/decode heavy, so defaults are moderately parallel and bounded.
+func GetRestorePipelineTuning() (int, int) {
+	workers := runtime.NumCPU()
+	if MEMOPT {
+		workers = workers / 2
+	}
+	if workers < 2 {
+		workers = 2
+	}
+	if workers > 16 {
+		workers = 16
+	}
+
+	queueDepth := workers * 4
+
+	if RestoreWorkerCount > 0 {
+		workers = RestoreWorkerCount
+	}
+	if RestoreTaskQueueDepth > 0 {
+		queueDepth = RestoreTaskQueueDepth
+	}
+
+	if workers < 1 {
+		workers = 1
+	}
+	if queueDepth < workers {
+		queueDepth = workers
+	}
+
+	return workers, queueDepth
+}
+
+func GetRestoreProgressInterval() time.Duration {
+	if RestoreProgressIntervalMs <= 0 {
+		return 120 * time.Millisecond
+	}
+	if RestoreProgressIntervalMs < 20 {
+		return 20 * time.Millisecond
+	}
+	if RestoreProgressIntervalMs > 2000 {
+		return 2000 * time.Millisecond
+	}
+	return time.Duration(RestoreProgressIntervalMs) * time.Millisecond
+}
+
+func GetRestoreWriteBufferSize() int {
+	if RestoreWriteBufferMB <= 0 {
+		if MEMOPT {
+			return 32 * 1024 * 1024
+		}
+		return 256 * 1024 * 1024
+	}
+	if RestoreWriteBufferMB < 1 {
+		return 1 * 1024 * 1024
+	}
+	if RestoreWriteBufferMB > 256 {
+		return 256 * 1024 * 1024
+	}
+	return RestoreWriteBufferMB * 1024 * 1024
+}
+
 func GetCacheLimit() (int64, error) {
 	if MEMOPT {
-		return 64 * KB, nil
+		return 64 * MB, nil
 	}
+
+	const (
+		cacheFallback = 256 * MB
+		cacheMin      = 64 * MB
+		cacheMax      = 8 * GB
+	)
+
 	vmemstat, err := mem.VirtualMemory()
-	return int64(vmemstat.Available / 4), err
+	if err != nil {
+		// Reliability first: use a sane fallback when memory probing fails.
+		return cacheFallback, nil
+	}
+
+	cacheLimit := int64(vmemstat.Available / 4)
+	if cacheLimit < cacheMin {
+		cacheLimit = cacheMin
+	}
+	if cacheLimit > cacheMax {
+		cacheLimit = cacheMax
+	}
+
+	return cacheLimit, nil
 }
 func GetMaxBatchCount() (int, error) {
 	if MEMOPT {

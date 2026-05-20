@@ -1,17 +1,27 @@
 <svg width="700" height="240" viewBox="0 0 700 240" xmlns="http://www.w3.org/2000/svg">
     <defs>
         <linearGradient id="bgGradient" x1="0%" y1="0%" x2="100%" y2="100%">
-            <stop offset="0%" stop-color="#0b1220" />
-            <stop offset="45%" stop-color="#11325c" />
-            <stop offset="100%" stop-color="#157f73" />
+            <stop offset="0%" stop-color="#120f1f" />
+            <stop offset="42%" stop-color="#1d2a46" />
+            <stop offset="100%" stop-color="#1c6a5d" />
         </linearGradient>
+        <radialGradient id="orbGradient" cx="18%" cy="12%" r="95%">
+            <stop offset="0%" stop-color="#f59e0b" stop-opacity="0.22" />
+            <stop offset="60%" stop-color="#22d3ee" stop-opacity="0.09" />
+            <stop offset="100%" stop-color="#000000" stop-opacity="0" />
+        </radialGradient>
         <linearGradient id="cardGradient" x1="0%" y1="0%" x2="100%" y2="100%">
-            <stop offset="0%" stop-color="#1e293b" stop-opacity="0.85" />
-            <stop offset="100%" stop-color="#0f172a" stop-opacity="0.4" />
+            <stop offset="0%" stop-color="#161a2f" stop-opacity="0.88" />
+            <stop offset="100%" stop-color="#0a1224" stop-opacity="0.56" />
         </linearGradient>
         <linearGradient id="accentGradient" x1="0%" y1="0%" x2="100%" y2="0%">
             <stop offset="0%" stop-color="#22d3ee" />
-            <stop offset="100%" stop-color="#34d399" />
+            <stop offset="52%" stop-color="#34d399" />
+            <stop offset="100%" stop-color="#fbbf24" />
+        </linearGradient>
+        <linearGradient id="jackfruitSkin" x1="0%" y1="0%" x2="0%" y2="100%">
+            <stop offset="0%" stop-color="#fde68a" />
+            <stop offset="100%" stop-color="#f59e0b" />
         </linearGradient>
         <filter id="softGlow" x="-50%" y="-50%" width="200%" height="200%">
             <feGaussianBlur stdDeviation="8" result="blur" />
@@ -23,62 +33,79 @@
     </defs>
 
     <rect width="700" height="240" rx="18" fill="url(#bgGradient)" />
-    <circle cx="628" cy="40" r="68" fill="#38bdf8" opacity="0.08" />
-    <circle cx="64" cy="208" r="52" fill="#34d399" opacity="0.11" />
+    <rect width="700" height="240" rx="18" fill="url(#orbGradient)" />
+    <circle cx="620" cy="32" r="74" fill="#22d3ee" opacity="0.08" />
+    <circle cx="56" cy="206" r="58" fill="#f59e0b" opacity="0.12" />
 
     <g transform="translate(26, 26)">
         <rect width="648" height="188" rx="16" fill="url(#cardGradient)" stroke="#67e8f9"
-            stroke-opacity="0.28" />
+            stroke-opacity="0.30" />
 
-        <g transform="translate(24, 34)">
-            <rect x="0" y="0" width="142" height="96" rx="14" fill="#0b1d33" stroke="#38bdf8"
-                stroke-opacity="0.45" />
+        <g transform="translate(22, 30)">
+            <rect x="0" y="0" width="154" height="108" rx="16" fill="#111b33" stroke="#22d3ee"
+                stroke-opacity="0.42" />
+            <rect x="12" y="12" width="130" height="84" rx="12" fill="#0f172a" stroke="#1e293b" />
 
-            <g transform="translate(16, 16)" filter="url(#softGlow)">
-                <ellipse cx="55" cy="56" rx="45" ry="12" fill="#0f766e" opacity="0.45" />
-                <rect x="10" y="18" width="90" height="38" rx="9" fill="#164e63" opacity="0.65" />
-                <ellipse cx="55" cy="18" rx="45" ry="12" fill="url(#accentGradient)" />
-                <circle cx="55" cy="18" r="6" fill="#ecfeff" opacity="0.9" />
+            <g transform="translate(16, 18)" filter="url(#softGlow)">
+                <ellipse cx="52" cy="58" rx="45" ry="10" fill="#0f766e" opacity="0.40" />
+                <ellipse cx="52" cy="22" rx="42" ry="14" fill="url(#jackfruitSkin)" />
+                <rect x="10" y="22" width="84" height="30" rx="8" fill="#164e63" opacity="0.68" />
+                <circle cx="52" cy="22" r="6" fill="#fffbeb" opacity="0.92" />
+                <circle cx="22" cy="22" r="1.3" fill="#78350f" opacity="0.60" />
+                <circle cx="32" cy="16" r="1.2" fill="#78350f" opacity="0.60" />
+                <circle cx="43" cy="13" r="1.2" fill="#78350f" opacity="0.60" />
+                <circle cx="62" cy="12" r="1.2" fill="#78350f" opacity="0.60" />
+                <circle cx="72" cy="16" r="1.2" fill="#78350f" opacity="0.60" />
+                <circle cx="82" cy="22" r="1.3" fill="#78350f" opacity="0.60" />
             </g>
 
-            <rect x="20" y="74" width="102" height="14" rx="7" fill="#111827" stroke="#34d399"
-                stroke-opacity="0.65" />
-            <rect x="26" y="77" width="90" height="8" rx="4" fill="url(#accentGradient)"
-                opacity="0.88" />
+            <g transform="translate(18, 74)">
+                <rect x="0" y="0" width="116" height="16" rx="8" fill="#101827" stroke="#34d399"
+                    stroke-opacity="0.62" />
+                <rect x="5" y="4" width="68" height="8" rx="4" fill="url(#accentGradient)"
+                    opacity="0.90" />
+                <rect x="82" y="4" width="30" height="8" rx="4" fill="#1f2937" />
+            </g>
         </g>
 
-        <g transform="translate(202, 44)">
+        <g transform="translate(206, 42)">
             <text x="0" y="52" font-family="Segoe UI, Arial, sans-serif" font-size="56"
-                font-weight="800" letter-spacing="1.5" fill="#f8fafc">
+                font-weight="800" letter-spacing="1.8" fill="#f8fafc">
                 DUES
             </text>
-            <text x="0" y="80" font-family="Segoe UI, Arial, sans-serif" font-size="14"
+            <text x="0" y="82" font-family="Segoe UI, Arial, sans-serif" font-size="14"
                 fill="#bae6fd" opacity="0.95">
                 Deduplicated Unified Evidence Store
             </text>
         </g>
 
-        <g transform="translate(202, 132)">
+        <g transform="translate(206, 132)">
             <rect x="0" y="0" width="84" height="28" rx="14" fill="#059669" />
             <text x="42" y="14" dominant-baseline="middle" font-family="Segoe UI, Arial, sans-serif"
                 font-size="14" font-weight="700" fill="#ecfeff" text-anchor="middle">
-                v0.37
+                v0.38
             </text>
 
-            <rect x="96" y="0" width="296" height="28" rx="14" fill="#0f172a" stroke="#22d3ee"
+            <rect x="96" y="0" width="318" height="28" rx="14" fill="#0f172a" stroke="#22d3ee"
                 stroke-opacity="0.55" />
-            <text x="244" y="14" dominant-baseline="middle"
-                font-family="Consolas, Courier New, monospace"
-                font-size="13" fill="#67e8f9" text-anchor="middle">
-                &lt;starfruit&gt; spacebar
+            <text x="255" y="14" dominant-baseline="middle"
+                font-family="Consolas, Courier New, monospace" font-size="13" fill="#67e8f9"
+                text-anchor="middle">
+                &lt;jackfruit&gt; spacebar
             </text>
         </g>
 
-        <g transform="translate(572, 38)">
-            <circle cx="22" cy="22" r="18" fill="none" stroke="#67e8f9" stroke-width="3" />
-            <line x1="34" y1="34" x2="48" y2="48" stroke="#67e8f9" stroke-width="3"
+        <g transform="translate(568, 34)">
+            <rect x="0" y="0" width="56" height="56" rx="14" fill="#0b1528" stroke="#22d3ee"
+                stroke-opacity="0.55" />
+            <line x1="12" y1="18" x2="44" y2="18" stroke="#67e8f9" stroke-width="3"
                 stroke-linecap="round" />
-            <path d="M 15 23 L 20 28 L 30 17" fill="none" stroke="#34d399" stroke-width="3"
+            <line x1="12" y1="28" x2="44" y2="28" stroke="#67e8f9" stroke-width="3"
+                stroke-linecap="round" />
+            <line x1="12" y1="38" x2="44" y2="38" stroke="#67e8f9" stroke-width="3"
+                stroke-linecap="round" />
+            <circle cx="46" cy="46" r="7" fill="#34d399" />
+            <path d="M 42 46 L 45 49 L 50 43" fill="none" stroke="#062b23" stroke-width="2"
                 stroke-linecap="round" stroke-linejoin="round" />
         </g>
     </g>

@@ -3,10 +3,12 @@ package store
 import (
 	"bytes"
 	"encoding/base64"
+	"errors"
 	"sort"
 	"strings"
 
 	"indicer/lib/cnst"
+	"indicer/lib/dbio"
 	"indicer/lib/structs"
 	"indicer/lib/util"
 
@@ -25,6 +27,9 @@ func buildPartitionData(phash string, txn *badger.Txn) (map[string]interface{}, 
 		offset := pdata.InternalObjects[ihash]
 		ifileDataEntries, err := buildIndexedFileData(ihash, txn)
 		if err != nil {
+			if errors.Is(err, badger.ErrKeyNotFound) {
+				continue
+			}
 			return nil, err
 		}
 		for _, ifileData := range ifileDataEntries {
@@ -37,17 +42,32 @@ func buildPartitionData(phash string, txn *badger.Txn) (map[string]interface{}, 
 	}
 
 	partData := map[string]interface{}{
-		"hash":         phash,
-		"fileName":     firstCleanNameFromMap(pdata.Names),
+		"id":           phash,
+		"hash":         pdata.FileHash,
+		"fileHash":     pdata.FileHash,
+		"fileName":     firstCleanName(pdata.Name),
 		"type":         pdata.IndexedType,
 		"size":         pdata.Size,
-		"files":        getMapKeys(pdata.Names),
-		"fileCount":    len(pdata.Names),
+		"fileCount":    1,
 		"indexedFiles": indexedFiles,
 		"indexedCount": len(indexedFiles),
 	}
+	if partData["hash"] == "" {
+		partData["hash"] = phash
+	}
 
 	return partData, nil
+}
+
+func firstCleanName(name string) string {
+	if name == "" {
+		return ""
+	}
+	if strings.Contains(name, cnst.DataSeperator) {
+		parts := strings.Split(name, cnst.DataSeperator)
+		return parts[len(parts)-1]
+	}
+	return name
 }
 
 func getPartitionByHash(txn *badger.Txn, partitionHash string) (structs.PartitionFile, error) {
@@ -57,23 +77,38 @@ func getPartitionByHash(txn *badger.Txn, partitionHash string) (structs.Partitio
 		return pdata, err
 	}
 
-	pid := util.AppendToBytesSlice(cnst.PartiFileNamespace, decodedPhash)
-	item, err := txn.Get(pid)
-	if err != nil {
-		return pdata, err
-	}
-	v, err := item.ValueCopy(nil)
-	if err != nil {
-		return pdata, err
+	// Partition IDs are currently UUID primary keys (raw bytes). Support both
+	// raw UUID and namespaced key shapes for forward compatibility.
+	candidates := [][]byte{
+		decodedPhash,
+		util.AppendToBytesSlice(cnst.PartiFileNamespace, decodedPhash),
 	}
 
-	decoded, err := cnst.DECODER.DecodeAll(v, nil)
-	if err == nil {
-		v = decoded
+	for _, pid := range candidates {
+		item, getErr := txn.Get(pid)
+		if getErr == badger.ErrKeyNotFound {
+			continue
+		}
+		if getErr != nil {
+			return pdata, getErr
+		}
+		v, copyErr := item.ValueCopy(nil)
+		if copyErr != nil {
+			return pdata, copyErr
+		}
+
+		decoded, decodeErr := cnst.DECODER.DecodeAll(v, nil)
+		if decodeErr == nil {
+			v = decoded
+		}
+
+		if unmarshalErr := msgpack.Unmarshal(v, &pdata); unmarshalErr != nil {
+			continue
+		}
+		return pdata, nil
 	}
 
-	err = msgpack.Unmarshal(v, &pdata)
-	return pdata, err
+	return pdata, badger.ErrKeyNotFound
 }
 
 func buildIndexedFileData(ihash string, txn *badger.Txn) ([]map[string]interface{}, error) {
@@ -82,69 +117,61 @@ func buildIndexedFileData(ihash string, txn *badger.Txn) ([]map[string]interface
 		return nil, err
 	}
 
-	iid := util.AppendToBytesSlice(cnst.IdxFileNamespace, decodedIhash)
-	item, err := txn.Get(iid)
-	if err != nil {
-		return nil, err
-	}
-	v, err := item.ValueCopy(nil)
-	if err != nil {
-		return nil, err
-	}
-
-	decoded, err := cnst.DECODER.DecodeAll(v, nil)
-	if err == nil {
-		v = decoded
-	}
-
 	var idata structs.IndexedFile
-	err = msgpack.Unmarshal(v, &idata)
-	if err != nil {
-		return nil, err
+	// Indexed IDs are currently UUID primary keys (raw bytes). Support both
+	// raw UUID and namespaced key shapes for forward compatibility.
+	candidates := [][]byte{
+		decodedIhash,
+		util.AppendToBytesSlice(cnst.IdxFileNamespace, decodedIhash),
 	}
 
-	cleanedNames := make(map[string]struct{}, len(idata.Names))
-	cleanedMeta := make(map[string]structs.IndexedNameMeta, len(idata.Names))
-	for rawName := range idata.Names {
-		name := rawName
-		if strings.Contains(rawName, cnst.DataSeperator) {
-			parts := strings.Split(rawName, cnst.DataSeperator)
-			if len(parts) >= 3 {
-				name = parts[2]
-			}
+	found := false
+	for _, iid := range candidates {
+		item, getErr := txn.Get(iid)
+		if getErr == badger.ErrKeyNotFound {
+			continue
+		}
+		if getErr != nil {
+			return nil, getErr
+		}
+		v, copyErr := item.ValueCopy(nil)
+		if copyErr != nil {
+			return nil, copyErr
 		}
 
-		cleanedNames[name] = struct{}{}
-
-		meta := structs.IndexedNameMeta{IsDeleted: idata.IsDeleted}
-		if rawMeta, ok := idata.NameMeta[rawName]; ok {
-			meta = rawMeta
+		decoded, decodeErr := cnst.DECODER.DecodeAll(v, nil)
+		if decodeErr == nil {
+			v = decoded
 		}
-		existing := cleanedMeta[name]
-		existing.IsDeleted = existing.IsDeleted || meta.IsDeleted
-		cleanedMeta[name] = existing
+
+		if unmarshalErr := msgpack.Unmarshal(v, &idata); unmarshalErr != nil {
+			continue
+		}
+		found = true
+		break
+	}
+	if !found {
+		return nil, badger.ErrKeyNotFound
 	}
 
-	names := getMapKeys(cleanedNames)
-	sort.Strings(names)
-	if len(names) == 0 {
-		names = []string{ihash}
+	name := firstCleanName(idata.Name)
+	if name == "" {
+		name = ihash
 	}
-
-	entries := make([]map[string]interface{}, 0, len(names))
-	for _, name := range names {
-		meta := cleanedMeta[name]
-		entry := map[string]interface{}{
-			"hash":         ihash,
-			"fileName":     name,
-			"path":         name,
-			"type":         idata.IndexedType,
-			"size":         idata.Size,
-			"start":        idata.Start,
-			"isDeleted":    idata.IsDeleted || meta.IsDeleted,
-			"isFragmented": meta.IsFragmented,
-		}
-		entries = append(entries, entry)
+	entries := []map[string]interface{}{{
+		"id":           ihash,
+		"hash":         idata.FileHash,
+		"fileHash":     idata.FileHash,
+		"fileName":     name,
+		"path":         name,
+		"type":         idata.IndexedType,
+		"size":         idata.Size,
+		"start":        idata.Start,
+		"isDeleted":    idata.IsDeleted,
+		"isFragmented": idata.IsFragmented,
+	}}
+	if entries[0]["hash"] == "" {
+		entries[0]["hash"] = ihash
 	}
 
 	return entries, nil
@@ -153,15 +180,18 @@ func buildIndexedFileData(ihash string, txn *badger.Txn) ([]map[string]interface
 func buildCompletedEvidenceFromKV(evidenceHash string, db *badger.DB) (map[string]interface{}, bool, error) {
 	result := map[string]interface{}{}
 	err := db.View(func(txn *badger.Txn) error {
-		evidata, found, err := getEvidenceByHash(txn, evidenceHash)
+		evidata, evidenceID, found, err := getEvidenceByHash(txn, evidenceHash)
 		if err != nil {
 			return err
 		}
 		if !found || !evidata.Completed {
 			return nil
 		}
+		if evidenceID == "" {
+			evidenceID = evidenceHash
+		}
 
-		partitionHashes, err := getEvidencePartitionHashes(txn, evidenceHash, evidata)
+		partitionHashes, err := getEvidencePartitionHashes(txn, evidenceID, evidata)
 		if err != nil {
 			return err
 		}
@@ -192,16 +222,21 @@ func buildCompletedEvidenceFromKV(evidenceHash string, db *badger.DB) (map[strin
 			}
 		}
 
-		result["name"] = normalizeEvidenceFileName(firstCleanNameFromMap(evidata.Names))
+		result["name"] = normalizeEvidenceFileName(firstCleanName(evidata.Name))
+		result["id"] = evidenceID
+		result["hash"] = evidata.FileHash
+		result["fileHash"] = evidata.FileHash
 		result["type"] = evidata.EvidenceType
 		result["size"] = evidata.Size
-		result["files"] = getMapKeys(evidata.Names)
-		result["fileCount"] = len(evidata.Names)
+		result["fileCount"] = 1
 		result["partitions"] = partitions
 		result["partitionCount"] = len(partitions)
 		result["indexedCount"] = totalIndexed
 		result["deletedIndexedCount"] = totalDeletedIndexed
 		result["fragmentedIndexedCount"] = totalFragmentedIndexed
+		if result["hash"] == "" {
+			result["hash"] = evidenceID
+		}
 
 		return nil
 	})
@@ -219,6 +254,12 @@ func getEvidencePartitionHashes(txn *badger.Txn, evidenceHash string, evidata st
 	if len(evidata.InternalObjects) > 0 {
 		partitionHashes := make([]string, 0, len(evidata.InternalObjects))
 		for phash := range evidata.InternalObjects {
+			if _, err := getPartitionByHash(txn, phash); err != nil {
+				if errors.Is(err, badger.ErrKeyNotFound) {
+					continue
+				}
+				return nil, err
+			}
 			partitionHashes = append(partitionHashes, phash)
 		}
 		sort.Strings(partitionHashes)
@@ -226,65 +267,138 @@ func getEvidencePartitionHashes(txn *badger.Txn, evidenceHash string, evidata st
 	}
 
 	partitionHashes := make([]string, 0)
-	partitionPrefix := []byte(cnst.PartiFileNamespace)
 	iter := txn.NewIterator(badger.DefaultIteratorOptions)
 	defer iter.Close()
 
-	for iter.Seek(partitionPrefix); iter.ValidForPrefix(partitionPrefix); iter.Next() {
-		key := iter.Item().KeyCopy(nil)
-		partitionHash := base64.StdEncoding.EncodeToString(bytes.TrimPrefix(key, partitionPrefix))
-		pdata, err := getPartitionByHash(txn, partitionHash)
+	for iter.Rewind(); iter.Valid(); iter.Next() {
+		item := iter.Item()
+		key := item.KeyCopy(nil)
+		value, err := item.ValueCopy(nil)
 		if err != nil {
 			return nil, err
 		}
-		if partitionBelongsToEvidence(evidenceHash, pdata) {
-			partitionHashes = append(partitionHashes, partitionHash)
+
+		pdata, ok, err := decodePartitionRecord(value)
+		if err != nil {
+			return nil, err
 		}
+		if !ok {
+			continue
+		}
+		if !partitionBelongsToEvidence(evidenceHash, pdata) {
+			continue
+		}
+
+		rawID := key
+		if bytes.HasPrefix(rawID, []byte(cnst.PartiFileNamespace)) {
+			rawID = bytes.TrimPrefix(rawID, []byte(cnst.PartiFileNamespace))
+		}
+		partitionHashes = append(partitionHashes, base64.StdEncoding.EncodeToString(rawID))
 	}
 
 	sort.Strings(partitionHashes)
 	return partitionHashes, nil
 }
 
-func partitionBelongsToEvidence(evidenceHash string, pdata structs.PartitionFile) bool {
-	for name := range pdata.Names {
-		parts := strings.SplitN(name, cnst.DataSeperator, 2)
-		if len(parts) > 0 && parts[0] == evidenceHash {
-			return true
-		}
+func decodePartitionRecord(value []byte) (structs.PartitionFile, bool, error) {
+	var pdata structs.PartitionFile
+
+	decoded, decodeErr := cnst.DECODER.DecodeAll(value, nil)
+	if decodeErr == nil {
+		value = decoded
 	}
-	return false
+
+	if err := msgpack.Unmarshal(value, &pdata); err != nil {
+		return pdata, false, nil
+	}
+
+	if pdata.Name == "" || pdata.Size == 0 {
+		return pdata, false, nil
+	}
+
+	return pdata, true, nil
 }
 
-func getEvidenceByHash(txn *badger.Txn, evidenceHash string) (structs.EvidenceFile, bool, error) {
+func partitionBelongsToEvidence(evidenceHash string, pdata structs.PartitionFile) bool {
+	parts := strings.SplitN(pdata.Name, cnst.DataSeperator, 2)
+	return len(parts) > 0 && parts[0] == evidenceHash
+}
+
+func getEvidenceByHash(txn *badger.Txn, evidenceHash string) (structs.EvidenceFile, string, bool, error) {
 	var evidata structs.EvidenceFile
-	rawHash, err := base64.StdEncoding.DecodeString(evidenceHash)
-	if err != nil {
+	rawHash, decodeErr := base64.StdEncoding.DecodeString(evidenceHash)
+	if decodeErr != nil {
 		rawHash = []byte(evidenceHash)
 	}
 
-	eid := util.AppendToBytesSlice(cnst.EviFileNamespace, rawHash)
-	item, err := txn.Get(eid)
-	if err == badger.ErrKeyNotFound {
-		return evidata, false, nil
-	}
-	if err != nil {
-		return evidata, false, err
+	candidateKeys := [][]byte{dbio.CanonicalEvidenceKey(rawHash)}
+
+	for _, candidate := range candidateKeys {
+		item, err := txn.Get(candidate)
+		if err == badger.ErrKeyNotFound {
+			continue
+		}
+		if err != nil {
+			return evidata, "", false, err
+		}
+
+		v, err := item.ValueCopy(nil)
+		if err != nil {
+			return evidata, "", false, err
+		}
+
+		decoded, err := cnst.DECODER.DecodeAll(v, nil)
+		if err == nil {
+			v = decoded
+		}
+
+		if err := msgpack.Unmarshal(v, &evidata); err != nil {
+			continue
+		}
+		evidenceID := base64.StdEncoding.EncodeToString(dbio.EvidenceRawID(candidate))
+		return evidata, evidenceID, true, nil
 	}
 
+	// evidenceHash may be a content hash; resolve to UUID key via EH reverse index.
+	lookupKey := util.AppendToBytesSlice(cnst.EviFileHashLookupNamespace, evidenceHash)
+	item, err := txn.Get(lookupKey)
+	if err == badger.ErrKeyNotFound {
+		return evidata, "", false, nil
+	}
+	if err != nil {
+		return evidata, "", false, err
+	}
+	var resolvedIDs [][]byte
+	err = item.Value(func(val []byte) error {
+		return msgpack.Unmarshal(val, &resolvedIDs)
+	})
+	if err != nil {
+		return evidata, "", false, err
+	}
+	if len(resolvedIDs) == 0 {
+		return evidata, "", false, nil
+	}
+	resolvedID := resolvedIDs[len(resolvedIDs)-1]
+
+	item, err = txn.Get(resolvedID)
+	if err == badger.ErrKeyNotFound {
+		return evidata, "", false, nil
+	}
+	if err != nil {
+		return evidata, "", false, err
+	}
 	v, err := item.ValueCopy(nil)
 	if err != nil {
-		return evidata, false, err
+		return evidata, "", false, err
 	}
-
 	decoded, err := cnst.DECODER.DecodeAll(v, nil)
 	if err == nil {
 		v = decoded
 	}
-
 	if err := msgpack.Unmarshal(v, &evidata); err != nil {
-		return evidata, false, err
+		return evidata, "", false, err
 	}
 
-	return evidata, true, nil
+	evidenceID := base64.StdEncoding.EncodeToString(dbio.EvidenceRawID(resolvedID))
+	return evidata, evidenceID, true, nil
 }

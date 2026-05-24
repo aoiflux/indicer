@@ -79,7 +79,7 @@ func getIndexedFileMeta(fid []byte, db *badger.DB) (structs.FileMeta, error) {
 	if err != nil {
 		return meta, err
 	}
-	ehash, err := GetLogicalFileEviHash(ifile.Names, db)
+	ehash, err := GetLogicalFileEviHash(ifile.Name, db)
 	if err != nil {
 		return meta, err
 	}
@@ -96,7 +96,7 @@ func getPartitionFileMeta(fid []byte, db *badger.DB) (structs.FileMeta, error) {
 	if err != nil {
 		return meta, err
 	}
-	ehash, err := GetLogicalFileEviHash(pfile.Names, db)
+	ehash, err := GetLogicalFileEviHash(pfile.Name, db)
 	if err != nil {
 		return meta, err
 	}
@@ -106,8 +106,7 @@ func getPartitionFileMeta(fid []byte, db *badger.DB) (structs.FileMeta, error) {
 	meta.Size = pfile.Size
 	return meta, nil
 }
-func GetLogicalFileEviHash(names map[string]struct{}, db *badger.DB) ([]byte, error) {
-	name := util.GetArbitratyMapKey(names)
+func GetLogicalFileEviHash(name string, db *badger.DB) ([]byte, error) {
 	ehash, err := util.GetEvidenceFileHash(name)
 	if err != nil {
 		return nil, err
@@ -129,7 +128,7 @@ func getEvidenceFileMeta(fid []byte, db *badger.DB) (structs.FileMeta, error) {
 	if !efile.Completed {
 		return meta, cnst.ErrIncompleteFile
 	}
-	ehash := bytes.Split(fid, []byte(cnst.EviFileNamespace))[1]
+	ehash := dbio.EvidenceRawID(fid)
 
 	meta.EviHash = ehash
 	meta.Start = efile.Start

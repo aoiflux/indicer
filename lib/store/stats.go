@@ -111,23 +111,19 @@ func gatherStats(db *badger.DB) (*DBStats, error) {
 			}
 
 			s.TotalIndexedFiles++
-			s.TotalIndexedNames += int64(len(ifile.Names))
+			if ifile.Name != "" {
+				s.TotalIndexedNames++
+			}
 
 			objDeleted := ifile.IsDeleted
 			var objFragmented bool
-			for name := range ifile.Names {
-				meta, ok := ifile.NameMeta[name]
-				if !ok {
-					meta = structs.IndexedNameMeta{IsDeleted: ifile.IsDeleted}
-				}
-				if meta.IsDeleted {
-					s.DeletedIndexedNames++
-					objDeleted = true
-				}
-				if meta.IsFragmented {
-					s.FragmentedIndexedNames++
-					objFragmented = true
-				}
+			if ifile.IsDeleted {
+				s.DeletedIndexedNames++
+				objDeleted = true
+			}
+			if ifile.IsFragmented {
+				s.FragmentedIndexedNames++
+				objFragmented = true
 			}
 
 			if objDeleted {

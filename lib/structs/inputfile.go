@@ -1,15 +1,12 @@
 package structs
 
 import (
-	"bytes"
 	"encoding/base64"
-	"indicer/lib/cnst"
-	"indicer/lib/util"
 	"os"
-	"strings"
 
 	"github.com/dgraph-io/badger/v4"
 	"github.com/edsrzf/mmap-go"
+	"github.com/google/uuid"
 )
 
 type InputFile struct {
@@ -17,6 +14,8 @@ type InputFile struct {
 	mappedFile      mmap.MMap
 	size            int64
 	id              []byte
+	namespace       string
+	fileHash        []byte
 	name            string
 	startIndex      int64
 	db              *badger.DB
@@ -24,6 +23,7 @@ type InputFile struct {
 	internalObjects map[string]InternalOffset
 }
 
+// NewInputFile creates a new InputFile with UUIDv7 ID as the default behavior.
 func NewInputFile(
 	db *badger.DB,
 	fileHandle *os.File,
@@ -36,7 +36,13 @@ func NewInputFile(
 
 	infile.fileHandle = fileHandle
 	infile.mappedFile = mappedFile
-	infile.id = util.AppendToBytesSlice(namespace, inFileHash)
+	uuidv7, err := uuid.NewV7()
+	if err != nil {
+		panic(err)
+	}
+	infile.id = uuidv7[:]
+	infile.namespace = namespace
+	infile.fileHash = inFileHash
 	infile.name = name
 	infile.db = db
 	infile.size = size
@@ -55,6 +61,11 @@ func (i InputFile) GetMappedFile() mmap.MMap {
 func (i InputFile) GetID() []byte {
 	return i.id
 }
+
+// GetFileID returns this file object's UUIDv7 identifier.
+func (i InputFile) GetFileID() []byte {
+	return i.id
+}
 func (i InputFile) GetName() string {
 	return i.name
 }
@@ -70,9 +81,17 @@ func (i InputFile) GetDB() *badger.DB {
 func (i InputFile) GetSize() int64 {
 	return i.size
 }
+
+// GetHash returns the file ID for compatibility with existing callsites.
 func (i InputFile) GetHash() []byte {
-	return bytes.Split(i.id, []byte(cnst.NamespaceSeperator))[1]
+	return i.id
 }
+
+func (i InputFile) GetFileHash() []byte {
+	return i.fileHash
+}
+
+// GetEncodedHash returns base64(file_id).
 func (i InputFile) GetEncodedHash() ([]byte, error) {
 	hash := i.GetHash()
 	return []byte(base64.StdEncoding.EncodeToString(hash)), nil
@@ -80,27 +99,13 @@ func (i InputFile) GetEncodedHash() ([]byte, error) {
 func (i InputFile) GetInternalObjects() map[string]InternalOffset {
 	return i.internalObjects
 }
-func (i InputFile) GetEviFileHash() []byte {
-	if strings.HasPrefix(i.name, cnst.EviFileNamespace) {
-		return i.GetHash()
-	}
-	ehashString := strings.Split(i.name, cnst.DataSeperator)[0]
-	return []byte(ehashString)
-}
+
 func (i InputFile) GetNamespace() []byte {
-	fileType := bytes.Split(i.id, []byte(cnst.NamespaceSeperator))[0]
-	return append(fileType, []byte(cnst.NamespaceSeperator)...)
+	return []byte(i.namespace)
 }
 
 func (i *InputFile) UpdateInternalObjects(start, size int64, objectHash []byte) {
 	objHashStr := base64.StdEncoding.EncodeToString(objectHash)
 	end := (start + size) - 1
 	i.internalObjects[objHashStr] = InternalOffset{start, end}
-}
-
-func (i *InputFile) UpdateInputFile(name, namespace string, hash []byte, size, start int64) {
-	i.name = name
-	i.id = util.AppendToBytesSlice(namespace, hash)
-	i.size = size
-	i.startIndex = start
 }

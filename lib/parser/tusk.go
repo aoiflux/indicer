@@ -85,7 +85,7 @@ func (r *tuskResult) flatLayout() []structs.PartitionFile {
 // in indexing unless separately filtered by upstream data.
 // It mirrors IndexEXFAT but works from the tusk JSON instead of reading the
 // filesystem directly.
-func IndexFilesystem(jsonOutput string, pfile structs.InputFile, idxChan chan error, enableFTS bool, enableEnrichment bool) {
+func IndexFilesystem(jsonOutput string, pfile structs.InputFile, eviID []byte, idxChan chan error, enableFTS bool, enableEnrichment bool) {
 	var result tuskResult
 	if err := json.Unmarshal([]byte(jsonOutput), &result); err != nil {
 		idxChan <- err
@@ -123,7 +123,7 @@ func IndexFilesystem(jsonOutput string, pfile structs.InputFile, idxChan chan er
 			if n := countDeleted(p.Files); n > 0 {
 				report.info(fmt.Sprintf("partition %d", i+1), fmt.Sprintf("%d deleted file(s) currently indexed", n))
 			}
-			buildIdxMap(p.Files, idxmap, pfile, encodedPfileHash, idxChan)
+			buildIdxMap(p.Files, idxmap, pfile, encodedPfileHash, eviID, idxChan)
 			break
 		}
 		if !matched {
@@ -144,12 +144,12 @@ func IndexFilesystem(jsonOutput string, pfile structs.InputFile, idxChan chan er
 		if n := countDeleted(result.Files); n > 0 {
 			report.info("filesystem", fmt.Sprintf("%d deleted file(s) currently indexed", n))
 		}
-		buildIdxMap(result.Files, idxmap, pfile, encodedPfileHash, idxChan)
+		buildIdxMap(result.Files, idxmap, pfile, encodedPfileHash, eviID, idxChan)
 	}
 
 	report.print()
 
-	err = finalizeIndexedFiles(idxmap, pfile, batch, idxChan, enableFTS, enableEnrichment)
+	err = finalizeIndexedFiles(idxmap, pfile, batch, idxChan, eviID, enableFTS, enableEnrichment)
 	if err != nil {
 		idxChan <- err
 		return

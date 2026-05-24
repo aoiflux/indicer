@@ -206,7 +206,8 @@ Store-specific highlights:
 - --no-index, -n: skip indexing
 - --enable-fts: build sidecar full-text index
 - --enable-enrichment: upsert hierarchy metadata to graphdb
-- --hashalgo, -a: sha3 or blake3
+- --hash-algo, -g: sha3 or blake3
+- --hash-strategy: sync or async (evidence hash timing only; default sync)
 - --simhash: compute chunk SimHash signatures during ingest
 - --store-workers and --store-queue: override ingest pipeline tuning
 

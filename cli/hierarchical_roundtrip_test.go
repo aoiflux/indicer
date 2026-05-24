@@ -8,6 +8,7 @@ import (
 	"testing"
 
 	"indicer/lib/cnst"
+	"indicer/lib/dbio"
 	"indicer/lib/util"
 
 	"github.com/klauspost/compress/zstd"
@@ -69,6 +70,45 @@ func TestHierarchicalContainerStoreRestoreRoundTrip(t *testing.T) {
 	}
 
 	rhash := base64.StdEncoding.EncodeToString(hash)
+	db, err := dbio.ConnectDB(dbPath, key)
+	if err != nil {
+		t.Fatalf("ConnectDB: %v", err)
+	}
+
+	fid, err := dbio.GuessFileType(rhash, db)
+	if err != nil {
+		t.Fatalf("GuessFileType: %v", err)
+	}
+	legacyFID := util.AppendToBytesSlice(cnst.EviFileNamespace, hash)
+	if bytes.Equal(fid, legacyFID) {
+		t.Fatal("expected UUID-keyed evidence id, got legacy hash-keyed id")
+	}
+	evi, err := dbio.GetEvidenceFile(fid, db)
+	if err != nil {
+		t.Fatalf("GetEvidenceFile: %v", err)
+	}
+	if evi.FileHash != rhash {
+		t.Fatalf("expected committed FileHash %q, got %q", rhash, evi.FileHash)
+	}
+	lookupKey := util.AppendToBytesSlice(cnst.EviFileHashLookupNamespace, rhash)
+	mappedIDs, err := dbio.GetHashLookupUUIDsByKey(lookupKey, db)
+	if err != nil {
+		t.Fatalf("GetHashLookupUUIDsByKey: %v", err)
+	}
+	found := false
+	for _, mappedID := range mappedIDs {
+		if bytes.Equal(mappedID, fid) {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Fatal("expected hash lookup to contain committed evidence id")
+	}
+	if err := db.Close(); err != nil {
+		t.Fatalf("db.Close: %v", err)
+	}
+
 	if err := RestoreData(64, dbPath, rhash, outputPath, key); err != nil {
 		t.Fatalf("RestoreData: %v", err)
 	}

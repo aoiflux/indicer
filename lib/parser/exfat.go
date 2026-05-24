@@ -11,7 +11,7 @@ import (
 	"github.com/schollz/progressbar/v3"
 )
 
-func IndexEXFAT(pfile structs.InputFile, idxChan chan error, enableFTS bool, enableEnrichment bool) {
+func IndexEXFAT(pfile structs.InputFile, eviID []byte, idxChan chan error, enableFTS bool, enableEnrichment bool) {
 	startOffset := getStartOffset(uint64(pfile.GetStartIndex()))
 	exfatdata, err := libxfat.New(pfile.GetHandle(), true, startOffset)
 	if err != nil {
@@ -61,10 +61,10 @@ func IndexEXFAT(pfile structs.InputFile, idxChan chan error, enableFTS bool, ena
 			}
 		}
 
-		iname := string(util.AppendToBytesSlice(pfile.GetEviFileHash(), cnst.DataSeperator, encodedPfileHash, cnst.DataSeperator, entry.GetName()))
+		iname := string(util.AppendToBytesSlice(eviID, cnst.DataSeperator, encodedPfileHash, cnst.DataSeperator, entry.GetName()))
 		istart := int64(exfatdata.GetClusterOffset(entry.GetEntryCluster()))
 		isize := int64(entry.GetSize())
-		err = registerIndexedRange(idxmap, pfile, iname, istart, isize, false)
+		err = registerIndexedRange(idxmap, pfile, eviID, iname, istart, isize, false)
 		if err != nil {
 			idxChan <- err
 			return
@@ -75,7 +75,7 @@ func IndexEXFAT(pfile structs.InputFile, idxChan chan error, enableFTS bool, ena
 		}
 	}
 
-	err = finalizeIndexedFiles(idxmap, pfile, batch, idxChan, enableFTS, enableEnrichment)
+	err = finalizeIndexedFiles(idxmap, pfile, batch, idxChan, eviID, enableFTS, enableEnrichment)
 	if err != nil {
 		idxChan <- err
 		return

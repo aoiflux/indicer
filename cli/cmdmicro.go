@@ -148,7 +148,7 @@ func processAllIndexedFiles(db *badger.DB, service *microartefact.Service, repo 
 			eviHash := bytes.TrimPrefix(k, eviPrefix)
 			evidenceCtx := microEvidenceContext{
 				evidenceFileID:   base64.StdEncoding.EncodeToString(eviHash),
-				evidenceFileName: arbitrarySetKey(evidata.Names),
+				evidenceFileName: evidata.Name,
 			}
 
 			for phashB64 := range evidata.InternalObjects {
@@ -198,7 +198,7 @@ func processPartition(txn *badger.Txn, db *badger.DB, service *microartefact.Ser
 	partitionCtx := microPartitionContext{
 		microEvidenceContext: evidenceCtx,
 		partitionID:          partitionHashB64,
-		partitionName:        arbitrarySetKey(pdata.Names),
+		partitionName:        pdata.Name,
 	}
 
 	for ihashB64 := range pdata.InternalObjects {
@@ -329,26 +329,21 @@ func ensureIndexedFileNodes(db *badger.DB, repo *microartefact.GrapheneRepositor
 }
 
 func buildIndexedFileRecords(ifile structs.IndexedFile, partitionCtx microPartitionContext, indexedFileHashB64 string) []microartefact.FileRecord {
-	records := make([]microartefact.FileRecord, 0, len(ifile.Names))
-	for indexedName := range ifile.Names {
-		name, path := resolveIndexedFileNameSingle(indexedName)
-		meta := ifile.NameMeta[indexedName]
-		records = append(records, microartefact.FileRecord{
-			Hash:             indexedFileHashB64,
-			Name:             name,
-			Path:             path,
-			Size:             ifile.Size,
-			IsDeleted:        ifile.IsDeleted || meta.IsDeleted,
-			IsFragmented:     meta.IsFragmented,
-			FileType:         ifile.IndexedType,
-			EvidenceFileID:   partitionCtx.evidenceFileID,
-			EvidenceFileName: partitionCtx.evidenceFileName,
-			PartitionID:      partitionCtx.partitionID,
-			PartitionName:    partitionCtx.partitionName,
-			IndexedFileID:    mmodel.BuildIndexedFileID(partitionCtx.partitionID, path, indexedFileHashB64),
-		})
-	}
-	return records
+	name, path := resolveIndexedFileNameSingle(ifile.Name)
+	return []microartefact.FileRecord{{
+		Hash:             indexedFileHashB64,
+		Name:             name,
+		Path:             path,
+		Size:             ifile.Size,
+		IsDeleted:        ifile.IsDeleted,
+		IsFragmented:     ifile.IsFragmented,
+		FileType:         ifile.IndexedType,
+		EvidenceFileID:   partitionCtx.evidenceFileID,
+		EvidenceFileName: partitionCtx.evidenceFileName,
+		PartitionID:      partitionCtx.partitionID,
+		PartitionName:    partitionCtx.partitionName,
+		IndexedFileID:    mmodel.BuildIndexedFileID(partitionCtx.partitionID, path, indexedFileHashB64),
+	}}
 }
 
 // readIndexedFileContent streams up to microScanLimit bytes of the indexed file
@@ -373,8 +368,9 @@ func readIndexedFileContent(iid []byte, db *badger.DB) ([]byte, error) {
 }
 
 // resolveIndexedFileName extracts a human-readable name and path from the
-// IndexedFile.Names set. Names that follow the "hash|||evi_path|||file_name"
-// convention are split accordingly; otherwise the raw entry is used for both.
+// flattened IndexedFile.Name field. Values that follow the
+// "hash|||evi_path|||file_name" convention are split accordingly; otherwise
+// the raw entry is used for both.
 func resolveIndexedFileNameSingle(name string) (fileName, path string) {
 	if strings.Contains(name, cnst.DataSeperator) {
 		parts := strings.SplitN(name, cnst.DataSeperator, 3)
@@ -383,14 +379,6 @@ func resolveIndexedFileNameSingle(name string) (fileName, path string) {
 		}
 	}
 	return name, name
-}
-
-// arbitrarySetKey returns any key from the map (used for display names).
-func arbitrarySetKey(m map[string]struct{}) string {
-	for k := range m {
-		return k
-	}
-	return ""
 }
 
 // ─── CLI visualisation tree ───────────────────────────────────────────────────

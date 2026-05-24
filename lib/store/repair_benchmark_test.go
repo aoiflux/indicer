@@ -60,7 +60,7 @@ func seedRepairBenchmarkData(tb testing.TB, db *badger.DB, total, pendingEvery, 
 		hash[3] = byte(i >> 24)
 
 		infile := newTestInputFile(db, "bench-evidence", hash)
-		evidenceFile := structs.NewEvidenceFile(infile.GetName(), infile.GetStartIndex(), infile.GetSize(), infile.GetInternalObjects(), "dd")
+		evidenceFile := structs.NewEvidenceFile(infile.GetName(), infile.GetStartIndex(), infile.GetSize(), infile.GetInternalObjects(), "dd", "")
 
 		if i%pendingEvery == 0 {
 			evidenceFile.Completed = false

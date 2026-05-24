@@ -64,17 +64,13 @@ func getBaseFiles(prefix string, db *badger.DB) ([]*pb.BaseFile, error) {
 				return err
 			}
 
-			idstr := base64.StdEncoding.EncodeToString(id)
-			for name := range eviFile.Names {
-				var baseFile pb.BaseFile
+			var baseFile pb.BaseFile
+			baseFile.FileId = base64.StdEncoding.EncodeToString(id)
+			baseFile.FilePath = eviFile.Name
+			baseFile.FileSize = eviFile.Size
+			baseFile.ChunkMap = chunkMap
 
-				baseFile.FileId = idstr
-				baseFile.FilePath = name
-				baseFile.FileSize = eviFile.Size
-				baseFile.ChunkMap = chunkMap
-
-				eviList = append(eviList, &baseFile)
-			}
+			eviList = append(eviList, &baseFile)
 		}
 
 		return nil

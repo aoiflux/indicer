@@ -12,30 +12,26 @@ const (
 )
 
 type baseFile struct {
-	Names map[string]struct{} `msgpack:"names"`
-	Size  int64               `msgpack:"size"`
-}
-
-type IndexedNameMeta struct {
-	IsDeleted    bool `msgpack:"is_deleted"`
-	IsFragmented bool `msgpack:"is_fragmented"`
+	Name string `msgpack:"name"`
+	Size int64  `msgpack:"size"`
 }
 
 type IndexedFile struct {
 	baseFile
-	Start       int64                      `msgpack:"start"`
-	IndexedType string                     `msgpack:"indexed_type"`
-	IsDeleted   bool                       `msgpack:"is_deleted"`
-	NameMeta    map[string]IndexedNameMeta `msgpack:"name_meta"`
+	Start        int64  `msgpack:"start"`
+	IndexedType  string `msgpack:"indexed_type"`
+	IsDeleted    bool   `msgpack:"is_deleted"`
+	IsFragmented bool   `msgpack:"is_fragmented"`
+	FileHash     string `msgpack:"file_hash"`
 }
 
-func NewIndexedFile(name string, start, size int64, indexedType string, isDeleted bool) IndexedFile {
-	bfile := baseFile{Names: map[string]struct{}{name: {}}, Size: size}
-	nameMeta := map[string]IndexedNameMeta{name: {IsDeleted: isDeleted}}
+// NewIndexedFile creates a new IndexedFile with optional FileHash
+func NewIndexedFile(name string, start, size int64, indexedType string, isDeleted bool, fileHash string) IndexedFile {
+	bfile := baseFile{Name: name, Size: size}
 	if indexedType == "" {
 		indexedType = cnst.UnknownEvidenceType
 	}
-	return IndexedFile{baseFile: bfile, Start: start, IndexedType: indexedType, IsDeleted: isDeleted, NameMeta: nameMeta}
+	return IndexedFile{baseFile: bfile, Start: start, IndexedType: indexedType, IsDeleted: isDeleted, FileHash: fileHash}
 }
 
 type InternalOffset struct {
@@ -47,8 +43,9 @@ type PartitionFile struct {
 	InternalObjects map[string]InternalOffset `msgpack:"internal_objects"`
 }
 
-func NewPartitionFile(name string, start, size int64, indexedFiles map[string]InternalOffset) PartitionFile {
-	indexedFile := NewIndexedFile(name, start, size, cnst.UnknownEvidenceType, false)
+// NewPartitionFile creates a new PartitionFile with optional FileHash
+func NewPartitionFile(name string, start, size int64, indexedFiles map[string]InternalOffset, fileHash string) PartitionFile {
+	indexedFile := NewIndexedFile(name, start, size, cnst.UnknownEvidenceType, false, fileHash)
 	return PartitionFile{IndexedFile: indexedFile, InternalObjects: indexedFiles}
 }
 
@@ -60,8 +57,9 @@ type EvidenceFile struct {
 	IngestState  IngestState `msgpack:"ingest_state"`
 }
 
-func NewEvidenceFile(name string, start, size int64, partitions map[string]InternalOffset, evidenceType string) EvidenceFile {
-	partitionFile := NewPartitionFile(name, start, size, partitions)
+// NewEvidenceFile creates a new EvidenceFile with optional FileHash
+func NewEvidenceFile(name string, start, size int64, partitions map[string]InternalOffset, evidenceType string, fileHash string) EvidenceFile {
+	partitionFile := NewPartitionFile(name, start, size, partitions, fileHash)
 	return EvidenceFile{PartitionFile: partitionFile, EvidenceType: evidenceType, Completed: false, Failed: false, IngestState: IngestStatePending}
 }
 

@@ -17,7 +17,7 @@ func TestMarkEvidenceFileFailedSetsFailedFlag(t *testing.T) {
 	db := openTestDB(t)
 
 	infile := newTestInputFile(db, "failed-retry.dd", bytes.Repeat([]byte{1}, 32))
-	evidenceFile := structs.NewEvidenceFile(infile.GetName(), infile.GetStartIndex(), infile.GetSize(), infile.GetInternalObjects(), "dd")
+	evidenceFile := structs.NewEvidenceFile(infile.GetName(), infile.GetStartIndex(), infile.GetSize(), infile.GetInternalObjects(), "dd", "")
 	if err := dbio.SetFile(infile.GetID(), evidenceFile, db); err != nil {
 		t.Fatalf("seed evidence file: %v", err)
 	}
@@ -42,7 +42,7 @@ func TestMarkEvidenceFileFailedUnlessFlushedMarksPending(t *testing.T) {
 	db := openTestDB(t)
 
 	infile := newTestInputFile(db, "pending-fail.dd", bytes.Repeat([]byte{0x11}, 32))
-	evidenceFile := structs.NewEvidenceFile(infile.GetName(), infile.GetStartIndex(), infile.GetSize(), infile.GetInternalObjects(), "dd")
+	evidenceFile := structs.NewEvidenceFile(infile.GetName(), infile.GetStartIndex(), infile.GetSize(), infile.GetInternalObjects(), "dd", "")
 	evidenceFile.IngestState = structs.IngestStatePending
 	if err := dbio.SetFile(infile.GetID(), evidenceFile, db); err != nil {
 		t.Fatalf("seed evidence file: %v", err)
@@ -65,7 +65,7 @@ func TestMarkEvidenceFileFailedUnlessFlushedSkipsFlushed(t *testing.T) {
 	db := openTestDB(t)
 
 	infile := newTestInputFile(db, "flushed-preserve.dd", bytes.Repeat([]byte{0x22}, 32))
-	evidenceFile := structs.NewEvidenceFile(infile.GetName(), infile.GetStartIndex(), infile.GetSize(), infile.GetInternalObjects(), "dd")
+	evidenceFile := structs.NewEvidenceFile(infile.GetName(), infile.GetStartIndex(), infile.GetSize(), infile.GetInternalObjects(), "dd", "")
 	evidenceFile.IngestState = structs.IngestStateFlushed
 	if err := dbio.SetFile(infile.GetID(), evidenceFile, db); err != nil {
 		t.Fatalf("seed evidence file: %v", err)
@@ -91,7 +91,7 @@ func TestEvidenceFilePreflightClearsFailedFlagOnRetry(t *testing.T) {
 	db := openTestDB(t)
 
 	infile := newTestInputFile(db, "retry.dd", bytes.Repeat([]byte{2}, 32))
-	evidenceFile := structs.NewEvidenceFile(infile.GetName(), infile.GetStartIndex(), infile.GetSize(), infile.GetInternalObjects(), "dd")
+	evidenceFile := structs.NewEvidenceFile(infile.GetName(), infile.GetStartIndex(), infile.GetSize(), infile.GetInternalObjects(), "dd", "")
 	evidenceFile.Failed = true
 	if err := dbio.SetFile(infile.GetID(), evidenceFile, db); err != nil {
 		t.Fatalf("seed evidence file: %v", err)

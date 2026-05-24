@@ -1,7 +1,7 @@
 package parser
 
 import (
-	"errors"
+	"encoding/base64"
 	"fmt"
 	"indicer/lib/cnst"
 	"indicer/lib/dbio"
@@ -13,6 +13,7 @@ import (
 	"os"
 
 	"github.com/dgraph-io/badger/v4"
+	"github.com/google/uuid"
 	"github.com/schollz/progressbar/v3"
 )
 
@@ -36,56 +37,19 @@ func countDeleted(files []tuskFile) int {
 	return n
 }
 
-func ensureNameMeta(ifile *structs.IndexedFile) {
-	if ifile.NameMeta == nil {
-		ifile.NameMeta = make(map[string]structs.IndexedNameMeta)
-	}
-	for name := range ifile.Names {
-		if _, ok := ifile.NameMeta[name]; ok {
-			continue
-		}
-		// Fragmented files are currently skipped by buildIdxMap, so this field
-		// is false today but intentionally preserved for future ingestion modes.
-		ifile.NameMeta[name] = structs.IndexedNameMeta{IsDeleted: ifile.IsDeleted}
-	}
-}
-
-func mergeNameMeta(dst map[string]structs.IndexedNameMeta, src map[string]structs.IndexedNameMeta) bool {
-	updated := false
-	for name, meta := range src {
-		existing, ok := dst[name]
-		if !ok {
-			dst[name] = meta
-			updated = true
-			continue
-		}
-		if !existing.IsDeleted && meta.IsDeleted {
-			existing.IsDeleted = true
-			dst[name] = existing
-			updated = true
-		}
-		if !existing.IsFragmented && meta.IsFragmented {
-			existing.IsFragmented = true
-			dst[name] = existing
-			updated = true
-		}
-	}
-	return updated
-}
-
-func buildIdxMap(files []tuskFile, idxmap map[string]structs.IndexedFile, pfile structs.InputFile, encodedPfileHash []byte, idxChan chan error) {
+func buildIdxMap(files []tuskFile, idxmap map[string]structs.IndexedFile, pfile structs.InputFile, encodedPfileHash []byte, eviID []byte, idxChan chan error) {
 	for _, f := range files {
 		if f.IsFragmented {
 			// Current parser behavior: fragmented entries are intentionally skipped.
 			// We still keep IsFragmented in per-name metadata for forward compatibility.
 			continue
 		}
-		iname := string(util.AppendToBytesSlice(pfile.GetEviFileHash(), cnst.DataSeperator, encodedPfileHash, cnst.DataSeperator, []byte(f.Filename)))
+		iname := string(util.AppendToBytesSlice(eviID, cnst.DataSeperator, encodedPfileHash, cnst.DataSeperator, []byte(f.Filename)))
 		for _, frag := range f.Fragments {
 			checkChannel(idxChan)
 			istart := frag.StartOffset
 			isize := frag.EndOffset - frag.StartOffset + 1
-			if err := registerIndexedRange(idxmap, pfile, iname, istart, isize, f.IsDeleted); err != nil {
+			if err := registerIndexedRange(idxmap, pfile, eviID, iname, istart, isize, f.IsDeleted); err != nil {
 				idxChan <- err
 				return
 			}
@@ -93,7 +57,7 @@ func buildIdxMap(files []tuskFile, idxmap map[string]structs.IndexedFile, pfile 
 	}
 }
 
-func registerIndexedRange(idxmap map[string]structs.IndexedFile, pfile structs.InputFile, iname string, istart, isize int64, isDeleted bool) error {
+func registerIndexedRange(idxmap map[string]structs.IndexedFile, pfile structs.InputFile, eviID []byte, iname string, istart, isize int64, isDeleted bool) error {
 	if isize <= 0 {
 		return fmt.Errorf("invalid indexed file size %d for %s", isize, iname)
 	}
@@ -105,47 +69,48 @@ func registerIndexedRange(idxmap map[string]structs.IndexedFile, pfile structs.I
 	}
 
 	chunk := mapped[int(istart):int(end)]
-	ihash, err := util.GetLogicalFileHash(pfile.GetHandle(), cnst.GetHashAlgo(true), istart, isize, false)
+	var ihash []byte
+	if cnst.StoreHashStrategy == cnst.HochoHashStrategy && cnst.HochoMode != cnst.HochoModeBaseline {
+		reusedHash, reused, reuseErr := store.TryComputeLogicalHochoWithEdges(eviID, istart, isize, mapped, pfile.GetDB())
+		if reuseErr != nil {
+			return reuseErr
+		}
+		if reused {
+			ihash = reusedHash
+		}
+	}
+	if len(ihash) == 0 {
+		var err error
+		ihash, err = util.GetLogicalFileHash(pfile.GetHandle(), cnst.GetHashAlgo(true), istart, isize, false)
+		if err != nil {
+			return err
+		}
+	}
+
+	indexedID, err := uuid.NewV7()
 	if err != nil {
 		return err
 	}
-
-	val, ok := idxmap[string(ihash)]
-	if !ok {
-		typeHint := util.DetectFileType(iname, chunk)
-		idxmap[string(ihash)] = structs.NewIndexedFile(iname, istart, isize, typeHint, isDeleted)
-		pfile.UpdateInternalObjects(istart, isize, ihash)
-		return nil
-	}
-
-	if _, ok := val.Names[iname]; !ok {
-		val.Names[iname] = struct{}{}
-	}
-	if val.NameMeta == nil {
-		val.NameMeta = make(map[string]structs.IndexedNameMeta)
-	}
-	meta := val.NameMeta[iname]
-	meta.IsDeleted = meta.IsDeleted || isDeleted
-	val.NameMeta[iname] = meta
-	if val.IndexedType == "" || val.IndexedType == cnst.UnknownEvidenceType {
-		if promotedType := util.DetectFileType(iname, chunk); promotedType != cnst.UnknownEvidenceType {
-			val.IndexedType = promotedType
-		}
-	}
-	val.IsDeleted = val.IsDeleted || isDeleted
-	idxmap[string(ihash)] = val
-
-	pfile.UpdateInternalObjects(istart, isize, ihash)
+	idB64 := base64.StdEncoding.EncodeToString(indexedID[:])
+	typeHint := util.DetectFileType(iname, chunk)
+	idxmap[idB64] = structs.NewIndexedFile(iname, istart, isize, typeHint, isDeleted, base64.StdEncoding.EncodeToString(ihash))
+	pfile.UpdateInternalObjects(istart, isize, indexedID[:])
 	return nil
 }
 
-func finalizeIndexedFiles(idxmap map[string]structs.IndexedFile, pfile structs.InputFile, batch *badger.WriteBatch, idxChan chan error, enableFTS bool, enableEnrichment bool) error {
-	indexedHashes := make([]string, 0, len(idxmap))
-	for ihash := range idxmap {
-		indexedHashes = append(indexedHashes, ihash)
+func finalizeIndexedFiles(idxmap map[string]structs.IndexedFile, pfile structs.InputFile, batch *badger.WriteBatch, idxChan chan error, eviID []byte, enableFTS bool, enableEnrichment bool) error {
+	indexedIDs := make([]string, 0, len(idxmap))
+	type indexedRef struct {
+		idB64   string
+		hashB64 string
+	}
+	refs := make([]indexedRef, 0, len(idxmap))
+	for indexedID, ifile := range idxmap {
+		indexedIDs = append(indexedIDs, indexedID)
+		refs = append(refs, indexedRef{idB64: indexedID, hashB64: ifile.FileHash})
 	}
 
-	ftsJobs, err := storeIndexedFiles(idxmap, pfile.GetDB(), batch, idxChan)
+	ftsJobs, err := storeIndexedFiles(idxmap, batch, idxChan)
 	if err != nil {
 		return err
 	}
@@ -153,6 +118,18 @@ func finalizeIndexedFiles(idxmap map[string]structs.IndexedFile, pfile structs.I
 	err = batch.Flush()
 	if err != nil {
 		return err
+	}
+
+	for _, ref := range refs {
+		rawID, err := base64.StdEncoding.DecodeString(ref.idB64)
+		if err != nil {
+			return err
+		}
+		indexedKey := dbio.CanonicalIndexedKey(rawID)
+		lookupKey := util.AppendToBytesSlice(cnst.IdxFileHashLookupNamespace, ref.hashB64)
+		if err := dbio.AppendHashLookupUUIDByKey(pfile.GetDB(), lookupKey, indexedKey); err != nil {
+			return err
+		}
 	}
 
 	pchan := make(chan error)
@@ -168,7 +145,7 @@ func finalizeIndexedFiles(idxmap map[string]structs.IndexedFile, pfile structs.I
 		}
 		service := enrichment.NewService(pfile.GetDB(), repo)
 		defer service.Close()
-		if err := service.EnrichPartition(pfile, indexedHashes); err != nil {
+		if err := service.EnrichPartition(pfile, eviID, indexedIDs); err != nil {
 			return err
 		}
 	}
@@ -180,17 +157,6 @@ func finalizeIndexedFiles(idxmap map[string]structs.IndexedFile, pfile structs.I
 }
 
 type ftsIndexJob = fts.IndexedFileJob
-
-func cloneNamesMap(names map[string]struct{}) map[string]struct{} {
-	if len(names) == 0 {
-		return nil
-	}
-	cloned := make(map[string]struct{}, len(names))
-	for name := range names {
-		cloned[name] = struct{}{}
-	}
-	return cloned
-}
 
 func indexFullTextSidecar(db *badger.DB, jobs []ftsIndexJob) error {
 	if len(jobs) == 0 {
@@ -217,7 +183,7 @@ func indexFullTextSidecar(db *badger.DB, jobs []ftsIndexJob) error {
 	return nil
 }
 
-func storeIndexedFiles(idxmap map[string]structs.IndexedFile, db *badger.DB, batch *badger.WriteBatch, idxChan chan error) ([]ftsIndexJob, error) {
+func storeIndexedFiles(idxmap map[string]structs.IndexedFile, batch *badger.WriteBatch, idxChan chan error) ([]ftsIndexJob, error) {
 	var pflag bool
 	ftsJobs := make([]ftsIndexJob, 0, len(idxmap))
 	total := int64(len(idxmap))
@@ -229,8 +195,7 @@ func storeIndexedFiles(idxmap map[string]structs.IndexedFile, db *badger.DB, bat
 	)
 	bar.Clear()
 
-	for ihash, newIdxfile := range idxmap {
-		delete(idxmap, ihash)
+	for indexedID, newIdxfile := range idxmap {
 		if !pflag {
 			pflag = checkChannel(idxChan)
 			if pflag {
@@ -238,82 +203,15 @@ func storeIndexedFiles(idxmap map[string]structs.IndexedFile, db *badger.DB, bat
 			}
 		}
 
-		id := util.AppendToBytesSlice(cnst.IdxFileNamespace, ihash)
-		oldIdxFile, err := dbio.GetIndexedFile(id, db)
-		if errors.Is(err, badger.ErrKeyNotFound) {
-			err = dbio.SetIndexedFile(id, newIdxfile, batch)
-			if err != nil {
-				return nil, err
-			}
-			ftsJobs = append(ftsJobs, ftsIndexJob{FileID: string(id), Names: cloneNamesMap(newIdxfile.Names)})
-			bar.Add(1)
-			continue
-		}
+		rawID, err := base64.StdEncoding.DecodeString(indexedID)
 		if err != nil {
 			return nil, err
 		}
-		ensureNameMeta(&oldIdxFile)
-		ensureNameMeta(&newIdxfile)
-
-		typeUpdated := false
-		if (oldIdxFile.IndexedType == "" || oldIdxFile.IndexedType == cnst.UnknownEvidenceType) &&
-			newIdxfile.IndexedType != "" && newIdxfile.IndexedType != cnst.UnknownEvidenceType {
-			oldIdxFile.IndexedType = newIdxfile.IndexedType
-			typeUpdated = true
-		}
-		deletedUpdated := false
-		if !oldIdxFile.IsDeleted && newIdxfile.IsDeleted {
-			oldIdxFile.IsDeleted = true
-			deletedUpdated = true
-		}
-
-		flag := true
-		if len(newIdxfile.Names) < len(oldIdxFile.Names) {
-			for newName := range newIdxfile.Names {
-				if _, ok := oldIdxFile.Names[newName]; ok {
-					continue
-				}
-				oldIdxFile.Names[newName] = struct{}{}
-				flag = false
-			}
-			nameMetaUpdated := mergeNameMeta(oldIdxFile.NameMeta, newIdxfile.NameMeta)
-
-			unchanged := flag && !typeUpdated && !deletedUpdated && !nameMetaUpdated
-			if unchanged {
-				continue
-			}
-			if err := dbio.SetIndexedFile(id, oldIdxFile, batch); err != nil {
-				return nil, err
-			}
-			ftsJobs = append(ftsJobs, ftsIndexJob{FileID: string(id), Names: cloneNamesMap(oldIdxFile.Names)})
-			bar.Add(1)
-			continue
-		}
-
-		for oldName := range oldIdxFile.Names {
-			if _, ok := newIdxfile.Names[oldName]; ok {
-				continue
-			}
-			newIdxfile.Names[oldName] = struct{}{}
-			flag = false
-		}
-		if newIdxfile.IndexedType == "" || newIdxfile.IndexedType == cnst.UnknownEvidenceType {
-			newIdxfile.IndexedType = oldIdxFile.IndexedType
-		}
-		nameMetaUpdated := mergeNameMeta(newIdxfile.NameMeta, oldIdxFile.NameMeta)
-		mergedDeleted := newIdxfile.IsDeleted || oldIdxFile.IsDeleted
-		if mergedDeleted != oldIdxFile.IsDeleted {
-			deletedUpdated = true
-		}
-		newIdxfile.IsDeleted = mergedDeleted
-		unchanged := flag && !typeUpdated && !deletedUpdated && !nameMetaUpdated
-		if unchanged {
-			continue
-		}
+		id := dbio.CanonicalIndexedKey(rawID)
 		if err := dbio.SetIndexedFile(id, newIdxfile, batch); err != nil {
 			return nil, err
 		}
-		ftsJobs = append(ftsJobs, ftsIndexJob{FileID: string(id), Names: cloneNamesMap(newIdxfile.Names)})
+		ftsJobs = append(ftsJobs, ftsIndexJob{FileID: string(id), Name: newIdxfile.Name})
 		bar.Add(1)
 	}
 

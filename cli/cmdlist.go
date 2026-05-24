@@ -47,8 +47,20 @@ func ListData(chonkSize int, dbpath string, key []byte, statusFilter string) err
 	logging.GetLogger().Info("ListData LIST_EXECUTE", zap.String("mode", "graphdb_first"))
 	err = store.ListWithEnrichment(db, enrichRepo, statusFilter)
 	if err != nil {
-		logging.GetLogger().Error("ListData LIST_ERROR", zap.Error(err), zap.String("mode", "graphdb_first"))
-		return err
+		logging.GetLogger().Warn("ListData LIST_GRAPHDB_FAILED_FALLBACK_KV",
+			zap.Error(err),
+			zap.String("mode", "graphdb_first"),
+		)
+		err = store.List(db, statusFilter)
+		if err != nil {
+			logging.GetLogger().Error("ListData LIST_ERROR", zap.Error(err), zap.String("mode", "kvdb_fallback"))
+			return err
+		}
+		logging.GetLogger().Info("ListData COMPLETE",
+			zap.Int64("duration_ms", time.Since(start).Milliseconds()),
+			zap.String("mode", "kvdb_fallback"),
+		)
+		return nil
 	}
 	logging.GetLogger().Info("ListData COMPLETE",
 		zap.Int64("duration_ms", time.Since(start).Milliseconds()),

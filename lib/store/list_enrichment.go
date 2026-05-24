@@ -2,6 +2,7 @@ package store
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"strings"
 
@@ -31,7 +32,10 @@ func ListWithEnrichment(db *badger.DB, enrichRepo enrichment.Repository, statusF
 
 		kvEvidence, hasKVEvidence, err := buildCompletedEvidenceFromKV(evidenceFile.ID, db)
 		if err != nil {
-			return err
+			if !errors.Is(err, badger.ErrKeyNotFound) {
+				return err
+			}
+			hasKVEvidence = false
 		}
 
 		var partitions []map[string]interface{}
@@ -64,7 +68,9 @@ func ListWithEnrichment(db *badger.DB, enrichRepo enrichment.Repository, statusF
 			totalFragmentedIndexed += fragmentedIndexed
 
 			partitions = append(partitions, map[string]interface{}{
+				"id":                     partition.ID,
 				"hash":                   partition.ID,
+				"fileHash":               "",
 				"fileName":               partitionFileName,
 				"name":                   partition.Name,
 				"type":                   "partition",
@@ -78,20 +84,36 @@ func ListWithEnrichment(db *badger.DB, enrichRepo enrichment.Repository, statusF
 		if hasKVEvidence {
 			kvPartitions, _ := kvEvidence["partitions"].([]map[string]interface{})
 			kvIndexedCount, _ := kvEvidence["indexedCount"].(int)
-			if len(partitions) == 0 || (totalIndexed == 0 && kvIndexedCount > 0) {
+			kvDeletedIndexedCount, _ := kvEvidence["deletedIndexedCount"].(int)
+			kvFragmentedIndexedCount, _ := kvEvidence["fragmentedIndexedCount"].(int)
+			if len(partitions) == 0 ||
+				(totalIndexed != kvIndexedCount) ||
+				(totalDeletedIndexed != kvDeletedIndexedCount) ||
+				(totalFragmentedIndexed != kvFragmentedIndexedCount) {
 				partitions = kvPartitions
-				totalIndexed, _ = kvEvidence["indexedCount"].(int)
-				totalDeletedIndexed, _ = kvEvidence["deletedIndexedCount"].(int)
-				totalFragmentedIndexed, _ = kvEvidence["fragmentedIndexedCount"].(int)
+				totalIndexed = kvIndexedCount
+				totalDeletedIndexed = kvDeletedIndexedCount
+				totalFragmentedIndexed = kvFragmentedIndexedCount
 			}
 		}
 
 		evidenceName := normalizeEvidenceFileName(evidenceFile.Name)
 		evidenceType := "image"
+		evidenceID := evidenceFile.ID
+		evidenceHash := evidenceFile.ID
+		evidenceFileHash := ""
 		var evidenceSize int64
-		files := []string{}
 		fileCount := 0
 		if hasKVEvidence {
+			if val, ok := kvEvidence["id"].(string); ok && strings.TrimSpace(val) != "" {
+				evidenceID = val
+			}
+			if val, ok := kvEvidence["hash"].(string); ok && strings.TrimSpace(val) != "" {
+				evidenceHash = val
+			}
+			if val, ok := kvEvidence["fileHash"].(string); ok && strings.TrimSpace(val) != "" {
+				evidenceFileHash = val
+			}
 			if val, ok := kvEvidence["name"].(string); ok && strings.TrimSpace(val) != "" {
 				evidenceName = normalizeEvidenceFileName(val)
 			}
@@ -101,23 +123,24 @@ func ListWithEnrichment(db *badger.DB, enrichRepo enrichment.Repository, statusF
 			if val, ok := kvEvidence["size"].(int64); ok {
 				evidenceSize = val
 			}
-			if val, ok := kvEvidence["files"].([]string); ok {
-				files = val
-			}
 			if val, ok := kvEvidence["fileCount"].(int); ok {
 				fileCount = val
 			}
 		}
+		if evidenceFileHash == "" {
+			evidenceFileHash = evidenceHash
+		}
 
 		evidenceFiles = append(evidenceFiles, map[string]interface{}{
-			"hash":                   evidenceFile.ID,
+			"id":                     evidenceID,
+			"hash":                   evidenceHash,
+			"fileHash":               evidenceFileHash,
 			"name":                   evidenceName,
 			"type":                   evidenceType,
 			"size":                   evidenceSize,
 			"completed":              true,
 			"failed":                 false,
 			"status":                 "completed",
-			"files":                  files,
 			"fileCount":              fileCount,
 			"partitions":             partitions,
 			"partitionCount":         len(partitions),
@@ -130,7 +153,11 @@ func ListWithEnrichment(db *badger.DB, enrichRepo enrichment.Repository, statusF
 
 	repairReport, err := InspectEvidenceRepairs(db, false)
 	if err != nil {
-		return err
+		if errors.Is(err, badger.ErrKeyNotFound) {
+			repairReport = RepairReport{Evidence: []RepairEvidenceRow{}}
+		} else {
+			return err
+		}
 	}
 
 	filteredIncomplete := make([]RepairEvidenceRow, 0, len(repairReport.Evidence))
@@ -187,9 +214,15 @@ func buildEnrichedIndexedFileData(file *enrichment.EnrichmentFileNode) map[strin
 		path = name
 	}
 
+	hashValue := file.Hash
+	if hashValue == "" {
+		hashValue = file.ID
+	}
+
 	return map[string]interface{}{
 		"id":           file.ID,
-		"hash":         file.Hash,
+		"hash":         hashValue,
+		"fileHash":     file.Hash,
 		"fileName":     name,
 		"path":         path,
 		"type":         file.FileType,

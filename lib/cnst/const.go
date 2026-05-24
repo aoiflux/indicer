@@ -28,6 +28,12 @@ const (
 	UploadsDir          = "uploads"
 	SHA3                = "sha3"
 	BLAKE3              = "blake3"
+	SyncHashStrategy    = "sync"
+	AsyncHashStrategy   = "async"
+	HochoHashStrategy   = "hocho"
+	HochoModeBaseline   = "baseline"
+	HochoModeReuse      = "reuse"
+	HochoModePostDedup  = "postdedup"
 )
 
 const (
@@ -53,6 +59,8 @@ var CONTAINERMODE bool
 var HIERARCHICALINDEX bool
 var ENABLESIMHASH = false  // compute and persist per-chunk simhash signatures during ingest (opt-in via --simhash)
 var CompressLevel = "best" // per-chunk zstd ingest level: fast | default | best
+var StoreHashStrategy = SyncHashStrategy
+var HochoMode = HochoModeBaseline
 var StoreWorkerCount = 0
 var StoreTaskQueueDepth = 0
 var RestoreWorkerCount = 0
@@ -63,8 +71,11 @@ var DB *badger.DB
 
 const (
 	EviFileNamespace                = "E|||:"
+	EviFileHashLookupNamespace      = "EH|||:"
 	PartiFileNamespace              = "P|||:"
+	PartiFileHashLookupNamespace    = "PH|||:"
 	IdxFileNamespace                = "I|||:"
+	IdxFileHashLookupNamespace      = "IH|||:"
 	RelationNamespace               = "R|||:"
 	ReverseRelationNamespace        = "Я|||:"
 	ReverseRelationAppendNamespace  = "RA|||:"
@@ -148,6 +159,8 @@ const (
 	FlagNoIndexShort         = 'n'
 	FlagHashAlgo             = "hash-algo"
 	FlagHashAlgoShort        = 'g'
+	FlagHashStrategy         = "hash-strategy"
+	FlagHochoMode            = "hocho-mode"
 	FlagExplainExact         = "explain-exact"
 	FlagExplainExactShort    = 't'
 	FlagAdvancedDeep         = "advanced-deep"
@@ -195,6 +208,50 @@ func SetHashAlgo(algo string) error {
 		return errors.New("invalid hash algorithm: must be sha3 or blake3")
 	}
 	HASHALGO = normalized
+	return nil
+}
+
+func NormalizeHashStrategy(strategy string) string {
+	switch strings.ToLower(strings.TrimSpace(strategy)) {
+	case SyncHashStrategy, "", "synchash":
+		return SyncHashStrategy
+	case AsyncHashStrategy, "asynchash":
+		return AsyncHashStrategy
+	case HochoHashStrategy, "hochohash":
+		return HochoHashStrategy
+	default:
+		return ""
+	}
+}
+
+func SetStoreHashStrategy(strategy string) error {
+	normalized := NormalizeHashStrategy(strategy)
+	if normalized == "" {
+		return errors.New("invalid hash strategy: must be sync, async, or hocho")
+	}
+	StoreHashStrategy = normalized
+	return nil
+}
+
+func NormalizeHochoMode(mode string) string {
+	switch strings.ToLower(strings.TrimSpace(mode)) {
+	case HochoModeReuse:
+		return HochoModeReuse
+	case HochoModeBaseline, "":
+		return HochoModeBaseline
+	case HochoModePostDedup:
+		return HochoModePostDedup
+	default:
+		return ""
+	}
+}
+
+func SetHochoMode(mode string) error {
+	normalized := NormalizeHochoMode(mode)
+	if normalized == "" {
+		return errors.New("invalid hocho mode: must be baseline, reuse, or postdedup")
+	}
+	HochoMode = normalized
 	return nil
 }
 

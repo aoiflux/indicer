@@ -96,11 +96,9 @@ func (service *Service) EnrichAll() error {
 			evidenceHash := bytes.TrimPrefix(key, evidencePrefix)
 			context := evidenceContext{
 				evidenceFileID:   base64.StdEncoding.EncodeToString(evidenceHash),
-				evidenceFileName: util.GetArbitratyMapKey(evidata.Names),
+				evidenceFileName: evidata.Name,
 			}
 
-			// Create evidence-file-level file records for each file at evidence level
-			ensureIndexedNameMeta(&evidata.IndexedFile)
 			evidenceEntropy, hasEvidenceEntropy := service.computeEntropyForLogicalFile(cnst.EviFileNamespace, context.evidenceFileID, entropyCache)
 			sharedEvidenceRecord := FileRecord{
 				Level:            "evidence_file",
@@ -110,9 +108,7 @@ func (service *Service) EnrichAll() error {
 				Entropy:          evidenceEntropy,
 				HasEntropy:       hasEvidenceEntropy,
 			}
-			for evidenceFileName := range evidata.Names {
-				meta := evidata.NameMeta[evidenceFileName]
-				evidenceFileRecord := buildNameLevelRecord(sharedEvidenceRecord, evidenceFileName, meta, false)
+			if evidenceFileRecord := buildNameLevelRecord(sharedEvidenceRecord, evidata.Name, false); true {
 				if err := service.repository.UpsertFile(evidenceFileRecord); err != nil {
 					return err
 				}
@@ -132,7 +128,7 @@ func (service *Service) EnrichAll() error {
 
 // EnrichPartition enriches graphdb metadata for one partition worth of indexed
 // hashes during store-time indexing.
-func (service *Service) EnrichPartition(pfile structs.InputFile, indexedHashes []string) error {
+func (service *Service) EnrichPartition(pfile structs.InputFile, eviID []byte, indexedHashes []string) error {
 	if service == nil || service.db == nil || service.repository == nil || len(indexedHashes) == 0 {
 		return nil
 	}
@@ -143,14 +139,10 @@ func (service *Service) EnrichPartition(pfile structs.InputFile, indexedHashes [
 		fmt.Fprintln(os.Stderr)
 	}()
 
-	partitionIDBytes, err := pfile.GetEncodedHash()
-	if err != nil {
-		return err
-	}
-	partitionID := string(partitionIDBytes)
+	partitionID := base64.StdEncoding.EncodeToString(pfile.GetID())
 	partitionName := pfile.GetName()
 
-	evidenceID := string(pfile.GetEviFileHash())
+	evidenceID := string(eviID)
 	evidenceName := partitionName
 	parts := strings.SplitN(partitionName, cnst.DataSeperator, 3)
 	if len(parts) >= 2 && parts[1] != "" {
@@ -182,12 +174,10 @@ func (service *Service) enrichPartitionByHash(txn *badger.Txn, evidence evidence
 	context := partitionContext{
 		evidenceContext: evidence,
 		partitionID:     partitionHashB64,
-		partitionName:   util.GetArbitratyMapKey(pdata.Names),
+		partitionName:   pdata.Name,
 	}
 	partitionEntropy, hasPartitionEntropy := service.computeEntropyForLogicalFile(cnst.PartiFileNamespace, partitionHashB64, entropyCache)
 
-	// Create partition-level file records for each file in this partition
-	ensureIndexedNameMeta(&pdata.IndexedFile)
 	sharedPartitionRecord := FileRecord{
 		Level:            "partition",
 		Size:             pdata.Size,
@@ -199,9 +189,7 @@ func (service *Service) enrichPartitionByHash(txn *badger.Txn, evidence evidence
 		Entropy:          partitionEntropy,
 		HasEntropy:       hasPartitionEntropy,
 	}
-	for partitionFileName := range pdata.Names {
-		meta := pdata.NameMeta[partitionFileName]
-		partitionRecord := buildNameLevelRecord(sharedPartitionRecord, partitionFileName, meta, false)
+	if partitionRecord := buildNameLevelRecord(sharedPartitionRecord, pdata.Name, false); true {
 		if err := service.repository.UpsertFile(partitionRecord); err != nil {
 			return err
 		}
@@ -283,7 +271,6 @@ func (service *Service) enrichIndexedHash(context partitionContext, indexedHashB
 	if err != nil {
 		return fmt.Errorf("get indexed file: %w", err)
 	}
-	ensureIndexedNameMeta(&indexedFile)
 	indexedEntropy, hasIndexedEntropy := service.computeEntropyForLogicalFile(cnst.IdxFileNamespace, indexedHashCanonical, entropyCache)
 	sharedIndexedRecord := FileRecord{
 		Level:            "indexed_file",
@@ -294,15 +281,12 @@ func (service *Service) enrichIndexedHash(context partitionContext, indexedHashB
 		PartitionID:      context.partitionID,
 		PartitionName:    context.partitionName,
 		IndexedFileID:    indexedHashCanonical,
-		IndexedFileHash:  indexedHashCanonical,
+		IndexedFileHash:  indexedFile.FileHash,
 		Entropy:          indexedEntropy,
 		HasEntropy:       hasIndexedEntropy,
 	}
 
-	// Create one FileRecord per file NAME at the indexed file level
-	for indexedName := range indexedFile.Names {
-		meta := indexedFile.NameMeta[indexedName]
-		record := buildNameLevelRecord(sharedIndexedRecord, indexedName, meta, indexedFile.IsDeleted)
+	if record := buildNameLevelRecord(sharedIndexedRecord, indexedFile.Name, indexedFile.IsDeleted); true {
 		if err := service.repository.UpsertFile(record); err != nil {
 			return err
 		}
@@ -404,13 +388,12 @@ func readPartitionFileByHash(txn *badger.Txn, partitionHashB64 string) (structs.
 	return pdata, nil
 }
 
-func buildNameLevelRecord(shared FileRecord, rawName string, meta structs.IndexedNameMeta, baseDeleted bool) FileRecord {
+func buildNameLevelRecord(shared FileRecord, rawName string, baseDeleted bool) FileRecord {
 	name, path := splitIndexedName(rawName)
 	record := shared
 	record.FileName = name
 	record.Path = path
-	record.IsDeleted = baseDeleted || meta.IsDeleted
-	record.IsFragmented = meta.IsFragmented
+	record.IsDeleted = baseDeleted
 	record.MimeType, record.Tags = classifyFile(record.Path, record.FileType)
 	return record
 }
@@ -426,21 +409,6 @@ func (service *Service) upsertUnreadablePartition(evidence evidenceContext, part
 		PartitionID:      partitionHashB64,
 		PartitionName:    partitionHashB64,
 	})
-}
-
-func ensureIndexedNameMeta(indexedFile *structs.IndexedFile) {
-	if indexedFile == nil {
-		return
-	}
-	if indexedFile.NameMeta == nil {
-		indexedFile.NameMeta = make(map[string]structs.IndexedNameMeta)
-	}
-	for name := range indexedFile.Names {
-		if _, ok := indexedFile.NameMeta[name]; ok {
-			continue
-		}
-		indexedFile.NameMeta[name] = structs.IndexedNameMeta{IsDeleted: indexedFile.IsDeleted}
-	}
 }
 
 func splitIndexedName(indexedName string) (name string, path string) {

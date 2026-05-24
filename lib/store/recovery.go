@@ -1,15 +1,11 @@
 package store
 
 import (
-	"fmt"
-
-	"indicer/lib/cnst"
 	"indicer/lib/dbio"
 	"indicer/lib/logging"
 	"indicer/lib/structs"
 
 	"github.com/dgraph-io/badger/v4"
-	"github.com/vmihailenco/msgpack/v5"
 	"go.uber.org/zap"
 )
 
@@ -30,35 +26,11 @@ func RecoverIncompleteIngests(db *badger.DB) (RecoveryReport, error) {
 		file structs.EvidenceFile
 	}
 	orphans := make([]orphanRecord, 0)
-	eviPrefix := []byte(cnst.EviFileNamespace)
-
 	err := db.View(func(txn *badger.Txn) error {
-		opts := badger.DefaultIteratorOptions
-		opts.PrefetchSize = 1000
-		it := txn.NewIterator(opts)
-		defer it.Close()
-
-		for it.Seek(eviPrefix); it.ValidForPrefix(eviPrefix); it.Next() {
-			item := it.Item()
-			key := item.KeyCopy(nil)
-			value, err := item.ValueCopy(nil)
-			if err != nil {
-				return err
-			}
-
-			decoded, decodeErr := cnst.DECODER.DecodeAll(value, nil)
-			if decodeErr == nil {
-				value = decoded
-			}
-
-			var evidenceFile structs.EvidenceFile
-			if err := msgpack.Unmarshal(value, &evidenceFile); err != nil {
-				return fmt.Errorf("decode evidence file: %w", err)
-			}
-
+		return forEachEvidenceRecord(txn, func(key []byte, evidenceFile structs.EvidenceFile) error {
 			report.ScannedEvidence++
 			if evidenceFile.Completed || evidenceFile.Failed {
-				continue
+				return nil
 			}
 
 			// Legacy incomplete records may not have ingest_state populated.
@@ -71,9 +43,9 @@ func RecoverIncompleteIngests(db *badger.DB) (RecoveryReport, error) {
 				report.IncompleteFound++
 				orphans = append(orphans, orphanRecord{key: key, file: evidenceFile})
 			}
-		}
 
-		return nil
+			return nil
+		})
 	})
 	if err != nil {
 		return report, err
@@ -97,7 +69,7 @@ func RecoverIncompleteIngests(db *badger.DB) (RecoveryReport, error) {
 				}
 				report.CompletedFlushed++
 				logging.GetLogger().Info("RecoverIncompleteIngests AUTO_COMPLETED",
-					zap.String("file_name", firstCleanNameFromMap(evidenceFile.Names)),
+					zap.String("file_name", firstCleanName(evidenceFile.Name)),
 				)
 			} else {
 				evidenceFile.Failed = true
@@ -106,7 +78,7 @@ func RecoverIncompleteIngests(db *badger.DB) (RecoveryReport, error) {
 				}
 				report.MarkedFailed++
 				logging.GetLogger().Warn("RecoverIncompleteIngests FLUSHED_INVALID_MARKED_FAILED",
-					zap.String("file_name", firstCleanNameFromMap(evidenceFile.Names)),
+					zap.String("file_name", firstCleanName(evidenceFile.Name)),
 					zap.Error(err),
 				)
 			}
@@ -118,7 +90,7 @@ func RecoverIncompleteIngests(db *badger.DB) (RecoveryReport, error) {
 			}
 			report.MarkedFailed++
 			logging.GetLogger().Warn("RecoverIncompleteIngests MARKED_FAILED",
-				zap.String("file_name", firstCleanNameFromMap(evidenceFile.Names)),
+				zap.String("file_name", firstCleanName(evidenceFile.Name)),
 				zap.String("ingest_state", string(evidenceFile.IngestState)),
 			)
 		}

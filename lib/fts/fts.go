@@ -28,7 +28,7 @@ var ErrIndexNotReady = errors.New("full-text index not ready")
 
 type IndexedFileJob struct {
 	FileID string
-	Names  map[string]struct{}
+	Name   string
 }
 
 type QueryMode int
@@ -64,8 +64,8 @@ func openExisting(db *badger.DB) (bleve.Index, error) {
 	return bleve.Open(path)
 }
 
-func IndexNames(db *badger.DB, fileID string, names map[string]struct{}, docType string) error {
-	if len(names) == 0 {
+func IndexNames(db *badger.DB, fileID string, name string, docType string) error {
+	if name == "" {
 		return nil
 	}
 	index, err := createOrOpen(db)
@@ -73,18 +73,18 @@ func IndexNames(db *badger.DB, fileID string, names map[string]struct{}, docType
 		return err
 	}
 	defer index.Close()
-	return indexNamesWithIndex(index, fileID, names, docType)
+	return indexNamesWithIndex(index, fileID, name, docType)
 }
 
 // IndexIndexedFile indexes both name/path metadata and a capped textual extract
 // from logical file bytes for richer full-text candidate retrieval.
-func IndexIndexedFile(db *badger.DB, fileID string, names map[string]struct{}) error {
+func IndexIndexedFile(db *badger.DB, fileID string, name string) error {
 	index, err := createOrOpen(db)
 	if err != nil {
 		return err
 	}
 	defer index.Close()
-	return indexIndexedFileWithIndex(index, db, fileID, names)
+	return indexIndexedFileWithIndex(index, db, fileID, name)
 }
 
 // IndexIndexedFileJobs indexes many indexed-file documents in a single index
@@ -101,7 +101,7 @@ func IndexIndexedFileJobs(db *badger.DB, jobs []IndexedFileJob, onIndexed func()
 	defer index.Close()
 
 	for _, job := range jobs {
-		if err := indexIndexedFileWithIndex(index, db, job.FileID, job.Names); err != nil {
+		if err := indexIndexedFileWithIndex(index, db, job.FileID, job.Name); err != nil {
 			return err
 		}
 		if onIndexed != nil {
@@ -111,8 +111,8 @@ func IndexIndexedFileJobs(db *badger.DB, jobs []IndexedFileJob, onIndexed func()
 	return nil
 }
 
-func indexIndexedFileWithIndex(index bleve.Index, db *badger.DB, fileID string, names map[string]struct{}) error {
-	if err := indexNamesWithIndex(index, fileID, names, "indexed"); err != nil {
+func indexIndexedFileWithIndex(index bleve.Index, db *badger.DB, fileID string, name string) error {
+	if err := indexNamesWithIndex(index, fileID, name, "indexed"); err != nil {
 		return err
 	}
 	text := extractTextForFTS(db, []byte(fileID), defaultMaxIndexBytes, defaultMaxExtractedRunes)
@@ -282,7 +282,7 @@ func BuildFromIndexedFiles(ctx context.Context, db *badger.DB) error {
 			continue
 		}
 		fileID := string(fid)
-		if err := indexNamesWithIndex(index, fileID, ifile.Names, "indexed"); err != nil {
+		if err := indexNamesWithIndex(index, fileID, ifile.Name, "indexed"); err != nil {
 			bar.Add(1) //nolint:errcheck
 			continue
 		}
@@ -302,20 +302,18 @@ func BuildFromIndexedFiles(ctx context.Context, db *badger.DB) error {
 	return nil
 }
 
-func indexNamesWithIndex(index bleve.Index, fileID string, names map[string]struct{}, docType string) error {
-	if len(names) == 0 {
+func indexNamesWithIndex(index bleve.Index, fileID string, name string, docType string) error {
+	if name == "" {
 		return nil
 	}
 
 	var b strings.Builder
-	for name := range names {
-		b.WriteString(name)
-		b.WriteByte(' ')
-		b.WriteString(strings.ReplaceAll(name, "/", " "))
-		b.WriteByte(' ')
-		b.WriteString(strings.ReplaceAll(name, "_", " "))
-		b.WriteByte(' ')
-	}
+	b.WriteString(name)
+	b.WriteByte(' ')
+	b.WriteString(strings.ReplaceAll(name, "/", " "))
+	b.WriteByte(' ')
+	b.WriteString(strings.ReplaceAll(name, "_", " "))
+	b.WriteByte(' ')
 
 	doc := map[string]string{
 		"content":  b.String(),

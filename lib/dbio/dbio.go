@@ -67,12 +67,21 @@ func ConnectDB(datadir string, key []byte) (*badger.DB, error) {
 
 func SetFile[T structs.FileTypes](id []byte, filenode T, db *badger.DB) error {
 	logging.GetLogger().Debug("SetFile START", zap.Int("id_length", len(id)))
+	if _, ok := any(filenode).(structs.EvidenceFile); ok {
+		id = CanonicalEvidenceKey(id)
+	}
 	data, err := msgpack.Marshal(filenode)
 	if err != nil {
 		logging.GetLogger().Error("SetFile MARSHAL_ERROR", zap.Error(err))
 		return err
 	}
-	err = SetNode(id, data, db)
+	if !cnst.QUICKOPT {
+		data = cnst.ENCODER.EncodeAll(data, make([]byte, 0, len(data)))
+	}
+
+	err = db.Update(func(txn *badger.Txn) error {
+		return txn.Set(id, data)
+	})
 	if err != nil {
 		logging.GetLogger().Error("SetFile SET_NODE_ERROR", zap.Error(err), zap.Int("id_length", len(id)))
 		return err
@@ -81,6 +90,7 @@ func SetFile[T structs.FileTypes](id []byte, filenode T, db *badger.DB) error {
 	return nil
 }
 func SetIndexedFile(id []byte, filenode structs.IndexedFile, batch *badger.WriteBatch) error {
+	id = CanonicalIndexedKey(id)
 	data, err := msgpack.Marshal(filenode)
 	if err != nil {
 		return err
@@ -90,6 +100,7 @@ func SetIndexedFile(id []byte, filenode structs.IndexedFile, batch *badger.Write
 
 func GetEvidenceFile(key []byte, db *badger.DB) (structs.EvidenceFile, error) {
 	var evidenceFile structs.EvidenceFile
+	key = CanonicalEvidenceKey(key)
 	logging.GetLogger().Debug("GetEvidenceFile START", zap.Int("key_length", len(key)))
 
 	data, err := GetNode(key, db)
@@ -106,8 +117,37 @@ func GetEvidenceFile(key []byte, db *badger.DB) (structs.EvidenceFile, error) {
 	logging.GetLogger().Debug("GetEvidenceFile COMPLETE", zap.Int("key_length", len(key)))
 	return evidenceFile, err
 }
+
+func CanonicalEvidenceKey(key []byte) []byte {
+	if bytes.HasPrefix(key, []byte(cnst.EviFileNamespace)) {
+		return key
+	}
+	return util.AppendToBytesSlice(cnst.EviFileNamespace, key)
+}
+
+func EvidenceRawID(key []byte) []byte {
+	if bytes.HasPrefix(key, []byte(cnst.EviFileNamespace)) {
+		return key[len(cnst.EviFileNamespace):]
+	}
+	return key
+}
+
+func CanonicalPartitionKey(key []byte) []byte {
+	if bytes.HasPrefix(key, []byte(cnst.PartiFileNamespace)) {
+		return key
+	}
+	return util.AppendToBytesSlice(cnst.PartiFileNamespace, key)
+}
+
+func CanonicalIndexedKey(key []byte) []byte {
+	if bytes.HasPrefix(key, []byte(cnst.IdxFileNamespace)) {
+		return key
+	}
+	return util.AppendToBytesSlice(cnst.IdxFileNamespace, key)
+}
 func GetPartitionFile(key []byte, db *badger.DB) (structs.PartitionFile, error) {
 	var partitionFile structs.PartitionFile
+	key = CanonicalPartitionKey(key)
 
 	data, err := GetNode(key, db)
 	if err != nil {
@@ -119,6 +159,7 @@ func GetPartitionFile(key []byte, db *badger.DB) (structs.PartitionFile, error) 
 }
 func GetIndexedFile(key []byte, db *badger.DB) (structs.IndexedFile, error) {
 	var indexedFile structs.IndexedFile
+	key = CanonicalIndexedKey(key)
 
 	data, err := GetNode(key, db)
 	if err != nil {
@@ -127,6 +168,89 @@ func GetIndexedFile(key []byte, db *badger.DB) (structs.IndexedFile, error) {
 
 	err = msgpack.Unmarshal(data, &indexedFile)
 	return indexedFile, err
+}
+
+func GetHashLookupUUIDsByKey(lookupKey []byte, db *badger.DB) ([][]byte, error) {
+	var ids [][]byte
+	err := db.View(func(txn *badger.Txn) error {
+		resolved, getErr := getHashLookupUUIDsByKeyTxn(txn, lookupKey)
+		if getErr != nil {
+			return getErr
+		}
+		ids = resolved
+		return nil
+	})
+	if err != nil {
+		return nil, err
+	}
+	return ids, nil
+}
+
+func AppendHashLookupUUIDByKey(db *badger.DB, lookupKey []byte, uuid []byte) error {
+	return db.Update(func(txn *badger.Txn) error {
+		return AppendHashLookupUUIDByKeyTxn(txn, lookupKey, uuid)
+	})
+}
+
+func AppendHashLookupUUIDByKeyTxn(txn *badger.Txn, lookupKey []byte, uuid []byte) error {
+	ids, err := getHashLookupUUIDsByKeyTxn(txn, lookupKey)
+	if err != nil && err != badger.ErrKeyNotFound {
+		return err
+	}
+
+	for _, id := range ids {
+		if bytes.Equal(id, uuid) {
+			return nil
+		}
+	}
+
+	ids = append(ids, bytes.Clone(uuid))
+	encoded, err := msgpack.Marshal(ids)
+	if err != nil {
+		return err
+	}
+	return txn.Set(lookupKey, encoded)
+}
+
+func RemoveHashLookupUUIDByKeyTxn(txn *badger.Txn, lookupKey []byte, uuid []byte) error {
+	ids, err := getHashLookupUUIDsByKeyTxn(txn, lookupKey)
+	if err != nil {
+		return err
+	}
+
+	filtered := ids[:0]
+	for _, id := range ids {
+		if !bytes.Equal(id, uuid) {
+			filtered = append(filtered, id)
+		}
+	}
+
+	if len(filtered) == 0 {
+		return txn.Delete(lookupKey)
+	}
+
+	encoded, err := msgpack.Marshal(filtered)
+	if err != nil {
+		return err
+	}
+	return txn.Set(lookupKey, encoded)
+}
+
+func getHashLookupUUIDsByKeyTxn(txn *badger.Txn, lookupKey []byte) ([][]byte, error) {
+	item, err := txn.Get(lookupKey)
+	if err != nil {
+		return nil, err
+	}
+
+	var ids [][]byte
+	err = item.Value(func(val []byte) error {
+		return msgpack.Unmarshal(val, &ids)
+	})
+	if err != nil {
+		return nil, err
+	}
+
+	return ids, nil
 }
 
 type ReverseRelationAppendMember struct {
@@ -599,7 +723,7 @@ func getLogicalFileMeta(fid []byte, db *badger.DB) (start, size int64, ehash []b
 		if e != nil {
 			return 0, 0, nil, e
 		}
-		name := util.GetArbitratyMapKey(pfile.Names)
+		name := pfile.Name
 		ehash, e = util.GetEvidenceFileHash(name)
 		if e != nil {
 			return 0, 0, nil, e
@@ -610,7 +734,7 @@ func getLogicalFileMeta(fid []byte, db *badger.DB) (start, size int64, ehash []b
 		if e != nil {
 			return 0, 0, nil, e
 		}
-		name := util.GetArbitratyMapKey(ifile.Names)
+		name := ifile.Name
 		ehash, e = util.GetEvidenceFileHash(name)
 		if e != nil {
 			return 0, 0, nil, e
@@ -697,6 +821,17 @@ func GetNodesBatch(keys [][]byte, db *badger.DB) ([][]byte, []error) {
 }
 
 func GuessFileType(encodedHash string, db *badger.DB) ([]byte, error) {
+	fids, err := GuessFileTypes(encodedHash, db)
+	if err != nil {
+		return nil, err
+	}
+	if len(fids) == 0 {
+		return nil, badger.ErrKeyNotFound
+	}
+	return fids[len(fids)-1], nil
+}
+
+func GuessFileTypes(encodedHash string, db *badger.DB) ([][]byte, error) {
 	fhash, err := base64.StdEncoding.DecodeString(encodedHash)
 	if err != nil {
 		return nil, err
@@ -708,7 +843,7 @@ func GuessFileType(encodedHash string, db *badger.DB) ([]byte, error) {
 		return nil, err
 	}
 	if err == nil {
-		return fid, nil
+		return [][]byte{fid}, nil
 	}
 
 	fid = util.AppendToBytesSlice(cnst.PartiFileNamespace, fhash)
@@ -717,10 +852,41 @@ func GuessFileType(encodedHash string, db *badger.DB) ([]byte, error) {
 		return nil, err
 	}
 	if err == nil {
-		return fid, nil
+		return [][]byte{fid}, nil
+	}
+
+	partitionLookupKey := util.AppendToBytesSlice(cnst.PartiFileHashLookupNamespace, encodedHash)
+	mappedPartitionIDs, err := GetHashLookupUUIDsByKey(partitionLookupKey, db)
+	if err == nil {
+		return mappedPartitionIDs, nil
+	}
+	if err != badger.ErrKeyNotFound {
+		return nil, err
+	}
+
+	indexedLookupKey := util.AppendToBytesSlice(cnst.IdxFileHashLookupNamespace, encodedHash)
+	mappedIndexedIDs, err := GetHashLookupUUIDsByKey(indexedLookupKey, db)
+	if err == nil {
+		return mappedIndexedIDs, nil
+	}
+	if err != badger.ErrKeyNotFound {
+		return nil, err
 	}
 
 	fid = util.AppendToBytesSlice(cnst.EviFileNamespace, fhash)
 	err = PingNode(fid, db)
-	return fid, err
+	if err == nil || err != badger.ErrKeyNotFound {
+		return [][]byte{fid}, err
+	}
+
+	lookupKey := util.AppendToBytesSlice(cnst.EviFileHashLookupNamespace, encodedHash)
+	mappedIDs, err := GetHashLookupUUIDsByKey(lookupKey, db)
+	if err == nil {
+		return mappedIDs, nil
+	}
+	if err != badger.ErrKeyNotFound {
+		return nil, err
+	}
+
+	return nil, badger.ErrKeyNotFound
 }

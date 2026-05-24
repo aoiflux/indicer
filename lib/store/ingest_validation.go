@@ -1,7 +1,6 @@
 package store
 
 import (
-	"bytes"
 	"fmt"
 
 	"indicer/lib/cnst"
@@ -26,10 +25,7 @@ func ValidateFlushedEvidenceMaterialized(fileID []byte, evidenceFile structs.Evi
 		return nil
 	}
 
-	ehash := bytes.TrimPrefix(fileID, []byte(cnst.EviFileNamespace))
-	if len(ehash) == len(fileID) {
-		return fmt.Errorf("invalid evidence id namespace")
-	}
+	ehash := fileID
 
 	end := evidenceFile.Start + evidenceFile.Size
 	dbstart := util.GetDBStartOffset(evidenceFile.Start)

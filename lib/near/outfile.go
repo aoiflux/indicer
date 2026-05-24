@@ -38,15 +38,19 @@ func NearOutFile(fpath string, db *badger.DB, deep, explainExact, verify bool, t
 		vcfg = verifyConfig{enabled: true, topK: topK, querySig: acc.finalize(), isOutfile: true}
 	}
 
-	exactID, hasExact, err := getExactOutMatchID(fhash, db)
+	exactIDs, hasExact, err := getExactOutMatchIDs(fhash, db)
 	if err != nil {
 		return err
 	}
 	if hasExact {
-		addNearExactMatchID(string(exactID))
+		for _, exactID := range exactIDs {
+			addNearExactMatchID(string(exactID))
+		}
 	}
 	if hasExact && !explainExact {
-		idmap.Set(string(exactID), 100, true)
+		for _, exactID := range exactIDs {
+			idmap.Set(string(exactID), 100, true)
+		}
 
 		input := nearReportInput{
 			QueryHashBase64: base64.StdEncoding.EncodeToString(fhash),
@@ -116,21 +120,27 @@ func NearOutFile(fpath string, db *badger.DB, deep, explainExact, verify bool, t
 	return nil
 }
 
-func getExactOutMatchID(fileHash []byte, db *badger.DB) ([]byte, bool, error) {
-	candidates := [][]byte{
-		util.AppendToBytesSlice(cnst.IdxFileNamespace, fileHash),
-		util.AppendToBytesSlice(cnst.PartiFileNamespace, fileHash),
-		util.AppendToBytesSlice(cnst.EviFileNamespace, fileHash),
+func getExactOutMatchIDs(fileHash []byte, db *badger.DB) ([][]byte, bool, error) {
+	// Indexed files are still content-addressed: I|||:<rawHash>
+	idxID := util.AppendToBytesSlice(cnst.IdxFileNamespace, fileHash)
+	if err := dbio.PingNode(idxID, db); err == nil {
+		return [][]byte{idxID}, true, nil
+	} else if err != badger.ErrKeyNotFound {
+		return nil, false, err
 	}
 
-	for _, id := range candidates {
-		err := dbio.PingNode(id, db)
-		if err == nil {
-			return id, true, nil
+	// Evidence files are UUID-keyed; resolve via reverse hash index.
+	encodedHash := base64.StdEncoding.EncodeToString(fileHash)
+	lookupKey := util.AppendToBytesSlice(cnst.EviFileHashLookupNamespace, encodedHash)
+	resolvedIDs, err := dbio.GetHashLookupUUIDsByKey(lookupKey, db)
+	if err == nil {
+		if len(resolvedIDs) == 0 {
+			return nil, false, nil
 		}
-		if err != badger.ErrKeyNotFound {
-			return nil, false, err
-		}
+		return resolvedIDs, true, nil
+	}
+	if err != badger.ErrKeyNotFound {
+		return nil, false, err
 	}
 
 	return nil, false, nil

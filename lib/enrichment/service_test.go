@@ -42,34 +42,23 @@ func TestEnrichAllCreatesFileNodesAtAllLevels(t *testing.T) {
 
 	evidence := structs.NewEvidenceFile("seed", 0, 4096, map[string]structs.InternalOffset{
 		partitionB64: {Start: 0, End: 1024},
-	}, "e01")
+	}, "e01", "")
 	evidence.Completed = true
-	evidence.Names = map[string]struct{}{
-		"p0|||diskA.E01|||disk-level-a.txt": {},
-		"p0|||diskA.E01|||disk-level-b.txt": {},
-	}
+	evidence.Name = "p0|||diskA.E01|||disk-level-a.txt"
 	evidence.Size = 4096
 
 	partition := structs.NewPartitionFile("seed-part", 0, 2048, map[string]structs.InternalOffset{
 		indexedB64: {Start: 0, End: 512},
-	})
-	partition.Names = map[string]struct{}{
-		"p1|||vol1|||part-level-a.log": {},
-		"p1|||vol1|||part-level-b.log": {},
-	}
+	}, "")
+	partition.Name = "p1|||vol1|||part-level-a.log"
 	partition.Size = 2048
 	partition.IndexedType = "ntfs"
 	partition.IsDeleted = false
 
-	indexed := structs.NewIndexedFile("seed-index", 0, 1024, "pe", false)
-	indexed.Names = map[string]struct{}{
-		"p2|||vol1|||idx-level-a.exe": {},
-		"p2|||vol1|||idx-level-b.exe": {},
-	}
-	indexed.NameMeta = map[string]structs.IndexedNameMeta{
-		"p2|||vol1|||idx-level-a.exe": {IsDeleted: false, IsFragmented: false},
-		"p2|||vol1|||idx-level-b.exe": {IsDeleted: false, IsFragmented: true},
-	}
+	indexed := structs.NewIndexedFile("seed-index", 0, 1024, "pe", false, "")
+	indexed = structs.NewIndexedFile("seed-index", 0, 1024, "pe", false, "")
+	indexed.Name = "p2|||vol1|||idx-level-a.exe"
+	indexed.IsFragmented = false
 
 	evidenceKey := util.AppendToBytesSlice(cnst.EviFileNamespace, evidenceRaw)
 	partitionKey := util.AppendToBytesSlice(cnst.PartiFileNamespace, partitionRaw)
@@ -118,8 +107,8 @@ func TestEnrichAllCreatesFileNodesAtAllLevels(t *testing.T) {
 	if len(hierarchy.EvidenceFiles[0].Partitions) != 1 {
 		t.Fatalf("expected 1 partition, got %d", len(hierarchy.EvidenceFiles[0].Partitions))
 	}
-	if len(hierarchy.EvidenceFiles[0].Partitions[0].Files) != 2 {
-		t.Fatalf("expected 2 indexed file entries, got %d", len(hierarchy.EvidenceFiles[0].Partitions[0].Files))
+	if len(hierarchy.EvidenceFiles[0].Partitions[0].Files) != 1 {
+		t.Fatalf("expected 1 indexed file entry, got %d", len(hierarchy.EvidenceFiles[0].Partitions[0].Files))
 	}
 
 	if err := repo.Close(); err != nil {
@@ -136,24 +125,24 @@ func TestEnrichAllCreatesFileNodesAtAllLevels(t *testing.T) {
 	if err != nil {
 		t.Fatalf("NodesByProperty level=evidence_file: %v", err)
 	}
-	if len(evidenceLevelHits) != 2 {
-		t.Fatalf("expected 2 evidence_file FILE nodes, got %d", len(evidenceLevelHits))
+	if len(evidenceLevelHits) != 1 {
+		t.Fatalf("expected 1 evidence_file FILE node, got %d", len(evidenceLevelHits))
 	}
 
 	partitionLevelHits, err := graph.NodesByProperty("level", []byte("partition"))
 	if err != nil {
 		t.Fatalf("NodesByProperty level=partition: %v", err)
 	}
-	if len(partitionLevelHits) != 2 {
-		t.Fatalf("expected 2 partition FILE nodes, got %d", len(partitionLevelHits))
+	if len(partitionLevelHits) != 1 {
+		t.Fatalf("expected 1 partition FILE node, got %d", len(partitionLevelHits))
 	}
 
 	indexedLevelHits, err := graph.NodesByProperty("level", []byte("indexed_file"))
 	if err != nil {
 		t.Fatalf("NodesByProperty level=indexed_file: %v", err)
 	}
-	if len(indexedLevelHits) != 2 {
-		t.Fatalf("expected 2 indexed_file FILE nodes, got %d", len(indexedLevelHits))
+	if len(indexedLevelHits) != 1 {
+		t.Fatalf("expected 1 indexed_file FILE node, got %d", len(indexedLevelHits))
 	}
 }
 

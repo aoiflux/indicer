@@ -30,10 +30,10 @@ func CheckAndAppend(filePath, fileHashStr string, db *badger.DB) (structs.Eviden
 }
 
 func appendFile(eid []byte, filePath string, efile structs.EvidenceFile, db *badger.DB) (string, error) {
-	if _, ok := efile.Names[filePath]; ok {
+	if efile.Name == filePath {
 		return cnst.FILE_EXISTS, nil
 	}
-	efile.Names[filePath] = struct{}{}
+	efile.Name = filePath
 	err := dbio.SetFile(eid, efile, db)
 	if err != nil {
 		return "", err

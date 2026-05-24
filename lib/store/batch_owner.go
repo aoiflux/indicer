@@ -25,8 +25,11 @@ package store
 
 import (
 	"context"
+	"encoding/base64"
+	"encoding/binary"
 	"errors"
 	"fmt"
+	"hash"
 	"indicer/lib/cnst"
 	"indicer/lib/dbio"
 	"indicer/lib/fio"
@@ -53,8 +56,71 @@ type workerRes struct {
 	err error
 }
 
+type writerResult struct {
+	hochoHash string
+	err       error
+}
+
+type hochoAccumulator struct {
+	enabled      bool
+	hasher       hash.Hash
+	expectedIdx  int64
+	pendingChunk map[int64][]byte
+}
+
+func newHochoAccumulator(enabled bool, startIndex int64) *hochoAccumulator {
+	if !enabled {
+		return &hochoAccumulator{enabled: false}
+	}
+	return &hochoAccumulator{
+		enabled:      true,
+		hasher:       cnst.GetHashAlgo(true),
+		expectedIdx:  startIndex,
+		pendingChunk: make(map[int64][]byte),
+	}
+}
+
+func (h *hochoAccumulator) add(index int64, chash []byte) error {
+	if !h.enabled {
+		return nil
+	}
+	h.pendingChunk[index] = append([]byte(nil), chash...)
+
+	for {
+		next, ok := h.pendingChunk[h.expectedIdx]
+		if !ok {
+			break
+		}
+
+		var lenPrefix [4]byte
+		binary.BigEndian.PutUint32(lenPrefix[:], uint32(len(next)))
+		if _, err := h.hasher.Write(lenPrefix[:]); err != nil {
+			return err
+		}
+		if _, err := h.hasher.Write(next); err != nil {
+			return err
+		}
+
+		delete(h.pendingChunk, h.expectedIdx)
+		h.expectedIdx += cnst.ChonkSize
+	}
+
+	return nil
+}
+
+func (h *hochoAccumulator) finalize() (string, error) {
+	if !h.enabled {
+		return "", nil
+	}
+	if len(h.pendingChunk) != 0 {
+		return "", fmt.Errorf("hocho accumulation incomplete: %d chunks pending", len(h.pendingChunk))
+	}
+	return base64.StdEncoding.EncodeToString(h.hasher.Sum(nil)), nil
+}
+
 // storeEvidenceDataBatchOwner is the production evidence ingest path.
-func storeEvidenceDataBatchOwner(infile structs.InputFile) (err error) {
+// Returns a hocho evidence hash only when hocho strategy is active.
+func storeEvidenceDataBatchOwner(infile structs.InputFile) (evidenceHochoHash string, err error) {
 	bar := progressbar.NewOptions64(
 		infile.GetSize(),
 		progressbar.OptionShowBytes(true),
@@ -95,14 +161,15 @@ func storeEvidenceDataBatchOwner(infile structs.InputFile) (err error) {
 	// include serialized components and benefit from steadier queue pressure.
 	workerCount, taskQueueDepth := cnst.GetStorePipelineTuning(cnst.CONTAINERMODE, cnst.HIERARCHICALINDEX)
 	taskCh := make(chan chunkTask, taskQueueDepth)
-	writerErrCh := make(chan error, 1)
+	writerResCh := make(chan writerResult, 1)
 
 	go runBatchOwnerWriter(
 		infile.GetHash(),
+		infile.GetStartIndex(),
 		infile.GetDB(),
 		taskCh,
 		cancel,
-		writerErrCh,
+		writerResCh,
 	)
 
 	workerResCh := make(chan workerRes, workerCount+1)
@@ -141,7 +208,7 @@ func storeEvidenceDataBatchOwner(infile structs.InputFile) (err error) {
 	}
 
 	close(taskCh)
-	writerErr := <-writerErrCh
+	writerRes := <-writerResCh
 
 	bar.Add64(cnst.ChonkSize)
 	bar.Finish()
@@ -149,12 +216,16 @@ func storeEvidenceDataBatchOwner(infile structs.InputFile) (err error) {
 	barErr := bar.Close()
 
 	if firstWorkerErr != nil {
-		return firstWorkerErr
+		return "", firstWorkerErr
 	}
-	if writerErr != nil {
-		return writerErr
+	if writerRes.err != nil {
+		return "", writerRes.err
 	}
-	return barErr
+	if barErr != nil {
+		return "", barErr
+	}
+
+	return writerRes.hochoHash, nil
 }
 
 func mergeDeferredErr(target *error, incoming error) {
@@ -180,16 +251,17 @@ func closeBlockManager(target *error, blockMgr *fio.BlockManager) {
 
 func runBatchOwnerWriter(
 	fhash []byte,
+	startIndex int64,
 	db *badger.DB,
 	taskCh <-chan chunkTask,
 	cancel context.CancelFunc,
-	writerErrCh chan<- error,
+	writerResCh chan<- writerResult,
 ) {
-	werr := batchOwnerWriteLoop(fhash, db, taskCh)
+	hochoHash, werr := batchOwnerWriteLoop(fhash, startIndex, db, taskCh)
 	if werr != nil {
 		cancel()
 	}
-	writerErrCh <- werr
+	writerResCh <- writerResult{hochoHash: hochoHash, err: werr}
 }
 
 func batchOwnerHashWorker(
@@ -265,42 +337,58 @@ func captureFirstWorkerErr(err error, firstWorkerErr *error, hasWorkerErr *bool)
 // needed for those structures here.
 func batchOwnerWriteLoop(
 	fhash []byte,
+	startIndex int64,
 	db *badger.DB,
 	taskCh <-chan chunkTask,
-) error {
+) (string, error) {
 	batch, err := util.InitBatch(db)
 	if err != nil {
-		return err
+		return "", err
 	}
 
 	revRelBuffer := newRevRelAppendBuffer(256)
+	hocho := newHochoAccumulator(cnst.StoreHashStrategy == cnst.HochoHashStrategy, startIndex)
 
 	for task := range taskCh {
+		if err := hocho.add(task.index, task.chash); err != nil {
+			batch.Cancel()
+			return "", err
+		}
 		if len(task.cmeta) > 0 {
 			ckey := util.AppendToBytesSlice(cnst.ChonkNamespace, task.chash)
 			if err := dbio.SetBatchNode(ckey, task.cmeta, batch); err != nil {
 				batch.Cancel()
-				return err
+				return "", err
 			}
 		}
 		if err := processRel(task.index, fhash, task.chash, db, batch); err != nil {
 			batch.Cancel()
-			return err
+			return "", err
 		}
 		if err := processRevRel(task.index, fhash, task.chash, batch, revRelBuffer); err != nil {
 			batch.Cancel()
-			return err
+			return "", err
 		}
 	}
 
 	if revRelBuffer != nil {
 		if err := revRelBuffer.flush(fhash, batch); err != nil {
 			batch.Cancel()
-			return err
+			return "", err
 		}
 	}
 
-	return batch.Flush()
+	hochoHash, err := hocho.finalize()
+	if err != nil {
+		batch.Cancel()
+		return "", err
+	}
+
+	if err := batch.Flush(); err != nil {
+		return "", err
+	}
+
+	return hochoHash, nil
 }
 
 // batchOwnerProcessChonk mirrors processChonk but uses a plain map for

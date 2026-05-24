@@ -384,19 +384,19 @@ func getNearInputNames(fid []byte, db *badger.DB) ([]string, error) {
 		if err != nil {
 			return nil, err
 		}
-		return mapKeysSorted(ifile.Names), nil
+		return singleNameSlice(ifile.Name), nil
 	case bytes.HasPrefix(fid, []byte(cnst.PartiFileNamespace)):
 		pfile, err := dbio.GetPartitionFile(fid, db)
 		if err != nil {
 			return nil, err
 		}
-		return mapKeysSorted(pfile.Names), nil
+		return singleNameSlice(pfile.Name), nil
 	case bytes.HasPrefix(fid, []byte(cnst.EviFileNamespace)):
 		efile, err := dbio.GetEvidenceFile(fid, db)
 		if err != nil {
 			return nil, err
 		}
-		return mapKeysSorted(efile.Names), nil
+		return singleNameSlice(efile.Name), nil
 	default:
 		return nil, nil
 	}
@@ -485,7 +485,7 @@ func buildNearReportMatch(id []byte, confidence float64, db *badger.DB) (nearRep
 		if err != nil {
 			return match, err
 		}
-		match.Names = mapKeysSorted(ifile.Names)
+		match.Names = singleNameSlice(ifile.Name)
 		match.Start = ifile.Start
 		match.Size = ifile.Size
 		match.End = ifile.Start + ifile.Size
@@ -494,7 +494,7 @@ func buildNearReportMatch(id []byte, confidence float64, db *badger.DB) (nearRep
 		if err != nil {
 			return match, err
 		}
-		match.Names = mapKeysSorted(pfile.Names)
+		match.Names = singleNameSlice(pfile.Name)
 		match.Start = pfile.Start
 		match.Size = pfile.Size
 		match.End = pfile.Start + pfile.Size
@@ -504,7 +504,7 @@ func buildNearReportMatch(id []byte, confidence float64, db *badger.DB) (nearRep
 		if err != nil {
 			return match, err
 		}
-		match.Names = mapKeysSorted(efile.Names)
+		match.Names = singleNameSlice(efile.Name)
 		match.Start = efile.Start
 		match.Size = efile.Size
 		match.End = efile.Start + efile.Size
@@ -531,6 +531,13 @@ func mapKeysSorted(kv map[string]struct{}) []string {
 	}
 	sort.Strings(out)
 	return out
+}
+
+func singleNameSlice(name string) []string {
+	if name == "" {
+		return nil
+	}
+	return []string{name}
 }
 
 func getHashFromID(id []byte) string {
@@ -574,7 +581,7 @@ func nearIndexFile(fid []byte, db *badger.DB, deep ...bool) (*structs.ConcMap, e
 	if len(deep) > 0 {
 		isdeep = deep[0]
 	}
-	iname := util.GetArbitratyMapKey(ifile.Names)
+	iname := ifile.Name
 	return getNearLogicalFile(ifile.Start, ifile.Size, iname, fid, db, isdeep)
 }
 func nearPartitionFile(fid []byte, db *badger.DB, deep ...bool) (*structs.ConcMap, error) {
@@ -586,7 +593,7 @@ func nearPartitionFile(fid []byte, db *badger.DB, deep ...bool) (*structs.ConcMa
 	if len(deep) > 0 {
 		isdeep = deep[0]
 	}
-	pname := util.GetArbitratyMapKey(pfile.Names)
+	pname := pfile.Name
 	return getNearLogicalFile(pfile.Start, pfile.Size, pname, fid, db, isdeep)
 }
 func nearEvidenceFile(fid []byte, db *badger.DB, deep ...bool) (*structs.ConcMap, error) {

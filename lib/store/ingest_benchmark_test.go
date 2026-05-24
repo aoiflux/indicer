@@ -265,7 +265,7 @@ func ingestBatchOwnerWorkerOnce(db *badger.DB, fhash, mappedFile []byte, enableS
 	workerCount := cnst.GetMaxThreadCount()
 	taskCh := make(chan chunkTask, workerCount*2)
 	workerResCh := make(chan workerRes, workerCount+1)
-	writerErrCh := make(chan error, 1)
+	writerResCh := make(chan writerResult, 1)
 
 	var simhashWriter *simhashAsyncWriter
 	if enableSimhash {
@@ -275,7 +275,7 @@ func ingestBatchOwnerWorkerOnce(db *badger.DB, fhash, mappedFile []byte, enableS
 		}()
 	}
 
-	go runBatchOwnerWriter(fhash, db, taskCh, cancel, writerErrCh)
+	go runBatchOwnerWriter(fhash, 0, db, taskCh, cancel, writerResCh)
 	seenChunks := newShardedChunkSet()
 
 	active := 0
@@ -306,8 +306,9 @@ func ingestBatchOwnerWorkerOnce(db *badger.DB, fhash, mappedFile []byte, enableS
 	}
 
 	close(taskCh)
-	if writerErr := <-writerErrCh; writerErr != nil {
-		return writerErr
+	writerRes := <-writerResCh
+	if writerRes.err != nil {
+		return writerRes.err
 	}
 
 	return nil

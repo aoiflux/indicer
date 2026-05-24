@@ -12,7 +12,7 @@ func TestRecoverIncompleteIngestsMarksPendingAsFailed(t *testing.T) {
 	db := openTestDB(t)
 
 	pendingInput := newTestInputFile(db, "pending-recovery.dd", bytes.Repeat([]byte{6}, 32))
-	pending := structs.NewEvidenceFile(pendingInput.GetName(), pendingInput.GetStartIndex(), pendingInput.GetSize(), pendingInput.GetInternalObjects(), "dd")
+	pending := structs.NewEvidenceFile(pendingInput.GetName(), pendingInput.GetStartIndex(), pendingInput.GetSize(), pendingInput.GetInternalObjects(), "dd", "")
 	if err := dbio.SetFile(pendingInput.GetID(), pending, db); err != nil {
 		t.Fatalf("seed pending evidence: %v", err)
 	}
@@ -78,7 +78,7 @@ func TestRecoverIncompleteIngestsMarksInvalidFlushedAsFailed(t *testing.T) {
 	db := openTestDB(t)
 
 	flushedInput := newTestInputFile(db, "flushed-invalid-recovery.dd", bytes.Repeat([]byte{0x71}, 32))
-	flushed := structs.NewEvidenceFile(flushedInput.GetName(), flushedInput.GetStartIndex(), flushedInput.GetSize(), flushedInput.GetInternalObjects(), "dd")
+	flushed := structs.NewEvidenceFile(flushedInput.GetName(), flushedInput.GetStartIndex(), flushedInput.GetSize(), flushedInput.GetInternalObjects(), "dd", "")
 	flushed.IngestState = structs.IngestStateFlushed
 	if err := dbio.SetFile(flushedInput.GetID(), flushed, db); err != nil {
 		t.Fatalf("seed invalid flushed evidence: %v", err)
@@ -114,7 +114,7 @@ func TestRecoverIncompleteIngestsSkipsCompletedAndAlreadyFailed(t *testing.T) {
 	db := openTestDB(t)
 
 	completedInput := newTestInputFile(db, "completed-recovery.dd", bytes.Repeat([]byte{8}, 32))
-	completed := structs.NewEvidenceFile(completedInput.GetName(), completedInput.GetStartIndex(), completedInput.GetSize(), completedInput.GetInternalObjects(), "dd")
+	completed := structs.NewEvidenceFile(completedInput.GetName(), completedInput.GetStartIndex(), completedInput.GetSize(), completedInput.GetInternalObjects(), "dd", "")
 	completed.Completed = true
 	completed.IngestState = structs.IngestStateCompleted
 	if err := dbio.SetFile(completedInput.GetID(), completed, db); err != nil {
@@ -122,7 +122,7 @@ func TestRecoverIncompleteIngestsSkipsCompletedAndAlreadyFailed(t *testing.T) {
 	}
 
 	failedInput := newTestInputFile(db, "failed-recovery.dd", bytes.Repeat([]byte{9}, 32))
-	failed := structs.NewEvidenceFile(failedInput.GetName(), failedInput.GetStartIndex(), failedInput.GetSize(), failedInput.GetInternalObjects(), "dd")
+	failed := structs.NewEvidenceFile(failedInput.GetName(), failedInput.GetStartIndex(), failedInput.GetSize(), failedInput.GetInternalObjects(), "dd", "")
 	failed.Failed = true
 	if err := dbio.SetFile(failedInput.GetID(), failed, db); err != nil {
 		t.Fatalf("seed failed evidence: %v", err)

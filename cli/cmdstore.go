@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"encoding/base64"
 	"errors"
 	"fmt"
 	"indicer/lib/cnst"
@@ -18,8 +19,81 @@ import (
 
 	"github.com/dgraph-io/badger/v4"
 	"github.com/edsrzf/mmap-go"
+	"github.com/vmihailenco/msgpack/v5"
 	"go.uber.org/zap"
 )
+
+type asyncFileHashResult struct {
+	encodedHash string
+	err         error
+}
+
+type evidenceHashOutcome struct {
+	encodedHash string
+	resultCh    <-chan asyncFileHashResult
+}
+
+func startAsyncFileHash(filePath string) <-chan asyncFileHashResult {
+	resultCh := make(chan asyncFileHashResult, 1)
+	go func() {
+		handle, err := os.Open(filePath)
+		if err != nil {
+			resultCh <- asyncFileHashResult{err: err}
+			return
+		}
+		defer handle.Close()
+
+		hash, err := util.GetFileHash(handle, cnst.GetHashAlgo(true))
+		if err != nil {
+			resultCh <- asyncFileHashResult{err: err}
+			return
+		}
+
+		resultCh <- asyncFileHashResult{encodedHash: base64.StdEncoding.EncodeToString(hash)}
+	}()
+	return resultCh
+}
+
+func awaitAsyncFileHash(hashResultCh <-chan asyncFileHashResult) (string, error) {
+	if hashResultCh == nil {
+		return "", nil
+	}
+	result := <-hashResultCh
+	return result.encodedHash, result.err
+}
+
+func computeSyncFileHash(filePath string) (string, error) {
+	handle, err := os.Open(filePath)
+	if err != nil {
+		return "", err
+	}
+	defer handle.Close()
+
+	hash, err := util.GetFileHash(handle, cnst.GetHashAlgo(true))
+	if err != nil {
+		return "", err
+	}
+
+	return base64.StdEncoding.EncodeToString(hash), nil
+}
+
+func prepareEvidenceFileHash(filePath string) (evidenceHashOutcome, error) {
+	switch cnst.StoreHashStrategy {
+	case cnst.AsyncHashStrategy:
+		return evidenceHashOutcome{resultCh: startAsyncFileHash(filePath)}, nil
+	case cnst.HochoHashStrategy:
+		// Hocho evidence hash is produced by ingest from chunk hashes.
+		return evidenceHashOutcome{}, nil
+	case cnst.SyncHashStrategy:
+		encodedHash, err := computeSyncFileHash(filePath)
+		if err != nil {
+			return evidenceHashOutcome{}, err
+		}
+		return evidenceHashOutcome{encodedHash: encodedHash}, nil
+	default:
+		return evidenceHashOutcome{}, fmt.Errorf("unsupported store hash strategy: %s", cnst.StoreHashStrategy)
+	}
+}
 
 func StoreData(chonkSize int, dbpath, evipath string, key []byte, syncIndex bool, noIndex bool, enableFTS bool, enableEnrichment bool) error {
 	start := time.Now()
@@ -159,10 +233,22 @@ func StoreFile(chonkSize int, evipath string, key []byte, syncIndex bool, noInde
 		return nil
 	}
 
-	idxErrCh, err := startIndexing(eviFile, db, noIndex, syncIndex, enableFTS, enableEnrichment)
+	hashOutcome, err := prepareEvidenceFileHash(evipath)
 	if err != nil {
-		logging.GetLogger().Error("StoreFile INDEX_ERROR", zap.Error(err))
+		logging.GetLogger().Error("StoreFile HASH_PREP_ERROR", zap.Error(err), zap.String("strategy", cnst.StoreHashStrategy))
 		return err
+	}
+
+	deferIndexUntilFlushed := cnst.StoreHashStrategy == cnst.HochoHashStrategy && cnst.HochoMode == cnst.HochoModePostDedup
+	var idxErrCh chan error
+	if !deferIndexUntilFlushed {
+		idxErrCh, err = startIndexing(eviFile, db, noIndex, syncIndex, enableFTS, enableEnrichment)
+		if err != nil {
+			logging.GetLogger().Error("StoreFile INDEX_ERROR", zap.Error(err))
+			return err
+		}
+	} else {
+		logging.GetLogger().Info("StoreFile INDEX_DEFERRED_UNTIL_FLUSHED", zap.String("hocho_mode", cnst.HochoMode))
 	}
 
 	eviname := filepath.Base(evipath)
@@ -178,9 +264,18 @@ func StoreFile(chonkSize int, evipath string, key []byte, syncIndex bool, noInde
 		return err
 	}
 
-	err = transitionEvidenceFileToCompleted(eviFile, eviname, db, idxErrCh)
+	err = transitionEvidenceFileToCompleted(eviFile, eviname, db, idxErrCh, hashOutcome)
 	if err != nil {
 		return err
+	}
+
+	if deferIndexUntilFlushed {
+		idxErrCh, err = startIndexing(eviFile, db, noIndex, syncIndex, enableFTS, enableEnrichment)
+		if err != nil {
+			logging.GetLogger().Error("StoreFile INDEX_ERROR", zap.Error(err))
+			markEvidenceFileFailed(eviFile.GetID(), db)
+			return err
+		}
 	}
 
 	if idxErr := awaitIndexError(idxErrCh); idxErr != nil {
@@ -233,7 +328,7 @@ func startIndexing(eviFile structs.InputFile, db *badger.DB, noIndex bool, syncI
 	return idxErrCh, nil
 }
 
-func transitionEvidenceFileToCompleted(eviFile structs.InputFile, eviname string, db *badger.DB, idxErrCh chan error) error {
+func transitionEvidenceFileToCompleted(eviFile structs.InputFile, eviname string, db *badger.DB, idxErrCh chan error, hashOutcome evidenceHashOutcome) error {
 	// Verify that all chunk data has been flushed to persistent storage.
 	eviNode, err := dbio.GetEvidenceFile(eviFile.GetID(), eviFile.GetDB())
 	if err != nil {
@@ -249,11 +344,51 @@ func transitionEvidenceFileToCompleted(eviFile structs.InputFile, eviname string
 		return stateErr
 	}
 
+	encodedHash := hashOutcome.encodedHash
+	if encodedHash == "" {
+		if cnst.StoreHashStrategy == cnst.HochoHashStrategy {
+			encodedHash = eviNode.FileHash
+			if encodedHash == "" {
+				drainIndexError(idxErrCh)
+				markEvidenceFileFailed(eviFile.GetID(), db)
+				err = fmt.Errorf("ingest-reused hocho hash missing on flushed evidence record")
+				logging.GetLogger().Error("StoreFile HOCHO_HASH_MISSING", zap.Error(err))
+				return err
+			}
+		} else {
+			encodedHash, err = awaitAsyncFileHash(hashOutcome.resultCh)
+			if err != nil {
+				drainIndexError(idxErrCh)
+				markEvidenceFileFailed(eviFile.GetID(), db)
+				logging.GetLogger().Error("StoreFile HASH_AWAIT_ERROR", zap.Error(err))
+				return err
+			}
+		}
+	}
+	eviNode.FileHash = encodedHash
+
 	// Atomically transition to COMPLETED state so recovery can detect incomplete ingest.
 	eviNode.Completed = true
 	eviNode.Failed = false
 	eviNode.IngestState = structs.IngestStateCompleted
-	err = dbio.SetFile(eviFile.GetID(), eviNode, eviFile.GetDB())
+	payload, err := msgpack.Marshal(eviNode)
+	if err != nil {
+		drainIndexError(idxErrCh)
+		markEvidenceFileFailed(eviFile.GetID(), db)
+		logging.GetLogger().Error("StoreFile MARSHAL_EVIDENCE_NODE_ERROR", zap.Error(err))
+		return err
+	}
+	err = eviFile.GetDB().Update(func(txn *badger.Txn) error {
+		evidenceKey := dbio.CanonicalEvidenceKey(eviFile.GetID())
+		if setErr := txn.Set(evidenceKey, payload); setErr != nil {
+			return setErr
+		}
+		if encodedHash == "" {
+			return nil
+		}
+		lookupKey := util.AppendToBytesSlice(cnst.EviFileHashLookupNamespace, encodedHash)
+		return dbio.AppendHashLookupUUIDByKeyTxn(txn, lookupKey, evidenceKey)
+	})
 	if err != nil {
 		drainIndexError(idxErrCh)
 		markEvidenceFileFailed(eviFile.GetID(), db)
@@ -347,6 +482,10 @@ func indexEvidenceFile(eviFile structs.InputFile, db *badger.DB, enableFTS bool,
 		zap.Bool("enable_fts", enableFTS),
 		zap.Bool("enable_enrichment", enableEnrichment),
 	)
+	statsBefore := store.LogicalHochoReuseStats{}
+	if cnst.StoreHashStrategy == cnst.HochoHashStrategy {
+		statsBefore = store.SnapshotLogicalHochoReuseStats()
+	}
 	tuskJSON, hasTusk := parser.TuskAnalysis(eviFile.GetHandle().Name())
 	partitions := parser.ParseImage(tuskJSON, hasTusk, eviFile.GetSize(), eviFile.GetHandle())
 	idxChan := make(chan error)
@@ -364,16 +503,25 @@ func indexEvidenceFile(eviFile structs.InputFile, db *badger.DB, enableFTS bool,
 	logging.GetLogger().Debug("indexEvidenceFile PARTITION_PARSE_COMPLETE", zap.Int("partition_count", len(partitions)))
 
 	for index, partition := range partitions {
-		phash := eviFile.GetHash()
-		var err error
-		if partition.Start != 0 && partition.Size != eviFile.GetSize() {
+		var phash []byte
+		if cnst.StoreHashStrategy == cnst.HochoHashStrategy && cnst.HochoMode != cnst.HochoModeBaseline {
+			reusedHash, reused, reuseErr := store.TryComputeLogicalHochoWithEdges(eviFile.GetID(), partition.Start, partition.Size, eviFile.GetMappedFile(), db)
+			if reuseErr != nil {
+				logging.GetLogger().Error("indexEvidenceFile PARTITION_HASH_REUSE_ERROR", zap.Error(reuseErr), zap.Int("partition_index", index))
+				return reuseErr
+			}
+			if reused {
+				phash = reusedHash
+			}
+		}
+		if len(phash) == 0 {
+			var err error
 			phash, err = util.GetLogicalFileHash(eviFile.GetHandle(), cnst.GetHashAlgo(true), partition.Start, partition.Size, true)
 			if err != nil {
 				logging.GetLogger().Error("indexEvidenceFile PARTITION_HASH_ERROR", zap.Error(err), zap.Int("partition_index", index))
 				return err
 			}
 		}
-		eviFile.UpdateInternalObjects(partition.Start, partition.Size, phash)
 
 		ehash, err := eviFile.GetEncodedHash()
 		if err != nil {
@@ -391,6 +539,7 @@ func indexEvidenceFile(eviFile structs.InputFile, db *badger.DB, enableFTS bool,
 			partition.Size,
 			partition.Start,
 		)
+		eviFile.UpdateInternalObjects(partition.Start, partition.Size, pfile.GetID())
 
 		if enableEnrichment {
 			err := upsertPartitionNodeForUnparsedPartition(enrichRepo, eviFile, pfile)
@@ -401,9 +550,9 @@ func indexEvidenceFile(eviFile structs.InputFile, db *badger.DB, enableFTS bool,
 		}
 
 		if hasTusk {
-			go parser.IndexFilesystem(tuskJSON, pfile, idxChan, enableFTS, enableEnrichment)
+			go parser.IndexFilesystem(tuskJSON, pfile, eviFile.GetID(), idxChan, enableFTS, enableEnrichment)
 		} else {
-			go parser.IndexEXFAT(pfile, idxChan, enableFTS, enableEnrichment)
+			go parser.IndexEXFAT(pfile, eviFile.GetID(), idxChan, enableFTS, enableEnrichment)
 		}
 		// Use select so that if the goroutine finishes before we send the
 		// start signal (e.g. empty partition with no files), we receive the
@@ -427,22 +576,52 @@ func indexEvidenceFile(eviFile structs.InputFile, db *badger.DB, enableFTS bool,
 		logging.GetLogger().Error("indexEvidenceFile PERSIST_INTERNAL_OBJECTS_ERROR", zap.Error(err))
 		return err
 	}
+	if cnst.StoreHashStrategy == cnst.HochoHashStrategy {
+		statsAfter := store.SnapshotLogicalHochoReuseStats()
+		logging.GetLogger().Info("indexEvidenceFile LOGICAL_HOCHO_REUSE_STATS",
+			zap.Uint64("attempts", statsAfter.Attempts-statsBefore.Attempts),
+			zap.Uint64("reused", statsAfter.Reused-statsBefore.Reused),
+			zap.Uint64("fallback_unaligned", statsAfter.FallbackUnaligned-statsBefore.FallbackUnaligned),
+			zap.Uint64("fallback_missing_relation", statsAfter.FallbackMissingRelation-statsBefore.FallbackMissingRelation),
+			zap.Uint64("errors", statsAfter.Errors-statsBefore.Errors),
+		)
+	}
 	logging.GetLogger().Info("indexEvidenceFile COMPLETE", zap.Int("partition_count", len(partitions)))
 	return nil
 }
 
 func persistEvidenceInternalObjects(fileID []byte, internalObjects map[string]structs.InternalOffset, db *badger.DB) error {
-	evidenceFile, err := dbio.GetEvidenceFile(fileID, db)
-	if err != nil {
-		return err
-	}
+	evidenceKey := dbio.CanonicalEvidenceKey(fileID)
+	return db.Update(func(txn *badger.Txn) error {
+		item, err := txn.Get(evidenceKey)
+		if err != nil {
+			return err
+		}
+		payload, err := item.ValueCopy(nil)
+		if err != nil {
+			return err
+		}
+		decoded, decodeErr := cnst.DECODER.DecodeAll(payload, nil)
+		if decodeErr == nil {
+			payload = decoded
+		}
 
-	evidenceFile.InternalObjects = make(map[string]structs.InternalOffset, len(internalObjects))
-	for key, offset := range internalObjects {
-		evidenceFile.InternalObjects[key] = offset
-	}
+		var evidenceFile structs.EvidenceFile
+		if err := msgpack.Unmarshal(payload, &evidenceFile); err != nil {
+			return err
+		}
 
-	return dbio.SetFile(fileID, evidenceFile, db)
+		evidenceFile.InternalObjects = make(map[string]structs.InternalOffset, len(internalObjects))
+		for key, offset := range internalObjects {
+			evidenceFile.InternalObjects[key] = offset
+		}
+
+		updatedPayload, err := msgpack.Marshal(evidenceFile)
+		if err != nil {
+			return err
+		}
+		return txn.Set(evidenceKey, updatedPayload)
+	})
 }
 
 func upsertPartitionNodeForUnparsedPartition(repo *enrichment.GrapheneRepository, eviFile structs.InputFile, pfile structs.InputFile) error {
@@ -454,15 +633,12 @@ func upsertPartitionNodeForUnparsedPartition(repo *enrichment.GrapheneRepository
 	if err != nil {
 		return err
 	}
-	partitionHashB64, err := pfile.GetEncodedHash()
-	if err != nil {
-		return err
-	}
+	partitionHashB64 := base64.StdEncoding.EncodeToString(pfile.GetFileHash())
 
 	return repo.UpsertPartition(enrichment.PartitionRecord{
 		EvidenceFileID:   string(evidenceHashB64),
 		EvidenceFileName: eviFile.GetName(),
-		PartitionID:      string(partitionHashB64),
+		PartitionID:      partitionHashB64,
 		PartitionName:    pfile.GetName(),
 	})
 }
@@ -481,11 +657,6 @@ func initEvidenceFile(evifilepath string, db *badger.DB) (structs.InputFile, err
 	}
 	eviFileName := filepath.Base(evifilepath)
 
-	eviFileHash, err := util.GetFileHash(eviHandle, cnst.GetHashAlgo(true))
-	if err != nil {
-		return eviFile, err
-	}
-
 	mappedFile, err := mmap.Map(eviHandle, mmap.RDONLY, 0)
 	if err != nil {
 		return eviFile, err
@@ -497,7 +668,7 @@ func initEvidenceFile(evifilepath string, db *badger.DB) (structs.InputFile, err
 		mappedFile,
 		eviFileName,
 		cnst.EviFileNamespace,
-		eviFileHash,
+		nil,
 		eviSize,
 		0,
 	)

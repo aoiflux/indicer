@@ -17,8 +17,8 @@ import (
 )
 
 const (
-	duesVersion  = "0.38"
-	duesCodename = "<jackfruit> spacebar"
+	duesVersion  = "0.39"
+	duesCodename = "<pineapple> spacebar"
 )
 
 func init() {
@@ -55,6 +55,8 @@ func main() {
 	enableFTS := cmdstore.Flag(cnst.FlagEnableFts, "Enable full-text search indexing (sidecar Bleve index)").Default("false").Bool()
 	enableEnrichment := cmdstore.Flag(cnst.FlagEnableEnrichment, "Upsert disk/partition/indexed-file metadata nodes into graphdb during store").Default("false").Bool()
 	storeHashAlgo := cmdstore.Flag(cnst.FlagHashAlgo, "Hashing algorithm to use [sha3|blake3] (default: BLAKE3)").Short(cnst.FlagHashAlgoShort).Default(cnst.BLAKE3).String()
+	storeHashStrategy := cmdstore.Flag(cnst.FlagHashStrategy, "Store hash strategy for evidence [sync|async|hocho] (default: sync)").Default(cnst.SyncHashStrategy).String()
+	hochoMode := cmdstore.Flag(cnst.FlagHochoMode, "Hocho logical hashing mode [baseline|reuse|postdedup] (default: baseline)").Default(cnst.HochoModeBaseline).String()
 	enableSimhash := cmdstore.Flag(cnst.FlagSimhash, "Compute and store per-chunk simhash signatures during ingest (enables NeAR chunk-level similarity; off by default)").Default("false").Bool()
 	storeWorkers := cmdstore.Flag(cnst.FlagStoreWorkers, "Override batch-owner worker count (0 = mode-aware default)").Default("0").Int()
 	storeQueue := cmdstore.Flag(cnst.FlagStoreQueue, "Override batch-owner task queue depth (0 = mode-aware default)").Default("0").Int()
@@ -145,6 +147,22 @@ func main() {
 	restorePipelineWorkers := 0
 	restorePipelineQueue := 0
 	if parsed == cmdstore.FullCommand() {
+		if err := cnst.SetStoreHashStrategy(*storeHashStrategy); err != nil {
+			handle(err)
+		}
+		if err := cnst.SetHochoMode(*hochoMode); err != nil {
+			handle(err)
+		}
+		hochoModeFlagProvided := false
+		for _, arg := range os.Args[1:] {
+			if arg == "--"+cnst.FlagHochoMode || strings.HasPrefix(arg, "--"+cnst.FlagHochoMode+"=") {
+				hochoModeFlagProvided = true
+				break
+			}
+		}
+		if cnst.StoreHashStrategy != cnst.HochoHashStrategy && hochoModeFlagProvided {
+			handle(fmt.Errorf("--%s is only valid when --%s=hocho", cnst.FlagHochoMode, cnst.FlagHashStrategy))
+		}
 		cnst.ENABLESIMHASH = *enableSimhash
 		cnst.StoreWorkerCount = *storeWorkers
 		cnst.StoreTaskQueueDepth = *storeQueue
@@ -207,6 +225,9 @@ func main() {
 		}
 		if parsed == cmdstore.FullCommand() {
 			color.Cyan("⚙ store pipeline: workers=%d queue=%d", storePipelineWorkers, storePipelineQueue)
+			if cnst.StoreHashStrategy == cnst.HochoHashStrategy {
+				color.Cyan("⚙ hocho mode: %s", cnst.HochoMode)
+			}
 		}
 		if parsed == cmdrestore.FullCommand() {
 			color.Cyan("⚙ restore pipeline: workers=%d queue=%d progress=%s buffer=%dMB", restorePipelineWorkers, restorePipelineQueue, cnst.GetRestoreProgressInterval(), cnst.GetRestoreWriteBufferSize()/(1024*1024))
@@ -225,6 +246,7 @@ func main() {
 			zap.String("file", *evipath),
 			zap.String("dbpath", *dbpath),
 			zap.Int("chonksize_kb", *chonkSize),
+			zap.String("hash_strategy", cnst.StoreHashStrategy),
 			zap.Bool("sync_index", *syncIndex),
 			zap.Bool("no_index", *noIndex),
 			zap.Bool("fts_enabled", *enableFTS),

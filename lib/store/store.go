@@ -1,7 +1,7 @@
 package store
 
 import (
-	"bytes"
+	"encoding/base64"
 	"errors"
 	"indicer/lib/cnst"
 	"indicer/lib/dbio"
@@ -15,7 +15,7 @@ import (
 )
 
 func Store(infile structs.InputFile, errchan chan error) {
-	if bytes.HasPrefix(infile.GetID(), []byte(cnst.PartiFileNamespace)) {
+	if string(infile.GetNamespace()) == cnst.PartiFileNamespace {
 		errchan <- storePartitionFile(infile)
 	} else {
 		errchan <- storeEvidenceFile(infile)
@@ -29,11 +29,11 @@ func EvidenceFilePreStoreCheck(infile structs.InputFile) error {
 	if !evidenceFile.Completed {
 		return cnst.ErrIncompleteFile
 	}
-	if _, ok := evidenceFile.Names[infile.GetName()]; ok {
+	if evidenceFile.Name == infile.GetName() {
 		return nil
 	}
 
-	evidenceFile.Names[infile.GetName()] = struct{}{}
+	evidenceFile.Name = infile.GetName()
 	return dbio.SetFile(infile.GetID(), evidenceFile, infile.GetDB())
 }
 
@@ -110,49 +110,29 @@ func storePartitionFile(infile structs.InputFile) error {
 		zap.String("file_name", infile.GetName()),
 		zap.Int64("file_size", infile.GetSize()),
 	)
-
-	partitionFile, err := dbio.GetPartitionFile(infile.GetID(), infile.GetDB())
-	if errors.Is(err, badger.ErrKeyNotFound) {
-		partitionFile = structs.NewPartitionFile(
-			infile.GetName(),
-			infile.GetStartIndex(),
-			infile.GetSize(),
-			infile.GetInternalObjects(),
-		)
-		err = dbio.SetFile(infile.GetID(), partitionFile, infile.GetDB())
-		if err != nil {
-			logging.GetLogger().Error("storePartitionFile SET_FILE_ERROR", zap.Error(err))
-			return err
-		}
-		logging.GetLogger().Info("storePartitionFile COMPLETE",
-			zap.Int64("duration_ms", time.Since(start).Milliseconds()),
-			zap.String("result", "created"),
-		)
-		return nil
-	}
-	if err != nil && err != badger.ErrKeyNotFound {
-		logging.GetLogger().Error("storePartitionFile GET_PARTITION_ERROR", zap.Error(err))
+	partitionKey := dbio.CanonicalPartitionKey(infile.GetID())
+	encodedHash := base64.StdEncoding.EncodeToString(infile.GetFileHash())
+	partitionLookupKey := util.AppendToBytesSlice(cnst.PartiFileHashLookupNamespace, encodedHash)
+	partitionHash := base64.StdEncoding.EncodeToString(infile.GetFileHash())
+	partitionFile := structs.NewPartitionFile(
+		infile.GetName(),
+		infile.GetStartIndex(),
+		infile.GetSize(),
+		infile.GetInternalObjects(),
+		partitionHash,
+	)
+	err := dbio.SetFile(partitionKey, partitionFile, infile.GetDB())
+	if err != nil {
+		logging.GetLogger().Error("storePartitionFile SET_FILE_ERROR", zap.Error(err))
 		return err
 	}
-
-	if _, ok := partitionFile.Names[infile.GetName()]; ok {
-		logging.GetLogger().Debug("storePartitionFile ALREADY_EXISTS", zap.String("file_name", infile.GetName()))
-		logging.GetLogger().Info("storePartitionFile COMPLETE",
-			zap.Int64("duration_ms", time.Since(start).Milliseconds()),
-			zap.String("result", "unchanged"),
-		)
-		return nil
-	}
-
-	partitionFile.Names[infile.GetName()] = struct{}{}
-	err = dbio.SetFile(infile.GetID(), partitionFile, infile.GetDB())
-	if err != nil {
-		logging.GetLogger().Error("storePartitionFile UPDATE_FILE_ERROR", zap.Error(err))
+	if err := dbio.AppendHashLookupUUIDByKey(infile.GetDB(), partitionLookupKey, partitionKey); err != nil {
+		logging.GetLogger().Error("storePartitionFile SET_LOOKUP_ERROR", zap.Error(err))
 		return err
 	}
 	logging.GetLogger().Info("storePartitionFile COMPLETE",
 		zap.Int64("duration_ms", time.Since(start).Milliseconds()),
-		zap.String("result", "updated"),
+		zap.String("result", "created"),
 	)
 	return nil
 }
@@ -176,11 +156,11 @@ func storeEvidenceFile(infile structs.InputFile) error {
 		)
 		return nil
 	}
-	err = storeEvidenceDataBatchOwner(infile)
+	hochoEvidenceHash, err := storeEvidenceDataBatchOwner(infile)
 	if err != nil {
 		return failEvidenceStore(infile, err)
 	}
-	if err := markEvidenceFileFlushed(infile); err != nil {
+	if err := markEvidenceFileFlushed(infile, hochoEvidenceHash); err != nil {
 		return err
 	}
 	logging.GetLogger().Info("storeEvidenceFile COMPLETE",
@@ -198,13 +178,16 @@ func failEvidenceStore(infile structs.InputFile, storeErr error) error {
 	return storeErr
 }
 
-func markEvidenceFileFlushed(infile structs.InputFile) error {
+func markEvidenceFileFlushed(infile structs.InputFile, hochoEvidenceHash string) error {
 	// Mark as FLUSHED: all chunk data has been written to persistent storage.
 	// The caller (cmdstore.go) atomically transitions this to COMPLETED.
 	evidenceFile, err := dbio.GetEvidenceFile(infile.GetID(), infile.GetDB())
 	if err != nil {
 		logging.GetLogger().Error("storeEvidenceFile GET_EVIDENCE_AFTER_STORE_ERROR", zap.Error(err))
 		return err
+	}
+	if cnst.StoreHashStrategy == cnst.HochoHashStrategy && hochoEvidenceHash != "" {
+		evidenceFile.FileHash = hochoEvidenceHash
 	}
 	evidenceFile.IngestState = structs.IngestStateFlushed
 	err = dbio.SetFile(infile.GetID(), evidenceFile, infile.GetDB())
@@ -249,6 +232,7 @@ func loadOrCreateEvidenceFile(infile structs.InputFile, detectedType string) (st
 			infile.GetSize(),
 			infile.GetInternalObjects(),
 			detectedType,
+			"", // FileHash placeholder
 		)
 		err = dbio.SetFile(infile.GetID(), evidenceFile, infile.GetDB())
 		return evidenceFile, true, err
@@ -296,10 +280,10 @@ func ensureIncompleteEvidenceState(infile structs.InputFile, evidenceFile struct
 }
 
 func ensureEvidenceAlias(infile structs.InputFile, evidenceFile structs.EvidenceFile) (structs.EvidenceFile, error) {
-	if _, ok := evidenceFile.Names[infile.GetName()]; ok {
+	if evidenceFile.Name == infile.GetName() {
 		return evidenceFile, nil
 	}
-	evidenceFile.Names[infile.GetName()] = struct{}{}
+	evidenceFile.Name = infile.GetName()
 	err := dbio.SetFile(infile.GetID(), evidenceFile, infile.GetDB())
 	return evidenceFile, err
 }

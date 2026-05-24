@@ -1,7 +1,6 @@
 package store
 
 import (
-	"bytes"
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
@@ -63,10 +62,10 @@ func InspectEvidenceRepairs(db *badger.DB, fix bool) (RepairReport, error) {
 		it := txn.NewIterator(opts)
 		defer it.Close()
 
-		eviPrefix := []byte(cnst.EviFileNamespace)
-		for it.Seek(eviPrefix); it.ValidForPrefix(eviPrefix); it.Next() {
+		for it.Rewind(); it.Valid(); it.Next() {
 			item := it.Item()
 			key := item.KeyCopy(nil)
+			rawID := dbio.EvidenceRawID(key)
 			value, err := item.ValueCopy(nil)
 			if err != nil {
 				return err
@@ -79,22 +78,25 @@ func InspectEvidenceRepairs(db *badger.DB, fix bool) (RepairReport, error) {
 
 			var evidenceFile structs.EvidenceFile
 			if err := msgpack.Unmarshal(value, &evidenceFile); err != nil {
-				return err
+				continue
+			}
+			if evidenceFile.EvidenceType == "" && evidenceFile.IngestState == "" && !evidenceFile.Completed && !evidenceFile.Failed {
+				continue
 			}
 			if evidenceFile.Completed {
 				continue
 			}
 
 			row := RepairEvidenceRow{
-				Hash:        base64.StdEncoding.EncodeToString(bytes.TrimPrefix(key, eviPrefix)),
-				Name:        firstCleanNameFromMap(evidenceFile.Names),
+				Hash:        base64.StdEncoding.EncodeToString(rawID),
+				Name:        firstCleanName(evidenceFile.Name),
 				Type:        evidenceFile.EvidenceType,
 				Size:        evidenceFile.Size,
 				Completed:   evidenceFile.Completed,
 				Failed:      evidenceFile.Failed,
 				IngestState: string(evidenceFile.IngestState),
 				Action:      "inspect",
-				id:          key,
+				id:          rawID,
 			}
 			if evidenceFile.Failed {
 				report.FailedCount++

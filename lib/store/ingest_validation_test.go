@@ -18,7 +18,7 @@ func seedFlushedEvidenceWithChunk(t testing.TB, db *badger.DB, name string, hash
 	t.Helper()
 
 	infile := newTestInputFile(db, name, bytes.Repeat([]byte{hashSeed}, 32))
-	evidenceFile := structs.NewEvidenceFile(infile.GetName(), infile.GetStartIndex(), infile.GetSize(), infile.GetInternalObjects(), "dd")
+	evidenceFile := structs.NewEvidenceFile(infile.GetName(), infile.GetStartIndex(), infile.GetSize(), infile.GetInternalObjects(), "dd", "")
 	evidenceFile.IngestState = structs.IngestStateFlushed
 	if err := dbio.SetFile(infile.GetID(), evidenceFile, db); err != nil {
 		t.Fatalf("seed flushed evidence: %v", err)

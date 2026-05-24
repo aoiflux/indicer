@@ -295,7 +295,7 @@ func GetEvidenceFileHash(fname string) ([]byte, error) {
 	return eviFileHash, err
 }
 func GetEvidenceFileID(eviFileHash []byte) []byte {
-	return append([]byte(cnst.EviFileNamespace), eviFileHash...)
+	return append([]byte(nil), eviFileHash...)
 }
 
 func GetRandomName(length int) string {

@@ -10,7 +10,6 @@ import (
 	"indicer/lib/structs"
 	"indicer/lib/util"
 	"indicer/pb"
-	"strings"
 
 	"github.com/dgraph-io/badger/v4"
 )
@@ -56,7 +55,7 @@ func getIdxFiles(idxMap map[string]structs.InternalOffset, db *badger.DB) ([]*pb
 			return nil, err
 		}
 
-		ehash, err := store.GetLogicalFileEviHash(idxfile.Names, db)
+		ehash, err := store.GetLogicalFileEviHash(idxfile.Name, db)
 		if err != nil {
 			return nil, err
 		}
@@ -66,18 +65,12 @@ func getIdxFiles(idxMap map[string]structs.InternalOffset, db *badger.DB) ([]*pb
 			return nil, err
 		}
 
-		for name := range idxfile.Names {
-			var baseFile pb.BaseFile
-			baseFile.FileId = base64.StdEncoding.EncodeToString(iid)
-
-			split := strings.Split(name, cnst.DataSeperator)
-			name = split[len(split)-1]
-
-			baseFile.FilePath = name
-			baseFile.FileSize = idxfile.Size
-			baseFile.ChunkMap = chunkMap
-			baseList = append(baseList, &baseFile)
-		}
+		var baseFile pb.BaseFile
+		baseFile.FileId = base64.StdEncoding.EncodeToString(iid)
+		baseFile.FilePath = idxfile.Name
+		baseFile.FileSize = idxfile.Size
+		baseFile.ChunkMap = chunkMap
+		baseList = append(baseList, &baseFile)
 	}
 
 	return baseList, nil

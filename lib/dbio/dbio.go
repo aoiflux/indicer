@@ -204,7 +204,10 @@ func AppendHashLookupUUIDByKeyTxn(txn *badger.Txn, lookupKey []byte, uuid []byte
 		}
 	}
 
-	ids = append(ids, bytes.Clone(uuid))
+	if containsSlice(ids, uuid[:]) {
+		return nil
+	}
+	ids = append(ids, uuid[:])
 	encoded, err := msgpack.Marshal(ids)
 	if err != nil {
 		return err
@@ -212,28 +215,13 @@ func AppendHashLookupUUIDByKeyTxn(txn *badger.Txn, lookupKey []byte, uuid []byte
 	return txn.Set(lookupKey, encoded)
 }
 
-func RemoveHashLookupUUIDByKeyTxn(txn *badger.Txn, lookupKey []byte, uuid []byte) error {
-	ids, err := getHashLookupUUIDsByKeyTxn(txn, lookupKey)
-	if err != nil {
-		return err
-	}
-
-	filtered := ids[:0]
-	for _, id := range ids {
-		if !bytes.Equal(id, uuid) {
-			filtered = append(filtered, id)
+func containsSlice(data [][]byte, target []byte) bool {
+	for _, b := range data {
+		if bytes.Equal(b, target) {
+			return true
 		}
 	}
-
-	if len(filtered) == 0 {
-		return txn.Delete(lookupKey)
-	}
-
-	encoded, err := msgpack.Marshal(filtered)
-	if err != nil {
-		return err
-	}
-	return txn.Set(lookupKey, encoded)
+	return false
 }
 
 func getHashLookupUUIDsByKeyTxn(txn *badger.Txn, lookupKey []byte) ([][]byte, error) {

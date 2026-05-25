@@ -64,7 +64,6 @@ func List(db *badger.DB, statusFilter string) error {
 			eviFile := map[string]interface{}{
 				"id":             evidenceID,
 				"hash":           hashStr,
-				"fileHash":       evidata.FileHash,
 				"name":           normalizeEvidenceFileName(firstCleanName(evidata.Name)),
 				"type":           evidata.EvidenceType,
 				"size":           evidata.Size,

@@ -44,7 +44,6 @@ func buildPartitionData(phash string, txn *badger.Txn) (map[string]interface{}, 
 	partData := map[string]interface{}{
 		"id":           phash,
 		"hash":         pdata.FileHash,
-		"fileHash":     pdata.FileHash,
 		"fileName":     firstCleanName(pdata.Name),
 		"type":         pdata.IndexedType,
 		"size":         pdata.Size,
@@ -161,7 +160,6 @@ func buildIndexedFileData(ihash string, txn *badger.Txn) ([]map[string]interface
 	entries := []map[string]interface{}{{
 		"id":           ihash,
 		"hash":         idata.FileHash,
-		"fileHash":     idata.FileHash,
 		"fileName":     name,
 		"path":         name,
 		"type":         idata.IndexedType,
@@ -225,7 +223,6 @@ func buildCompletedEvidenceFromKV(evidenceHash string, db *badger.DB) (map[strin
 		result["name"] = normalizeEvidenceFileName(firstCleanName(evidata.Name))
 		result["id"] = evidenceID
 		result["hash"] = evidata.FileHash
-		result["fileHash"] = evidata.FileHash
 		result["type"] = evidata.EvidenceType
 		result["size"] = evidata.Size
 		result["fileCount"] = 1

@@ -70,7 +70,6 @@ func ListWithEnrichment(db *badger.DB, enrichRepo enrichment.Repository, statusF
 			partitions = append(partitions, map[string]interface{}{
 				"id":                     partition.ID,
 				"hash":                   partition.ID,
-				"fileHash":               "",
 				"fileName":               partitionFileName,
 				"name":                   partition.Name,
 				"type":                   "partition",
@@ -101,7 +100,6 @@ func ListWithEnrichment(db *badger.DB, enrichRepo enrichment.Repository, statusF
 		evidenceType := "image"
 		evidenceID := evidenceFile.ID
 		evidenceHash := evidenceFile.ID
-		evidenceFileHash := ""
 		var evidenceSize int64
 		fileCount := 0
 		if hasKVEvidence {
@@ -110,9 +108,6 @@ func ListWithEnrichment(db *badger.DB, enrichRepo enrichment.Repository, statusF
 			}
 			if val, ok := kvEvidence["hash"].(string); ok && strings.TrimSpace(val) != "" {
 				evidenceHash = val
-			}
-			if val, ok := kvEvidence["fileHash"].(string); ok && strings.TrimSpace(val) != "" {
-				evidenceFileHash = val
 			}
 			if val, ok := kvEvidence["name"].(string); ok && strings.TrimSpace(val) != "" {
 				evidenceName = normalizeEvidenceFileName(val)
@@ -127,14 +122,10 @@ func ListWithEnrichment(db *badger.DB, enrichRepo enrichment.Repository, statusF
 				fileCount = val
 			}
 		}
-		if evidenceFileHash == "" {
-			evidenceFileHash = evidenceHash
-		}
 
 		evidenceFiles = append(evidenceFiles, map[string]interface{}{
 			"id":                     evidenceID,
 			"hash":                   evidenceHash,
-			"fileHash":               evidenceFileHash,
 			"name":                   evidenceName,
 			"type":                   evidenceType,
 			"size":                   evidenceSize,
@@ -222,7 +213,6 @@ func buildEnrichedIndexedFileData(file *enrichment.EnrichmentFileNode) map[strin
 	return map[string]interface{}{
 		"id":           file.ID,
 		"hash":         hashValue,
-		"fileHash":     file.Hash,
 		"fileName":     name,
 		"path":         path,
 		"type":         file.FileType,

@@ -239,6 +239,12 @@ func StoreFile(chonkSize int, evipath string, key []byte, syncIndex bool, noInde
 		return err
 	}
 
+	err = store.EnsureEvidenceFilePreStoreState(eviFile)
+	if err != nil {
+		logging.GetLogger().Error("StoreFile ENSURE_EVIDENCE_PRESTORE_STATE_ERROR", zap.Error(err))
+		return err
+	}
+
 	deferIndexUntilFlushed := cnst.StoreHashStrategy == cnst.HochoHashStrategy && cnst.HochoMode == cnst.HochoModePostDedup
 	var idxErrCh chan error
 	if !deferIndexUntilFlushed {

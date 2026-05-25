@@ -37,6 +37,13 @@ func EvidenceFilePreStoreCheck(infile structs.InputFile) error {
 	return dbio.SetFile(infile.GetID(), evidenceFile, infile.GetDB())
 }
 
+// EnsureEvidenceFilePreStoreState makes sure the evidence metadata row exists
+// and has a sane ingest state before asynchronous indexing starts.
+func EnsureEvidenceFilePreStoreState(infile structs.InputFile) error {
+	_, err := evidenceFilePreflight(infile)
+	return err
+}
+
 func MarkEvidenceFileFailed(fileID []byte, db *badger.DB) error {
 	evidenceFile, err := dbio.GetEvidenceFile(fileID, db)
 	if errors.Is(err, badger.ErrKeyNotFound) {

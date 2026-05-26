@@ -27,6 +27,38 @@ func ResetData(dbpath string) error {
 		}
 	}
 
+	info, err := os.Stat(dbpath)
+	if err != nil {
+		if os.IsNotExist(err) {
+			color.Blue("Nothing to reset: data folder does not exist: %s", dbpath)
+			logging.GetLogger().Info("ResetData SKIP_MISSING_PATH",
+				zap.String("db_path", dbpath),
+				zap.Int64("duration_ms", time.Since(start).Milliseconds()),
+			)
+			return nil
+		}
+		logging.GetLogger().Error("ResetData STAT_ERROR", zap.Error(err), zap.String("db_path", dbpath))
+		return err
+	}
+	if !info.IsDir() {
+		logging.GetLogger().Error("ResetData INVALID_PATH_NOT_DIR", zap.String("db_path", dbpath))
+		return fmt.Errorf("db path is not a directory: %s", dbpath)
+	}
+
+	entries, err := os.ReadDir(dbpath)
+	if err != nil {
+		logging.GetLogger().Error("ResetData READDIR_ERROR", zap.Error(err), zap.String("db_path", dbpath))
+		return err
+	}
+	if len(entries) == 0 {
+		color.Blue("Nothing to reset: data folder is already empty: %s", dbpath)
+		logging.GetLogger().Info("ResetData SKIP_ALREADY_EMPTY",
+			zap.String("db_path", dbpath),
+			zap.Int64("duration_ms", time.Since(start).Milliseconds()),
+		)
+		return nil
+	}
+
 	color.Red("WARNING! This command will DELETE ALL the saved files.")
 	fmt.Printf("Are you sure about this? [y/N] ")
 

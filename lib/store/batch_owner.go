@@ -53,7 +53,13 @@ type chunkTask struct {
 }
 
 type workerRes struct {
-	err error
+	err   error
+	bytes int64
+}
+
+type chunkJob struct {
+	idx      int64
+	chonkEnd int64
 }
 
 type writerResult struct {
@@ -172,14 +178,19 @@ func storeEvidenceDataBatchOwner(infile structs.InputFile) (evidenceHochoHash st
 		writerResCh,
 	)
 
+	jobCh := make(chan chunkJob, taskQueueDepth)
 	workerResCh := make(chan workerRes, workerCount+1)
 	seenChunks := newShardedChunkSet()
-	active := 0
 	mappedFile := infile.GetMappedFile()
 	var firstWorkerErr error
-	hasWorkerErr := false
 
-	for storeIndex := infile.GetStartIndex(); storeIndex < infile.GetSize() && !hasWorkerErr; storeIndex += cnst.ChonkSize {
+	for i := 0; i < workerCount; i++ {
+		go batchOwnerHashWorkerLoop(ctx, mappedFile, infile.GetDB(), containerMgr, blockMgr, seenChunks, jobCh, taskCh, workerResCh, simhashWriter)
+	}
+
+	totalJobs := 0
+	completedJobs := 0
+	for storeIndex := infile.GetStartIndex(); storeIndex < infile.GetSize(); storeIndex += cnst.ChonkSize {
 		var buffsize int64
 		if infile.GetSize()-storeIndex <= cnst.ChonkSize {
 			buffsize = infile.GetSize() - storeIndex
@@ -187,30 +198,33 @@ func storeEvidenceDataBatchOwner(infile structs.InputFile) (evidenceHochoHash st
 			buffsize = cnst.ChonkSize
 		}
 		chonkEnd := storeIndex + buffsize
-		idx := storeIndex
+		job := chunkJob{idx: storeIndex, chonkEnd: chonkEnd}
 
-		go batchOwnerHashWorker(ctx, mappedFile, idx, chonkEnd, infile.GetDB(), containerMgr, blockMgr, seenChunks, taskCh, workerResCh, simhashWriter)
-		active++
-
-		if active > workerCount {
-			res := <-workerResCh
-			captureFirstWorkerErr(res.err, &firstWorkerErr, &hasWorkerErr)
-			active--
-			bar.Add64(buffsize)
+		for {
+			select {
+			case jobCh <- job:
+				totalJobs++
+				goto enqueued
+			case res := <-workerResCh:
+				completedJobs++
+				captureFirstWorkerErr(res.err, &firstWorkerErr)
+				bar.Add64(res.bytes)
+			}
 		}
-	}
 
-	for active > 0 {
+	enqueued:
+	}
+	close(jobCh)
+
+	for completedJobs < totalJobs {
 		res := <-workerResCh
-		captureFirstWorkerErr(res.err, &firstWorkerErr, &hasWorkerErr)
-		active--
-		bar.Add64(cnst.ChonkSize)
+		completedJobs++
+		captureFirstWorkerErr(res.err, &firstWorkerErr)
+		bar.Add64(res.bytes)
 	}
 
 	close(taskCh)
 	writerRes := <-writerResCh
-
-	bar.Add64(cnst.ChonkSize)
 	bar.Finish()
 	fmt.Fprintln(os.Stderr)
 	barErr := bar.Close()
@@ -264,6 +278,35 @@ func runBatchOwnerWriter(
 	writerResCh <- writerResult{hochoHash: hochoHash, err: werr}
 }
 
+func batchOwnerHashWorkerLoop(
+	ctx context.Context,
+	mappedFile []byte,
+	db *badger.DB,
+	containerMgr *fio.ContainerManager,
+	blockMgr *fio.BlockManager,
+	seenChunks *shardedChunkSet,
+	jobCh <-chan chunkJob,
+	taskCh chan<- chunkTask,
+	workerResCh chan<- workerRes,
+	simhashWriter *simhashAsyncWriter,
+) {
+	for job := range jobCh {
+		err := batchOwnerHashWorker(
+			ctx,
+			mappedFile,
+			job.idx,
+			job.chonkEnd,
+			db,
+			containerMgr,
+			blockMgr,
+			seenChunks,
+			taskCh,
+			simhashWriter,
+		)
+		workerResCh <- workerRes{err: err, bytes: job.chonkEnd - job.idx}
+	}
+}
+
 func batchOwnerHashWorker(
 	ctx context.Context,
 	mappedFile []byte,
@@ -273,14 +316,12 @@ func batchOwnerHashWorker(
 	blockMgr *fio.BlockManager,
 	seenChunks *shardedChunkSet,
 	taskCh chan<- chunkTask,
-	workerResCh chan<- workerRes,
 	simhashWriter *simhashAsyncWriter,
-) {
+) error {
 	chunkBytes := mappedFile[idx:chonkEnd]
 	chash, herr := util.GetChonkHash(chunkBytes, cnst.GetHashAlgo())
 	if herr != nil {
-		workerResCh <- workerRes{herr}
-		return
+		return herr
 	}
 
 	if simhashWriter != nil {
@@ -297,12 +338,10 @@ func batchOwnerHashWorker(
 			if errors.Is(err, badger.ErrKeyNotFound) {
 				cmeta, err = dbio.MaterializeChonkNode(ckey, chunkBytes, db, containerMgr, blockMgr)
 				if err != nil {
-					workerResCh <- workerRes{err}
-					return
+					return err
 				}
 			} else if err != nil {
-				workerResCh <- workerRes{err}
-				return
+				return err
 			}
 		} else {
 			// File mode: WriteChonk is idempotent (os.Stat check); call
@@ -310,26 +349,24 @@ func batchOwnerHashWorker(
 			var merr error
 			cmeta, merr = dbio.MaterializeChonkNode(ckey, chunkBytes, db, nil, blockMgr)
 			if merr != nil {
-				workerResCh <- workerRes{merr}
-				return
+				return merr
 			}
 		}
 	}
 
 	select {
 	case taskCh <- chunkTask{index: idx, chash: chash, cmeta: cmeta}:
-		workerResCh <- workerRes{}
+		return nil
 	case <-ctx.Done():
-		workerResCh <- workerRes{context.Canceled}
+		return context.Canceled
 	}
 }
 
-func captureFirstWorkerErr(err error, firstWorkerErr *error, hasWorkerErr *bool) {
-	if err == nil || *hasWorkerErr {
+func captureFirstWorkerErr(err error, firstWorkerErr *error) {
+	if err == nil || *firstWorkerErr != nil {
 		return
 	}
 	*firstWorkerErr = err
-	*hasWorkerErr = true
 }
 
 // batchOwnerWriteLoop is the single writer goroutine. It owns the WriteBatch
@@ -372,7 +409,7 @@ func batchOwnerWriteLoop(
 	}
 
 	if revRelBuffer != nil {
-		if err := revRelBuffer.flush(fhash, batch); err != nil {
+		if err := revRelBuffer.flush(fhash, db, batch); err != nil {
 			batch.Cancel()
 			return "", err
 		}

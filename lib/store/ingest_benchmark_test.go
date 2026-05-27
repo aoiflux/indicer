@@ -285,7 +285,10 @@ func ingestBatchOwnerWorkerOnce(db *badger.DB, fhash, mappedFile []byte, enableS
 			chonkEnd = int64(len(mappedFile))
 		}
 
-		go batchOwnerHashWorker(ctx, mappedFile, idx, chonkEnd, db, nil, nil, seenChunks, taskCh, workerResCh, simhashWriter)
+		go func(start, end int64) {
+			err := batchOwnerHashWorker(ctx, mappedFile, start, end, db, nil, nil, seenChunks, taskCh, simhashWriter)
+			workerResCh <- workerRes{err: err, bytes: end - start}
+		}(idx, chonkEnd)
 		active++
 
 		if active > workerCount {
@@ -339,7 +342,7 @@ func ingestMetadataWorkloadWithOffset(db *badger.DB, fileCount int, chunkHashes 
 			}
 		}
 
-		if err := revRelBuffer.flush(fhash, batch); err != nil {
+		if err := revRelBuffer.flush(fhash, db, batch); err != nil {
 			batch.Cancel()
 			return err
 		}
@@ -395,7 +398,7 @@ func ingestProcessRevRelWorkloadMode(db *badger.DB, fileCount int, chunkHashes [
 		}
 
 		if revRelBuffer != nil {
-			if err := revRelBuffer.flush(fhash, batch); err != nil {
+			if err := revRelBuffer.flush(fhash, db, batch); err != nil {
 				batch.Cancel()
 				return err
 			}
@@ -762,7 +765,7 @@ func batchOwnerWriteLoopBenchmarkDirect(fhash []byte, db *badger.DB, tasks []chu
 	}
 
 	if revRelBuffer != nil {
-		if err := revRelBuffer.flush(fhash, batch); err != nil {
+		if err := revRelBuffer.flush(fhash, db, batch); err != nil {
 			batch.Cancel()
 			return err
 		}

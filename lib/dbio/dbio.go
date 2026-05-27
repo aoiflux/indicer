@@ -246,6 +246,8 @@ type ReverseRelationAppendMember struct {
 	Index int64
 }
 
+const reverseRelationAppendKeyVersionBinary byte = 1
+
 func reverseRelationAppendShard(fhash []byte) int {
 	if len(fhash) == 0 {
 		return 0
@@ -253,16 +255,17 @@ func reverseRelationAppendShard(fhash []byte) int {
 	return int(fhash[len(fhash)-1]) % cnst.ReverseRelationAppendShardCount
 }
 
-func buildReverseRelationAppendMemberKey(chash []byte, index int64, shard int, encodedFHash string) []byte {
-	key := make([]byte, 0, len(cnst.ReverseRelationAppendNamespace)+len(chash)+len(cnst.DataSeperator)*3+len(encodedFHash)+16)
+func buildReverseRelationAppendMemberKey(chash []byte, index int64, shard int, fhash []byte) []byte {
+	key := make([]byte, 0, len(cnst.ReverseRelationAppendNamespace)+len(chash)+len(cnst.DataSeperator)+1+8+1+len(fhash))
 	key = append(key, cnst.ReverseRelationAppendNamespace...)
 	key = append(key, chash...)
 	key = append(key, cnst.DataSeperator...)
-	key = strconv.AppendInt(key, index, 10)
-	key = append(key, cnst.DataSeperator...)
-	key = strconv.AppendInt(key, int64(shard), 10)
-	key = append(key, cnst.DataSeperator...)
-	key = append(key, encodedFHash...)
+	key = append(key, reverseRelationAppendKeyVersionBinary)
+	var idxBytes [8]byte
+	binary.BigEndian.PutUint64(idxBytes[:], uint64(index))
+	key = append(key, idxBytes[:]...)
+	key = append(key, byte(shard))
+	key = append(key, fhash...)
 	return key
 }
 
@@ -271,11 +274,10 @@ func SetReverseRelationAppendMembers(fhash []byte, members []ReverseRelationAppe
 		return nil
 	}
 
-	encodedFHash := base64.RawURLEncoding.EncodeToString(fhash)
 	shard := reverseRelationAppendShard(fhash)
 
 	for _, member := range members {
-		memberKey := buildReverseRelationAppendMemberKey(member.Chash, member.Index, shard, encodedFHash)
+		memberKey := buildReverseRelationAppendMemberKey(member.Chash, member.Index, shard, fhash)
 		if err := SetBatchNode(memberKey, fhash, batch); err != nil {
 			return err
 		}
@@ -302,6 +304,9 @@ func GetReverseRelationNode(key []byte, db *badger.DB) (map[string]struct{}, err
 
 func GetReverseRelationAppendPrefixMembers(revPrefixKey []byte, db *badger.DB) (map[int64][]string, error) {
 	split := bytes.Split(revPrefixKey, []byte(cnst.DataSeperator))
+	if len(split) < 2 {
+		return nil, fmt.Errorf("invalid reverse relation prefix key: %q", string(revPrefixKey))
+	}
 	chash := bytes.TrimPrefix(split[1], []byte(":"))
 	prefix := util.AppendToBytesSlice(cnst.ReverseRelationAppendNamespace, chash, cnst.DataSeperator)
 	similarMap := make(map[int64][]string)
@@ -326,14 +331,9 @@ func GetReverseRelationAppendPrefixMembers(revPrefixKey []byte, db *badger.DB) (
 				value = decoded
 			}
 
-			split := bytes.Split(memberKey, []byte(cnst.DataSeperator))
-			if len(split) < 3 {
+			idx, ok := reverseRelationAppendMemberIndex(chash, memberKey)
+			if !ok {
 				return fmt.Errorf("invalid reverse-relation append key: %q", string(memberKey))
-			}
-			idxstr := split[2]
-			idx, err := util.GetNumber(string(idxstr))
-			if err != nil {
-				return err
 			}
 
 			revlist := similarMap[idx]
@@ -343,45 +343,142 @@ func GetReverseRelationAppendPrefixMembers(revPrefixKey []byte, db *badger.DB) (
 
 		return nil
 	})
+	if err != nil {
+		return nil, err
+	}
+
+	segmentMap, err := getReverseRelationSegmentPrefixMembers(chash, db)
+	if err != nil {
+		return nil, err
+	}
+	for idx, revlist := range segmentMap {
+		merged := similarMap[idx]
+		for _, revid := range revlist {
+			if util.FindInStringSlice(merged, revid) == int(cnst.IgnoreVar) {
+				merged = append(merged, revid)
+			}
+		}
+		similarMap[idx] = merged
+	}
 
 	return similarMap, err
 }
 
 func getReverseRelationAppendMembers(key []byte, db *badger.DB) (map[string]struct{}, error) {
 	reverseRelations := make(map[string]struct{})
-	prefix := reverseRelationAppendMemberPrefix(key)
+	binaryPrefix, err := reverseRelationAppendMemberPrefixBinary(key)
+	if err != nil {
+		return nil, err
+	}
+	legacyPrefix, err := reverseRelationAppendMemberPrefixLegacy(key)
+	if err != nil {
+		return nil, err
+	}
 
-	err := db.View(func(txn *badger.Txn) error {
+	err = db.View(func(txn *badger.Txn) error {
 		opts := badger.DefaultIteratorOptions
 		opts.PrefetchSize = 128
 		it := txn.NewIterator(opts)
 		defer it.Close()
 
-		for it.Seek(prefix); it.ValidForPrefix(prefix); it.Next() {
-			item := it.Item()
-			value, err := item.ValueCopy(nil)
-			if err != nil {
-				return err
-			}
+		for _, prefix := range [][]byte{binaryPrefix, legacyPrefix} {
+			for it.Seek(prefix); it.ValidForPrefix(prefix); it.Next() {
+				item := it.Item()
+				value, err := item.ValueCopy(nil)
+				if err != nil {
+					return err
+				}
 
-			decoded, err := cnst.DECODER.DecodeAll(value, nil)
-			if err == nil {
-				value = decoded
-			}
+				decoded, err := cnst.DECODER.DecodeAll(value, nil)
+				if err == nil {
+					value = decoded
+				}
 
-			reverseRelations[string(value)] = struct{}{}
+				reverseRelations[string(value)] = struct{}{}
+			}
 		}
 
 		return nil
 	})
+	if err != nil {
+		return nil, err
+	}
+
+	chash, index, err := reverseRelationLookupParts(key)
+	if err != nil {
+		return nil, err
+	}
+	segmentRelations, err := getReverseRelationSegmentMembersAtIndex(chash, index, db)
+	if err != nil {
+		return nil, err
+	}
+	for rel := range segmentRelations {
+		reverseRelations[rel] = struct{}{}
+	}
 
 	return reverseRelations, err
 }
 
-func reverseRelationAppendMemberPrefix(key []byte) []byte {
+func reverseRelationAppendMemberPrefixLegacy(key []byte) ([]byte, error) {
+	chash, index, err := reverseRelationLookupParts(key)
+	if err != nil {
+		return nil, err
+	}
+	return util.AppendToBytesSlice(cnst.ReverseRelationAppendNamespace, chash, cnst.DataSeperator, index, cnst.DataSeperator), nil
+}
+
+func reverseRelationAppendMemberPrefixBinary(key []byte) ([]byte, error) {
+	chash, index, err := reverseRelationLookupParts(key)
+	if err != nil {
+		return nil, err
+	}
+	prefix := make([]byte, 0, len(cnst.ReverseRelationAppendNamespace)+len(chash)+len(cnst.DataSeperator)+1+8)
+	prefix = append(prefix, cnst.ReverseRelationAppendNamespace...)
+	prefix = append(prefix, chash...)
+	prefix = append(prefix, cnst.DataSeperator...)
+	prefix = append(prefix, reverseRelationAppendKeyVersionBinary)
+	var idxBytes [8]byte
+	binary.BigEndian.PutUint64(idxBytes[:], uint64(index))
+	prefix = append(prefix, idxBytes[:]...)
+	return prefix, nil
+}
+
+func reverseRelationLookupParts(key []byte) ([]byte, int64, error) {
 	split := bytes.Split(key, []byte(cnst.DataSeperator))
+	if len(split) < 3 {
+		return nil, 0, fmt.Errorf("invalid reverse relation lookup key: %q", string(key))
+	}
 	chash := bytes.TrimPrefix(split[1], []byte(":"))
-	return util.AppendToBytesSlice(cnst.ReverseRelationAppendNamespace, chash, cnst.DataSeperator, split[2], cnst.DataSeperator)
+	idx, err := strconv.ParseInt(string(split[2]), 10, 64)
+	if err != nil {
+		return nil, 0, err
+	}
+	return chash, idx, nil
+}
+
+func reverseRelationAppendMemberIndex(chash, memberKey []byte) (int64, bool) {
+	prefixLen := len(cnst.ReverseRelationAppendNamespace) + len(chash) + len(cnst.DataSeperator)
+	if len(memberKey) <= prefixLen {
+		return 0, false
+	}
+
+	payload := memberKey[prefixLen:]
+	if payload[0] == reverseRelationAppendKeyVersionBinary {
+		if len(payload) < 1+8 {
+			return 0, false
+		}
+		return int64(binary.BigEndian.Uint64(payload[1 : 1+8])), true
+	}
+
+	split := bytes.Split(memberKey, []byte(cnst.DataSeperator))
+	if len(split) < 3 {
+		return 0, false
+	}
+	idx, err := strconv.ParseInt(string(split[2]), 10, 64)
+	if err != nil {
+		return 0, false
+	}
+	return idx, true
 }
 
 func SetBatchChonkSignature(chash []byte, signature uint64, batch *badger.WriteBatch) error {

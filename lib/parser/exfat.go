@@ -16,16 +16,19 @@ func IndexEXFAT(pfile structs.InputFile, eviID []byte, idxChan chan error, enabl
 	exfatdata, err := libxfat.New(pfile.GetHandle(), true, startOffset)
 	if err != nil {
 		idxChan <- cnst.ErrIncompatibleFileSystem
+		return
 	}
 
 	rootEntries, err := exfatdata.ReadRootDir()
 	if err != nil {
 		idxChan <- err
+		return
 	}
 
 	indexableEntries, err := exfatdata.GetIndexableEntries(rootEntries)
 	if err != nil {
 		idxChan <- err
+		return
 	}
 
 	var flag bool
@@ -41,11 +44,13 @@ func IndexEXFAT(pfile structs.InputFile, eviID []byte, idxChan chan error, enabl
 	encodedPfileHash, err := pfile.GetEncodedHash()
 	if err != nil {
 		idxChan <- err
+		return
 	}
 
 	batch, err := util.InitBatch(pfile.GetDB())
 	if err != nil {
 		idxChan <- err
+		return
 	}
 
 	var index int
@@ -89,12 +94,8 @@ func IndexEXFAT(pfile structs.InputFile, eviID []byte, idxChan chan error, enabl
 }
 
 func checkChannel(idxChan chan error) bool {
-	select {
-	case <-idxChan:
-		return true
-	default:
-		return false
-	}
+	_ = idxChan
+	return true
 }
 
 func getStartOffset(pfileStart uint64) uint64 {

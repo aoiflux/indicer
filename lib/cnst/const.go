@@ -79,6 +79,7 @@ const (
 	RelationNamespace               = "R|||:"
 	ReverseRelationNamespace        = "Я|||:"
 	ReverseRelationAppendNamespace  = "RA|||:"
+	ReverseRelationSegmentNamespace = "RAS|||:"
 	ChonkNamespace                  = "C|||:"
 	ChonkSimhashNamespace           = "S|||:"
 	FileSimhashNamespace            = "F|||:"

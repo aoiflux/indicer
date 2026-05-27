@@ -29,11 +29,11 @@ func (b *revRelAppendBuffer) add(chash []byte, index int64) {
 	b.members = append(b.members, member)
 }
 
-func (b *revRelAppendBuffer) flush(fhash []byte, batch *badger.WriteBatch) error {
+func (b *revRelAppendBuffer) flush(fhash []byte, db *badger.DB, batch *badger.WriteBatch) error {
 	if b == nil {
 		return nil
 	}
 	members := b.members
 	b.members = nil
-	return dbio.SetReverseRelationAppendMembers(fhash, members, batch)
+	return dbio.SetReverseRelationSegmentMembers(fhash, members, db, batch)
 }

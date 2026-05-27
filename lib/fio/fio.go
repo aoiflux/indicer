@@ -2,6 +2,7 @@ package fio
 
 import (
 	"encoding/base64"
+	"errors"
 	"indicer/lib/cnst"
 	"indicer/lib/util"
 	"os"
@@ -25,14 +26,26 @@ func WriteChonk(dbpath string, data, ckey, key []byte) ([]byte, error) {
 	cfname := base64.RawURLEncoding.EncodeToString(ckhash) + cnst.BLOBEXT
 	cfpath := filepath.Join(util.BlobPath(dbpath), cfname)
 
-	// Idempotent: if the file already exists, its content is identical
-	// (content-addressed by ckey hash), so we can return the path unchanged.
-	if _, serr := os.Stat(cfpath); serr == nil {
-		return []byte(cfpath), nil
+	f, err := os.OpenFile(cfpath, os.O_CREATE|os.O_EXCL|os.O_WRONLY, cnst.FilePerm)
+	if err != nil {
+		if errors.Is(err, os.ErrExist) {
+			// Idempotent content-addressed write: an existing blob is expected.
+			return []byte(cfpath), nil
+		}
+		return nil, err
 	}
 
-	err = os.WriteFile(cfpath, data, cnst.FilePerm)
-	return []byte(cfpath), err
+	if _, err := f.Write(data); err != nil {
+		_ = f.Close()
+		_ = os.Remove(cfpath)
+		return nil, err
+	}
+	if err := f.Close(); err != nil {
+		_ = os.Remove(cfpath)
+		return nil, err
+	}
+
+	return []byte(cfpath), nil
 }
 
 func ReadChonk(cfpath, key []byte) ([]byte, error) {

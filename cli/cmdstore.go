@@ -494,7 +494,6 @@ func indexEvidenceFile(eviFile structs.InputFile, db *badger.DB, enableFTS bool,
 	}
 	tuskJSON, hasTusk := parser.TuskAnalysis(eviFile.GetHandle().Name())
 	partitions := parser.ParseImage(tuskJSON, hasTusk, eviFile.GetSize(), eviFile.GetHandle())
-	idxChan := make(chan error)
 
 	var enrichRepo *enrichment.GrapheneRepository
 	if enableEnrichment {
@@ -509,6 +508,7 @@ func indexEvidenceFile(eviFile structs.InputFile, db *badger.DB, enableFTS bool,
 	logging.GetLogger().Debug("indexEvidenceFile PARTITION_PARSE_COMPLETE", zap.Int("partition_count", len(partitions)))
 
 	for index, partition := range partitions {
+		idxChan := make(chan error)
 		var phash []byte
 		if cnst.StoreHashStrategy == cnst.HochoHashStrategy && cnst.HochoMode != cnst.HochoModeBaseline {
 			reusedHash, reused, reuseErr := store.TryComputeLogicalHochoWithEdges(eviFile.GetID(), partition.Start, partition.Size, eviFile.GetMappedFile(), db)
@@ -560,13 +560,10 @@ func indexEvidenceFile(eviFile structs.InputFile, db *badger.DB, enableFTS bool,
 		} else {
 			go parser.IndexEXFAT(pfile, eviFile.GetID(), idxChan, enableFTS, enableEnrichment)
 		}
-		// Use select so that if the goroutine finishes before we send the
-		// start signal (e.g. empty partition with no files), we receive the
-		// result directly instead of deadlocking on the send.
 		select {
-		case idxChan <- nil:
-			err = <-idxChan
 		case err = <-idxChan:
+		case <-time.After(5 * time.Minute):
+			err = fmt.Errorf("partition indexing timed out (partition=%d name=%s)", index+1, pfile.GetName())
 		}
 		if errors.Is(err, cnst.ErrIncompatibleFile) {
 			continue

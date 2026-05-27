@@ -11,6 +11,7 @@ import (
 	"indicer/lib/structs"
 	"indicer/lib/util"
 	"os"
+	"time"
 
 	"github.com/dgraph-io/badger/v4"
 	"github.com/google/uuid"
@@ -98,12 +99,13 @@ func registerIndexedRange(idxmap map[string]structs.IndexedFile, pfile structs.I
 	return nil
 }
 
+type indexedRef struct {
+	idB64   string
+	hashB64 string
+}
+
 func finalizeIndexedFiles(idxmap map[string]structs.IndexedFile, pfile structs.InputFile, batch *badger.WriteBatch, idxChan chan error, eviID []byte, enableFTS bool, enableEnrichment bool) error {
 	indexedIDs := make([]string, 0, len(idxmap))
-	type indexedRef struct {
-		idB64   string
-		hashB64 string
-	}
 	refs := make([]indexedRef, 0, len(idxmap))
 	for indexedID, ifile := range idxmap {
 		indexedIDs = append(indexedIDs, indexedID)
@@ -115,28 +117,31 @@ func finalizeIndexedFiles(idxmap map[string]structs.IndexedFile, pfile structs.I
 		return err
 	}
 
+	fmt.Fprintln(os.Stderr, "Flushing indexed metadata batch...")
 	err = batch.Flush()
 	if err != nil {
 		return err
 	}
+	fmt.Fprintln(os.Stderr, "Indexed metadata batch flush complete.")
 
-	for _, ref := range refs {
-		rawID, err := base64.StdEncoding.DecodeString(ref.idB64)
+	fmt.Fprintln(os.Stderr, "Linking indexed hash lookups...")
+	if err := appendIndexedHashLookupsBatched(pfile.GetDB(), refs); err != nil {
+		return err
+	}
+	fmt.Fprintln(os.Stderr, "Indexed hash lookup linking complete.")
+
+	pchan := make(chan error)
+	fmt.Fprintln(os.Stderr, "Persisting partition metadata...")
+	go store.Store(pfile, pchan)
+	select {
+	case err := <-pchan:
 		if err != nil {
 			return err
 		}
-		indexedKey := dbio.CanonicalIndexedKey(rawID)
-		lookupKey := util.AppendToBytesSlice(cnst.IdxFileHashLookupNamespace, ref.hashB64)
-		if err := dbio.AppendHashLookupUUIDByKey(pfile.GetDB(), lookupKey, indexedKey); err != nil {
-			return err
-		}
+	case <-time.After(2 * time.Minute):
+		return fmt.Errorf("partition metadata persist timed out for %s", pfile.GetName())
 	}
-
-	pchan := make(chan error)
-	go store.Store(pfile, pchan)
-	if err := <-pchan; err != nil {
-		return err
-	}
+	fmt.Fprintln(os.Stderr, "Partition metadata persist complete.")
 
 	if enableEnrichment {
 		repo, err := enrichment.OpenGrapheneRepository(pfile.GetDB().Opts().Dir)
@@ -153,6 +158,50 @@ func finalizeIndexedFiles(idxmap map[string]structs.IndexedFile, pfile structs.I
 	if enableFTS {
 		return indexFullTextSidecar(pfile.GetDB(), ftsJobs)
 	}
+	return nil
+}
+
+func appendIndexedHashLookupsBatched(db *badger.DB, refs []indexedRef) error {
+	if len(refs) == 0 {
+		return nil
+	}
+
+	const batchSize = 512
+	bar := progressbar.NewOptions64(
+		int64(len(refs)),
+		progressbar.OptionSetDescription("Linking hash lookups"),
+		progressbar.OptionSetWriter(os.Stderr),
+		progressbar.OptionSetTheme(cnst.CommonProgressBarTheme),
+	)
+
+	for start := 0; start < len(refs); start += batchSize {
+		end := start + batchSize
+		if end > len(refs) {
+			end = len(refs)
+		}
+
+		if err := db.Update(func(txn *badger.Txn) error {
+			for _, ref := range refs[start:end] {
+				rawID, err := base64.StdEncoding.DecodeString(ref.idB64)
+				if err != nil {
+					return err
+				}
+				indexedKey := dbio.CanonicalIndexedKey(rawID)
+				lookupKey := util.AppendToBytesSlice(cnst.IdxFileHashLookupNamespace, ref.hashB64)
+				if err := dbio.AppendHashLookupUUIDByKeyTxn(txn, lookupKey, indexedKey); err != nil {
+					return err
+				}
+			}
+			return nil
+		}); err != nil {
+			return err
+		}
+
+		bar.Add(end - start)
+	}
+
+	bar.Finish()
+	fmt.Fprintln(os.Stderr)
 	return nil
 }
 

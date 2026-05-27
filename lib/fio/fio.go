@@ -3,23 +3,35 @@ package fio
 import (
 	"encoding/base64"
 	"errors"
+	"fmt"
 	"indicer/lib/cnst"
 	"indicer/lib/util"
 	"os"
 	"path/filepath"
+
+	"github.com/zeebo/blake3"
 )
 
-func WriteChonk(dbpath string, data, ckey, key []byte) ([]byte, error) {
-	var err error
-	if !cnst.QUICKOPT {
-		data = cnst.ENCODER.EncodeAll(data, make([]byte, 0, len(data)))
-		data, err = util.SealAES(key, data)
-		if err != nil {
-			return nil, err
-		}
+func getKeyedHash(ckey, key []byte) ([]byte, error) {
+	if len(key) != 32 {
+		return nil, fmt.Errorf("invalid keyed hash key length: got %d, want 32", len(key))
 	}
 
-	ckhash, err := util.GetChonkHash(ckey, cnst.GetHashAlgo())
+	hasher, err := blake3.NewKeyed(key)
+	if err != nil {
+		return nil, err
+	}
+	_, err = hasher.Write(ckey)
+	if err != nil {
+		return nil, err
+	}
+	hash := hasher.Sum(nil)
+	return hash, nil
+}
+func WriteChonk(dbpath string, data, ckey, key []byte) ([]byte, error) {
+	var err error
+
+	ckhash, err := getKeyedHash(ckey, key)
 	if err != nil {
 		return nil, err
 	}

@@ -12,7 +12,10 @@ import (
 )
 
 func StoreStreamedFile(fpath string) error {
-	key := util.HashPassword("")
+	key, err := util.HashPassword("")
+	if err != nil {
+		return err
+	}
 	return cli.StoreFile(int(cnst.DefaultChonkSize), fpath, key, false, false, false, false, cnst.DB)
 }
 

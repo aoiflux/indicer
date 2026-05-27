@@ -202,10 +202,14 @@ func AppendToBytesSlice(args ...interface{}) []byte {
 	return out
 }
 
-func HashPassword(password string) []byte {
+func HashPassword(password string) ([]byte, error) {
 	hasher := sha3.New256()
-	hash := hasher.Sum([]byte(password))
-	return hash[:]
+	_, err := hasher.Write([]byte(password))
+	if err != nil {
+		return nil, err
+	}
+	hash := hasher.Sum(nil)
+	return hash[:], nil
 }
 
 func PartialMatchConfidence(s1, s2 []byte) float64 {

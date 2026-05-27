@@ -582,22 +582,27 @@ func materializeContainerChonkNode(key, data []byte, originalSize int64, db *bad
 }
 
 func materializeFileChonkNode(key, data []byte, originalSize int64, db *badger.DB) ([]byte, error) {
+	if !cnst.QUICKOPT {
+		data = cnst.ENCODER.EncodeAll(data, make([]byte, 0, len(data)))
+		var err error
+		data, err = util.SealAES(db.Opts().EncryptionKey, data)
+		if err != nil {
+			return nil, err
+		}
+	}
+
 	cfpath, err := fio.WriteChonk(db.Opts().Dir, data, key, db.Opts().EncryptionKey)
 	if err != nil {
 		return nil, err
 	}
-
-	stat, err := os.Stat(string(cfpath))
-	if err != nil {
-		return nil, err
-	}
+	dataLen := int64(len(data))
 
 	metadata := structs.ChonkMetadata{
 		Path:         string(cfpath),
 		Offset:       0,
 		OriginalSize: originalSize,
-		StoredSize:   stat.Size(),
-		EncodedSize:  stat.Size(),
+		StoredSize:   dataLen,
+		EncodedSize:  dataLen,
 		Container:    false,
 	}
 	encodedMetadata, err := msgpack.Marshal(metadata)

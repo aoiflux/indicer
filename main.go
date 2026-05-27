@@ -199,7 +199,10 @@ func main() {
 		cnst.CONTAINERMODE = true
 	}
 
-	key := util.HashPassword(*pwd)
+	key, err := util.HashPassword(*pwd)
+	if err != nil {
+		handle(err)
+	}
 
 	// Skip banner for TUI mode
 	if parsed != cmdtui.FullCommand() && parsed != cmdversion.FullCommand() {

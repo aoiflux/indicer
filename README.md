@@ -67,7 +67,7 @@ by patents 567877 and 556272 registered at the Indian Patent Office.
 
 See also:
 
-- [TOOLCHAIN_NOTES.md](TOOLCHAIN_NOTES.md)
+- [TOOLCHAIN_NOTES.md](docs/TOOLCHAIN_NOTES.md)
 - [clib/LIBTUSK_ABI.md](clib/LIBTUSK_ABI.md)
 
 ### 3) Search and ranking

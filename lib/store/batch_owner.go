@@ -158,6 +158,13 @@ func storeEvidenceDataBatchOwner(infile structs.InputFile) (evidenceHochoHash st
 		}
 	}
 
+	if !cnst.CONTAINERMODE && cnst.StoreAsyncFileWrites {
+		fio.StartAsyncFileWriter(0)
+		defer func() {
+			mergeDeferredErr(&err, fio.CloseAsyncFileWriter())
+		}()
+	}
+
 	// ctx is cancelled when the writer goroutine exits with an error so that
 	// in-flight workers do not block indefinitely on taskCh.
 	ctx, cancel := context.WithCancel(context.Background())

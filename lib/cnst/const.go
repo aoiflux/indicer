@@ -34,6 +34,8 @@ const (
 	HochoModeBaseline   = "baseline"
 	HochoModeReuse      = "reuse"
 	HochoModePostDedup  = "postdedup"
+	StorePipelineBatch  = "batch-owner"
+	StorePipelineStaged = "staged"
 )
 
 const (
@@ -61,6 +63,8 @@ var ENABLESIMHASH = false  // compute and persist per-chunk simhash signatures d
 var CompressLevel = "best" // per-chunk zstd ingest level: fast | default | best
 var StoreHashStrategy = SyncHashStrategy
 var HochoMode = HochoModeBaseline
+var StorePipelineMode = StorePipelineBatch
+var StoreAsyncFileWrites = false
 var StoreWorkerCount = 0
 var StoreTaskQueueDepth = 0
 var RestoreWorkerCount = 0
@@ -161,6 +165,8 @@ const (
 	FlagHashAlgo             = "hash-algo"
 	FlagHashAlgoShort        = 'g'
 	FlagHashStrategy         = "hash-strategy"
+	FlagStorePipeline        = "pipeline"
+	FlagStoreAsyncFileWrite  = "async-fio"
 	FlagHochoMode            = "hocho-mode"
 	FlagExplainExact         = "explain-exact"
 	FlagExplainExactShort    = 't'
@@ -231,6 +237,26 @@ func SetStoreHashStrategy(strategy string) error {
 		return errors.New("invalid hash strategy: must be sync, async, or hocho")
 	}
 	StoreHashStrategy = normalized
+	return nil
+}
+
+func NormalizeStorePipeline(mode string) string {
+	switch strings.ToLower(strings.TrimSpace(mode)) {
+	case StorePipelineBatch, "":
+		return StorePipelineBatch
+	case StorePipelineStaged:
+		return StorePipelineStaged
+	default:
+		return ""
+	}
+}
+
+func SetStorePipeline(mode string) error {
+	normalized := NormalizeStorePipeline(mode)
+	if normalized == "" {
+		return errors.New("invalid store pipeline: must be batch-owner or staged")
+	}
+	StorePipelineMode = normalized
 	return nil
 }
 

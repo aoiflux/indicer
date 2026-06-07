@@ -19,6 +19,13 @@ func WriteChonk(dbpath string, data, ckey, key []byte) ([]byte, error) {
 	cfname := base64.RawURLEncoding.EncodeToString(ckhash) + cnst.BLOBEXT
 	cfpath := filepath.Join(util.BlobPath(dbpath), cfname)
 
+	if cnst.StoreAsyncFileWrites {
+		if err := EnqueueAsyncFileWrite(cfpath, data); err != nil {
+			return nil, err
+		}
+		return []byte(cfpath), nil
+	}
+
 	f, err := os.OpenFile(cfpath, os.O_CREATE|os.O_EXCL|os.O_WRONLY, cnst.FilePerm)
 	if err != nil {
 		if errors.Is(err, os.ErrExist) {

@@ -56,6 +56,8 @@ func main() {
 	enableEnrichment := cmdstore.Flag(cnst.FlagEnableEnrichment, "Upsert disk/partition/indexed-file metadata nodes into graphdb during store").Default("false").Bool()
 	storeHashAlgo := cmdstore.Flag(cnst.FlagHashAlgo, "Hashing algorithm to use [sha3|blake3] (default: BLAKE3)").Short(cnst.FlagHashAlgoShort).Default(cnst.BLAKE3).String()
 	storeHashStrategy := cmdstore.Flag(cnst.FlagHashStrategy, "Store hash strategy for evidence [sync|async|hocho] (default: sync)").Default(cnst.SyncHashStrategy).String()
+	storePipeline := cmdstore.Flag(cnst.FlagStorePipeline, "Store ingest pipeline mode [batch-owner|staged] (default: batch-owner)").Default(cnst.StorePipelineBatch).String()
+	storeAsyncFileWrite := cmdstore.Flag(cnst.FlagStoreAsyncFileWrite, "EXPERIMENTAL: queue file-mode chunk writes to an async writer and drain before completion").Default("false").Bool()
 	hochoMode := cmdstore.Flag(cnst.FlagHochoMode, "Hocho logical hashing mode [baseline|reuse|postdedup] (default: baseline)").Default(cnst.HochoModeBaseline).String()
 	enableSimhash := cmdstore.Flag(cnst.FlagSimhash, "Compute and store per-chunk simhash signatures during ingest (enables NeAR chunk-level similarity; off by default)").Default("false").Bool()
 	storeWorkers := cmdstore.Flag(cnst.FlagStoreWorkers, "Override batch-owner worker count (0 = mode-aware default)").Default("0").Int()
@@ -150,6 +152,9 @@ func main() {
 		if err := cnst.SetStoreHashStrategy(*storeHashStrategy); err != nil {
 			handle(err)
 		}
+		if err := cnst.SetStorePipeline(*storePipeline); err != nil {
+			handle(err)
+		}
 		if err := cnst.SetHochoMode(*hochoMode); err != nil {
 			handle(err)
 		}
@@ -164,6 +169,7 @@ func main() {
 			handle(fmt.Errorf("--%s is only valid when --%s=hocho", cnst.FlagHochoMode, cnst.FlagHashStrategy))
 		}
 		cnst.ENABLESIMHASH = *enableSimhash
+		cnst.StoreAsyncFileWrites = *storeAsyncFileWrite
 		cnst.StoreWorkerCount = *storeWorkers
 		cnst.StoreTaskQueueDepth = *storeQueue
 		storePipelineWorkers, storePipelineQueue = cnst.GetStorePipelineTuning(cnst.CONTAINERMODE, cnst.HIERARCHICALINDEX)
@@ -228,6 +234,10 @@ func main() {
 		}
 		if parsed == cmdstore.FullCommand() {
 			color.Cyan("⚙ store pipeline: workers=%d queue=%d", storePipelineWorkers, storePipelineQueue)
+			color.Cyan("⚙ store pipeline mode: %s", cnst.StorePipelineMode)
+			if cnst.StoreAsyncFileWrites {
+				color.Yellow("⚗ async file writes: enabled (experimental)")
+			}
 			if cnst.StoreHashStrategy == cnst.HochoHashStrategy {
 				color.Cyan("⚙ hocho mode: %s", cnst.HochoMode)
 			}
@@ -249,6 +259,8 @@ func main() {
 			zap.String("file", *evipath),
 			zap.String("dbpath", *dbpath),
 			zap.Int("chonksize_kb", *chonkSize),
+			zap.String("store_pipeline_mode", cnst.StorePipelineMode),
+			zap.Bool("store_async_file_write", cnst.StoreAsyncFileWrites),
 			zap.String("hash_strategy", cnst.StoreHashStrategy),
 			zap.Bool("sync_index", *syncIndex),
 			zap.Bool("no_index", *noIndex),

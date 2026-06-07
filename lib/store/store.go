@@ -163,7 +163,12 @@ func storeEvidenceFile(infile structs.InputFile) error {
 		)
 		return nil
 	}
-	hochoEvidenceHash, err := storeEvidenceDataBatchOwner(infile)
+	var hochoEvidenceHash string
+	if cnst.StorePipelineMode == cnst.StorePipelineStaged {
+		hochoEvidenceHash, err = storeEvidenceDataStaged(infile)
+	} else {
+		hochoEvidenceHash, err = storeEvidenceDataBatchOwner(infile)
+	}
 	if err != nil {
 		return failEvidenceStore(infile, err)
 	}

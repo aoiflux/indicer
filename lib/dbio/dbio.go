@@ -444,12 +444,21 @@ func reverseRelationAppendMemberPrefixBinary(key []byte) ([]byte, error) {
 }
 
 func reverseRelationLookupParts(key []byte) ([]byte, int64, error) {
-	split := bytes.Split(key, []byte(cnst.DataSeperator))
-	if len(split) < 3 {
+	if !bytes.HasPrefix(key, []byte(cnst.ReverseRelationNamespace)) {
 		return nil, 0, fmt.Errorf("invalid reverse relation lookup key: %q", string(key))
 	}
-	chash := bytes.TrimPrefix(split[1], []byte(":"))
-	idx, err := strconv.ParseInt(string(split[2]), 10, 64)
+	body := key[len(cnst.ReverseRelationNamespace):]
+	sep := []byte(cnst.DataSeperator)
+	sepIdx := bytes.LastIndex(body, sep)
+	if sepIdx < 0 {
+		return nil, 0, fmt.Errorf("invalid reverse relation lookup key: %q", string(key))
+	}
+	chash := body[:sepIdx]
+	idxBytes := bytes.TrimLeft(body[sepIdx+len(sep):], "|:")
+	if len(idxBytes) == 0 {
+		return nil, 0, fmt.Errorf("invalid reverse relation lookup key index: %q", string(key))
+	}
+	idx, err := strconv.ParseInt(string(idxBytes), 10, 64)
 	if err != nil {
 		return nil, 0, err
 	}
@@ -470,11 +479,16 @@ func reverseRelationAppendMemberIndex(chash, memberKey []byte) (int64, bool) {
 		return int64(binary.BigEndian.Uint64(payload[1 : 1+8])), true
 	}
 
-	split := bytes.Split(memberKey, []byte(cnst.DataSeperator))
-	if len(split) < 3 {
+	sep := []byte(cnst.DataSeperator)
+	idxEnd := bytes.Index(payload, sep)
+	if idxEnd < 0 {
 		return 0, false
 	}
-	idx, err := strconv.ParseInt(string(split[2]), 10, 64)
+	idxBytes := bytes.TrimLeft(payload[:idxEnd], "|:")
+	if len(idxBytes) == 0 {
+		return 0, false
+	}
+	idx, err := strconv.ParseInt(string(idxBytes), 10, 64)
 	if err != nil {
 		return 0, false
 	}
@@ -927,13 +941,29 @@ func GuessFileTypes(encodedHash string, db *badger.DB) ([][]byte, error) {
 		return nil, err
 	}
 
+	var matches [][]byte
+	seen := make(map[string]struct{})
+	appendUnique := func(ids ...[]byte) {
+		for _, id := range ids {
+			if len(id) == 0 {
+				continue
+			}
+			k := string(id)
+			if _, ok := seen[k]; ok {
+				continue
+			}
+			seen[k] = struct{}{}
+			matches = append(matches, id)
+		}
+	}
+
 	fid := util.AppendToBytesSlice(cnst.IdxFileNamespace, fhash)
 	err = PingNode(fid, db)
 	if err != nil && err != badger.ErrKeyNotFound {
 		return nil, err
 	}
 	if err == nil {
-		return [][]byte{fid}, nil
+		appendUnique(fid)
 	}
 
 	fid = util.AppendToBytesSlice(cnst.PartiFileNamespace, fhash)
@@ -942,41 +972,43 @@ func GuessFileTypes(encodedHash string, db *badger.DB) ([][]byte, error) {
 		return nil, err
 	}
 	if err == nil {
-		return [][]byte{fid}, nil
+		appendUnique(fid)
 	}
 
 	partitionLookupKey := util.AppendToBytesSlice(cnst.PartiFileHashLookupNamespace, encodedHash)
 	mappedPartitionIDs, err := GetHashLookupUUIDsByKey(partitionLookupKey, db)
 	if err == nil {
-		return mappedPartitionIDs, nil
-	}
-	if err != badger.ErrKeyNotFound {
+		appendUnique(mappedPartitionIDs...)
+	} else if err != badger.ErrKeyNotFound {
 		return nil, err
 	}
 
 	indexedLookupKey := util.AppendToBytesSlice(cnst.IdxFileHashLookupNamespace, encodedHash)
 	mappedIndexedIDs, err := GetHashLookupUUIDsByKey(indexedLookupKey, db)
 	if err == nil {
-		return mappedIndexedIDs, nil
-	}
-	if err != badger.ErrKeyNotFound {
+		appendUnique(mappedIndexedIDs...)
+	} else if err != badger.ErrKeyNotFound {
 		return nil, err
 	}
 
 	fid = util.AppendToBytesSlice(cnst.EviFileNamespace, fhash)
 	err = PingNode(fid, db)
-	if err == nil || err != badger.ErrKeyNotFound {
-		return [][]byte{fid}, err
+	if err == nil {
+		appendUnique(fid)
+	} else if err != badger.ErrKeyNotFound {
+		return nil, err
 	}
 
 	lookupKey := util.AppendToBytesSlice(cnst.EviFileHashLookupNamespace, encodedHash)
 	mappedIDs, err := GetHashLookupUUIDsByKey(lookupKey, db)
 	if err == nil {
-		return mappedIDs, nil
-	}
-	if err != badger.ErrKeyNotFound {
+		appendUnique(mappedIDs...)
+	} else if err != badger.ErrKeyNotFound {
 		return nil, err
 	}
 
-	return nil, badger.ErrKeyNotFound
+	if len(matches) == 0 {
+		return nil, badger.ErrKeyNotFound
+	}
+	return matches, nil
 }

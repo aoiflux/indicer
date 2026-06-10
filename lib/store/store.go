@@ -309,6 +309,9 @@ func processRel(index int64, fhash, chash []byte, db *badger.DB, batch *badger.W
 	return dbio.SetBatchNode(relKey, chash, batch)
 }
 func processRevRel(index int64, fhash, chash []byte, batch *badger.WriteBatch, revRelBuffer *revRelAppendBuffer) error {
+	if !cnst.ENABLEREVREL {
+		return nil
+	}
 	if revRelBuffer != nil {
 		revRelBuffer.add(chash, index)
 	} else if err := dbio.SetReverseRelationAppendMember(chash, index, fhash, batch); err != nil {

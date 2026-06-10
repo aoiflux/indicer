@@ -121,23 +121,10 @@ func NearOutFile(fpath string, db *badger.DB, deep, explainExact, verify bool, t
 }
 
 func getExactOutMatchIDs(fileHash []byte, db *badger.DB) ([][]byte, bool, error) {
-	// Indexed files are still content-addressed: I|||:<rawHash>
-	idxID := util.AppendToBytesSlice(cnst.IdxFileNamespace, fileHash)
-	if err := dbio.PingNode(idxID, db); err == nil {
-		return [][]byte{idxID}, true, nil
-	} else if err != badger.ErrKeyNotFound {
-		return nil, false, err
-	}
-
-	// Evidence files are UUID-keyed; resolve via reverse hash index.
 	encodedHash := base64.StdEncoding.EncodeToString(fileHash)
-	lookupKey := util.AppendToBytesSlice(cnst.EviFileHashLookupNamespace, encodedHash)
-	resolvedIDs, err := dbio.GetHashLookupUUIDsByKey(lookupKey, db)
+	resolvedIDs, err := dbio.GuessFileTypes(encodedHash, db)
 	if err == nil {
-		if len(resolvedIDs) == 0 {
-			return nil, false, nil
-		}
-		return resolvedIDs, true, nil
+		return resolvedIDs, len(resolvedIDs) > 0, nil
 	}
 	if err != badger.ErrKeyNotFound {
 		return nil, false, err

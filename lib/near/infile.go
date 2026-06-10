@@ -164,9 +164,13 @@ func NearInFile(fhash string, db *badger.DB, deep, verify bool, topK int) error 
 	start := time.Now()
 	resetNearChunkContributions()
 
-	fid, err := dbio.GuessFileType(fhash, db)
+	fids, err := dbio.GuessFileTypes(fhash, db)
 	if err != nil {
 		return err
+	}
+	fid := fids[len(fids)-1]
+	for _, exactID := range fids {
+		addNearExactMatchID(string(exactID))
 	}
 	addNearExactMatchID(string(fid))
 
@@ -220,7 +224,9 @@ func NearInFile(fhash string, db *badger.DB, deep, verify bool, topK int) error 
 	if err != nil {
 		return err
 	}
-	idmap.Set(string(fid), 100, true)
+	for _, exactID := range fids {
+		idmap.Set(string(exactID), 100, true)
+	}
 
 	reportPath, err := writeNearJSONReport(fid, fhash, idmap, deep, time.Since(start), db, vcfg)
 	if err != nil {

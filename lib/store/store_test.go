@@ -2,11 +2,13 @@ package store
 
 import (
 	"bytes"
+	"errors"
 	"testing"
 
 	"indicer/lib/cnst"
 	"indicer/lib/dbio"
 	"indicer/lib/structs"
+	"indicer/lib/util"
 
 	"github.com/dgraph-io/badger/v4"
 	"github.com/edsrzf/mmap-go"
@@ -111,6 +113,67 @@ func TestEvidenceFilePreflightClearsFailedFlagOnRetry(t *testing.T) {
 	}
 	if persisted.Failed {
 		t.Fatal("expected persisted failed flag to be cleared")
+	}
+}
+
+func TestProcessRevRelSkippedWhenDisabled(t *testing.T) {
+	db := openTestDB(t)
+
+	prev := cnst.ENABLEREVREL
+	cnst.ENABLEREVREL = false
+	t.Cleanup(func() {
+		cnst.ENABLEREVREL = prev
+	})
+
+	index := int64(0)
+	fhash := []byte("file-disabled")
+	chash := []byte("chunk-disabled")
+
+	batch := db.NewWriteBatch()
+	if err := processRevRel(index, fhash, chash, batch, nil); err != nil {
+		batch.Cancel()
+		t.Fatalf("processRevRel disabled: %v", err)
+	}
+	if err := batch.Flush(); err != nil {
+		t.Fatalf("batch.Flush disabled: %v", err)
+	}
+
+	revKey := util.AppendToBytesSlice(cnst.ReverseRelationNamespace, chash, cnst.DataSeperator, index)
+	_, err := dbio.GetReverseRelationNode(revKey, db)
+	if !errors.Is(err, badger.ErrKeyNotFound) {
+		t.Fatalf("expected badger.ErrKeyNotFound when reverse relations disabled, got %v", err)
+	}
+}
+
+func TestProcessRevRelWritesWhenEnabled(t *testing.T) {
+	db := openTestDB(t)
+
+	prev := cnst.ENABLEREVREL
+	cnst.ENABLEREVREL = true
+	t.Cleanup(func() {
+		cnst.ENABLEREVREL = prev
+	})
+
+	index := int64(0)
+	fhash := []byte("file-enabled")
+	chash := []byte("chunk-enabled")
+
+	batch := db.NewWriteBatch()
+	if err := processRevRel(index, fhash, chash, batch, nil); err != nil {
+		batch.Cancel()
+		t.Fatalf("processRevRel enabled: %v", err)
+	}
+	if err := batch.Flush(); err != nil {
+		t.Fatalf("batch.Flush enabled: %v", err)
+	}
+
+	revKey := util.AppendToBytesSlice(cnst.ReverseRelationNamespace, chash, cnst.DataSeperator, index)
+	revMap, err := dbio.GetReverseRelationNode(revKey, db)
+	if err != nil {
+		t.Fatalf("GetReverseRelationNode enabled: %v", err)
+	}
+	if _, ok := revMap[string(fhash)]; !ok {
+		t.Fatalf("expected reverse relation member %q when enabled", string(fhash))
 	}
 }
 

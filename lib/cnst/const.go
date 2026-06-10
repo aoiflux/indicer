@@ -60,6 +60,7 @@ var QUICKOPT bool
 var CONTAINERMODE bool
 var HIERARCHICALINDEX bool
 var ENABLESIMHASH = false  // compute and persist per-chunk simhash signatures during ingest (opt-in via --simhash)
+var ENABLEREVREL = false   // persist reverse-relation writes during ingest (opt-in via --enable-revrel)
 var CompressLevel = "best" // per-chunk zstd ingest level: fast | default | best
 var StoreHashStrategy = SyncHashStrategy
 var HochoMode = HochoModeBaseline
@@ -176,11 +177,12 @@ const (
 	FlagRepairMigrateRevRel  = "migrate-revrel"
 	FlagTopK                 = "top-k"
 	FlagTopKShort            = 'k'
-	FlagEnableFts            = "enable-fts"
+	FlagEnableFts            = "fts"
 	FlagEnableEnrichment     = "enrich"
 	FlagListStatus           = "status"
 	FlagCompressLevel        = "compress-level"
 	FlagSimhash              = "simhash"
+	FlagEnableRevRel         = "revrel"
 	FlagStoreWorkers         = "store-workers"
 	FlagStoreQueue           = "store-queue"
 	FlagRestoreWorkers       = "restore-workers"

@@ -168,10 +168,7 @@ func partialChonkMatch(inhash []byte, inputSig uint64, db *badger.DB) ([]byte, f
 			}
 			if temp > confidence {
 				confidence = temp
-
-				split := bytes.Split(key, []byte(cnst.DataSeperator))
-				idxstr := split[len(split)-1]
-				idx, err := strconv.ParseInt(string(idxstr), 10, 64)
+				idx, err := parseTrailingRelationIndex(key)
 				if err != nil {
 					return err
 				}
@@ -183,6 +180,28 @@ func partialChonkMatch(inhash []byte, inputSig uint64, db *badger.DB) ([]byte, f
 	})
 
 	return keyToReturn, confidence, err
+}
+
+func parseTrailingRelationIndex(key []byte) (int64, error) {
+	if len(key) == 0 {
+		return 0, errors.New("invalid relation key: empty")
+	}
+
+	end := len(key) - 1
+	for end >= 0 && key[end] >= '0' && key[end] <= '9' {
+		end--
+	}
+
+	start := end + 1
+	if start >= len(key) {
+		return 0, errors.New("invalid relation key: missing trailing index")
+	}
+
+	idx, err := strconv.ParseInt(string(key[start:]), 10, 64)
+	if err != nil {
+		return 0, err
+	}
+	return idx, nil
 }
 
 func checkInSignature(inputSig uint64, chash []byte, cache map[string]uint64, db *badger.DB) (float64, error) {

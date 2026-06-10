@@ -60,6 +60,7 @@ func main() {
 	storeAsyncFileWrite := cmdstore.Flag(cnst.FlagStoreAsyncFileWrite, "EXPERIMENTAL: queue file-mode chunk writes to an async writer and drain before completion").Default("false").Bool()
 	hochoMode := cmdstore.Flag(cnst.FlagHochoMode, "Hocho logical hashing mode [baseline|reuse|postdedup] (default: baseline)").Default(cnst.HochoModeBaseline).String()
 	enableSimhash := cmdstore.Flag(cnst.FlagSimhash, "Compute and store per-chunk simhash signatures during ingest (enables NeAR chunk-level similarity; off by default)").Default("false").Bool()
+	enableRevRel := cmdstore.Flag(cnst.FlagEnableRevRel, "Persist reverse-relation keys during ingest (off by default for higher ingest throughput)").Default("false").Bool()
 	storeWorkers := cmdstore.Flag(cnst.FlagStoreWorkers, "Override batch-owner worker count (0 = mode-aware default)").Default("0").Int()
 	storeQueue := cmdstore.Flag(cnst.FlagStoreQueue, "Override batch-owner task queue depth (0 = mode-aware default)").Default("0").Int()
 
@@ -169,6 +170,7 @@ func main() {
 			handle(fmt.Errorf("--%s is only valid when --%s=hocho", cnst.FlagHochoMode, cnst.FlagHashStrategy))
 		}
 		cnst.ENABLESIMHASH = *enableSimhash
+		cnst.ENABLEREVREL = *enableRevRel
 		cnst.StoreAsyncFileWrites = *storeAsyncFileWrite
 		cnst.StoreWorkerCount = *storeWorkers
 		cnst.StoreTaskQueueDepth = *storeQueue
@@ -232,6 +234,9 @@ func main() {
 		if cnst.ENABLESIMHASH {
 			color.Yellow("🔍 simhash enabled (--simhash)")
 		}
+		if cnst.ENABLEREVREL {
+			color.Yellow("↩ reverse relations enabled (--%s)", cnst.FlagEnableRevRel)
+		}
 		if parsed == cmdstore.FullCommand() {
 			color.Cyan("⚙ store pipeline: workers=%d queue=%d", storePipelineWorkers, storePipelineQueue)
 			color.Cyan("⚙ store pipeline mode: %s", cnst.StorePipelineMode)
@@ -266,6 +271,7 @@ func main() {
 			zap.Bool("no_index", *noIndex),
 			zap.Bool("fts_enabled", *enableFTS),
 			zap.Bool("enrichment_enabled", *enableEnrichment),
+			zap.Bool("reverse_relations_enabled", cnst.ENABLEREVREL),
 			zap.Int("store_workers", *storeWorkers),
 			zap.Int("store_queue", *storeQueue),
 			zap.Int("store_workers_effective", storePipelineWorkers),
@@ -529,7 +535,7 @@ func printRootHelp() {
 
 func printStoreHelp() {
 	printHelpHeader("store")
-	fmt.Println("Usage: dues store FILE [--sync|-s] [--no-index|-n] [--enable-fts] [--enrich] [--hash-algo|-g [sha3|blake3]] [--simhash] [--store-workers N] [--store-queue N] [global options]")
+	fmt.Println("Usage: dues store FILE [--sync|-s] [--no-index|-n] [--enable-fts] [--enrich] [--hash-algo|-g [sha3|blake3]] [--simhash] [--enable-revrel] [--store-workers N] [--store-queue N] [global options]")
 	fmt.Println("Stores a file in the DUES database using chunk-level deduplication.")
 	fmt.Println("")
 	printHelpSection("Store Pipeline")
@@ -541,6 +547,7 @@ func printStoreHelp() {
 	printHelpSection("Store Tuning")
 	fmt.Println("  --store-workers N   Override worker count (0 = mode-aware default)")
 	fmt.Println("  --store-queue N     Override task queue depth (0 = mode-aware default)")
+	fmt.Println("  --enable-revrel     Persist reverse-relation keys during ingest (off by default)")
 	fmt.Println("  Defaults are chosen by storage mode:")
 	fmt.Println("    file mode: higher workers")
 	fmt.Println("    container/hierarchical: lower workers + deeper queue")

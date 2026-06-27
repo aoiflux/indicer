@@ -58,6 +58,7 @@ func main() {
 	storeHashStrategy := cmdstore.Flag(cnst.FlagHashStrategy, "Store hash strategy for evidence [sync|async|hocho] (default: sync)").Default(cnst.SyncHashStrategy).String()
 	storePipeline := cmdstore.Flag(cnst.FlagStorePipeline, "Store ingest pipeline mode [batch-owner|staged] (default: batch-owner)").Default(cnst.StorePipelineBatch).String()
 	storeAsyncFileWrite := cmdstore.Flag(cnst.FlagStoreAsyncFileWrite, "EXPERIMENTAL: queue file-mode chunk writes to an async writer and drain before completion").Default("false").Bool()
+	storeIOEngine := cmdstore.Flag(cnst.FlagStoreIOEngine, "Store write engine [auto|stdlib|io-uring] (default: auto)").Default(cnst.StoreIOEngineAuto).String()
 	hochoMode := cmdstore.Flag(cnst.FlagHochoMode, "Hocho logical hashing mode [baseline|reuse|postdedup] (default: baseline)").Default(cnst.HochoModeBaseline).String()
 	enableSimhash := cmdstore.Flag(cnst.FlagSimhash, "Compute and store per-chunk simhash signatures during ingest (enables NeAR chunk-level similarity; off by default)").Default("false").Bool()
 	enableRevRel := cmdstore.Flag(cnst.FlagEnableRevRel, "Persist reverse-relation keys during ingest (off by default for higher ingest throughput)").Default("false").Bool()
@@ -172,6 +173,9 @@ func main() {
 		cnst.ENABLESIMHASH = *enableSimhash
 		cnst.ENABLEREVREL = *enableRevRel
 		cnst.StoreAsyncFileWrites = *storeAsyncFileWrite
+		if err := cnst.SetStoreIOEngine(*storeIOEngine); err != nil {
+			handle(err)
+		}
 		cnst.StoreWorkerCount = *storeWorkers
 		cnst.StoreTaskQueueDepth = *storeQueue
 		storePipelineWorkers, storePipelineQueue = cnst.GetStorePipelineTuning(cnst.CONTAINERMODE, cnst.HIERARCHICALINDEX)
@@ -240,6 +244,7 @@ func main() {
 		if parsed == cmdstore.FullCommand() {
 			color.Cyan("⚙ store pipeline: workers=%d queue=%d", storePipelineWorkers, storePipelineQueue)
 			color.Cyan("⚙ store pipeline mode: %s", cnst.StorePipelineMode)
+			color.Cyan("⚙ store io engine: %s", cnst.StoreIOEngine)
 			if cnst.StoreAsyncFileWrites {
 				color.Yellow("⚗ async file writes: enabled (experimental)")
 			}
@@ -265,6 +270,7 @@ func main() {
 			zap.String("dbpath", *dbpath),
 			zap.Int("chonksize_kb", *chonkSize),
 			zap.String("store_pipeline_mode", cnst.StorePipelineMode),
+			zap.String("store_io_engine", cnst.StoreIOEngine),
 			zap.Bool("store_async_file_write", cnst.StoreAsyncFileWrites),
 			zap.String("hash_strategy", cnst.StoreHashStrategy),
 			zap.Bool("sync_index", *syncIndex),

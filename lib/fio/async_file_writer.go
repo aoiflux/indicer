@@ -2,10 +2,7 @@ package fio
 
 import (
 	"errors"
-	"os"
 	"sync"
-
-	"indicer/lib/cnst"
 )
 
 const defaultAsyncFileWriteQueueDepth = 2048
@@ -27,6 +24,7 @@ type asyncFileWriter struct {
 	closed  bool
 	running bool
 	first   error
+	backend writeBackend
 }
 
 var (
@@ -47,9 +45,10 @@ func StartAsyncFileWriter(queueDepth int) {
 	}
 
 	w := &asyncFileWriter{
-		queue: make([]asyncFileWriteRequest, 0, queueDepth),
-		head:  0,
-		done:  make(chan struct{}),
+		queue:   make([]asyncFileWriteRequest, 0, queueDepth),
+		head:    0,
+		done:    make(chan struct{}),
+		backend: getWriteBackend(),
 	}
 	w.cond = sync.NewCond(&w.mu)
 	w.running = true
@@ -126,7 +125,7 @@ func (w *asyncFileWriter) loop() {
 		}
 		w.mu.Unlock()
 
-		if err := writeBlobSync(req.path, req.data); err != nil {
+		if err := w.backend.WriteBlob(req.path, req.data); err != nil {
 			w.mu.Lock()
 			if w.first == nil {
 				w.first = err
@@ -134,26 +133,4 @@ func (w *asyncFileWriter) loop() {
 			w.mu.Unlock()
 		}
 	}
-}
-
-func writeBlobSync(path string, data []byte) error {
-	f, err := os.OpenFile(path, os.O_CREATE|os.O_EXCL|os.O_WRONLY, cnst.FilePerm)
-	if err != nil {
-		if errors.Is(err, os.ErrExist) {
-			return nil
-		}
-		return err
-	}
-
-	if _, err := f.Write(data); err != nil {
-		_ = f.Close()
-		_ = os.Remove(path)
-		return err
-	}
-	if err := f.Close(); err != nil {
-		_ = os.Remove(path)
-		return err
-	}
-
-	return nil
 }

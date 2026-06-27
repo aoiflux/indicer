@@ -36,6 +36,9 @@ const (
 	HochoModePostDedup  = "postdedup"
 	StorePipelineBatch  = "batch-owner"
 	StorePipelineStaged = "staged"
+	StoreIOEngineAuto   = "auto"
+	StoreIOEngineStdlib = "stdlib"
+	StoreIOEngineUring  = "io-uring"
 )
 
 const (
@@ -66,6 +69,7 @@ var StoreHashStrategy = SyncHashStrategy
 var HochoMode = HochoModeBaseline
 var StorePipelineMode = StorePipelineBatch
 var StoreAsyncFileWrites = false
+var StoreIOEngine = StoreIOEngineAuto
 var StoreWorkerCount = 0
 var StoreTaskQueueDepth = 0
 var RestoreWorkerCount = 0
@@ -168,6 +172,7 @@ const (
 	FlagHashStrategy         = "hash-strategy"
 	FlagStorePipeline        = "pipeline"
 	FlagStoreAsyncFileWrite  = "async-fio"
+	FlagStoreIOEngine        = "io-engine"
 	FlagHochoMode            = "hocho-mode"
 	FlagExplainExact         = "explain-exact"
 	FlagExplainExactShort    = 't'
@@ -259,6 +264,28 @@ func SetStorePipeline(mode string) error {
 		return errors.New("invalid store pipeline: must be batch-owner or staged")
 	}
 	StorePipelineMode = normalized
+	return nil
+}
+
+func NormalizeStoreIOEngine(engine string) string {
+	switch strings.ToLower(strings.TrimSpace(engine)) {
+	case StoreIOEngineAuto, "":
+		return StoreIOEngineAuto
+	case StoreIOEngineStdlib:
+		return StoreIOEngineStdlib
+	case StoreIOEngineUring:
+		return StoreIOEngineUring
+	default:
+		return ""
+	}
+}
+
+func SetStoreIOEngine(engine string) error {
+	normalized := NormalizeStoreIOEngine(engine)
+	if normalized == "" {
+		return errors.New("invalid store io engine: must be auto, stdlib, or io-uring")
+	}
+	StoreIOEngine = normalized
 	return nil
 }
 

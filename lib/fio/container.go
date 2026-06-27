@@ -64,6 +64,7 @@ type ContainerManager struct {
 	currentOffset    int64
 	dbpath           string
 	containerIndex   int
+	writeBackend     writeBackend
 	writeQueue       chan *WriteRequest // Lock-free write queue
 	writerDone       chan struct{}      // Signal writer goroutine finished
 	acceptMu         sync.RWMutex
@@ -78,6 +79,7 @@ func NewContainerManager(dbpath string) *ContainerManager {
 	cm := &ContainerManager{
 		dbpath:         dbpath,
 		containerIndex: 0,
+		writeBackend:   getWriteBackend(),
 		writeQueue:     make(chan *WriteRequest, 1000), // Buffered channel for batching
 		writerDone:     make(chan struct{}),
 		seen:           make(map[string]WriteResponse),
@@ -173,7 +175,7 @@ func (cm *ContainerManager) doWrite(data, key []byte) (containerPath string, off
 	}
 
 	// Write data to current container
-	n, err := cm.currentFile.Write(processedData)
+	n, err := cm.writeBackend.WriteToFile(cm.currentFile, processedData)
 	if err != nil {
 		return "", 0, 0, err
 	}

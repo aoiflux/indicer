@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"context"
 	"encoding/base64"
 	"errors"
 	"fmt"
@@ -96,6 +97,13 @@ func prepareEvidenceFileHash(filePath string) (evidenceHashOutcome, error) {
 }
 
 func StoreData(chonkSize int, dbpath, evipath string, key []byte, syncIndex bool, noIndex bool, enableFTS bool, enableEnrichment bool) error {
+	return StoreDataWithContext(context.Background(), chonkSize, dbpath, evipath, key, syncIndex, noIndex, enableFTS, enableEnrichment)
+}
+
+func StoreDataWithContext(ctx context.Context, chonkSize int, dbpath, evipath string, key []byte, syncIndex bool, noIndex bool, enableFTS bool, enableEnrichment bool) error {
+	if ctx == nil {
+		ctx = context.Background()
+	}
 	start := time.Now()
 	logging.GetLogger().Info("StoreData START",
 		zap.Int("chonk_size", chonkSize),
@@ -125,16 +133,22 @@ func StoreData(chonkSize int, dbpath, evipath string, key []byte, syncIndex bool
 	}
 
 	if finfo.IsDir() {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
 		logging.GetLogger().Info("StoreData STORE_FOLDER_EXECUTE", zap.String("evidence_path", evipath))
 		fmt.Println("Storing Entire Folder")
-		err = StoreFolder(chonkSize, evipath, key, syncIndex, noIndex, enableFTS, enableEnrichment, db)
+		err = StoreFolderWithContext(ctx, chonkSize, evipath, key, syncIndex, noIndex, enableFTS, enableEnrichment, db)
 		if err != nil {
 			logging.GetLogger().Error("StoreData STORE_FOLDER_ERROR", zap.Error(err), zap.String("evidence_path", evipath))
 			return err
 		}
 	}
+	if err := ctx.Err(); err != nil {
+		return err
+	}
 	logging.GetLogger().Info("StoreData STORE_FILE_EXECUTE", zap.String("evidence_path", evipath))
-	err = StoreFile(chonkSize, evipath, key, syncIndex, noIndex, enableFTS, enableEnrichment, db)
+	err = StoreFileWithContext(ctx, chonkSize, evipath, key, syncIndex, noIndex, enableFTS, enableEnrichment, db)
 	if err != nil {
 		logging.GetLogger().Error("StoreData STORE_FILE_ERROR", zap.Error(err), zap.String("evidence_path", evipath))
 		return err
@@ -150,6 +164,13 @@ func StoreData(chonkSize int, dbpath, evipath string, key []byte, syncIndex bool
 }
 
 func StoreFolder(chonkSize int, evidir string, key []byte, syncIndex bool, noIndex bool, enableFTS bool, enableEnrichment bool, db *badger.DB) error {
+	return StoreFolderWithContext(context.Background(), chonkSize, evidir, key, syncIndex, noIndex, enableFTS, enableEnrichment, db)
+}
+
+func StoreFolderWithContext(ctx context.Context, chonkSize int, evidir string, key []byte, syncIndex bool, noIndex bool, enableFTS bool, enableEnrichment bool, db *badger.DB) error {
+	if ctx == nil {
+		ctx = context.Background()
+	}
 	start := time.Now()
 	logging.GetLogger().Info("StoreFolder START",
 		zap.Int("chonk_size", chonkSize),
@@ -161,6 +182,9 @@ func StoreFolder(chonkSize int, evidir string, key []byte, syncIndex bool, noInd
 	)
 
 	err := filepath.Walk(evidir, func(path string, info fs.FileInfo, err error) error {
+		if cerr := ctx.Err(); cerr != nil {
+			return cerr
+		}
 		if err != nil {
 			logging.GetLogger().Error("StoreFolder WALK_ERROR", zap.Error(err), zap.String("file_path", path))
 			return err
@@ -170,7 +194,7 @@ func StoreFolder(chonkSize int, evidir string, key []byte, syncIndex bool, noInd
 			return nil
 		}
 
-		return StoreFile(chonkSize, path, key, syncIndex, noIndex, enableFTS, enableEnrichment, db)
+		return StoreFileWithContext(ctx, chonkSize, path, key, syncIndex, noIndex, enableFTS, enableEnrichment, db)
 	})
 
 	if err != nil {
@@ -185,6 +209,13 @@ func StoreFolder(chonkSize int, evidir string, key []byte, syncIndex bool, noInd
 }
 
 func StoreFile(chonkSize int, evipath string, key []byte, syncIndex bool, noIndex bool, enableFTS bool, enableEnrichment bool, db *badger.DB) error {
+	return StoreFileWithContext(context.Background(), chonkSize, evipath, key, syncIndex, noIndex, enableFTS, enableEnrichment, db)
+}
+
+func StoreFileWithContext(ctx context.Context, chonkSize int, evipath string, key []byte, syncIndex bool, noIndex bool, enableFTS bool, enableEnrichment bool, db *badger.DB) error {
+	if ctx == nil {
+		ctx = context.Background()
+	}
 	start := time.Now()
 	logging.GetLogger().Info("StoreFile START",
 		zap.Int("chonk_size", chonkSize),
@@ -203,6 +234,9 @@ func StoreFile(chonkSize int, evipath string, key []byte, syncIndex bool, noInde
 	if info.IsDir() {
 		logging.GetLogger().Debug("StoreFile SKIP_DIRECTORY", zap.String("file_path", evipath))
 		return nil
+	}
+	if err := ctx.Err(); err != nil {
+		return err
 	}
 
 	fmt.Println("Pre-store checks....")
@@ -261,8 +295,12 @@ func StoreFile(chonkSize int, evipath string, key []byte, syncIndex bool, noInde
 	fmt.Printf("\nSaving Evidence File: %s\n", eviname)
 
 	echan := make(chan error)
-	go store.Store(eviFile, echan)
-	err = <-echan
+	go store.StoreWithContext(ctx, eviFile, echan)
+	select {
+	case err = <-echan:
+	case <-ctx.Done():
+		return ctx.Err()
+	}
 	if err != nil {
 		drainIndexError(idxErrCh)
 		markEvidenceFileFailed(eviFile.GetID(), db)

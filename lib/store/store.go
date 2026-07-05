@@ -1,6 +1,7 @@
 package store
 
 import (
+	"context"
 	"encoding/base64"
 	"errors"
 	"indicer/lib/cnst"
@@ -15,10 +16,17 @@ import (
 )
 
 func Store(infile structs.InputFile, errchan chan error) {
+	StoreWithContext(context.Background(), infile, errchan)
+}
+
+func StoreWithContext(ctx context.Context, infile structs.InputFile, errchan chan error) {
+	if ctx == nil {
+		ctx = context.Background()
+	}
 	if string(infile.GetNamespace()) == cnst.PartiFileNamespace {
 		errchan <- storePartitionFile(infile)
 	} else {
-		errchan <- storeEvidenceFile(infile)
+		errchan <- storeEvidenceFile(ctx, infile)
 	}
 }
 func EvidenceFilePreStoreCheck(infile structs.InputFile) error {
@@ -144,7 +152,7 @@ func storePartitionFile(infile structs.InputFile) error {
 	return nil
 }
 
-func storeEvidenceFile(infile structs.InputFile) error {
+func storeEvidenceFile(ctx context.Context, infile structs.InputFile) error {
 	start := time.Now()
 	logging.GetLogger().Info("storeEvidenceFile START",
 		zap.String("file_name", infile.GetName()),
@@ -165,9 +173,9 @@ func storeEvidenceFile(infile structs.InputFile) error {
 	}
 	var hochoEvidenceHash string
 	if cnst.StorePipelineMode == cnst.StorePipelineStaged {
-		hochoEvidenceHash, err = storeEvidenceDataStaged(infile)
+		hochoEvidenceHash, err = storeEvidenceDataStaged(ctx, infile)
 	} else {
-		hochoEvidenceHash, err = storeEvidenceDataBatchOwner(infile)
+		hochoEvidenceHash, err = storeEvidenceDataBatchOwner(ctx, infile)
 	}
 	if err != nil {
 		return failEvidenceStore(infile, err)

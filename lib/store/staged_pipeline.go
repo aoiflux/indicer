@@ -62,7 +62,10 @@ type stageErr struct {
 
 // storeEvidenceDataStaged runs an explicit staged ingest pipeline:
 // ingestion -> hashing -> dedup -> batched disk writer.
-func storeEvidenceDataStaged(infile structs.InputFile) (evidenceHochoHash string, err error) {
+func storeEvidenceDataStaged(parentCtx context.Context, infile structs.InputFile) (evidenceHochoHash string, err error) {
+	if parentCtx == nil {
+		parentCtx = context.Background()
+	}
 	bar := progressbar.NewOptions64(
 		infile.GetSize(),
 		progressbar.OptionShowBytes(true),
@@ -102,7 +105,7 @@ func storeEvidenceDataStaged(infile structs.InputFile) (evidenceHochoHash string
 	}
 
 	workerCount, queueDepth := cnst.GetStorePipelineTuning(cnst.CONTAINERMODE, cnst.HIERARCHICALINDEX)
-	ctx, cancel := context.WithCancel(context.Background())
+	ctx, cancel := context.WithCancel(parentCtx)
 	defer cancel()
 
 	hashCh := make(chan ingestedChunk, queueDepth)

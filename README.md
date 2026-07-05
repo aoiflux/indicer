@@ -129,6 +129,69 @@ Windows users may prefer:
 go build -o dues.exe .
 ```
 
+Compression product specific builds:
+
+Note: FFI build mode defaults to `auto`:
+
+- Windows targets use `c-shared` (DLL)
+- Non-Windows targets use `c-archive` (static `.a`)
+
+Compression product build scripts compile with `-tags notusk`, which disables
+libtusk/clib usage for compression artifacts on Windows and Linux.
+
+```powershell
+# Windows compression CLI artifact
+./build-compression.ps1 -Mode cli -Targets windows/amd64
+
+# Windows compression CLI + FFI c-archive artifacts
+./build-compression.ps1 -Mode all -FfiBuildMode c-archive -Targets windows/amd64
+
+# Windows compression FFI shared library (Flutter-friendly)
+./build-compression.ps1 -Mode ffi -FfiBuildMode c-shared -Targets windows/amd64
+```
+
+```bash
+# Linux compression CLI artifact
+MODE=cli TARGETS=linux/amd64 ./build-compression.sh
+
+# Linux compression CLI + FFI c-archive artifacts
+MODE=all FFI_BUILD_MODE=c-archive TARGETS=linux/amd64 ./build-compression.sh
+
+# Linux compression FFI shared library (Flutter-friendly)
+MODE=ffi FFI_BUILD_MODE=c-shared TARGETS=linux/amd64 ./build-compression.sh
+```
+
+Product wrapper builds (routes to product-specific scripts):
+
+```powershell
+# Build compression CLI using root wrapper
+./build-product.ps1 -Product compression -Mode cli -Targets windows/amd64
+
+# Build compression FFI shared library using root wrapper
+./build-product.ps1 -Product compression -Mode ffi -FfiBuildMode c-shared -Targets windows/amd64
+```
+
+```bash
+# Build compression CLI using root wrapper
+PRODUCT=compression MODE=cli TARGETS=linux/amd64 ./build-product.sh
+
+# Build compression FFI shared library using root wrapper
+PRODUCT=compression MODE=ffi FFI_BUILD_MODE=c-shared TARGETS=linux/amd64 ./build-product.sh
+```
+
+FFI ABI for Flutter/native callers:
+
+- Build output includes a library and C header in `dist/compression`.
+- Example Windows output:
+  - `dues_engine-windows-amd64.dll`
+  - `dues_engine-windows-amd64.h`
+- Exported C functions from the generated header:
+  - `char* DuesDispatchJSON(char* requestJSON)`
+  - `void DuesFreeString(char* ptr)`
+
+The caller must free response buffers returned by `DuesDispatchJSON` by calling
+`DuesFreeString`.
+
 ## Quick start
 
 ```powershell

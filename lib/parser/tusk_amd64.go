@@ -1,4 +1,4 @@
-//go:build cgo && (windows || linux) && amd64
+//go:build cgo && (windows || linux) && amd64 && !notusk
 
 package parser
 

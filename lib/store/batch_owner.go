@@ -126,7 +126,10 @@ func (h *hochoAccumulator) finalize() (string, error) {
 
 // storeEvidenceDataBatchOwner is the production evidence ingest path.
 // Returns a hocho evidence hash only when hocho strategy is active.
-func storeEvidenceDataBatchOwner(infile structs.InputFile) (evidenceHochoHash string, err error) {
+func storeEvidenceDataBatchOwner(parentCtx context.Context, infile structs.InputFile) (evidenceHochoHash string, err error) {
+	if parentCtx == nil {
+		parentCtx = context.Background()
+	}
 	bar := progressbar.NewOptions64(
 		infile.GetSize(),
 		progressbar.OptionShowBytes(true),
@@ -165,9 +168,9 @@ func storeEvidenceDataBatchOwner(infile structs.InputFile) (evidenceHochoHash st
 		}()
 	}
 
-	// ctx is cancelled when the writer goroutine exits with an error so that
+	// ctx is cancelled when parent context is canceled or writer exits with an error so that
 	// in-flight workers do not block indefinitely on taskCh.
-	ctx, cancel := context.WithCancel(context.Background())
+	ctx, cancel := context.WithCancel(parentCtx)
 	defer cancel()
 
 	// Tune worker/queue shape by storage mode; container/hierarchical paths
@@ -197,7 +200,19 @@ func storeEvidenceDataBatchOwner(infile structs.InputFile) (evidenceHochoHash st
 
 	totalJobs := 0
 	completedJobs := 0
+	jobChClosed := false
 	for storeIndex := infile.GetStartIndex(); storeIndex < infile.GetSize(); storeIndex += cnst.ChonkSize {
+		if err := ctx.Err(); err != nil {
+			close(jobCh)
+			jobChClosed = true
+			for completedJobs < totalJobs {
+				res := <-workerResCh
+				completedJobs++
+				captureFirstWorkerErr(res.err, &firstWorkerErr)
+				bar.Add64(res.bytes)
+			}
+			break
+		}
 		var buffsize int64
 		if infile.GetSize()-storeIndex <= cnst.ChonkSize {
 			buffsize = infile.GetSize() - storeIndex
@@ -216,12 +231,29 @@ func storeEvidenceDataBatchOwner(infile structs.InputFile) (evidenceHochoHash st
 				completedJobs++
 				captureFirstWorkerErr(res.err, &firstWorkerErr)
 				bar.Add64(res.bytes)
+			case <-ctx.Done():
+				close(jobCh)
+				jobChClosed = true
+				for completedJobs < totalJobs {
+					res := <-workerResCh
+					completedJobs++
+					captureFirstWorkerErr(res.err, &firstWorkerErr)
+					bar.Add64(res.bytes)
+				}
+				goto doneScheduling
 			}
 		}
 
 	enqueued:
 	}
-	close(jobCh)
+
+doneScheduling:
+	if ctx.Err() != nil && firstWorkerErr == nil {
+		firstWorkerErr = ctx.Err()
+	}
+	if !jobChClosed {
+		close(jobCh)
+	}
 
 	for completedJobs < totalJobs {
 		res := <-workerResCh

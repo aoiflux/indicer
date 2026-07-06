@@ -5,13 +5,13 @@
 </p>
 
 [![Go Version](https://img.shields.io/badge/Go-1.25-blue.svg)](https://golang.org)
-[![Version](https://img.shields.io/badge/version-0.38-green.svg)](https://github.com/aoiflux/indicer)
+[![Version](https://img.shields.io/badge/version-0.39-green.svg)](https://github.com/aoiflux/indicer)
 [![License](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 
 DUES is a digital forensics data platform for ingesting, deduplicating,
 indexing, searching, restoring, and comparing large evidence sets.
 
-Version: 0.38 Codename: <jackfruit> spacebar
+Version: 0.39 Codename: <pineapple> spacebar
 
 ## Important upgrade notice (breaking)
 
@@ -133,7 +133,13 @@ go build -o dues.exe .
 
 ```powershell
 # Store evidence (file or folder)
-dues store E01-image.dd --enable-enrichment --enable-fts
+dues store E01-image.dd --enrich --fts
+
+# Store with convenience presets
+dues store E01-image.dd --preset quick
+dues store E01-image.dd --quick-mode
+dues store E01-image.dd --performance-mode
+dues store E01-image.dd --low-resource-mode
 
 # List entries
 dues list
@@ -142,13 +148,13 @@ dues list
 dues search "invoice payment"
 
 # Hybrid full-text first, then fallback
-dues search --enable-fts "invoice|receipt"
+dues search "invoice|receipt" --fts
 
 # Restore by hash
 dues restore <hash> --filepath restored.bin
 
 # Near similarity from DB object
-dues near in <hash> --advanced-deep --topk 50
+dues near in <hash> --advanced-deep --top-k 50
 
 # Near similarity for external file
 dues near out suspect.bin --explain-exact
@@ -165,6 +171,31 @@ dues repair --fix
 
 # Launch TUI
 dues tui
+```
+
+## Workflow recipes (copy/paste)
+
+```powershell
+# 1) Fast triage ingest (throughput-first)
+dues store E01-image.dd --preset quick --fts
+
+# 2) Balanced case ingest (good default)
+dues store E01-image.dd --preset performance --enrich --fts
+
+# 3) Low-resource ingest (laptop / constrained VM)
+dues store E01-image.dd --preset low-resource --compress-level default
+
+# 4) Search -> near -> restore investigation loop
+dues search "invoice" --fts
+dues near in <hash> --deep --advanced-deep --top-k 20
+dues restore <hash> --filepath restored.bin
+
+# 5) Tune heavy restore explicitly
+dues restore <hash> -y 8 -U 32 -m 100 -b 128
+
+# 6) Micro-artefact extraction workflow
+dues micro extract -V -K 25
+dues micro list
 ```
 
 ## Command summary
@@ -189,7 +220,35 @@ Core commands:
 
 ## Important flags
 
-Global:
+### Short-flag cheat sheet
+
+Most-used shortcuts for day-to-day operations:
+
+| Area    | Long form             | Short |
+| ------- | --------------------- | ----- |
+| Global  | --dbpath              | -d    |
+| Global  | --password            | -p    |
+| Global  | --chonksize           | -c    |
+| Global  | --preset              | -P    |
+| Global  | --quick-mode          | -Q    |
+| Store   | --fts                 | -F    |
+| Store   | --enrich              | -E    |
+| Store   | --no-index            | -N    |
+| Store   | --store-workers       | -w    |
+| Store   | --store-queue         | -W    |
+| Restore | --filepath            | -f    |
+| Restore | --restore-workers     | -y    |
+| Restore | --restore-queue       | -U    |
+| Restore | --restore-progress-ms | -m    |
+| Restore | --restore-buffer-mb   | -b    |
+| Search  | --rank-alpha          | -r    |
+| Near    | --deep                | -e    |
+| Near    | --advanced-deep       | -a    |
+| Near    | --top-k               | -k    |
+
+Tip: run `dues help <command>` for command-specific short flags and examples.
+
+### Global
 
 - --dbpath, -d: custom database path
 - --password, -p: password for encrypted DB access
@@ -198,37 +257,51 @@ Global:
 - --quick, -q: throughput-first mode
 - --container, -x: container blob mode
 - --hierarchical, -i: hierarchical index mode
-- --compress-level: fast, default, or best
+- --compress-level, -z: fast, default, or best
+- --preset, -P: apply convenience preset (quick, performance, low-resource)
+- --quick-mode, -Q: convenience alias for --preset quick
+- --performance-mode, -o: convenience alias for --preset performance
+- --low-resource-mode, -L: convenience alias for --preset low-resource
 
-Store-specific highlights:
+### Store-specific highlights
 
 - --sync, -s: synchronous indexing
-- --no-index, -n: skip indexing
-- --enable-fts: build sidecar full-text index
-- --enable-enrichment: upsert hierarchy metadata to graphdb
+- --no-index, -N: skip indexing
+- --fts, -F: build sidecar full-text index
+- --enrich, -E: upsert hierarchy metadata to graphdb
 - --hash-algo, -g: sha3 or blake3
-- --hash-strategy: sync or async (evidence hash timing only; default sync)
-- --simhash: compute chunk SimHash signatures during ingest
-- --store-workers and --store-queue: override ingest pipeline tuning
+- --hash-strategy, -S: sync, async, or hocho
+- --pipeline, -Y: batch-owner or staged
+- --simhash, -H: compute chunk SimHash signatures during ingest
+- --revrel, -R: persist reverse relations during ingest
+- --store-workers, -w and --store-queue, -W: override ingest pipeline tuning
 
-Restore-specific highlights:
+### Restore-specific highlights
 
 - --filepath, -f: output path
-- --restore-workers, --restore-queue: pipeline tuning
-- --restore-progress-ms: progress update interval
-- --restore-buffer-mb: write buffer sizing
+- --restore-workers, -y and --restore-queue, -U: pipeline tuning
+- --restore-progress-ms, -m: progress update interval
+- --restore-buffer-mb, -b: write buffer sizing
 
-Search-specific highlights:
+### Search-specific highlights
 
-- --rank-alpha: occurrence boost weighting
-- --enable-fts: hybrid full-text + fallback scan path
+- --rank-alpha, -r: occurrence boost weighting
+- --fts, -F: hybrid full-text + fallback scan path
 
-Near-specific highlights:
+### Near-specific highlights
 
 - --deep, -e: partial chunk matching
 - --advanced-deep, -a: phase-2 full-file SimHash rerank
-- --topk, -k: top-K candidates for phase-2 rerank
-- --explain-exact, -x: force chunk drilldown for exact out-file match
+- --top-k, -k: top-K candidates for phase-2 rerank
+- --explain-exact, -t: force chunk drilldown for exact out-file match
+
+## CLI migration notes
+
+- `store --no-index` short alias is now `-N`.
+- `--enable-fts` and `--enable-enrichment` are now `--fts` and `--enrich`.
+- `--topk` is now `--top-k`.
+- Presets are available via `--preset` and convenience aliases (`--quick-mode`,
+  `--performance-mode`, `--low-resource-mode`).
 
 ## Migration checklist (pre-0.38 to 0.38)
 

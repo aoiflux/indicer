@@ -15,7 +15,11 @@ import (
 )
 
 func openIoUringHandle() (ioUringHandle, error) {
-	return newNativeIoUringHandle(256)
+	depth := cnst.GetStoreIOUringQueueDepth()
+	if depth <= 0 {
+		depth = 256
+	}
+	return newNativeIoUringHandle(uint32(depth))
 }
 
 func (b *ioUringWriteBackend) WriteBlob(path string, data []byte) error {
@@ -96,7 +100,9 @@ const (
 	ioUringOffCqRing = 0x8000000
 	ioUringOffSqes   = 0x10000000
 
-	ioUringFeatSingleMmap = 1
+	ioUringFeatSingleMmap   = 1
+	ioUringMaxSubmitRetries = 3
+	ioUringDrainBatchSize   = 8
 )
 
 type ioSqringOffsets struct {
@@ -274,6 +280,7 @@ func (h *nativeIoUringHandle) Close() error {
 func (h *nativeIoUringHandle) SubmitWrite(fd int, data []byte) (int, error) {
 	h.mu.Lock()
 	defer h.mu.Unlock()
+	recordIoUringSubmitAttempt()
 
 	if h.closed {
 		return 0, errors.New("io-uring handle is closed")
@@ -282,9 +289,37 @@ func (h *nativeIoUringHandle) SubmitWrite(fd int, data []byte) (int, error) {
 		return 0, nil
 	}
 
-	sqHead := atomic.LoadUint32(h.sqHead)
-	sqTail := atomic.LoadUint32(h.sqTail)
-	if sqTail-sqHead >= *h.sqMask+1 {
+	var sqHead uint32
+	var sqTail uint32
+	capacity := *h.sqMask + 1
+	for attempt := 0; attempt < ioUringMaxSubmitRetries; attempt++ {
+		sqHead = atomic.LoadUint32(h.sqHead)
+		sqTail = atomic.LoadUint32(h.sqTail)
+		if sqTail-sqHead < capacity {
+			break
+		}
+
+		// Drain already-available CQEs first; this can refresh producer/consumer
+		// visibility and avoid an extra blocking enter() call.
+		_, _, _, drainErr := h.drainCompletions(0, ioUringDrainBatchSize)
+		if drainErr != nil {
+			recordIoUringSubmitError()
+			return 0, drainErr
+		}
+		sqHead = atomic.LoadUint32(h.sqHead)
+		sqTail = atomic.LoadUint32(h.sqTail)
+		if sqTail-sqHead < capacity {
+			break
+		}
+
+		recordIoUringSubmitWait()
+		if _, _, errno := unix.Syscall6(unix.SYS_IO_URING_ENTER, uintptr(h.fd), 0, 1, ioUringEnterGetEvents, 0, 0); errno != 0 {
+			recordIoUringSubmitError()
+			return 0, errno
+		}
+	}
+	if sqTail-sqHead >= capacity {
+		recordIoUringQueueFull()
 		return 0, errors.New("io-uring submission queue is full")
 	}
 
@@ -307,30 +342,59 @@ func (h *nativeIoUringHandle) SubmitWrite(fd int, data []byte) (int, error) {
 	atomic.StoreUint32(h.sqTail, sqTail+1)
 
 	if _, _, errno := unix.Syscall6(unix.SYS_IO_URING_ENTER, uintptr(h.fd), 1, 1, ioUringEnterGetEvents, 0, 0); errno != 0 {
+		recordIoUringSubmitError()
 		return 0, errno
 	}
 
 	for {
+		found, res, drained, drainErr := h.drainCompletions(userData, ioUringDrainBatchSize)
+		if drainErr != nil {
+			recordIoUringSubmitError()
+			return 0, drainErr
+		}
+		if found {
+			if res < 0 {
+				recordIoUringSubmitError()
+				return 0, unix.Errno(-res)
+			}
+			recordIoUringCompletion()
+			return int(res), nil
+		}
+		if drained > 0 {
+			continue
+		}
+
+		recordIoUringSubmitWait()
+		if _, _, errno := unix.Syscall6(unix.SYS_IO_URING_ENTER, uintptr(h.fd), 0, 1, ioUringEnterGetEvents, 0, 0); errno != 0 {
+			recordIoUringSubmitError()
+			return 0, errno
+		}
+	}
+}
+
+func (h *nativeIoUringHandle) drainCompletions(targetUserData uint64, max int) (found bool, res int32, drained int, err error) {
+	if max <= 0 {
+		max = 1
+	}
+
+	for drained < max {
 		cqHead := atomic.LoadUint32(h.cqHead)
 		cqTail := atomic.LoadUint32(h.cqTail)
 		if cqHead == cqTail {
-			if _, _, errno := unix.Syscall6(unix.SYS_IO_URING_ENTER, uintptr(h.fd), 0, 1, ioUringEnterGetEvents, 0, 0); errno != 0 {
-				return 0, errno
-			}
-			continue
+			break
 		}
 
 		cqeIndex := cqHead & *h.cqMask
 		cqe := (*ioUringCqe)(unsafe.Pointer(uintptr(unsafe.Pointer(h.cqesPtr)) + uintptr(cqeIndex)*unsafe.Sizeof(ioUringCqe{})))
-		res := cqe.Res
+		cqeRes := cqe.Res
+		cqeUserData := cqe.UserData
 		atomic.StoreUint32(h.cqHead, cqHead+1)
+		drained++
 
-		if cqe.UserData != userData {
-			continue
+		if targetUserData != 0 && cqeUserData == targetUserData {
+			return true, cqeRes, drained, nil
 		}
-		if res < 0 {
-			return 0, unix.Errno(-res)
-		}
-		return int(res), nil
 	}
+
+	return false, 0, drained, nil
 }

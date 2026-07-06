@@ -2,7 +2,12 @@ param(
     [int]$Count = 5,
     [string]$Benchtime = "2s",
     [switch]$Profiles,
-    [string]$OutputDir = "bench\outputs"
+    [string]$OutputDir = "bench\outputs",
+    [string]$StoreDataset = "",
+    [string]$StoreExe = "",
+    [int]$StoreCount = 3,
+    [int[]]$IOUringQueueDepths = @(256, 512, 1024, 2048),
+    [string]$StoreDbRoot = "bench\store_matrix"
 )
 
 Set-StrictMode -Version Latest
@@ -94,6 +99,115 @@ function Write-RevRelModeSummary {
     $lines | Add-Content -Path $fullRunFile
 }
 
+function Get-Median {
+    param([double[]]$Values)
+
+    if ($Values.Count -eq 0) {
+        return [double]::NaN
+    }
+
+    $sorted = $Values | Sort-Object
+    $n = $sorted.Count
+    if ($n % 2 -eq 1) {
+        return [double]$sorted[[int]($n / 2)]
+    }
+
+    $a = [double]$sorted[($n / 2) - 1]
+    $b = [double]$sorted[$n / 2]
+    return ($a + $b) / 2.0
+}
+
+function Get-StoreDurationSeconds {
+    param(
+        [string]$Exe,
+        [string[]]$ExecutionParams
+    )
+
+    $output = & $Exe @ExecutionParams 2>&1 | Out-String
+    $m = [regex]::Match($output, 'Stored in:\s*([0-9.]+)s')
+    if (-not $m.Success) {
+        throw "Could not parse store duration from output. Command: $Exe $($ExecutionParams -join ' '). Output:`n$output"
+    }
+
+    return [double]$m.Groups[1].Value
+}
+
+function Write-IOUringQueueDepthSummary {
+    if ([string]::IsNullOrWhiteSpace($StoreDataset)) {
+        return
+    }
+
+    if (-not (Test-Path $StoreDataset)) {
+        throw "Store dataset path not found: $StoreDataset"
+    }
+    if ($StoreCount -lt 1) {
+        throw "StoreCount must be >= 1"
+    }
+    if ($null -eq $IOUringQueueDepths -or $IOUringQueueDepths.Count -eq 0) {
+        throw "IOUringQueueDepths must contain at least one depth"
+    }
+
+    $exe = $StoreExe
+    $exePrefix = @()
+    if ([string]::IsNullOrWhiteSpace($exe)) {
+        if (Test-Path ".\\dues.exe") {
+            $exe = ".\\dues.exe"
+        }
+        else {
+            $exe = "go"
+            $exePrefix = @("run", ".")
+        }
+    }
+    elseif (-not (Get-Command $exe -ErrorAction SilentlyContinue) -and -not (Test-Path $exe)) {
+        throw "Store executable not found: $exe"
+    }
+
+    New-Item -ItemType Directory -Force -Path $StoreDbRoot | Out-Null
+
+    $lines = @(
+        "",
+        "=== io_uring Queue-Depth Sweep (store command) ===",
+        "dataset: $StoreDataset",
+        "executable: $exe",
+        "runs_per_depth: $StoreCount"
+    )
+
+    $results = @()
+    foreach ($depth in $IOUringQueueDepths) {
+        if ($depth -le 0) {
+            throw "All IOUringQueueDepths must be > 0. Invalid value: $depth"
+        }
+
+        $times = @()
+        for ($i = 1; $i -le $StoreCount; $i++) {
+            $dbPath = Join-Path $StoreDbRoot ("io_uring_${depth}_run_${i}")
+            Remove-Item -Recurse -Force $dbPath -ErrorAction SilentlyContinue
+
+            $cmdArgs = @("store", "--io-engine", "io-uring", "--io-uring-queue-depth", "$depth", "-d", $dbPath, $StoreDataset)
+            $allArgs = @($exePrefix + $cmdArgs)
+            $duration = Get-StoreDurationSeconds -Exe $exe -ExecutionParams $allArgs
+            $times += $duration
+
+            Write-Host ("io_uring depth {0} run {1}/{2}: {3:N4}s" -f $depth, $i, $StoreCount, $duration) -ForegroundColor DarkCyan
+        }
+
+        $median = Get-Median -Values $times
+        $results += [pscustomobject]@{
+            Depth  = $depth
+            Median = $median
+        }
+        $lines += ("depth={0} median_seconds={1:N4}" -f $depth, $median)
+    }
+
+    $best = $results | Sort-Object Median | Select-Object -First 1
+    if ($null -ne $best) {
+        $lines += ("recommended_depth={0} median_seconds={1:N4}" -f $best.Depth, $best.Median)
+    }
+
+    $lines | Add-Content -Path $summaryFile
+    $lines | Add-Content -Path $fullRunFile
+}
+
 if (-not (Get-Command go -ErrorAction SilentlyContinue)) {
     throw "Go compiler not found in PATH. Install Go and retry."
 }
@@ -119,6 +233,7 @@ Run-Bench -Name "store_restore_path" -Package "./lib/store" -Pattern "^Benchmark
 
 $hotspotFile = Join-Path $OutputDir "store_ingest_metadata_hotspots.txt"
 Write-RevRelModeSummary -HotspotFile $hotspotFile
+Write-IOUringQueueDepthSummary
 
 Write-Host "Benchmark run complete. Outputs in $OutputDir" -ForegroundColor Green
 Write-Host "Summary: $summaryFile" -ForegroundColor Green

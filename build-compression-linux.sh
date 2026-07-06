@@ -19,11 +19,13 @@ fi
 
 TARGETS="${TARGETS:-linux/amd64}"
 OUTPUT_DIR="${OUTPUT_DIR:-dist/compression}"
+BUILD_PROFILE="${BUILD_PROFILE:-release}"
 
 MODE=ffi \
 FFI_BUILD_MODE=c-archive \
 TARGETS="$TARGETS" \
 OUTPUT_DIR="$OUTPUT_DIR" \
+BUILD_PROFILE="$BUILD_PROFILE" \
 ./build-compression.sh
 
 echo "Linux static FFI build complete."

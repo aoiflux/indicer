@@ -1,0 +1,63 @@
+<svg width="1024" height="320" viewBox="0 0 1024 320" fill="none" xmlns="http://www.w3.org/2000/svg"
+    role="img" aria-labelledby="title desc">
+    <title id="title">QwikPak logo</title>
+    <desc id="desc">Minimal cyberpunk style logo for QwikPak with a neon Q symbol and sleek
+        wordmark.</desc>
+
+    <defs>
+        <linearGradient id="neonLine" x1="48" y1="32" x2="302" y2="288"
+            gradientUnits="userSpaceOnUse">
+            <stop offset="0" stop-color="#6AFFF2" />
+            <stop offset="1" stop-color="#2C7DFF" />
+        </linearGradient>
+
+        <linearGradient id="textNeon" x1="328" y1="96" x2="860" y2="226"
+            gradientUnits="userSpaceOnUse">
+            <stop offset="0" stop-color="#D8FFF9" />
+            <stop offset="1" stop-color="#9ED0FF" />
+        </linearGradient>
+
+        <filter id="glow" x="0" y="0" width="360" height="360" filterUnits="userSpaceOnUse"
+            color-interpolation-filters="sRGB">
+            <feGaussianBlur in="SourceGraphic" stdDeviation="5" result="blur" />
+            <feMerge>
+                <feMergeNode in="blur" />
+                <feMergeNode in="SourceGraphic" />
+            </feMerge>
+        </filter>
+
+        <filter id="wordGlow" x="300" y="74" width="700" height="190" filterUnits="userSpaceOnUse"
+            color-interpolation-filters="sRGB">
+            <feDropShadow dx="0" dy="0" stdDeviation="4" flood-color="#4FB8FF" flood-opacity="0.32" />
+        </filter>
+    </defs>
+
+    <g>
+        <rect x="36" y="36" width="248" height="248" rx="42" fill="#08131E" />
+        <rect x="36.75" y="36.75" width="246.5" height="246.5" rx="41.25" stroke="#173248"
+            stroke-width="1.5" />
+
+        <g filter="url(#glow)">
+            <circle cx="160" cy="160" r="76" stroke="url(#neonLine)" stroke-width="14"
+                stroke-dasharray="392 92" stroke-linecap="round" />
+            <path d="M106 156L160 124L214 156L160 188L106 156Z" fill="none" stroke="#A9FFF8"
+                stroke-width="8" stroke-linejoin="round" />
+            <path d="M160 124V188" stroke="#A9FFF8" stroke-width="8" stroke-linecap="round" />
+            <path d="M160 156L214 156" stroke="#A9FFF8" stroke-width="8" stroke-linecap="round" />
+            <path d="M222 98L244 98" stroke="url(#neonLine)" stroke-width="10"
+                stroke-linecap="round" />
+        </g>
+
+        <path d="M64 92H94" stroke="#1A3448" stroke-width="3" stroke-linecap="round" />
+        <path d="M226 226H256" stroke="#1A3448" stroke-width="3" stroke-linecap="round" />
+    </g>
+
+    <g filter="url(#wordGlow)">
+        <text x="332" y="190" fill="url(#textNeon)" font-size="108"
+            font-family="Orbitron, Eurostile, Rajdhani, Segoe UI, Arial, sans-serif"
+            font-weight="700" letter-spacing="1.6">QwikPak</text>
+        <text x="336" y="232" fill="#5FA7D9" font-size="24"
+            font-family="Orbitron, Rajdhani, Segoe UI, Arial, sans-serif" font-weight="600"
+            letter-spacing="5">ARCHIVE ENGINE</text>
+    </g>
+</svg>

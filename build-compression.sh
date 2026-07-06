@@ -12,6 +12,7 @@ OUTPUT_DIR="${OUTPUT_DIR:-dist/compression}"
 TARGETS="${TARGETS:-linux/amd64}"
 MODE="${MODE:-all}" # cli | ffi | all
 FFI_BUILD_MODE="${FFI_BUILD_MODE:-auto}" # auto | c-shared | c-archive
+BUILD_PROFILE="${BUILD_PROFILE:-debug}" # debug | release
 
 REPO_ROOT="$(cd "$(dirname "$0")" && pwd)"
 cd "$REPO_ROOT"
@@ -22,6 +23,21 @@ if ! command -v go > /dev/null 2>&1; then
 fi
 
 mkdir -p "$OUTPUT_DIR"
+
+GO_LDFLAGS=""
+case "$BUILD_PROFILE" in
+  debug)
+    echo "Build profile: debug"
+    ;;
+  release)
+    echo "Build profile: release (stripped symbols/debug info)"
+    GO_LDFLAGS="-s -w"
+    ;;
+  *)
+    echo "ERROR: Invalid BUILD_PROFILE '$BUILD_PROFILE'. Use debug|release." >&2
+    exit 1
+    ;;
+esac
 
 build_cli() {
   _goos="$1"
@@ -34,8 +50,13 @@ build_cli() {
   _out="$OUTPUT_DIR/${PRODUCT_NAME}-$_goos-$_goarch$_ext"
   echo "[CLI] $_goos/$_goarch -> $_out"
 
-  GOOS="$_goos" GOARCH="$_goarch" GOAMD64=v1 CGO_ENABLED=0 \
-    go build -trimpath -buildvcs=false -tags "notusk" -o "$_out" "$CLI_PACKAGE"
+  if [ -n "$GO_LDFLAGS" ]; then
+    GOOS="$_goos" GOARCH="$_goarch" GOAMD64=v1 CGO_ENABLED=0 \
+      go build -trimpath -buildvcs=false -tags "notusk" -ldflags "$GO_LDFLAGS" -o "$_out" "$CLI_PACKAGE"
+  else
+    GOOS="$_goos" GOARCH="$_goarch" GOAMD64=v1 CGO_ENABLED=0 \
+      go build -trimpath -buildvcs=false -tags "notusk" -o "$_out" "$CLI_PACKAGE"
+  fi
 }
 
 build_ffi() {
@@ -76,8 +97,13 @@ build_ffi() {
     exit 1
   fi
 
-  GOOS="$_goos" GOARCH="$_goarch" GOAMD64=v1 CGO_ENABLED=1 \
-    go build -trimpath -buildvcs=false -tags "notusk" -buildmode="$_resolved_ffi_build_mode" -o "$_out" "$FFI_PACKAGE"
+  if [ -n "$GO_LDFLAGS" ]; then
+    GOOS="$_goos" GOARCH="$_goarch" GOAMD64=v1 CGO_ENABLED=1 \
+      go build -trimpath -buildvcs=false -tags "notusk" -ldflags "$GO_LDFLAGS" -buildmode="$_resolved_ffi_build_mode" -o "$_out" "$FFI_PACKAGE"
+  else
+    GOOS="$_goos" GOARCH="$_goarch" GOAMD64=v1 CGO_ENABLED=1 \
+      go build -trimpath -buildvcs=false -tags "notusk" -buildmode="$_resolved_ffi_build_mode" -o "$_out" "$FFI_PACKAGE"
+  fi
   # Go also emits ${_base}.h for c-shared/c-archive.
 }
 

@@ -922,6 +922,22 @@ func TestHandle_ListArchive_File(t *testing.T) {
 	if logicalFileCount < 1 {
 		t.Fatalf("expected logical archive files, got %v", logicalFileCount)
 	}
+	logicalFiles, ok := m["logical_files"].([]any)
+	if !ok || len(logicalFiles) == 0 {
+		t.Fatalf("expected logical_files in list result")
+	}
+	first, ok := logicalFiles[0].(map[string]any)
+	if !ok {
+		t.Fatalf("logical file object parse failed")
+	}
+	totalSize, _ := first["total_size"].(float64)
+	compressedSize, _ := first["compressed_size"].(float64)
+	if totalSize <= 0 {
+		t.Fatalf("expected total_size > 0, got %v", totalSize)
+	}
+	if compressedSize <= 0 {
+		t.Fatalf("expected compressed_size > 0, got %v", compressedSize)
+	}
 }
 
 func TestHandle_ListArchive_AsyncProgress(t *testing.T) {
@@ -1085,6 +1101,66 @@ func TestHandle_VerifyArchive_File(t *testing.T) {
 	valid, _ := m[testKeyValid].(bool)
 	if !valid {
 		t.Fatalf("expected valid archive")
+	}
+	format, _ := m["format"].(string)
+	if format != "duesarc" {
+		t.Fatalf("expected duesarc format, got %q", format)
+	}
+	manifestFound, _ := m["manifest_found"].(bool)
+	if !manifestFound {
+		t.Fatalf("expected manifest_found=true")
+	}
+	fileCount, _ := m["file_count"].(float64)
+	if fileCount != 1 {
+		t.Fatalf("expected duesarc logical file_count=1, got %v", fileCount)
+	}
+	inputBytes, _ := m["input_bytes"].(float64)
+	if inputBytes <= 0 {
+		t.Fatalf("expected input_bytes > 0, got %v", inputBytes)
+	}
+}
+
+func TestHandle_VerifyArchive_ZipProvidesFormatMetadata(t *testing.T) {
+	svc := New()
+	dir := t.TempDir()
+	in := filepath.Join(dir, "verify-zip-src.txt")
+	arc := filepath.Join(dir, "verify-zip-src.zip")
+
+	if err := os.WriteFile(in, []byte("verify zip metadata"), testFilePerm); err != nil {
+		t.Fatalf("write input failed: %v", err)
+	}
+
+	createParams, _ := json.Marshal(map[string]any{
+		testKeyInputPath:  in,
+		testKeyOutputPath: arc,
+		"format":          "zip",
+	})
+	_, createErr := svc.Handle(context.Background(), testOpCreateArchive, createParams)
+	if createErr != nil {
+		t.Fatalf("create zip archive failed: %v", createErr)
+	}
+
+	verifyParams, _ := json.Marshal(map[string]any{testKeyInputPath: arc})
+	res, verifyErr := svc.Handle(context.Background(), testOpVerifyArchive, verifyParams)
+	if verifyErr != nil {
+		t.Fatalf("verify zip archive failed: %v", verifyErr)
+	}
+	m, ok := structToMap(res)
+	if !ok {
+		t.Fatalf("verify zip result parse failed")
+	}
+	format, _ := m["format"].(string)
+	if format != "zip" {
+		t.Fatalf("expected zip format, got %q", format)
+	}
+	manifestFound, _ := m["manifest_found"].(bool)
+	if manifestFound {
+		t.Fatalf("expected manifest_found=false for zip compatibility archive")
+	}
+	entryCount, _ := m[testKeyEntryCount].(float64)
+	fileCount, _ := m["file_count"].(float64)
+	if entryCount < 1 || fileCount < 1 {
+		t.Fatalf("expected entry_count/file_count >= 1, got entry_count=%v file_count=%v", entryCount, fileCount)
 	}
 }
 

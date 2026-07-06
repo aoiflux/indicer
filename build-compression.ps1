@@ -7,7 +7,9 @@ param(
     [ValidateSet("auto", "c-shared", "c-archive")]
     [string]$FfiBuildMode = "auto",
     [ValidateSet("cli", "ffi", "all")]
-    [string]$Mode = "all"
+    [string]$Mode = "all",
+    [ValidateSet("debug", "release")]
+    [string]$BuildProfile = "debug"
 )
 
 Set-StrictMode -Version Latest
@@ -26,6 +28,16 @@ $prevGoarch = $env:GOARCH
 $prevCgo = $env:CGO_ENABLED
 $prevGoamd64 = $env:GOAMD64
 
+$commonBuildArgs = @("-trimpath", "-buildvcs=false", "-tags", "notusk")
+if ($BuildProfile -eq "release") {
+    # -s -w strips symbol tables and DWARF debug info from Go artifacts.
+    $commonBuildArgs += @("-ldflags", "-s -w")
+    Write-Host "Build profile: release (stripped symbols/debug info)" -ForegroundColor DarkCyan
+}
+else {
+    Write-Host "Build profile: debug" -ForegroundColor DarkGray
+}
+
 function Build-Cli {
     param([string]$Goos, [string]$Goarch)
 
@@ -39,7 +51,8 @@ function Build-Cli {
     $env:GOAMD64 = "v1"
     $env:CGO_ENABLED = "0"
 
-    & go build -trimpath -buildvcs=false -tags "notusk" -o $out $CliPackage
+    $args = @("build") + $commonBuildArgs + @("-o", $out, $CliPackage)
+    & go @args
     if ($LASTEXITCODE -ne 0) { throw "CLI build failed for $Goos/$Goarch" }
 }
 
@@ -81,7 +94,8 @@ function Build-Ffi {
     $env:GOAMD64 = "v1"
     $env:CGO_ENABLED = "1"
 
-    & go build -trimpath -buildvcs=false -tags "notusk" -buildmode $resolvedFfiBuildMode -o $out $FfiPackage
+    $args = @("build") + $commonBuildArgs + @("-buildmode", $resolvedFfiBuildMode, "-o", $out, $FfiPackage)
+    & go @args
     if ($LASTEXITCODE -ne 0) { throw "FFI build failed for $Goos/$Goarch" }
 }
 

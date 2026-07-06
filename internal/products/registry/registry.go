@@ -28,6 +28,12 @@ func (r *Registry) Register(s Service) {
 	r.services[s.Product()] = s
 }
 
+func (r *Registry) RegisterAs(product string, s Service) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.services[product] = s
+}
+
 func (r *Registry) Get(product string) (Service, bool) {
 	r.mu.RLock()
 	defer r.mu.RUnlock()

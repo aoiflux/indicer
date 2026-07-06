@@ -24,7 +24,9 @@ func NewDispatcher(r *registry.Registry) *Dispatcher {
 
 func NewDefaultDispatcher() *Dispatcher {
 	r := registry.New()
-	r.Register(compression_product.New())
+	compressionService := compression_product.New()
+	r.Register(compressionService)
+	r.RegisterAs(compression_product.LegacyName, compressionService)
 	r.Register(backup_product.New())
 	r.Register(package_registry_product.New())
 	r.Register(evidence_management_product.New())

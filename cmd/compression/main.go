@@ -19,6 +19,8 @@ const (
 	cmdExtractArchive = "extract-archive"
 	cmdListArchive    = "list-archive"
 	cmdVerifyArchive  = "verify-archive"
+	cmdGetProgress    = "get-progress"
+	cmdCancelTask     = "cancel-task"
 	cmdCompress       = "compress"
 	cmdDecompress     = "decompress"
 	cmdCompressFile   = "compress-file"
@@ -29,24 +31,28 @@ const (
 	opExtractArchive  = "extract_archive"
 	opListArchive     = "list_archive"
 	opVerifyArchive   = "verify_archive"
+	opGetProgress     = "get_progress"
+	opCancelTask      = "cancel_task"
 	opCompressBytes   = "compress_bytes"
 	opDecompressBytes = "decompress_bytes"
 	opCompressFile    = "compress_file"
 	opDecompressFile  = "decompress_file"
 
-	productCompression = "compression_product"
+	productCompression = "qwikpak"
 
 	defaultLevel       = "best"
 	defaultChunkSizeKB = 256
 	defaultSplitSizeMB = 0
+	defaultFormat      = "duesarc"
 
-	usageText = "usage: compression <dispatch|capabilities|create-archive|extract-archive|list-archive|verify-archive|compress|decompress|compress-file|decompress-file> [flags]"
+	usageText = "usage: compression <dispatch|capabilities|create-archive|extract-archive|list-archive|verify-archive|get-progress|cancel-task|compress|decompress|compress-file|decompress-file> [flags]"
 
 	errUnknownCommandFmt   = "unknown command: %s\n"
 	errRequestRequired     = "--request is required"
 	errInputRequired       = "--input is required"
 	errCreateInputRequired = "--input or at least one --input-file is required"
 	errDataBase64Required  = "--data-base64 is required"
+	errTaskIDRequired      = "--task-id is required"
 
 	jsonVersionKey     = "version"
 	jsonProductKey     = "product"
@@ -63,6 +69,8 @@ const (
 	jsonSplitSizeMBKey = "split_size_mb"
 	jsonKeepWorkDirKey = "keep_work_dir"
 	jsonAsyncKey       = "async"
+	jsonFormatKey      = "format"
+	jsonTaskIDKey      = "task_id"
 )
 
 type command struct {
@@ -78,6 +86,8 @@ func main() {
 		cmdExtractArchive: {name: cmdExtractArchive, run: runExtractArchive},
 		cmdListArchive:    {name: cmdListArchive, run: runListArchive},
 		cmdVerifyArchive:  {name: cmdVerifyArchive, run: runVerifyArchive},
+		cmdGetProgress:    {name: cmdGetProgress, run: runGetProgress},
+		cmdCancelTask:     {name: cmdCancelTask, run: runCancelTask},
 		cmdCompress:       {name: cmdCompress, run: runCompress},
 		cmdDecompress:     {name: cmdDecompress, run: runDecompress},
 		cmdCompressFile:   {name: cmdCompressFile, run: runCompressFile},
@@ -132,12 +142,14 @@ func runCreateArchive(args []string) int {
 	input := fs.String("input", "", "input file or folder path")
 	var inputFiles stringSliceFlag
 	fs.Var(&inputFiles, "input-file", "add input file (repeat flag for multiple files)")
-	output := fs.String("output", "", "output .duesarc path (optional)")
+	output := fs.String("output", "", "output archive path (optional)")
 	workDir := fs.String("work-dir", "", "working directory for generated pipeline data")
 	chunkSize := fs.Int("chunk-size-kb", defaultChunkSizeKB, "chunk size in KB")
 	password := fs.String("password", "", "optional archive password for db key derivation")
 	splitSizeMB := fs.Int("split-size-mb", defaultSplitSizeMB, "optional split volume size in MB")
 	keepWorkDir := fs.Bool("keep-work-dir", false, "keep generated working directory")
+	format := fs.String("format", defaultFormat, "archive format: duesarc|zip|tar|tar.gz|tar.xz")
+	async := fs.Bool("async", false, "run operation asynchronously and return task_id")
 	if err := fs.Parse(args); err != nil {
 		return 2
 	}
@@ -159,6 +171,8 @@ func runCreateArchive(args []string) int {
 			jsonPasswordKey:    *password,
 			jsonSplitSizeMBKey: *splitSizeMB,
 			jsonKeepWorkDirKey: *keepWorkDir,
+			jsonFormatKey:      *format,
+			jsonAsyncKey:       *async,
 		},
 	}
 	out, err := dispatchRequest(request)
@@ -172,9 +186,11 @@ func runCreateArchive(args []string) int {
 
 func runExtractArchive(args []string) int {
 	fs := flag.NewFlagSet(cmdExtractArchive, flag.ContinueOnError)
-	input := fs.String("input", "", "input .duesarc or .duesarc.001 path")
+	input := fs.String("input", "", "input archive path")
 	output := fs.String("output", "", "output directory path (optional)")
 	password := fs.String("password", "", "optional archive password for db key derivation")
+	format := fs.String("format", "", "archive format override: duesarc|zip|tar|tar.gz|tar.xz")
+	async := fs.Bool("async", false, "run operation asynchronously and return task_id")
 	if err := fs.Parse(args); err != nil {
 		return 2
 	}
@@ -191,6 +207,8 @@ func runExtractArchive(args []string) int {
 			jsonInputPathKey:  *input,
 			jsonOutputPathKey: *output,
 			jsonPasswordKey:   *password,
+			jsonFormatKey:     *format,
+			jsonAsyncKey:      *async,
 		},
 	}
 	out, err := dispatchRequest(request)
@@ -204,8 +222,10 @@ func runExtractArchive(args []string) int {
 
 func runListArchive(args []string) int {
 	fs := flag.NewFlagSet(cmdListArchive, flag.ContinueOnError)
-	input := fs.String("input", "", "input .duesarc or .duesarc.001 path")
+	input := fs.String("input", "", "input archive path")
 	password := fs.String("password", "", "optional archive password for db key derivation")
+	format := fs.String("format", "", "archive format override: duesarc|zip|tar|tar.gz|tar.xz")
+	async := fs.Bool("async", false, "run operation asynchronously and return task_id")
 	if err := fs.Parse(args); err != nil {
 		return 2
 	}
@@ -221,6 +241,8 @@ func runListArchive(args []string) int {
 		jsonParamsKey: map[string]any{
 			jsonInputPathKey: *input,
 			jsonPasswordKey:  *password,
+			jsonFormatKey:    *format,
+			jsonAsyncKey:     *async,
 		},
 	}
 	out, err := dispatchRequest(request)
@@ -234,7 +256,9 @@ func runListArchive(args []string) int {
 
 func runVerifyArchive(args []string) int {
 	fs := flag.NewFlagSet(cmdVerifyArchive, flag.ContinueOnError)
-	input := fs.String("input", "", "input .duesarc or .duesarc.001 path")
+	input := fs.String("input", "", "input archive path")
+	format := fs.String("format", "", "archive format override: duesarc|zip|tar|tar.gz|tar.xz")
+	async := fs.Bool("async", false, "run operation asynchronously and return task_id")
 	if err := fs.Parse(args); err != nil {
 		return 2
 	}
@@ -249,6 +273,64 @@ func runVerifyArchive(args []string) int {
 		jsonOperationKey: opVerifyArchive,
 		jsonParamsKey: map[string]any{
 			jsonInputPathKey: *input,
+			jsonFormatKey:    *format,
+			jsonAsyncKey:     *async,
+		},
+	}
+	out, err := dispatchRequest(request)
+	if err != nil {
+		fmt.Fprintln(os.Stderr, err.Error())
+		return 2
+	}
+	fmt.Println(out)
+	return 0
+}
+
+func runGetProgress(args []string) int {
+	fs := flag.NewFlagSet(cmdGetProgress, flag.ContinueOnError)
+	taskID := fs.String("task-id", "", "async task id")
+	if err := fs.Parse(args); err != nil {
+		return 2
+	}
+	if *taskID == "" {
+		fmt.Fprintln(os.Stderr, errTaskIDRequired)
+		return 2
+	}
+
+	request := map[string]any{
+		jsonVersionKey:   jsonbridge.CurrentVersion,
+		jsonProductKey:   productCompression,
+		jsonOperationKey: opGetProgress,
+		jsonParamsKey: map[string]any{
+			jsonTaskIDKey: *taskID,
+		},
+	}
+	out, err := dispatchRequest(request)
+	if err != nil {
+		fmt.Fprintln(os.Stderr, err.Error())
+		return 2
+	}
+	fmt.Println(out)
+	return 0
+}
+
+func runCancelTask(args []string) int {
+	fs := flag.NewFlagSet(cmdCancelTask, flag.ContinueOnError)
+	taskID := fs.String("task-id", "", "async task id")
+	if err := fs.Parse(args); err != nil {
+		return 2
+	}
+	if *taskID == "" {
+		fmt.Fprintln(os.Stderr, errTaskIDRequired)
+		return 2
+	}
+
+	request := map[string]any{
+		jsonVersionKey:   jsonbridge.CurrentVersion,
+		jsonProductKey:   productCompression,
+		jsonOperationKey: opCancelTask,
+		jsonParamsKey: map[string]any{
+			jsonTaskIDKey: *taskID,
 		},
 	}
 	out, err := dispatchRequest(request)

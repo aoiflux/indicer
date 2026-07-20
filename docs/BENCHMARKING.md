@@ -50,6 +50,19 @@ Adjust run length/sample count:
 ./benchmark.ps1 -Count 7 -Benchtime 3s
 ```
 
+Run optional io_uring queue-depth sweep against a real dataset:
+
+```powershell
+./benchmark.ps1 -StoreDataset .\samples\evidence.img -StoreCount 3 -IOUringQueueDepths 256,512,1024,2048
+```
+
+Notes:
+
+- If `-StoreExe` is omitted, the harness uses `./dues.exe` when available,
+  otherwise falls back to `go run .`.
+- Sweep results are appended to `bench\outputs\summary.txt` with
+  `depth=... median_seconds=...` and a `recommended_depth=...` line.
+
 ### Linux/macOS
 
 Run benchmark suite:
@@ -69,6 +82,19 @@ Adjust run length/sample count:
 ```bash
 COUNT=7 BENCHTIME=3s sh ./benchmark.sh
 ```
+
+Run optional io_uring queue-depth sweep against a real dataset:
+
+```bash
+STORE_DATASET=./samples/evidence.img STORE_COUNT=3 IO_URING_DEPTHS="256 512 1024 2048" sh ./benchmark.sh
+```
+
+Notes:
+
+- If `STORE_EXE` is omitted, the harness uses `./dues` when available, otherwise
+  falls back to `go run .`.
+- Sweep results are appended to `bench/outputs/summary.txt` with
+  `depth=... median_seconds=...` and a `recommended_depth=...` line.
 
 ## Manual benchmark commands
 

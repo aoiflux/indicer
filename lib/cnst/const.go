@@ -70,6 +70,7 @@ var HochoMode = HochoModeBaseline
 var StorePipelineMode = StorePipelineBatch
 var StoreAsyncFileWrites = false
 var StoreIOEngine = StoreIOEngineAuto
+var StoreIOUringQueueDepth = 0 // io-uring SQ/CQ depth (0 = auto)
 var StoreWorkerCount = 0
 var StoreTaskQueueDepth = 0
 var RestoreWorkerCount = 0
@@ -143,57 +144,93 @@ const (
 	CmdServer   = "server"
 	CmdVeresion = "version"
 
-	FlagDBPath               = "dbpath"
-	FlagDBPathShort          = 'd'
-	FlagPassword             = "password"
-	FlagPasswordShort        = 'p'
-	FlagNearOption           = "nearoption"
-	FlagNearOptionShort      = 'n'
-	FlagDeep                 = "deep"
-	FlagDeepShort            = 'e'
-	FlagChonkSize            = "chonksize"
-	FlagChonkSizeShort       = 'c'
-	FlagRestoreFilePath      = "filepath"
-	FlagRestoreFilePathShort = 'f'
-	FlagLowResource          = "low"
-	FlagLowResourceShort     = 'l'
-	FlagFastMode             = "quick"
-	FlagFastModeShort        = 'q'
-	FlagContainerMode        = "container"
-	FlagContainerModeShort   = 'x'
-	FlagHierarchicalIndex    = "hierarchical"
-	FlagHierarchicalShort    = 'i'
-	FlagSyncIndex            = "sync"
-	FlagSyncIndexShort       = 's'
-	FlagNoIndex              = "no-index"
-	FlagNoIndexShort         = 'n'
-	FlagHashAlgo             = "hash-algo"
-	FlagHashAlgoShort        = 'g'
-	FlagHashStrategy         = "hash-strategy"
-	FlagStorePipeline        = "pipeline"
-	FlagStoreAsyncFileWrite  = "async-fio"
-	FlagStoreIOEngine        = "io-engine"
-	FlagHochoMode            = "hocho-mode"
-	FlagExplainExact         = "explain-exact"
-	FlagExplainExactShort    = 't'
-	FlagAdvancedDeep         = "advanced-deep"
-	FlagAdvancedDeepShort    = 'a'
-	FlagRepairFix            = "fix"
-	FlagRepairMigrateRevRel  = "migrate-revrel"
-	FlagTopK                 = "top-k"
-	FlagTopKShort            = 'k'
-	FlagEnableFts            = "fts"
-	FlagEnableEnrichment     = "enrich"
-	FlagListStatus           = "status"
-	FlagCompressLevel        = "compress-level"
-	FlagSimhash              = "simhash"
-	FlagEnableRevRel         = "revrel"
-	FlagStoreWorkers         = "store-workers"
-	FlagStoreQueue           = "store-queue"
-	FlagRestoreWorkers       = "restore-workers"
-	FlagRestoreQueue         = "restore-queue"
-	FlagRestoreProgressMs    = "restore-progress-ms"
-	FlagRestoreBufferMB      = "restore-buffer-mb"
+	FlagDBPath                      = "dbpath"
+	FlagDBPathShort                 = 'd'
+	FlagPassword                    = "password"
+	FlagPasswordShort               = 'p'
+	FlagNearOption                  = "nearoption"
+	FlagNearOptionShort             = 'n'
+	FlagDeep                        = "deep"
+	FlagDeepShort                   = 'e'
+	FlagChonkSize                   = "chonksize"
+	FlagChonkSizeShort              = 'c'
+	FlagRestoreFilePath             = "filepath"
+	FlagRestoreFilePathShort        = 'f'
+	FlagLowResource                 = "low"
+	FlagLowResourceShort            = 'l'
+	FlagFastMode                    = "quick"
+	FlagFastModeShort               = 'q'
+	FlagContainerMode               = "container"
+	FlagContainerModeShort          = 'x'
+	FlagHierarchicalIndex           = "hierarchical"
+	FlagHierarchicalShort           = 'i'
+	FlagPreset                      = "preset"
+	FlagPresetShort                 = 'P'
+	FlagQuickMode                   = "quick-mode"
+	FlagQuickModeShort              = 'Q'
+	FlagPerformanceMode             = "performance-mode"
+	FlagPerformanceModeShort        = 'o'
+	FlagLowResourceMode             = "low-resource-mode"
+	FlagLowResourceModeShort        = 'L'
+	FlagSyncIndex                   = "sync"
+	FlagSyncIndexShort              = 's'
+	FlagNoIndex                     = "no-index"
+	FlagNoIndexShort                = 'N'
+	FlagHashAlgo                    = "hash-algo"
+	FlagHashAlgoShort               = 'g'
+	FlagHashStrategy                = "hash-strategy"
+	FlagHashStrategyShort           = 'S'
+	FlagStorePipeline               = "pipeline"
+	FlagStorePipelineShort          = 'Y'
+	FlagStoreAsyncFileWrite         = "async-fio"
+	FlagStoreAsyncFileWriteShort    = 'A'
+	FlagStoreIOEngine               = "io-engine"
+	FlagStoreIOEngineShort          = 'I'
+	FlagStoreIOUringQueueDepth      = "io-uring-queue-depth"
+	FlagStoreIOUringQueueDepthShort = 'j'
+	FlagHochoMode                   = "hocho-mode"
+	FlagHochoModeShort              = 'M'
+	FlagExplainExact                = "explain-exact"
+	FlagExplainExactShort           = 't'
+	FlagAdvancedDeep                = "advanced-deep"
+	FlagAdvancedDeepShort           = 'a'
+	FlagRepairFix                   = "fix"
+	FlagRepairFixShort              = 'J'
+	FlagRepairMigrateRevRel         = "migrate-revrel"
+	FlagTopK                        = "top-k"
+	FlagTopKShort                   = 'k'
+	FlagEnableFts                   = "fts"
+	FlagEnableFtsShort              = 'F'
+	FlagEnableEnrichment            = "enrich"
+	FlagEnableEnrichmentShort       = 'E'
+	FlagListStatus                  = "status"
+	FlagListStatusShort             = 'u'
+	FlagCompressLevel               = "compress-level"
+	FlagCompressLevelShort          = 'z'
+	FlagSimhash                     = "simhash"
+	FlagSimhashShort                = 'H'
+	FlagEnableRevRel                = "revrel"
+	FlagEnableRevRelShort           = 'R'
+	FlagStoreWorkers                = "store-workers"
+	FlagStoreWorkersShort           = 'w'
+	FlagStoreQueue                  = "store-queue"
+	FlagStoreQueueShort             = 'W'
+	FlagRestoreWorkers              = "restore-workers"
+	FlagRestoreWorkersShort         = 'y'
+	FlagRestoreQueue                = "restore-queue"
+	FlagRestoreQueueShort           = 'U'
+	FlagRestoreProgressMs           = "restore-progress-ms"
+	FlagRestoreProgressMsShort      = 'm'
+	FlagRestoreBufferMB             = "restore-buffer-mb"
+	FlagRestoreBufferMBShort        = 'b'
+	FlagRankAlpha                   = "rank-alpha"
+	FlagRankAlphaShort              = 'r'
+	FlagMicroExtractForceShort      = 'V'
+	FlagMicroExtractTopKShort       = 'K'
+
+	PresetQuick       = "quick"
+	PresetPerformance = "performance"
+	PresetLowResource = "low-resource"
 
 	OperandFile  = "FILE"
 	OperandHash  = "HASH"
@@ -287,6 +324,31 @@ func SetStoreIOEngine(engine string) error {
 	}
 	StoreIOEngine = normalized
 	return nil
+}
+
+func SetStoreIOUringQueueDepth(depth int) error {
+	if depth < 0 {
+		return errors.New("invalid io-uring queue depth: must be >= 0")
+	}
+	StoreIOUringQueueDepth = depth
+	return nil
+}
+
+// GetStoreIOUringQueueDepth returns queue depth for io-uring.
+// A value of 0 auto-tunes based on CPU count and bounds the result.
+func GetStoreIOUringQueueDepth() int {
+	if StoreIOUringQueueDepth > 0 {
+		return StoreIOUringQueueDepth
+	}
+
+	depth := runtime.NumCPU() * 16
+	if depth < 256 {
+		depth = 256
+	}
+	if depth > 4096 {
+		depth = 4096
+	}
+	return depth
 }
 
 func NormalizeHochoMode(mode string) string {

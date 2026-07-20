@@ -8,6 +8,7 @@ import (
 	"strings"
 
 	"indicer/lib/cnst"
+	"indicer/lib/fio"
 	"indicer/lib/structs"
 	"indicer/lib/util"
 
@@ -328,6 +329,33 @@ func printStats(s *DBStats) {
 		} else {
 			ratio := float64(s.OnDiskBytes) / float64(s.TotalLogicalSize)
 			statRow("Storage overhead", fmt.Sprintf("%.2fx (encrypted+compressed)", ratio), dim)
+		}
+	}
+
+	// ── WRITE ENGINE ───────────────────────────────────────────────────────
+	fioStats := fio.GetWriteBackendStats()
+
+	fmt.Println()
+	sectionHdr.Println("  WRITE ENGINE")
+	fmt.Println("  ", dim.Sprint(sep))
+
+	statRow("Requested engine", fioStats.RequestedEngine, val)
+	statRow("Selected engine", fioStats.SelectedEngine, val)
+	statRow("Fallback count", humanize.Comma(int64(fioStats.FallbackCount)), val)
+	if fioStats.RequestedEngine == cnst.StoreIOEngineUring || fioStats.SelectedEngine == cnst.StoreIOEngineUring {
+		statRow("io_uring queue depth", humanize.Comma(int64(fioStats.IOUringQueueDepth)), val)
+		statRow("io_uring submits", humanize.Comma(int64(fioStats.IOUringSubmitCount)), val)
+		statRow("io_uring waits", humanize.Comma(int64(fioStats.IOUringSubmitWaits)), val)
+		statRow("io_uring completions", humanize.Comma(int64(fioStats.IOUringCompletions)), val)
+		if fioStats.IOUringQueueFull > 0 {
+			statRow("io_uring queue-full", humanize.Comma(int64(fioStats.IOUringQueueFull)), warn)
+		} else {
+			statRow("io_uring queue-full", "0", dim)
+		}
+		if fioStats.IOUringSubmitErrors > 0 {
+			statRow("io_uring submit errors", humanize.Comma(int64(fioStats.IOUringSubmitErrors)), warn)
+		} else {
+			statRow("io_uring submit errors", "0", dim)
 		}
 	}
 

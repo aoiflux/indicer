@@ -5,12 +5,7 @@ import (
 
 	coreerr "indicer/internal/core/errors"
 	"indicer/internal/core/jsonbridge"
-	"indicer/internal/products/backup_product"
-	"indicer/internal/products/cold_storage_product"
 	"indicer/internal/products/compression_product"
-	"indicer/internal/products/evidence_management_product"
-	"indicer/internal/products/forensic_analysis_product"
-	"indicer/internal/products/package_registry_product"
 	"indicer/internal/products/registry"
 )
 
@@ -27,11 +22,6 @@ func NewDefaultDispatcher() *Dispatcher {
 	compressionService := compression_product.New()
 	r.Register(compressionService)
 	r.RegisterAs(compression_product.LegacyName, compressionService)
-	r.Register(backup_product.New())
-	r.Register(package_registry_product.New())
-	r.Register(evidence_management_product.New())
-	r.Register(forensic_analysis_product.New())
-	r.Register(cold_storage_product.New())
 	return NewDispatcher(r)
 }
 

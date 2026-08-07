@@ -10,6 +10,7 @@ import (
 	"indicer/lib/enrichment"
 	"indicer/lib/logging"
 	"indicer/lib/parser"
+	"indicer/lib/parser/tskcompat"
 	"indicer/lib/store"
 	"indicer/lib/structs"
 	"indicer/lib/util"
@@ -530,7 +531,20 @@ func indexEvidenceFile(eviFile structs.InputFile, db *badger.DB, enableFTS bool,
 	if cnst.StoreHashStrategy == cnst.HochoHashStrategy {
 		statsBefore = store.SnapshotLogicalHochoReuseStats()
 	}
-	tuskJSON, hasTusk := parser.TuskAnalysis(eviFile.GetHandle().Name())
+	// Evidence parser backend: pure-Go (--parser=go) or CGo libtusk (default).
+	// tskcompat emits the same JSON shape as libtusk, so ParseImage and
+	// IndexFilesystem downstream are identical either way.
+	var tuskJSON string
+	var hasTusk bool
+	if cnst.PARSER == cnst.ParserGo {
+		if out, err := tskcompat.Analyze(eviFile.GetHandle().Name()); err == nil {
+			tuskJSON, hasTusk = out, true
+		} else {
+			logging.GetLogger().Error("indexEvidenceFile GO_PARSER_ERROR", zap.Error(err))
+		}
+	} else {
+		tuskJSON, hasTusk = parser.TuskAnalysis(eviFile.GetHandle().Name())
+	}
 	partitions := parser.ParseImage(tuskJSON, hasTusk, eviFile.GetSize(), eviFile.GetHandle())
 
 	var enrichRepo *enrichment.GrapheneRepository

@@ -1,6 +1,6 @@
 module indicer
 
-go 1.26
+go 1.26.2
 
 require (
 	charm.land/bubbles/v2 v2.1.0
@@ -9,7 +9,15 @@ require (
 	connectrpc.com/connect v1.20.0
 	github.com/alecthomas/kingpin/v2 v2.4.0
 	github.com/aoiflux/graphene v0.1.3
-	github.com/aoiflux/libxfat v1.0.6
+	github.com/aoiflux/libewf v0.2.0
+	github.com/aoiflux/libext v0.2.0
+	github.com/aoiflux/libfat v0.2.0
+	github.com/aoiflux/libhfs v0.2.0
+	github.com/aoiflux/libntfs v0.3.0
+	github.com/aoiflux/libtable v0.2.0
+	github.com/aoiflux/libvhdi v0.2.0
+	github.com/aoiflux/libxfat v1.1.0
+	github.com/aoiflux/libxfs v0.2.0
 	github.com/atotto/clipboard v0.1.4
 	github.com/blevesearch/bleve/v2 v2.6.0
 	github.com/cheggaaa/pb/v3 v3.1.7
@@ -25,10 +33,12 @@ require (
 	github.com/saferwall/pe v1.6.5
 	github.com/schollz/progressbar/v3 v3.19.0
 	github.com/shirou/gopsutil/v3 v3.24.5
+	github.com/ulikunitz/xz v0.5.15
 	github.com/vmihailenco/msgpack/v5 v5.4.1
 	github.com/zeebo/blake3 v0.2.4
 	go.uber.org/zap v1.28.0
 	golang.org/x/net v0.55.0
+	golang.org/x/sys v0.45.0
 	google.golang.org/grpc v1.81.1
 	google.golang.org/protobuf v1.36.11
 	www.velocidex.com/golang/evtx v0.2.0
@@ -108,7 +118,6 @@ require (
 	github.com/sirupsen/logrus v1.9.4 // indirect
 	github.com/tklauser/go-sysconf v0.4.0 // indirect
 	github.com/tklauser/numcpus v0.12.0 // indirect
-	github.com/ulikunitz/xz v0.5.15 // indirect
 	github.com/vmihailenco/tagparser/v2 v2.0.0 // indirect
 	github.com/xhit/go-str2duration/v2 v2.1.0 // indirect
 	github.com/xo/terminfo v0.0.0-20220910002029-abceb7e1c41e // indirect
@@ -122,7 +131,6 @@ require (
 	golang.org/x/crypto v0.52.0 // indirect
 	golang.org/x/image v0.41.0 // indirect
 	golang.org/x/sync v0.20.0 // indirect
-	golang.org/x/sys v0.45.0 // indirect
 	golang.org/x/term v0.43.0 // indirect
 	golang.org/x/text v0.37.0 // indirect
 	google.golang.org/genproto/googleapis/rpc v0.0.0-20260526163538-3dc84a4a5aaa // indirect

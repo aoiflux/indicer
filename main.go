@@ -46,11 +46,13 @@ type cliFlags struct {
 	compressLevel     *string
 
 	evipath             *string
+	parserDiffPath      *string
 	syncIndex           *bool
 	noIndex             *bool
 	enableFTS           *bool
 	enableEnrichment    *bool
 	storeHashAlgo       *string
+	storeParser         *string
 	storeHashStrategy   *string
 	storePipeline       *string
 	storeAsyncFileWrite *bool
@@ -110,6 +112,7 @@ type cliCommands struct {
 	enrich       *kingpin.CmdClause
 	server       *kingpin.CmdClause
 	reset        *kingpin.CmdClause
+	parserDiff   *kingpin.CmdClause
 }
 
 type cliDefinition struct {
@@ -215,6 +218,7 @@ func newCLIDefinition() cliDefinition {
 	flags.enableFTS = commands.store.Flag(cnst.FlagEnableFts, "Enable full-text search indexing (sidecar Bleve index)").Short(cnst.FlagEnableFtsShort).Default("false").Bool()
 	flags.enableEnrichment = commands.store.Flag(cnst.FlagEnableEnrichment, "Upsert disk/partition/indexed-file metadata nodes into graphdb during store").Short(cnst.FlagEnableEnrichmentShort).Default("false").Bool()
 	flags.storeHashAlgo = commands.store.Flag(cnst.FlagHashAlgo, "Hashing algorithm to use [sha3|blake3] (default: BLAKE3)").Short(cnst.FlagHashAlgoShort).Default(cnst.BLAKE3).String()
+	flags.storeParser = commands.store.Flag(cnst.FlagParser, "Evidence parser backend [tusk|go] (default: tusk, CGo libtsk). 'go' uses the pure-Go lib/parser stack.").Default(cnst.ParserTusk).String()
 	flags.storeHashStrategy = commands.store.Flag(cnst.FlagHashStrategy, "Store hash strategy for evidence [sync|async|hocho] (default: sync)").Short(cnst.FlagHashStrategyShort).Default(cnst.SyncHashStrategy).String()
 	flags.storePipeline = commands.store.Flag(cnst.FlagStorePipeline, "Store ingest pipeline mode [batch-owner|staged] (default: batch-owner)").Short(cnst.FlagStorePipelineShort).Default(cnst.StorePipelineBatch).String()
 	flags.storeAsyncFileWrite = commands.store.Flag(cnst.FlagStoreAsyncFileWrite, "EXPERIMENTAL: queue file-mode chunk writes to an async writer and drain before completion").Short(cnst.FlagStoreAsyncFileWriteShort).Default("false").Bool()
@@ -272,6 +276,9 @@ func newCLIDefinition() cliDefinition {
 
 	commands.reset = app.Command(cnst.CmdReset, "Delete the database").Alias(cnst.CmdPurge).Alias(cnst.CmdDelete).Alias(cnst.CmdDestroy)
 
+	commands.parserDiff = app.Command("parser-diff", "Compare libtusk vs pure-Go parser output on an image (migration validation)")
+	flags.parserDiffPath = commands.parserDiff.Arg(cnst.OperandFile, "Path of the evidence image to compare").Required().String()
+
 	return cliDefinition{app: app, flags: flags, commands: commands}
 }
 
@@ -318,6 +325,9 @@ func applyRuntimeConfig(parsed string, args []string, cliDef cliDefinition) (pip
 			return tuning, err
 		}
 		if err := cnst.SetHochoMode(*cliDef.flags.hochoMode); err != nil {
+			return tuning, err
+		}
+		if err := cnst.SetParser(*cliDef.flags.storeParser); err != nil {
 			return tuning, err
 		}
 		if cnst.StoreHashStrategy != cnst.HochoHashStrategy && hasFlagArg(args, cnst.FlagHochoMode) {
@@ -583,6 +593,10 @@ func buildCommandHandlers(cliDef cliDefinition, key []byte, tuning pipelineTunin
 				zap.Int("store_workers_effective", tuning.storeWorkers),
 				zap.Int("store_queue_effective", tuning.storeQueue))
 			return cli.StoreData(*cliDef.flags.chonkSize, *cliDef.flags.dbpath, *cliDef.flags.evipath, key, *cliDef.flags.syncIndex, *cliDef.flags.noIndex, *cliDef.flags.enableFTS, *cliDef.flags.enableEnrichment)
+		},
+		cliDef.commands.parserDiff.FullCommand(): func() error {
+			logging.GetLogger().Info("Command: parser-diff", zap.String("file", *cliDef.flags.parserDiffPath))
+			return cli.ParserDiff(*cliDef.flags.parserDiffPath)
 		},
 		cliDef.commands.restore.FullCommand(): func() error {
 			logging.GetLogger().Info("Command: restore",

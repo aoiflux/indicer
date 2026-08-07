@@ -179,6 +179,7 @@ const (
 	FlagHashAlgo                    = "hash-algo"
 	FlagHashAlgoShort               = 'g'
 	FlagHashStrategy                = "hash-strategy"
+	FlagParser                      = "parser"
 	FlagHashStrategyShort           = 'S'
 	FlagStorePipeline               = "pipeline"
 	FlagStorePipelineShort          = 'Y'
@@ -259,6 +260,28 @@ func SetHashAlgo(algo string) error {
 		return errors.New("invalid hash algorithm: must be sha3 or blake3")
 	}
 	HASHALGO = normalized
+	return nil
+}
+
+// Evidence parser backend selection.
+const (
+	ParserTusk = "tusk" // CGo libtsk/libtusk (default during migration)
+	ParserGo   = "go"   // pure-Go lib/parser stack
+)
+
+// PARSER selects the evidence parser backend used by the store path.
+var PARSER = ParserTusk
+
+// SetParser validates and sets the evidence parser backend.
+func SetParser(p string) error {
+	switch strings.ToLower(strings.TrimSpace(p)) {
+	case ParserTusk, "":
+		PARSER = ParserTusk
+	case ParserGo:
+		PARSER = ParserGo
+	default:
+		return errors.New("invalid parser: must be tusk or go")
+	}
 	return nil
 }
 

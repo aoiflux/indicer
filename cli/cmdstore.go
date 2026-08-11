@@ -531,19 +531,16 @@ func indexEvidenceFile(eviFile structs.InputFile, db *badger.DB, enableFTS bool,
 	if cnst.StoreHashStrategy == cnst.HochoHashStrategy {
 		statsBefore = store.SnapshotLogicalHochoReuseStats()
 	}
-	// Evidence parser backend: pure-Go (--parser=go) or CGo libtusk (default).
-	// tskcompat emits the same JSON shape as libtusk, so ParseImage and
-	// IndexFilesystem downstream are identical either way.
+	// Evidence parser: the pure-Go lib/parser stack via tskcompat, which emits the
+	// libtusk JSON shape so ParseImage/IndexFilesystem downstream are unchanged.
+	// On a parse failure hasTusk stays false and ParseImage falls back to its own
+	// MBR/exFAT detection.
 	var tuskJSON string
 	var hasTusk bool
-	if cnst.PARSER == cnst.ParserGo {
-		if out, err := tskcompat.Analyze(eviFile.GetHandle().Name()); err == nil {
-			tuskJSON, hasTusk = out, true
-		} else {
-			logging.GetLogger().Error("indexEvidenceFile GO_PARSER_ERROR", zap.Error(err))
-		}
+	if out, err := tskcompat.Analyze(eviFile.GetHandle().Name()); err == nil {
+		tuskJSON, hasTusk = out, true
 	} else {
-		tuskJSON, hasTusk = parser.TuskAnalysis(eviFile.GetHandle().Name())
+		logging.GetLogger().Error("indexEvidenceFile PARSER_ERROR", zap.Error(err))
 	}
 	partitions := parser.ParseImage(tuskJSON, hasTusk, eviFile.GetSize(), eviFile.GetHandle())
 

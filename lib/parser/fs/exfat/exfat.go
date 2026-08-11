@@ -12,6 +12,7 @@ import (
 	"errors"
 	"io"
 	"path"
+	"strings"
 
 	"github.com/aoiflux/libxfat"
 
@@ -37,18 +38,17 @@ var _ core.Filesystem = (*exfatFS)(nil)
 func Open(r io.ReaderAt, base, size int64) (core.Filesystem, error) {
 	// r is partition-relative (a SectionReader over the volume), so Base is 0.
 	//
-	// Strict mode is intentionally OFF. libxfat's strict path runs a file-name
-	// checksum verification that, on at least some real images (superfloppy exFAT
-	// whose VBR claims a nonzero PartitionOffset), false-positives on every entry
-	// and silently blanks the name — GetFullPathIndexableEntries then returns
-	// paths like "////" and GetIndexableEntries drops all but $MBR/$FAT1. The
-	// optimistic path returns correct names and full paths. IgnorePartitionOffset
-	// is kept as a belt-and-suspenders (harmless when not strict). See the libxfat
-	// strict-name-checksum bug report.
+	// Strict enables forensic name-checksum validation. The v1.1.0 strict path
+	// false-positived on superfloppy exFAT (nonzero VBR PartitionOffset) and
+	// silently blanked every name; libxfat v1.2.0 fixed it (verified: strict now
+	// yields identical names/full paths to optimistic on that image).
+	// IgnorePartitionOffset skips only the PartitionOffset cross-check, since
+	// imaging tools routinely record a PartitionOffset that does not match where
+	// the volume actually sits.
 	ex, err := libxfat.Open(libxfat.Source{
 		Reader:                r,
 		Size:                  size,
-		Strict:                false,
+		Strict:                true,
 		IgnorePartitionOffset: true,
 	})
 	if err != nil {
@@ -104,6 +104,39 @@ func (a *exfatFS) Walk(fn func(core.Node) error) error {
 			return err
 		}
 	}
+
+	// Deleted-in-place entries. GetFullPathIndexableEntries returns only live
+	// entries, but exFAT deletes a file by clearing its directory entry's in-use
+	// bit while the entry (and usually its contiguous clusters) stay intact in an
+	// allocated directory table — so the unallocated-cluster carver
+	// (RecoverDeletedEntries) does not see them. GetAllEntries(indexable=false)
+	// does. These carry a base name with a " (deleted)" suffix and no
+	// reconstructable parent path; surface them as deleted nodes so their content
+	// is still recovered (matching libtusk/TSK deleted-file recovery).
+	root2, err := a.ex.ReadRootDir()
+	if err != nil {
+		return nil // best effort: the live walk already succeeded
+	}
+	all, err := a.ex.GetAllEntries(root2, false)
+	if err != nil {
+		return nil
+	}
+	for _, e := range all {
+		if !e.IsDeleted() {
+			continue
+		}
+		name := strings.TrimSuffix(e.GetName(), " (deleted)")
+		node := core.Node{
+			ID:        a.put(e),
+			Name:      name,
+			Path:      "/" + name,
+			Kind:      entryKind(e),
+			IsDeleted: true,
+		}
+		if err := fn(node); err != nil {
+			return err
+		}
+	}
 	return nil
 }
 
@@ -133,15 +166,20 @@ func (a *exfatFS) DataRuns(n core.Node) ([]core.AbsRange, error) {
 	if !ok {
 		return nil, errUnknownNode
 	}
+	cs := int64(a.ex.GetClusterSize())
 	clusters, _, err := a.ex.GetClusterList(e)
-	if err != nil {
-		return nil, err
+	if err != nil || len(clusters) == 0 {
+		// A deleted entry's FAT chain is often unreadable (or absent — exFAT sets
+		// NoFatChain for contiguous files). Fall back to a contiguous run from the
+		// first cluster, sized to the file, which is how the data was laid out and
+		// what TSK reports for such files. Live files always have a chain, so this
+		// only affects recovered/deleted entries.
+		clusters = contiguousClusters(e, cs)
 	}
 	if len(clusters) == 0 {
 		return nil, nil
 	}
 
-	cs := int64(a.ex.GetClusterSize())
 	var out []core.AbsRange
 	flush := func(first uint32, count uint32) {
 		start := a.base + int64(a.ex.GetClusterOffset(first))
@@ -195,6 +233,23 @@ func (a *exfatFS) Open(n core.Node) (io.ReadCloser, error) {
 }
 
 func (a *exfatFS) Streams(_ core.Node) ([]core.Stream, error) { return nil, nil }
+
+// contiguousClusters returns the cluster numbers a file of e's size would occupy
+// if laid out contiguously from its first cluster. Used as a fallback for
+// deleted entries whose FAT chain is no longer resolvable.
+func contiguousClusters(e libxfat.Entry, clusterSize int64) []uint32 {
+	size := int64(e.GetSize())
+	first := e.GetEntryCluster()
+	if size <= 0 || clusterSize <= 0 || first == 0 {
+		return nil
+	}
+	n := (size + clusterSize - 1) / clusterSize
+	out := make([]uint32, 0, n)
+	for i := int64(0); i < n; i++ {
+		out = append(out, first+uint32(i))
+	}
+	return out
+}
 
 func entryKind(e libxfat.Entry) core.NodeKind {
 	if e.IsDir() {

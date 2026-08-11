@@ -7,8 +7,6 @@ set -e
 BINARY_NAME="${BINARY_NAME:-dues}"
 MAIN_PACKAGE="${MAIN_PACKAGE:-.}"
 OUTPUT_DIR="${OUTPUT_DIR:-dist}"
-# C compiler used when building linux/amd64 with CGO enabled (libtusk).
-CC_LINUX="${CC_LINUX:-gcc}"
 
 REPO_ROOT="$(cd "$(dirname "$0")" && pwd)"
 cd "$REPO_ROOT"
@@ -49,7 +47,7 @@ if [ -d "$OUTPUT_DIR" ]; then
 fi
 mkdir -p "$OUTPUT_DIR"
 
-LDFLAGS="-s -w -buildid= -extldflags '-static'"
+LDFLAGS="-s -w -buildid="
 
 PGO_FILE="$REPO_ROOT/default.pgo"
 if [ -f "$PGO_FILE" ]; then
@@ -71,13 +69,13 @@ label "PGO" "$PGO_STATUS" "$PGO_COLOR"
 
 OUTPUT_NAME="${BINARY_NAME}-linux-amd64"
 OUTPUT_PATH="${OUTPUT_DIR}/${OUTPUT_NAME}"
-CGO_LABEL="CGO=1, CC=${CC_LINUX}"
+CGO_LABEL="CGO=0 (pure Go)"
 
 printf "\n${C_DARKGRAY}[1/1] ${C_RESET}${C_YELLOW}%s${C_RESET}  ${C_DARKCYAN}(%s, trimpath, stripped)${C_RESET}\n" "$OUTPUT_NAME" "$CGO_LABEL"
 
 BUILD_START=$(date +%s)
 
-GOOS=linux GOARCH=amd64 GOAMD64=v1 CGO_ENABLED=1 CC="$CC_LINUX" \
+GOOS=linux GOARCH=amd64 GOAMD64=v1 CGO_ENABLED=0 \
     go build \
         -trimpath \
         -buildvcs=false \

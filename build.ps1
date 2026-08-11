@@ -5,9 +5,6 @@ param(
     [string[]]$Targets = @(
         "windows/amd64"
     ),
-    # C cross-compiler used when building windows/amd64 with CGO enabled.
-    # Must be a MinGW-w64 cross-compiler targeting x86_64-windows.
-    [string]$WindowsCrossCC = "x86_64-w64-mingw32-gcc",
     # To compile for Linux, run build.sh on Linux instead.
     [switch]$NoClean
 )
@@ -59,7 +56,7 @@ $prevCgo = $env:CGO_ENABLED
 $prevCC = $env:CC
 $prevGoamd64 = $env:GOAMD64
 
-$ldflags = "-s -w -buildid= -extldflags '-static'"
+$ldflags = "-s -w -buildid="
 $baseArgs = @(
     "build",
     "-trimpath",
@@ -104,18 +101,10 @@ try {
         $env:GOOS = $goos
         $env:GOARCH = $goarch
 
-        # CGO is required for windows/amd64 (libtusk).
-        # All other targets build without CGO.
-        $cgoLabel = "CGO=0"
-        if ($goos -eq "windows" -and $goarch -eq "amd64") {
-            $env:CGO_ENABLED = "1"
-            $env:CC = $WindowsCrossCC
-            $cgoLabel = "CGO=1, CC=$WindowsCrossCC"
-        }
-        else {
-            $env:CGO_ENABLED = "0"
-            Remove-Item Env:CC -ErrorAction SilentlyContinue
-        }
+        # Pure Go on every target — no CGO, no C toolchain (libtusk removed).
+        $cgoLabel = "CGO=0 (pure Go)"
+        $env:CGO_ENABLED = "0"
+        Remove-Item Env:CC -ErrorAction SilentlyContinue
 
         # Reset amd64 tuning unless the target is amd64.
         Remove-Item Env:GOAMD64 -ErrorAction SilentlyContinue

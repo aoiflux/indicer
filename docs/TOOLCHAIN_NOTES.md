@@ -1,5 +1,22 @@
 # Toolchain Notes: CGO, Static Linking, Musl, Zig, and MinGW
 
+> ⚠️ **SUPERSEDED (2026-08-10) — the `dues` binary is now pure Go.** libtusk / the
+> CGo dependency was removed (see [LIBTSK_REMOVAL_PLAN.md](LIBTSK_REMOVAL_PLAN.md)):
+> `lib/parser/tusk_amd64.go`, `tusk_fallback.go`, `clib/libtusk_*.a`, the `!notusk`
+> build tag, and the `--parser` flag are gone. The evidence parser is the pure-Go
+> `lib/parser` stack (via `tskcompat`). **The main binary builds with
+> `CGO_ENABLED=0` on every target** — no C compiler, MinGW, musl, or zig required;
+> `build.sh` / `build.ps1` no longer set `CC` or `CGO_ENABLED=1`. Verified
+> cross-compiling linux/amd64, linux/arm64, and darwin/arm64 with no C toolchain.
+>
+> The only remaining CGO in the repo is the **compression FFI** (`build-compression.*`,
+> `-buildmode=c-shared`), which is unrelated to libtusk and out of scope here.
+>
+> Everything below is retained for historical reference only — it no longer
+> describes how `dues` is built.
+
+---
+
 This document captures the toolchain decisions and constraints around building
 `dues` with CGO for the `windows/amd64` and `linux/amd64` targets. Both require
 linking `libtusk`, a C++ static archive. Everything here is a result of working

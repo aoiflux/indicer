@@ -9,15 +9,15 @@ require (
 	connectrpc.com/connect v1.20.0
 	github.com/alecthomas/kingpin/v2 v2.4.0
 	github.com/aoiflux/graphene v0.1.3
-	github.com/aoiflux/libewf v0.2.0
+	github.com/aoiflux/libewf v0.2.1
 	github.com/aoiflux/libext v0.2.0
 	github.com/aoiflux/libfat v0.2.0
 	github.com/aoiflux/libhfs v0.2.0
-	github.com/aoiflux/libntfs v0.3.0
-	github.com/aoiflux/libtable v0.2.0
+	github.com/aoiflux/libntfs v0.3.1
+	github.com/aoiflux/libtable v0.2.2
 	github.com/aoiflux/libvhdi v0.2.0
-	github.com/aoiflux/libxfat v1.1.0
-	github.com/aoiflux/libxfs v0.2.0
+	github.com/aoiflux/libxfat v1.2.0
+	github.com/aoiflux/libxfs v0.3.1
 	github.com/atotto/clipboard v0.1.4
 	github.com/blevesearch/bleve/v2 v2.6.0
 	github.com/cheggaaa/pb/v3 v3.1.7

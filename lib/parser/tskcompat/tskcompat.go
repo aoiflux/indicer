@@ -52,8 +52,9 @@ type resultJSON struct {
 	Partitions []partitionJSON `json:"partitions"`
 }
 
-// Analyze opens the image at path and renders libtusk-compatible JSON — a
-// drop-in replacement for parser.TuskAnalysis.
+// Analyze opens the image at path and renders libtusk-compatible JSON: the same
+// shape the CGo libtusk path used to emit, so ParseImage/IndexFilesystem consume
+// it unchanged.
 func Analyze(path string) (string, error) {
 	img, err := image.Open(path)
 	if err != nil {

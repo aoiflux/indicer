@@ -28,7 +28,7 @@ $prevGoarch = $env:GOARCH
 $prevCgo = $env:CGO_ENABLED
 $prevGoamd64 = $env:GOAMD64
 
-$commonBuildArgs = @("-trimpath", "-buildvcs=false", "-tags", "notusk")
+$commonBuildArgs = @("-trimpath", "-buildvcs=false")
 if ($BuildProfile -eq "release") {
     # -s -w strips symbol tables and DWARF debug info from Go artifacts.
     $commonBuildArgs += @("-ldflags", "-s -w")

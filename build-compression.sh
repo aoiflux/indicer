@@ -52,10 +52,10 @@ build_cli() {
 
   if [ -n "$GO_LDFLAGS" ]; then
     GOOS="$_goos" GOARCH="$_goarch" GOAMD64=v1 CGO_ENABLED=0 \
-      go build -trimpath -buildvcs=false -tags "notusk" -ldflags "$GO_LDFLAGS" -o "$_out" "$CLI_PACKAGE"
+      go build -trimpath -buildvcs=false -ldflags "$GO_LDFLAGS" -o "$_out" "$CLI_PACKAGE"
   else
     GOOS="$_goos" GOARCH="$_goarch" GOAMD64=v1 CGO_ENABLED=0 \
-      go build -trimpath -buildvcs=false -tags "notusk" -o "$_out" "$CLI_PACKAGE"
+      go build -trimpath -buildvcs=false -o "$_out" "$CLI_PACKAGE"
   fi
 }
 
@@ -99,10 +99,10 @@ build_ffi() {
 
   if [ -n "$GO_LDFLAGS" ]; then
     GOOS="$_goos" GOARCH="$_goarch" GOAMD64=v1 CGO_ENABLED=1 \
-      go build -trimpath -buildvcs=false -tags "notusk" -ldflags "$GO_LDFLAGS" -buildmode="$_resolved_ffi_build_mode" -o "$_out" "$FFI_PACKAGE"
+      go build -trimpath -buildvcs=false -ldflags "$GO_LDFLAGS" -buildmode="$_resolved_ffi_build_mode" -o "$_out" "$FFI_PACKAGE"
   else
     GOOS="$_goos" GOARCH="$_goarch" GOAMD64=v1 CGO_ENABLED=1 \
-      go build -trimpath -buildvcs=false -tags "notusk" -buildmode="$_resolved_ffi_build_mode" -o "$_out" "$FFI_PACKAGE"
+      go build -trimpath -buildvcs=false -buildmode="$_resolved_ffi_build_mode" -o "$_out" "$FFI_PACKAGE"
   fi
   # Go also emits ${_base}.h for c-shared/c-archive.
 }

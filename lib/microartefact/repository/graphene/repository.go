@@ -8,6 +8,7 @@ import (
 	duesgraph "indicer/lib/graph"
 	"indicer/lib/graph/ids"
 	"indicer/lib/graph/props"
+	"indicer/lib/graph/schema"
 	"indicer/lib/microartefact/model"
 
 	graphenedb "github.com/aoiflux/graphene"
@@ -17,12 +18,18 @@ import (
 
 const StoreDirName = "graph"
 
-var (
-	nodeTypeEvidenceFile = graphstore.CustomNodeType(0)
-	nodeTypePartition    = graphstore.CustomNodeType(1)
-	nodeTypeIndexedFile  = graphstore.CustomNodeType(2)
-	edgeTypeRelation     = graphstore.EdgeType(100)
-)
+// kinds resolves node and edge kinds to the raw type values this particular
+// store uses.
+//
+// This replaces package-level vars derived from graphstore.CustomNodeType and a
+// bare graphstore.EdgeType(100). Both were values captured from whichever
+// graphene happened to be linked; when the custom band moved from 128 to 32768
+// they stopped matching everything already written, silently. Relation edges
+// are the awkward case — 100 was a raw literal below the old custom base, so
+// its legacy encoding is not base+offset and the registry special-cases it.
+func (r *Repository) kinds() *schema.Registry {
+	return r.handle.Schema()
+}
 
 // Repository holds a reference to the process-wide graph handle. The cached
 // graph pointer stays valid for as long as that reference is outstanding.
@@ -290,7 +297,8 @@ func (r *Repository) ExportInteractiveHTMLTopK(outPath string, topK int) error {
 		return nil
 	}
 
-	indexedIDs, err := r.graph.NodesByType(nodeTypeIndexedFile)
+	kinds := r.kinds()
+	indexedIDs, err := r.graph.NodesByAnyType(kinds.MatchTypes(schema.KindIndexedFile))
 	if err != nil {
 		return err
 	}
@@ -369,16 +377,20 @@ func (r *Repository) ExportInteractiveHTMLTopK(outPath string, topK int) error {
 	if err != nil {
 		return err
 	}
-	containsEdges, err := r.graph.GetEdges(containsEdgeIDs)
+	// GetEdges reports IDs it could not resolve rather than failing on the
+	// first one. An ID can go missing between the type lookup and the fetch if
+	// a concurrent writer deleted the edge, which for an export is a reason to
+	// omit it, not to abandon the render.
+	containsEdges, _, err := r.graph.GetEdges(containsEdgeIDs)
 	if err != nil {
 		return err
 	}
 
-	relationEdgeIDs, err := r.graph.EdgesByType(edgeTypeRelation)
+	relationEdgeIDs, err := r.graph.EdgesByAnyType(kinds.MatchEdgeTypes(schema.EdgeKindRelation))
 	if err != nil {
 		return err
 	}
-	relationEdges, err := r.graph.GetEdges(relationEdgeIDs)
+	relationEdges, _, err := r.graph.GetEdges(relationEdgeIDs)
 	if err != nil {
 		return err
 	}
@@ -432,7 +444,7 @@ func (r *Repository) ensureMicroArtefactHasExactlyOneFileParent(fileNodeID, arte
 
 	fileParentCount := 0
 	for _, parent := range parents {
-		if parent.Node == nil || !parent.Node.HasLabel(nodeTypeIndexedFile) {
+		if parent.Node == nil || !r.kinds().Is(parent.Node, schema.KindIndexedFile) {
 			continue
 		}
 		fileParentCount++
@@ -468,7 +480,9 @@ func (r *Repository) storeRelationEdges(artefactNodesByKey map[string][]graphsto
 					continue
 				}
 
-				exists, err := r.graph.EdgeExists(fromID, toID, []graphstore.EdgeType{edgeTypeRelation})
+				// Match every encoding so a re-run against a legacy store does
+				// not duplicate an edge it already holds under the old value.
+				exists, err := r.graph.EdgeExists(fromID, toID, r.kinds().MatchEdgeTypes(schema.EdgeKindRelation))
 				if err != nil {
 					return err
 				}
@@ -488,7 +502,7 @@ func (r *Repository) storeRelationEdges(artefactNodesByKey map[string][]graphsto
 				edgeID, err := r.graph.AddEdge(&graphstore.Edge{
 					Src:    fromID,
 					Dst:    toID,
-					Labels: []graphstore.EdgeType{edgeTypeRelation},
+					Labels: []graphstore.EdgeType{r.kinds().EdgeType(schema.EdgeKindRelation)},
 					Properties: mustPack(map[string]any{
 						"relation_type":      relation.RelationType,
 						"method":             relation.Method,

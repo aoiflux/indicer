@@ -8,7 +8,7 @@ require (
 	charm.land/lipgloss/v2 v2.0.3
 	connectrpc.com/connect v1.20.0
 	github.com/alecthomas/kingpin/v2 v2.4.0
-	github.com/aoiflux/graphene v0.1.3
+	github.com/aoiflux/graphene v0.4.0
 	github.com/aoiflux/libewf v0.2.1
 	github.com/aoiflux/libext v0.2.0
 	github.com/aoiflux/libfat v0.2.0

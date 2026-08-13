@@ -5,6 +5,7 @@ import (
 
 	"indicer/lib/enrichment"
 	"indicer/lib/graph/props"
+	"indicer/lib/graph/schema"
 	"indicer/lib/hierarchy"
 	"indicer/lib/microartefact/model"
 
@@ -36,7 +37,12 @@ type MicroArtefactNode = enrichment.FileLevelArtefactNode
 func (r *Repository) ReadHierarchy() (*EvidenceFileHierarchy, error) {
 	tree := &EvidenceFileHierarchy{}
 
-	evidenceFileIDs, err := r.graph.NodesByType(nodeTypeEvidenceFile)
+	kinds := r.kinds()
+
+	// Match every encoding this store uses. On a store written by graphene
+	// v0.1.3 the current encoding matches nothing, and a single-type lookup
+	// would return an empty tree without raising an error.
+	evidenceFileIDs, err := r.graph.NodesByAnyType(kinds.MatchTypes(schema.KindEvidenceFile))
 	if err != nil {
 		return nil, err
 	}
@@ -60,7 +66,7 @@ func (r *Repository) ReadHierarchy() (*EvidenceFileHierarchy, error) {
 		}
 
 		for _, pn := range partNeighbours {
-			if !pn.Node.HasLabel(nodeTypePartition) {
+			if !kinds.Is(pn.Node, schema.KindPartition) {
 				continue
 			}
 			pProps := unpackProps(pn.Node.Properties)
@@ -75,7 +81,7 @@ func (r *Repository) ReadHierarchy() (*EvidenceFileHierarchy, error) {
 			}
 
 			for _, fn := range fileNeighbours {
-				if !fn.Node.HasLabel(nodeTypeIndexedFile) {
+				if !kinds.Is(fn.Node, schema.KindIndexedFile) {
 					continue
 				}
 				fProps := unpackProps(fn.Node.Properties)
@@ -145,12 +151,15 @@ func (r *Repository) ReadHierarchy() (*EvidenceFileHierarchy, error) {
 	sort.Slice(tree.EvidenceFiles, func(i, j int) bool {
 		return tree.EvidenceFiles[i].Name < tree.EvidenceFiles[j].Name
 	})
-	relationEdgeIDs, err := r.graph.EdgesByType(edgeTypeRelation)
+	relationEdgeIDs, err := r.graph.EdgesByAnyType(kinds.MatchEdgeTypes(schema.EdgeKindRelation))
 	if err != nil {
 		return nil, err
 	}
 	if len(relationEdgeIDs) > 0 {
-		relationEdges, err := r.graph.GetEdges(relationEdgeIDs)
+		// Unresolvable IDs come back in the second return rather than as an
+		// error; an edge deleted between the type lookup and the fetch is
+		// simply not counted.
+		relationEdges, _, err := r.graph.GetEdges(relationEdgeIDs)
 		if err != nil {
 			return nil, err
 		}

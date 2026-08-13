@@ -5,10 +5,16 @@ import (
 	"path/filepath"
 	"sync"
 
+	"indicer/lib/graph/migrate"
+	"indicer/lib/graph/schema"
 	"indicer/lib/util"
 
 	graphenedb "github.com/aoiflux/graphene"
 )
+
+// writtenBy is recorded in the schema marker so a store says which build
+// stamped it.
+const writtenBy = "dues / graphene v0.4.0"
 
 // Handle is the process's single reference-counted grip on one graph store.
 //
@@ -23,6 +29,12 @@ type Handle struct {
 	graph    *graphenedb.Graph
 	lock     *fileLock
 	readOnly bool
+
+	// schema resolves DUES kinds to the raw type values this particular store
+	// uses, which differ between a store written by graphene v0.1.3 and one
+	// written by v0.4.0.
+	schema     *schema.Registry
+	vocabulary migrate.Vocabulary
 
 	// writeMu serialises read-then-write sequences. The upsert the repositories
 	// perform — look the node up by an indexed property, insert if absent — is
@@ -89,16 +101,75 @@ func OpenWith(root string, opts OpenOptions) (*Handle, error) {
 		return nil, fmt.Errorf("graph: open %s: %w", key, err)
 	}
 
+	vocabulary, kinds, err := resolveSchema(key, store, opts.ReadOnly)
+	if err != nil {
+		_ = store.Close()
+		_ = lock.release()
+		return nil, err
+	}
+
 	handle := &Handle{
-		key:      key,
-		dir:      key,
-		graph:    store,
-		lock:     lock,
-		readOnly: opts.ReadOnly,
-		refs:     1,
+		key:        key,
+		dir:        key,
+		graph:      store,
+		lock:       lock,
+		readOnly:   opts.ReadOnly,
+		schema:     kinds,
+		vocabulary: vocabulary,
+		refs:       1,
 	}
 	registry[key] = handle
 	return handle, nil
+}
+
+// resolveSchema classifies the store's label encoding and stamps the marker.
+//
+// This is the automatic half of the migration: a store written by graphene
+// v0.1.3 is detected here and read through a registry that matches both
+// encodings, with no user action and nothing rewritten. Consolidating to a
+// single vocabulary is a separate, explicit rebuild.
+func resolveSchema(dir string, store *graphenedb.Graph, readOnly bool) (migrate.Vocabulary, *schema.Registry, error) {
+	report, err := migrate.Detect(dir, store)
+	if err != nil {
+		return report.Vocabulary, nil, err
+	}
+
+	kinds, err := migrate.RegistryFor(report)
+	if err != nil {
+		return report.Vocabulary, nil, err
+	}
+
+	if readOnly {
+		return report.Vocabulary, kinds, nil
+	}
+
+	// Stamp the marker when it is absent or when what it records has changed.
+	// Writing it on a legacy store is not a migration: it records what was
+	// found so the next open does not have to probe, and records that reads
+	// must stay widened.
+	mixed := kinds.Legacy()
+	if !report.HasMarker ||
+		report.Marker.SchemaVersion != schema.CurrentVersion ||
+		report.Marker.MixedVocabulary != mixed {
+
+		marker := schema.NewMarker(writtenBy, mixed)
+		if report.HasMarker {
+			previous := report.Marker.SchemaVersion
+			marker.MigratedFrom = &previous
+			// Preserve declarations a later phase will have added.
+			marker.OrderedNodeKeys = report.Marker.OrderedNodeKeys
+			marker.OrderedEdgeKeys = report.Marker.OrderedEdgeKeys
+			marker.DynamicNodeKinds = report.Marker.DynamicNodeKinds
+		} else if report.Vocabulary == migrate.VocabLegacyV1 {
+			legacy := 1
+			marker.MigratedFrom = &legacy
+		}
+		if err := schema.WriteMarker(dir, marker); err != nil {
+			return report.Vocabulary, nil, err
+		}
+	}
+
+	return report.Vocabulary, kinds, nil
 }
 
 // Release drops one reference. The store is closed, and the lock released, when
@@ -150,6 +221,24 @@ func (h *Handle) Graph() *graphenedb.Graph {
 	registryMu.Lock()
 	defer registryMu.Unlock()
 	return h.graph
+}
+
+// Schema resolves DUES kinds to the raw graphene type values this store uses.
+// Never derive those values from graphene's CustomNodeType directly: that is
+// what broke when the custom band moved.
+func (h *Handle) Schema() *schema.Registry {
+	if h == nil {
+		return nil
+	}
+	return h.schema
+}
+
+// Vocabulary reports which label encodings this store was found to hold.
+func (h *Handle) Vocabulary() migrate.Vocabulary {
+	if h == nil {
+		return migrate.VocabUnknown
+	}
+	return h.vocabulary
 }
 
 // Dir is the absolute graph directory, for diagnostics and error messages.

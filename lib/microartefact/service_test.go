@@ -6,6 +6,7 @@ import (
 	"testing"
 
 	duesgraph "indicer/lib/graph"
+	"indicer/lib/graph/schema"
 	specpkg "indicer/lib/microartefact/spec"
 
 	graphstore "github.com/aoiflux/graphene/store"
@@ -203,9 +204,15 @@ func TestGrapheneRepositoryStoresNodesAndEdges(t *testing.T) {
 		t.Fatalf("expected 5 contains edges (disk->partition->indexed_file->file + 2 artefacts), got %d", len(edgeHits))
 	}
 
-	relationEdgeHits, err := graph.EdgesByType(graphstore.EdgeType(100))
+	// Resolve the relation edge type through the store's own registry rather
+	// than the bare EdgeType(100) this used to assert. That literal is the
+	// graphene v0.1.3 encoding; a store written by this build uses the current
+	// custom band, and hard-coding either value is what made the vocabulary
+	// shift silent in the first place.
+	relationEdgeHits, err := graph.EdgesByAnyType(
+		handle.Schema().MatchEdgeTypes(schema.EdgeKindRelation))
 	if err != nil {
-		t.Fatalf("EdgesByType relation: %v", err)
+		t.Fatalf("EdgesByAnyType relation: %v", err)
 	}
 	if len(relationEdgeHits) != 1 {
 		t.Fatalf("expected 1 relation edge, got %d", len(relationEdgeHits))

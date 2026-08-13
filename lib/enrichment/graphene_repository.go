@@ -7,6 +7,7 @@ import (
 
 	duesgraph "indicer/lib/graph"
 	"indicer/lib/graph/props"
+	"indicer/lib/graph/schema"
 
 	graphenedb "github.com/aoiflux/graphene"
 	graphstore "github.com/aoiflux/graphene/store"
@@ -25,12 +26,16 @@ type GrapheneRepository struct {
 
 const storeDirName = "graph"
 
-var (
-	nodeTypeEvidenceFile = graphstore.CustomNodeType(0)
-	nodeTypePartition    = graphstore.CustomNodeType(1)
-	nodeTypeIndexedFile  = graphstore.CustomNodeType(2)
-	nodeTypeFile         = graphstore.CustomNodeType(3)
-)
+// kinds resolves node kinds to the raw type values this particular store uses.
+//
+// The package-level vars this replaced were derived once from
+// graphstore.CustomNodeType, which pinned them to whatever base the linked
+// library happened to have. When graphene moved that base from 128 to 32768 the
+// derived values silently stopped matching everything already on disk. Kinds
+// are offsets now, and only a store's own registry turns them into values.
+func (repository *GrapheneRepository) kinds() *schema.Registry {
+	return repository.handle.Schema()
+}
 
 // OpenGrapheneRepository acquires a reference to root's graph store. Close
 // releases it.
@@ -64,7 +69,7 @@ func (repository *GrapheneRepository) upsertEvidence(record EvidenceRecord) erro
 	evidenceNode, err := repository.upsertNode(
 		"evidence_file_id",
 		record.HashBase64,
-		[]graphstore.NodeType{nodeTypeEvidenceFile},
+		[]graphstore.NodeType{repository.kinds().NodeType(schema.KindEvidenceFile)},
 		map[string]any{
 			"evidence_file_id": record.HashBase64,
 			"name":             record.Name,
@@ -102,7 +107,7 @@ func (repository *GrapheneRepository) upsertPartition(record PartitionRecord) er
 	evidenceNode, err := repository.upsertNode(
 		"evidence_file_id",
 		record.EvidenceFileID,
-		[]graphstore.NodeType{nodeTypeEvidenceFile},
+		[]graphstore.NodeType{repository.kinds().NodeType(schema.KindEvidenceFile)},
 		map[string]any{"evidence_file_id": record.EvidenceFileID, "name": record.EvidenceFileName},
 	)
 	if err != nil {
@@ -112,7 +117,7 @@ func (repository *GrapheneRepository) upsertPartition(record PartitionRecord) er
 	partitionNode, err := repository.upsertNode(
 		"partition_id",
 		record.PartitionID,
-		[]graphstore.NodeType{nodeTypePartition},
+		[]graphstore.NodeType{repository.kinds().NodeType(schema.KindPartition)},
 		map[string]any{
 			"partition_id":     record.PartitionID,
 			"name":             record.PartitionName,
@@ -140,7 +145,7 @@ func (repository *GrapheneRepository) upsertFile(record FileRecord) error {
 	evidenceNode, err := repository.upsertNode(
 		"evidence_file_id",
 		record.EvidenceFileID,
-		[]graphstore.NodeType{nodeTypeEvidenceFile},
+		[]graphstore.NodeType{repository.kinds().NodeType(schema.KindEvidenceFile)},
 		map[string]any{"evidence_file_id": record.EvidenceFileID, "name": record.EvidenceFileName},
 	)
 	if err != nil {
@@ -154,7 +159,7 @@ func (repository *GrapheneRepository) upsertFile(record FileRecord) error {
 		partitionNode, err := repository.upsertNode(
 			"partition_id",
 			record.PartitionID,
-			[]graphstore.NodeType{nodeTypePartition},
+			[]graphstore.NodeType{repository.kinds().NodeType(schema.KindPartition)},
 			map[string]any{"partition_id": record.PartitionID, "name": record.PartitionName, "evidence_file_id": record.EvidenceFileID},
 		)
 		if err != nil {
@@ -182,7 +187,7 @@ func (repository *GrapheneRepository) upsertFile(record FileRecord) error {
 			indexedNode, err := repository.upsertNode(
 				"indexed_file_id",
 				record.IndexedFileID,
-				[]graphstore.NodeType{nodeTypeIndexedFile},
+				[]graphstore.NodeType{repository.kinds().NodeType(schema.KindIndexedFile)},
 				indexedProps,
 			)
 			if err != nil {
@@ -229,7 +234,7 @@ func (repository *GrapheneRepository) upsertFile(record FileRecord) error {
 	fileNode, err := repository.upsertNode(
 		"file_node_id",
 		fileNodeID,
-		[]graphstore.NodeType{nodeTypeFile},
+		[]graphstore.NodeType{repository.kinds().NodeType(schema.KindFile)},
 		fileProps,
 	)
 	if err != nil {
@@ -309,7 +314,13 @@ func (repository *GrapheneRepository) ReadHierarchy() (*EnrichmentHierarchy, err
 	}
 
 	tree := &EnrichmentHierarchy{}
-	evidenceFileIDs, err := repository.graph.NodesByType(nodeTypeEvidenceFile)
+	kinds := repository.kinds()
+
+	// NodesByAnyType over every encoding this store uses, rather than
+	// NodesByType over one: on a store written by graphene v0.1.3 the current
+	// encoding matches nothing, and the query would return an empty hierarchy
+	// without raising an error.
+	evidenceFileIDs, err := repository.graph.NodesByAnyType(kinds.MatchTypes(schema.KindEvidenceFile))
 	if err != nil {
 		return nil, err
 	}
@@ -333,7 +344,7 @@ func (repository *GrapheneRepository) ReadHierarchy() (*EnrichmentHierarchy, err
 		}
 
 		for _, pn := range partNeighbours {
-			if !pn.Node.HasLabel(nodeTypePartition) {
+			if !kinds.Is(pn.Node, schema.KindPartition) {
 				continue
 			}
 			pProps := unpackProps(pn.Node.Properties)
@@ -349,7 +360,7 @@ func (repository *GrapheneRepository) ReadHierarchy() (*EnrichmentHierarchy, err
 			}
 
 			for _, fn := range indexedNeighbours {
-				if !fn.Node.HasLabel(nodeTypeIndexedFile) {
+				if !kinds.Is(fn.Node, schema.KindIndexedFile) {
 					continue
 				}
 				fProps := unpackProps(fn.Node.Properties)
@@ -370,7 +381,7 @@ func (repository *GrapheneRepository) ReadHierarchy() (*EnrichmentHierarchy, err
 
 				addedFileNode := false
 				for _, file := range fileNeighbours {
-					if !file.Node.HasLabel(nodeTypeFile) {
+					if !kinds.Is(file.Node, schema.KindFile) {
 						continue
 					}
 					fileProps := unpackProps(file.Node.Properties)

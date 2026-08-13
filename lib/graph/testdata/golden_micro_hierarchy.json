@@ -1,0 +1,98 @@
+{
+  "EvidenceFiles": [
+    {
+      "ID": "ZXZpZGVuY2UtaGFzaC1kaXNrMQ==",
+      "Name": "disk1.E01",
+      "Partitions": [
+        {
+          "ID": "cGFydGl0aW9uLTE=",
+          "Name": "p1",
+          "Files": [
+            {
+              "ID": "ce4668c24688e09d1d91553619ae0e5e9b689e6d4160118f6a6ccf9ae8807c76",
+              "Name": "",
+              "Path": "",
+              "Size": 262144,
+              "Hash": "aGlzdG9yeS1oYXNo",
+              "IsDeleted": false,
+              "IsFragmented": false,
+              "FileType": "sqlite",
+              "MimeType": "",
+              "Tags": null,
+              "Entropy": 5.42,
+              "HasEntropy": true,
+              "Artefacts": [
+                {
+                  "Kind": "domain",
+                  "Detector": "ioc",
+                  "Value": "malicious.example",
+                  "Summary": "host extracted from URL",
+                  "Confidence": 0.88,
+                  "Start": 1031,
+                  "End": 1048
+                },
+                {
+                  "Kind": "ipv4",
+                  "Detector": "ioc",
+                  "Value": "203.0.113.42",
+                  "Summary": "resolved address",
+                  "Confidence": 0.55,
+                  "Start": 2048,
+                  "End": 2060
+                },
+                {
+                  "Kind": "url",
+                  "Detector": "browser",
+                  "Value": "http://malicious.example/payload.exe",
+                  "Summary": "download URL",
+                  "Confidence": 0.92,
+                  "Start": 1024,
+                  "End": 1060
+                }
+              ]
+            },
+            {
+              "ID": "fa7e9afe32c8a327a61f4a4473bd0968d7519a4f8ebd8d2a4531c338c61d54cb",
+              "Name": "",
+              "Path": "",
+              "Size": 55320,
+              "Hash": "c3ZjaG9zdC1oYXNo",
+              "IsDeleted": false,
+              "IsFragmented": false,
+              "FileType": "pe",
+              "MimeType": "",
+              "Tags": null,
+              "Entropy": 7.81,
+              "HasEntropy": true,
+              "Artefacts": null
+            },
+            {
+              "ID": "335a68992bfa91732229efb066f48e749d81ce0ee31e936c7111a2eaaa0360a4",
+              "Name": "",
+              "Path": "",
+              "Size": 1041,
+              "Hash": "ZGVsZXRlZC1ub3Rlcw==",
+              "IsDeleted": false,
+              "IsFragmented": false,
+              "FileType": "txt",
+              "MimeType": "",
+              "Tags": null,
+              "Entropy": 0,
+              "HasEntropy": false,
+              "Artefacts": null
+            }
+          ]
+        },
+        {
+          "ID": "cGFydGl0aW9uLTI=",
+          "Name": "p2",
+          "Files": null
+        }
+      ]
+    }
+  ],
+  "TotalArtefacts": 3,
+  "TotalRelations": 2,
+  "DeterministicRelations": 1,
+  "ProbabilisticRelations": 1
+}

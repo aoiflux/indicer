@@ -4,11 +4,11 @@ import (
 	"sort"
 
 	"indicer/lib/enrichment"
+	"indicer/lib/graph/props"
 	"indicer/lib/hierarchy"
 	"indicer/lib/microartefact/model"
 
 	graphstore "github.com/aoiflux/graphene/store"
-	"github.com/vmihailenco/msgpack/v5"
 )
 
 // EvidenceFileHierarchy is the top-level result of ReadHierarchy. It reflects
@@ -159,8 +159,8 @@ func (r *Repository) ReadHierarchy() (*EvidenceFileHierarchy, error) {
 				continue
 			}
 			tree.TotalRelations++
-			props := unpackProps(edge.Properties)
-			if boolProp(props, "deterministic_flag") {
+			edgeProps := unpackProps(edge.Properties)
+			if boolProp(edgeProps, "deterministic_flag") {
 				tree.DeterministicRelations++
 			} else {
 				tree.ProbabilisticRelations++
@@ -172,83 +172,14 @@ func (r *Repository) ReadHierarchy() (*EvidenceFileHierarchy, error) {
 }
 
 // ─── property helpers ────────────────────────────────────────────────────────
+//
+// These delegate to lib/graph/props, which is the union of the three helper
+// sets DUES used to carry. See that package's doc for where they disagreed.
 
-func unpackProps(data []byte) map[string]any {
-	if len(data) == 0 {
-		return nil
-	}
-	var m map[string]any
-	_ = msgpack.Unmarshal(data, &m)
-	return m
-}
+func unpackProps(data []byte) props.Map { return props.Unpack(data) }
 
-func strProp(m map[string]any, key string) string {
-	if v, ok := m[key]; ok {
-		if s, ok := v.(string); ok {
-			return s
-		}
-	}
-	return ""
-}
-
-func int64Prop(m map[string]any, key string) int64 {
-	if v, ok := m[key]; ok {
-		switch n := v.(type) {
-		case int64:
-			return n
-		case int8:
-			return int64(n)
-		case int16:
-			return int64(n)
-		case int32:
-			return int64(n)
-		case uint64:
-			return int64(n)
-		case float64:
-			return int64(n)
-		}
-	}
-	return 0
-}
-
-func float32Prop(m map[string]any, key string) float32 {
-	if v, ok := m[key]; ok {
-		switch n := v.(type) {
-		case float32:
-			return n
-		case float64:
-			return float32(n)
-		}
-	}
-	return 0
-}
-
-func float64Prop(m map[string]any, key string) float64 {
-	if v, ok := m[key]; ok {
-		switch n := v.(type) {
-		case float64:
-			return n
-		case float32:
-			return float64(n)
-		case int64:
-			return float64(n)
-		case int32:
-			return float64(n)
-		case int:
-			return float64(n)
-		}
-	}
-	return 0
-}
-
-func boolProp(m map[string]any, key string) bool {
-	if v, ok := m[key]; ok {
-		switch b := v.(type) {
-		case bool:
-			return b
-		case string:
-			return b == "true"
-		}
-	}
-	return false
-}
+func strProp(m props.Map, key string) string      { return m.Str(key) }
+func int64Prop(m props.Map, key string) int64     { return m.Int64(key) }
+func float32Prop(m props.Map, key string) float32 { return m.Float32(key) }
+func float64Prop(m props.Map, key string) float64 { return m.Float64(key) }
+func boolProp(m props.Map, key string) bool       { return m.Bool(key) }

@@ -1,9 +1,6 @@
 package enrichment
 
-import (
-	"crypto/sha256"
-	"encoding/hex"
-)
+import "indicer/lib/graph/ids"
 
 // FileRecord is a file-level enrichment payload destined for graphdb.
 // Creates FILE nodes at evidence file, partition, or indexed file level.
@@ -69,12 +66,7 @@ func (record FileRecord) buildFileNodeID() string {
 	}
 }
 
-func hashText(value string, rest ...string) string {
-	h := sha256.New()
-	_, _ = h.Write([]byte(value))
-	for _, next := range rest {
-		_, _ = h.Write([]byte{0})
-		_, _ = h.Write([]byte(next))
-	}
-	return hex.EncodeToString(h.Sum(nil))
-}
+// hashText delegates to the shared derivation. It stays as a local name
+// because the identifiers it produces are persisted, and keeping the call sites
+// untouched makes it obvious that nothing about them changed.
+func hashText(value string, rest ...string) string { return ids.HashText(value, rest...) }

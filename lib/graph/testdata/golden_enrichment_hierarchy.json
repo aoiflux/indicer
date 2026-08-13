@@ -1,0 +1,69 @@
+{
+  "EvidenceFiles": [
+    {
+      "ID": "ZXZpZGVuY2UtaGFzaC1kaXNrMQ==",
+      "Name": "disk1.E01",
+      "Partitions": [
+        {
+          "ID": "cGFydGl0aW9uLTE=",
+          "Name": "p1",
+          "Files": [
+            {
+              "ID": "362e78dacf15a60d6b7c99dcf48d47b745cfb72a4ccfcbb9e0245c83488e406c",
+              "Hash": "aGlzdG9yeS1oYXNo",
+              "FileName": "History",
+              "Path": "/Users/jane/AppData/Local/Google/Chrome/History",
+              "Size": 262144,
+              "IsDeleted": false,
+              "IsFragmented": false,
+              "FileType": "sqlite",
+              "MimeType": "application/vnd.sqlite3",
+              "Tags": [
+                "indexed"
+              ],
+              "Entropy": 5.42,
+              "HasEntropy": true
+            },
+            {
+              "ID": "4115ed1417e26dbcda01876c11671022b42737967fd8f02ccea72e16c40b3f9c",
+              "Hash": "ZGVsZXRlZC1ub3Rlcw==",
+              "FileName": "deleted-notes.txt",
+              "Path": "/Users/jane/Documents/deleted-notes.txt",
+              "Size": 1041,
+              "IsDeleted": true,
+              "IsFragmented": false,
+              "FileType": "txt",
+              "MimeType": "text/plain",
+              "Tags": [
+                "indexed"
+              ],
+              "Entropy": 0,
+              "HasEntropy": false
+            },
+            {
+              "ID": "164f544fa389ee59e2f05a287b6ddc2a53f181d4e2681b0a792e01da69fb4fb4",
+              "Hash": "c3ZjaG9zdC1oYXNo",
+              "FileName": "svchost.exe",
+              "Path": "/Windows/System32/svchost.exe",
+              "Size": 55320,
+              "IsDeleted": false,
+              "IsFragmented": true,
+              "FileType": "pe",
+              "MimeType": "application/vnd.microsoft.portable-executable",
+              "Tags": [
+                "indexed"
+              ],
+              "Entropy": 7.81,
+              "HasEntropy": true
+            }
+          ]
+        },
+        {
+          "ID": "cGFydGl0aW9uLTI=",
+          "Name": "p2",
+          "Files": null
+        }
+      ]
+    }
+  ]
+}

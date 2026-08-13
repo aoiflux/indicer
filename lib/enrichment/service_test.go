@@ -5,11 +5,11 @@ import (
 	"path/filepath"
 	"testing"
 
-	graphenedb "github.com/aoiflux/graphene"
 	"github.com/dgraph-io/badger/v4"
 	"github.com/vmihailenco/msgpack/v5"
 
 	"indicer/lib/cnst"
+	duesgraph "indicer/lib/graph"
 	"indicer/lib/structs"
 	"indicer/lib/util"
 
@@ -115,11 +115,12 @@ func TestEnrichAllCreatesFileNodesAtAllLevels(t *testing.T) {
 		t.Fatalf("repo.Close: %v", err)
 	}
 
-	graph, err := graphenedb.Open(filepath.Join(root, storeDirName))
+	handle, err := duesgraph.Open(root)
 	if err != nil {
-		t.Fatalf("graphenedb.Open: %v", err)
+		t.Fatalf("graph.Open: %v", err)
 	}
-	defer graph.Close()
+	defer handle.Release()
+	graph := handle.Graph()
 
 	evidenceLevelHits, err := graph.NodesByProperty("level", []byte("evidence_file"))
 	if err != nil {

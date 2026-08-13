@@ -1,19 +1,18 @@
 package graphene
 
 import (
-	"crypto/sha256"
-	"encoding/hex"
 	"fmt"
-	"indicer/lib/util"
 	"sort"
 	"strconv"
 
+	duesgraph "indicer/lib/graph"
+	"indicer/lib/graph/ids"
+	"indicer/lib/graph/props"
 	"indicer/lib/microartefact/model"
 
 	graphenedb "github.com/aoiflux/graphene"
 	graphstore "github.com/aoiflux/graphene/store"
 	graphviz "github.com/aoiflux/graphene/viz"
-	"github.com/vmihailenco/msgpack/v5"
 )
 
 const StoreDirName = "graph"
@@ -25,30 +24,55 @@ var (
 	edgeTypeRelation     = graphstore.EdgeType(100)
 )
 
+// Repository holds a reference to the process-wide graph handle. The cached
+// graph pointer stays valid for as long as that reference is outstanding.
 type Repository struct {
-	graph *graphenedb.Graph
+	handle *duesgraph.Handle
+	graph  *graphenedb.Graph
+	owns   bool
 }
 
+// Open acquires a reference to root's graph store. Close releases it.
 func Open(root string) (*Repository, error) {
-	graph, err := graphenedb.Open(util.GraphPath(root))
+	handle, err := duesgraph.Open(root)
 	if err != nil {
 		return nil, err
 	}
-	return &Repository{graph: graph}, nil
+	return &Repository{handle: handle, graph: handle.Graph(), owns: true}, nil
 }
 
-func (r *Repository) Close() error {
-	if r == nil || r.graph == nil {
+// OpenOn borrows a handle a caller already holds. Close is a no-op on the
+// result: the reference belongs to whoever opened it.
+func OpenOn(handle *duesgraph.Handle) *Repository {
+	if handle == nil {
 		return nil
 	}
-	return r.graph.Close()
+	return &Repository{handle: handle, graph: handle.Graph()}
+}
+
+// Close releases this repository's reference. The store itself closes when the
+// last reference in the process goes.
+func (r *Repository) Close() error {
+	if r == nil || !r.owns {
+		return nil
+	}
+	r.owns = false
+	r.graph = nil
+	handle := r.handle
+	r.handle = nil
+	return handle.Release()
 }
 
 func (r *Repository) Store(file model.FileRecord, artefacts []model.Artefact, relations []model.Relation) error {
 	if r == nil || r.graph == nil {
 		return nil
 	}
+	return r.handle.ExclusiveWrite(func() error {
+		return r.store(file, artefacts, relations)
+	})
+}
 
+func (r *Repository) store(file model.FileRecord, artefacts []model.Artefact, relations []model.Relation) error {
 	if err := validateStoreHierarchy(file); err != nil {
 		return err
 	}
@@ -396,49 +420,9 @@ func (r *Repository) ExportInteractiveHTMLTopK(outPath string, topK int) error {
 	})
 }
 
-func unpackNodeProps(data []byte) map[string]any {
-	if len(data) == 0 {
-		return nil
-	}
-	var m map[string]any
-	if err := msgpack.Unmarshal(data, &m); err != nil {
-		return nil
-	}
-	return m
-}
+func unpackNodeProps(data []byte) props.Map { return props.Unpack(data) }
 
-func intProp(m map[string]any, key string) int {
-	v, ok := m[key]
-	if !ok {
-		return 0
-	}
-	switch n := v.(type) {
-	case int:
-		return n
-	case int8:
-		return int(n)
-	case int16:
-		return int(n)
-	case int32:
-		return int(n)
-	case int64:
-		return int(n)
-	case uint8:
-		return int(n)
-	case uint16:
-		return int(n)
-	case uint32:
-		return int(n)
-	case uint64:
-		return int(n)
-	case float32:
-		return int(n)
-	case float64:
-		return int(n)
-	default:
-		return 0
-	}
-}
+func intProp(m props.Map, key string) int { return m.Int(key) }
 
 func (r *Repository) ensureMicroArtefactHasExactlyOneFileParent(fileNodeID, artefactNodeID graphstore.NodeID) error {
 	parents, err := r.graph.Neighbours(artefactNodeID, graphstore.DirectionInbound, []graphstore.EdgeType{graphstore.EdgeTypeContains})
@@ -464,27 +448,11 @@ func (r *Repository) ensureMicroArtefactHasExactlyOneFileParent(fileNodeID, arte
 	return nil
 }
 
-func mustPack(value any) []byte {
-	packed, err := msgpack.Marshal(value)
-	if err != nil {
-		panic(fmt.Errorf("pack microartefact graph properties: %w", err))
-	}
-	return packed
-}
+func mustPack(value any) []byte { return props.MustPack(value) }
 
-func hashText(value string, rest ...string) string {
-	hasher := sha256.New()
-	_, _ = hasher.Write([]byte(value))
-	for _, next := range rest {
-		_, _ = hasher.Write([]byte{0})
-		_, _ = hasher.Write([]byte(next))
-	}
-	return hex.EncodeToString(hasher.Sum(nil))
-}
+func hashText(value string, rest ...string) string { return ids.HashText(value, rest...) }
 
-func relationNodeLookupKey(kind, value string) string {
-	return kind + "\x00" + value
-}
+func relationNodeLookupKey(kind, value string) string { return ids.ArtefactLookupKey(kind, value) }
 
 func (r *Repository) storeRelationEdges(artefactNodesByKey map[string][]graphstore.NodeID, relations []model.Relation) error {
 	for _, relation := range relations {

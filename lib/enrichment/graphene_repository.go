@@ -1,19 +1,26 @@
 package enrichment
 
 import (
-	"indicer/lib/util"
 	"sort"
 	"strconv"
 	"strings"
 
+	duesgraph "indicer/lib/graph"
+	"indicer/lib/graph/props"
+
 	graphenedb "github.com/aoiflux/graphene"
 	graphstore "github.com/aoiflux/graphene/store"
-	"github.com/vmihailenco/msgpack/v5"
 )
 
 // GrapheneRepository is a graphdb adapter backed by the existing graphene store.
+//
+// It holds a reference to the process-wide graph handle rather than its own
+// store. The cached graph pointer stays valid for as long as that reference is
+// outstanding, which is what makes it safe to keep.
 type GrapheneRepository struct {
-	graph *graphenedb.Graph
+	handle *duesgraph.Handle
+	graph  *graphenedb.Graph
+	owns   bool
 }
 
 const storeDirName = "graph"
@@ -25,19 +32,35 @@ var (
 	nodeTypeFile         = graphstore.CustomNodeType(3)
 )
 
+// OpenGrapheneRepository acquires a reference to root's graph store. Close
+// releases it.
 func OpenGrapheneRepository(root string) (*GrapheneRepository, error) {
-	graph, err := graphenedb.Open(util.GraphPath(root))
+	handle, err := duesgraph.Open(root)
 	if err != nil {
 		return nil, err
 	}
-	return &GrapheneRepository{graph: graph}, nil
+	return &GrapheneRepository{handle: handle, graph: handle.Graph(), owns: true}, nil
+}
+
+// NewGrapheneRepositoryOn borrows a handle a caller already holds. Close is a
+// no-op on the result: the reference belongs to whoever opened it.
+func NewGrapheneRepositoryOn(handle *duesgraph.Handle) *GrapheneRepository {
+	if handle == nil {
+		return nil
+	}
+	return &GrapheneRepository{handle: handle, graph: handle.Graph()}
 }
 
 func (repository *GrapheneRepository) UpsertEvidence(record EvidenceRecord) error {
 	if repository == nil || repository.graph == nil {
 		return nil
 	}
+	return repository.handle.ExclusiveWrite(func() error {
+		return repository.upsertEvidence(record)
+	})
+}
 
+func (repository *GrapheneRepository) upsertEvidence(record EvidenceRecord) error {
 	evidenceNode, err := repository.upsertNode(
 		"evidence_file_id",
 		record.HashBase64,
@@ -70,7 +93,12 @@ func (repository *GrapheneRepository) UpsertPartition(record PartitionRecord) er
 	if repository == nil || repository.graph == nil {
 		return nil
 	}
+	return repository.handle.ExclusiveWrite(func() error {
+		return repository.upsertPartition(record)
+	})
+}
 
+func (repository *GrapheneRepository) upsertPartition(record PartitionRecord) error {
 	evidenceNode, err := repository.upsertNode(
 		"evidence_file_id",
 		record.EvidenceFileID,
@@ -102,7 +130,12 @@ func (repository *GrapheneRepository) UpsertFile(record FileRecord) error {
 	if repository == nil || repository.graph == nil {
 		return nil
 	}
+	return repository.handle.ExclusiveWrite(func() error {
+		return repository.upsertFile(record)
+	})
+}
 
+func (repository *GrapheneRepository) upsertFile(record FileRecord) error {
 	// Always create/get evidence file node
 	evidenceNode, err := repository.upsertNode(
 		"evidence_file_id",
@@ -222,11 +255,17 @@ func (repository *GrapheneRepository) UpsertFile(record FileRecord) error {
 	return nil
 }
 
+// Close releases this repository's reference to the graph handle. The store
+// itself closes when the last reference in the process goes.
 func (repository *GrapheneRepository) Close() error {
-	if repository == nil || repository.graph == nil {
+	if repository == nil || !repository.owns {
 		return nil
 	}
-	return repository.graph.Close()
+	repository.owns = false
+	repository.graph = nil
+	handle := repository.handle
+	repository.handle = nil
+	return handle.Release()
 }
 
 func (repository *GrapheneRepository) upsertNode(indexKey, indexValue string, labels []graphstore.NodeType, properties map[string]any) (graphstore.NodeID, error) {
@@ -260,13 +299,7 @@ func (repository *GrapheneRepository) ensureContains(src, dst graphstore.NodeID)
 	return err
 }
 
-func mustPack(value any) []byte {
-	packed, err := msgpack.Marshal(value)
-	if err != nil {
-		panic(err)
-	}
-	return packed
-}
+func mustPack(value any) []byte { return props.MustPack(value) }
 
 // ReadHierarchy walks the enrichment graphdb and returns the full
 // evidence_file → partition → indexed_file hierarchy with file-level metadata.
@@ -382,20 +415,20 @@ func (repository *GrapheneRepository) ReadHierarchy() (*EnrichmentHierarchy, err
 	return tree, nil
 }
 
-func buildEnrichmentFileNodeFromProps(props map[string]any) *EnrichmentFileNode {
+func buildEnrichmentFileNodeFromProps(fields props.Map) *EnrichmentFileNode {
 	return &EnrichmentFileNode{
-		ID:           strProp(props, "file_node_id"),
-		Hash:         strProp(props, "hash"),
-		FileName:     strProp(props, "name"),
-		Path:         strProp(props, "path"),
-		Size:         int64Prop(props, "size"),
-		IsDeleted:    boolProp(props, "is_deleted"),
-		IsFragmented: boolProp(props, "is_fragmented"),
-		FileType:     strProp(props, "file_type"),
-		MimeType:     strProp(props, "mime_type"),
-		Tags:         strSliceProp(props, "tags"),
-		Entropy:      float64Prop(props, "entropy"),
-		HasEntropy:   boolProp(props, "has_entropy"),
+		ID:           fields.Str("file_node_id"),
+		Hash:         fields.Str("hash"),
+		FileName:     fields.Str("name"),
+		Path:         fields.Str("path"),
+		Size:         fields.Int64("size"),
+		IsDeleted:    fields.Bool("is_deleted"),
+		IsFragmented: fields.Bool("is_fragmented"),
+		FileType:     fields.Str("file_type"),
+		MimeType:     fields.Str("mime_type"),
+		Tags:         fields.Strings("tags"),
+		Entropy:      fields.Float64("entropy"),
+		HasEntropy:   fields.Bool("has_entropy"),
 	}
 }
 
@@ -416,80 +449,19 @@ func mergeIndexedFallback(fileNode, indexedMeta *EnrichmentFileNode) {
 }
 
 // ─── property helpers ────────────────────────────────────────────────────────
+//
+// These now delegate to lib/graph/props. The local copies they replaced read
+// size fields back as 0 whenever msgpack had encoded them as uint64, int8 or
+// int16 — which it does for most real values — and rejected the string form of
+// a bool. See the package doc for the full drift.
 
-func unpackProps(packed []byte) map[string]any {
-	var props map[string]any
-	if err := msgpack.Unmarshal(packed, &props); err != nil {
-		return map[string]any{}
-	}
-	return props
-}
+func unpackProps(packed []byte) props.Map { return props.Unpack(packed) }
 
-func strProp(props map[string]any, key string) string {
-	if v, ok := props[key]; ok {
-		if s, ok := v.(string); ok {
-			return s
-		}
-	}
-	return ""
-}
-
-func int64Prop(props map[string]any, key string) int64 {
-	if v, ok := props[key]; ok {
-		switch val := v.(type) {
-		case int64:
-			return val
-		case float64:
-			return int64(val)
-		}
-	}
-	return 0
-}
-
-func float64Prop(props map[string]any, key string) float64 {
-	if v, ok := props[key]; ok {
-		switch val := v.(type) {
-		case float64:
-			return val
-		case float32:
-			return float64(val)
-		case int64:
-			return float64(val)
-		case int32:
-			return float64(val)
-		case int:
-			return float64(val)
-		}
-	}
-	return 0
-}
-
-func boolProp(props map[string]any, key string) bool {
-	if v, ok := props[key]; ok {
-		if b, ok := v.(bool); ok {
-			return b
-		}
-	}
-	return false
-}
-
-func strSliceProp(props map[string]any, key string) []string {
-	if v, ok := props[key]; ok {
-		switch val := v.(type) {
-		case []string:
-			return val
-		case []interface{}:
-			result := make([]string, len(val))
-			for i, item := range val {
-				if s, ok := item.(string); ok {
-					result[i] = s
-				}
-			}
-			return result
-		}
-	}
-	return nil
-}
+func strProp(m props.Map, key string) string        { return m.Str(key) }
+func int64Prop(m props.Map, key string) int64       { return m.Int64(key) }
+func float64Prop(m props.Map, key string) float64   { return m.Float64(key) }
+func boolProp(m props.Map, key string) bool         { return m.Bool(key) }
+func strSliceProp(m props.Map, key string) []string { return m.Strings(key) }
 
 func joinTags(tags []string) string {
 	if len(tags) == 0 {

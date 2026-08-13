@@ -5,9 +5,9 @@ import (
 	"path/filepath"
 	"testing"
 
+	duesgraph "indicer/lib/graph"
 	specpkg "indicer/lib/microartefact/spec"
 
-	"github.com/aoiflux/graphene"
 	graphstore "github.com/aoiflux/graphene/store"
 	"github.com/vmihailenco/msgpack/v5"
 )
@@ -171,11 +171,12 @@ func TestGrapheneRepositoryStoresNodesAndEdges(t *testing.T) {
 		t.Fatalf("Close: %v", err)
 	}
 
-	graph, err := graphene.Open(filepath.Join(root, grapheneStoreDir))
+	handle, err := duesgraph.Open(root)
 	if err != nil {
-		t.Fatalf("graphene.Open: %v", err)
+		t.Fatalf("graph.Open: %v", err)
 	}
-	defer graph.Close()
+	defer handle.Release()
+	graph := handle.Graph()
 
 	// Check for FILE node with "evidence.bin" name at indexed_file level
 	fileHits, err := graph.NodesByProperty("name", []byte("evidence.bin"))

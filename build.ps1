@@ -2,10 +2,16 @@ param(
     [string]$BinaryName = "dues",
     [string]$MainPackage = ".",
     [string]$OutputDir = "dist",
+    # The binary is pure Go (no CGO, no libtusk), so one host cross-compiles the
+    # whole matrix with no C toolchain. Override -Targets to build a subset.
     [string[]]$Targets = @(
-        "windows/amd64"
+        "windows/amd64",
+        "windows/arm64",
+        "linux/amd64",
+        "linux/arm64",
+        "darwin/amd64",
+        "darwin/arm64"
     ),
-    # To compile for Linux, run build.sh on Linux instead.
     [switch]$NoClean
 )
 
@@ -72,7 +78,7 @@ Write-Banner -Title "DUES Release Build"
 Write-Label -Label "Repository" -Value $repoRoot -ValueColor Cyan
 Write-Label -Label "Output Dir" -Value (Resolve-Path $OutputDir).Path -ValueColor Cyan
 Write-Label -Label "Targets" -Value ($Targets -join ", ") -ValueColor Yellow
-Write-Label -Label "Mode" -Value "Optimized static-style release build" -ValueColor Green
+Write-Label -Label "Mode" -Value "Pure-Go static release build (CGO=0)" -ValueColor Green
 
 $pgoFile = Join-Path $repoRoot "default.pgo"
 if (Test-Path $pgoFile) {
@@ -171,7 +177,7 @@ finally {
 }
 
 $buildSeconds = [math]::Round(((Get-Date) - $buildStart).TotalSeconds, 2)
-$artifacts = Get-ChildItem $OutputDir | Where-Object { $_.Name -ilike "*.exe" }
+$artifacts = Get-ChildItem $OutputDir -File | Where-Object { $_.Name -ilike "$BinaryName-*" }
 $count = 0;
 foreach ($artifact in $artifacts) {
     $count++;
@@ -192,4 +198,4 @@ Select-Object @{
 }, LastWriteTime |
 Format-Table -AutoSize
 
-Write-Host "NOTE: This script builds for Windows only. To compile for Linux, run build.sh on Linux." -ForegroundColor DarkYellow
+Write-Host "NOTE: Pure-Go cross-compile — every target above is produced from this one host (build.sh is the shell equivalent)." -ForegroundColor DarkYellow

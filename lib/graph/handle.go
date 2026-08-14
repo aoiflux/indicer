@@ -10,6 +10,7 @@ import (
 	"indicer/lib/util"
 
 	graphenedb "github.com/aoiflux/graphene"
+	graphstore "github.com/aoiflux/graphene/store"
 )
 
 // writtenBy is recorded in the schema marker so a store says which build
@@ -43,10 +44,39 @@ type Handle struct {
 	// pair of them safe.
 	writeMu sync.Mutex
 
+	// identity caches "indexKey\x00value" -> NodeID for the life of the handle.
+	//
+	// It never needs invalidating within a process: graphene issues IDs
+	// monotonically, never reuses them, and preserves them across compaction.
+	// It exists because the enrichment write path looks the same evidence and
+	// partition up once per file, which on a large image is the dominant cost
+	// of an upsert.
+	identity sync.Map
+
 	// refs is guarded by registryMu, not by an atomic, so that finding a live
 	// handle and incrementing it is one step. With an atomic, a concurrent
 	// Release could close the store between the map lookup and the increment.
 	refs int
+}
+
+// lookupIdentity resolves a cached node identity.
+func (h *Handle) lookupIdentity(cacheKey string) (graphstore.NodeID, bool) {
+	if h == nil {
+		return graphstore.InvalidNodeID, false
+	}
+	if cached, ok := h.identity.Load(cacheKey); ok {
+		return cached.(graphstore.NodeID), true
+	}
+	return graphstore.InvalidNodeID, false
+}
+
+// rememberIdentity caches a node identity. Only durable identities are cached;
+// see Batch.Commit.
+func (h *Handle) rememberIdentity(cacheKey string, id graphstore.NodeID) {
+	if h == nil || id == graphstore.InvalidNodeID {
+		return
+	}
+	h.identity.Store(cacheKey, id)
 }
 
 type OpenOptions struct {

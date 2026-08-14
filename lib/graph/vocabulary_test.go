@@ -9,6 +9,8 @@ import (
 	duesgraph "indicer/lib/graph"
 	"indicer/lib/graph/migrate"
 	"indicer/lib/graph/schema"
+
+	graphstore "github.com/aoiflux/graphene/store"
 )
 
 // TestVocabulary_LegacyFixtureIsDetectedAndShimmed is the automatic half of the
@@ -163,6 +165,52 @@ func TestVocabulary_WritingToALegacyStoreYieldsMixed(t *testing.T) {
 	if len(tree.EvidenceFiles) != len(after.EvidenceFiles) {
 		t.Errorf("after reopen: %d evidence files, want %d",
 			len(tree.EvidenceFiles), len(after.EvidenceFiles))
+	}
+}
+
+// TestVocabulary_ReRunOnLegacyStoreDoesNotDuplicateEdges guards a regression
+// the batch write path could easily have introduced.
+//
+// EnsureEdge deduplicates through an edge_key index entry, which edges written
+// before that key existed do not have. Without the incident-edge fallback, a
+// re-run against a legacy store would find no match for any of them and write a
+// second copy of every containment edge in the case.
+func TestVocabulary_ReRunOnLegacyStoreDoesNotDuplicateEdges(t *testing.T) {
+	root := legacyFixture(t)
+
+	handle, err := duesgraph.Open(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer handle.Release()
+
+	before, err := handle.Graph().EdgesByType(graphstore.EdgeTypeContains)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(before) == 0 {
+		t.Fatal("fixture holds no containment edges")
+	}
+
+	// Re-assert the hierarchy the fixture already contains.
+	repo := enrichment.NewGrapheneRepositoryOn(handle)
+	if err := repo.UpsertPartition(enrichment.PartitionRecord{
+		EvidenceFileID:   "ZXZpZGVuY2UtaGFzaC1kaXNrMQ==",
+		EvidenceFileName: "disk1.E01",
+		PartitionID:      "cGFydGl0aW9uLTE=",
+		PartitionName:    "p1",
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	after, err := handle.Graph().EdgesByType(graphstore.EdgeTypeContains)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(after) != len(before) {
+		t.Errorf("re-running enrichment on a legacy store changed the containment edge "+
+			"count from %d to %d; edges written before edge_key existed were not "+
+			"recognised as duplicates", len(before), len(after))
 	}
 }
 

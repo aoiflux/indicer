@@ -156,13 +156,19 @@ func (service *Service) EnrichPartition(pfile structs.InputFile, eviID []byte, i
 	}
 	entropyCache := make(map[string]float64)
 
+	pending := make([]FileRecord, 0, fileBatchSize)
 	for _, indexedHashB64 := range indexedHashes {
-		if err := service.enrichIndexedHash(context, indexedHashB64, entropyCache); err != nil {
+		record, err := service.buildIndexedFileRecord(context, indexedHashB64, entropyCache)
+		if err != nil {
+			return err
+		}
+		pending = append(pending, record)
+		if pending, err = service.flushIfFull(pending); err != nil {
 			return err
 		}
 		_ = bar.Add(1)
 	}
-	return nil
+	return service.upsertFiles(pending)
 }
 
 func (service *Service) enrichPartitionByHash(txn *badger.Txn, evidence evidenceContext, partitionHashB64 string, entropyCache map[string]float64, onProcessed func()) error {
@@ -189,22 +195,25 @@ func (service *Service) enrichPartitionByHash(txn *badger.Txn, evidence evidence
 		Entropy:          partitionEntropy,
 		HasEntropy:       hasPartitionEntropy,
 	}
-	if partitionRecord := buildNameLevelRecord(sharedPartitionRecord, pdata.Name, false); true {
-		if err := service.repository.UpsertFile(partitionRecord); err != nil {
+	// The partition record leads the batch so its node exists before the
+	// indexed files that hang off it are written in the same commit.
+	pending := make([]FileRecord, 0, fileBatchSize)
+	pending = append(pending, buildNameLevelRecord(sharedPartitionRecord, pdata.Name, false))
+
+	for indexedHashB64 := range pdata.InternalObjects {
+		record, err := service.buildIndexedFileRecord(context, indexedHashB64, entropyCache)
+		if err != nil {
 			return err
 		}
-	}
-
-	// Process indexed files within this partition
-	for indexedHashB64 := range pdata.InternalObjects {
-		if err := service.enrichIndexedHash(context, indexedHashB64, entropyCache); err != nil {
+		pending = append(pending, record)
+		if pending, err = service.flushIfFull(pending); err != nil {
 			return err
 		}
 		if onProcessed != nil {
 			onProcessed()
 		}
 	}
-	return nil
+	return service.upsertFiles(pending)
 }
 
 func (service *Service) countIndexedObjectsForEnrichment() (int64, error) {
@@ -264,12 +273,48 @@ func newEnrichmentProgressBar(total int64, description string) *progressbar.Prog
 	)
 }
 
-func (service *Service) enrichIndexedHash(context partitionContext, indexedHashB64 string, entropyCache map[string]float64) error {
+// fileBatchSize bounds how many records are held before a commit.
+//
+// A partition can hold hundreds of thousands of files, so accumulating a whole
+// one before writing would trade an fsync problem for a memory problem. This is
+// large enough that the per-commit cost disappears and small enough that the
+// working set stays trivial.
+const fileBatchSize = 2000
+
+// upsertFiles writes records in one commit where the backend supports it.
+func (service *Service) upsertFiles(records []FileRecord) error {
+	if len(records) == 0 {
+		return nil
+	}
+	if batcher, ok := service.repository.(FileBatchRepository); ok {
+		return batcher.UpsertFiles(records)
+	}
+	for _, record := range records {
+		if err := service.repository.UpsertFile(record); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// flushIfFull commits the pending records once they reach the batch size,
+// returning the slice to keep accumulating into.
+func (service *Service) flushIfFull(pending []FileRecord) ([]FileRecord, error) {
+	if len(pending) < fileBatchSize {
+		return pending, nil
+	}
+	if err := service.upsertFiles(pending); err != nil {
+		return nil, err
+	}
+	return pending[:0], nil
+}
+
+func (service *Service) buildIndexedFileRecord(context partitionContext, indexedHashB64 string, entropyCache map[string]float64) (FileRecord, error) {
 	rawIndexedHash, indexedHashCanonical := parseHashValue(indexedHashB64)
 	indexedID := util.AppendToBytesSlice(cnst.IdxFileNamespace, rawIndexedHash)
 	indexedFile, err := dbio.GetIndexedFile(indexedID, service.db)
 	if err != nil {
-		return fmt.Errorf("get indexed file: %w", err)
+		return FileRecord{}, fmt.Errorf("get indexed file: %w", err)
 	}
 	indexedEntropy, hasIndexedEntropy := service.computeEntropyForLogicalFile(cnst.IdxFileNamespace, indexedHashCanonical, entropyCache)
 	sharedIndexedRecord := FileRecord{
@@ -286,13 +331,7 @@ func (service *Service) enrichIndexedHash(context partitionContext, indexedHashB
 		HasEntropy:       hasIndexedEntropy,
 	}
 
-	if record := buildNameLevelRecord(sharedIndexedRecord, indexedFile.Name, indexedFile.IsDeleted); true {
-		if err := service.repository.UpsertFile(record); err != nil {
-			return err
-		}
-	}
-
-	return nil
+	return buildNameLevelRecord(sharedIndexedRecord, indexedFile.Name, indexedFile.IsDeleted), nil
 }
 
 func (service *Service) computeEntropyForLogicalFile(namespace, encodedHash string, cache map[string]float64) (float64, bool) {

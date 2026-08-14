@@ -22,6 +22,10 @@ type GrapheneRepository struct {
 	handle *duesgraph.Handle
 	graph  *graphenedb.Graph
 	owns   bool
+
+	// actor attributes every write. The zero value writes unattributed, which
+	// is what DUES did before batches existed; the signer provider populates it.
+	actor duesgraph.ActorRef
 }
 
 const storeDirName = "graph"
@@ -56,21 +60,45 @@ func NewGrapheneRepositoryOn(handle *duesgraph.Handle) *GrapheneRepository {
 	return &GrapheneRepository{handle: handle, graph: handle.Graph()}
 }
 
+// SetActor records who subsequent writes are attributed to. graphene binds an
+// actor to a batch commit and to nothing else, so this has to be set before the
+// writes it should cover — attribution cannot be added retrospectively.
+func (repository *GrapheneRepository) SetActor(actor duesgraph.ActorRef) {
+	if repository != nil {
+		repository.actor = actor
+	}
+}
+
+// inBatch runs fn inside one attributed, atomic commit.
+func (repository *GrapheneRepository) inBatch(fn func(*duesgraph.Batch) error) error {
+	writer, err := repository.handle.Writer(repository.actor)
+	if err != nil {
+		return err
+	}
+	defer writer.Close()
+
+	batch := writer.Batch()
+	if err := fn(batch); err != nil {
+		batch.Rollback()
+		return err
+	}
+	return batch.Commit()
+}
+
 func (repository *GrapheneRepository) UpsertEvidence(record EvidenceRecord) error {
 	if repository == nil || repository.graph == nil {
 		return nil
 	}
-	return repository.handle.ExclusiveWrite(func() error {
-		return repository.upsertEvidence(record)
+	return repository.inBatch(func(batch *duesgraph.Batch) error {
+		return repository.upsertEvidence(batch, record)
 	})
 }
 
-func (repository *GrapheneRepository) upsertEvidence(record EvidenceRecord) error {
-	evidenceNode, err := repository.upsertNode(
-		"evidence_file_id",
-		record.HashBase64,
+func (repository *GrapheneRepository) upsertEvidence(batch *duesgraph.Batch, record EvidenceRecord) error {
+	evidenceNode, err := batch.Upsert(
+		duesgraph.UpsertKey{Key: "evidence_file_id", Value: record.HashBase64},
 		[]graphstore.NodeType{repository.kinds().NodeType(schema.KindEvidenceFile)},
-		map[string]any{
+		props.Map{
 			"evidence_file_id": record.HashBase64,
 			"name":             record.Name,
 			"path":             record.Path,
@@ -78,19 +106,19 @@ func (repository *GrapheneRepository) upsertEvidence(record EvidenceRecord) erro
 			"evidence_hash":    record.HashBase64,
 			"node_type":        "evidence",
 		},
+		nil,
 	)
 	if err != nil {
 		return err
 	}
 
-	if err := repository.graph.IndexNodeProperties(evidenceNode, map[string][]byte{
+	// Registered unconditionally, not only on insert: the node may already
+	// exist because UpsertPartition created it knowing only its ID.
+	batch.Index(evidenceNode, map[string][]byte{
 		"evidence_hash": []byte(record.HashBase64),
 		"name":          []byte(record.Name),
 		"path":          []byte(record.Path),
-	}); err != nil {
-		return err
-	}
-
+	})
 	return nil
 }
 
@@ -98,56 +126,79 @@ func (repository *GrapheneRepository) UpsertPartition(record PartitionRecord) er
 	if repository == nil || repository.graph == nil {
 		return nil
 	}
-	return repository.handle.ExclusiveWrite(func() error {
-		return repository.upsertPartition(record)
+	return repository.inBatch(func(batch *duesgraph.Batch) error {
+		return repository.upsertPartition(batch, record)
 	})
 }
 
-func (repository *GrapheneRepository) upsertPartition(record PartitionRecord) error {
-	evidenceNode, err := repository.upsertNode(
-		"evidence_file_id",
-		record.EvidenceFileID,
-		[]graphstore.NodeType{repository.kinds().NodeType(schema.KindEvidenceFile)},
-		map[string]any{"evidence_file_id": record.EvidenceFileID, "name": record.EvidenceFileName},
-	)
+func (repository *GrapheneRepository) upsertPartition(batch *duesgraph.Batch, record PartitionRecord) error {
+	evidenceNode, err := repository.upsertEvidenceStub(batch, record.EvidenceFileID, record.EvidenceFileName)
 	if err != nil {
 		return err
 	}
 
-	partitionNode, err := repository.upsertNode(
-		"partition_id",
-		record.PartitionID,
+	partitionNode, err := batch.Upsert(
+		duesgraph.UpsertKey{Key: "partition_id", Value: record.PartitionID},
 		[]graphstore.NodeType{repository.kinds().NodeType(schema.KindPartition)},
-		map[string]any{
+		props.Map{
 			"partition_id":     record.PartitionID,
 			"name":             record.PartitionName,
 			"evidence_file_id": record.EvidenceFileID,
 		},
+		nil,
 	)
 	if err != nil {
 		return err
 	}
 
-	return repository.ensureContains(evidenceNode, partitionNode)
+	return repository.ensureContains(batch, evidenceNode, partitionNode)
+}
+
+// upsertEvidenceStub creates the evidence node knowing only its ID and name.
+// UpsertEvidence fills in the rest when it runs; ordering between them is not
+// guaranteed, which is why both register their index keys unconditionally.
+func (repository *GrapheneRepository) upsertEvidenceStub(
+	batch *duesgraph.Batch, evidenceFileID, evidenceFileName string,
+) (graphstore.NodeID, error) {
+	return batch.Upsert(
+		duesgraph.UpsertKey{Key: "evidence_file_id", Value: evidenceFileID},
+		[]graphstore.NodeType{repository.kinds().NodeType(schema.KindEvidenceFile)},
+		props.Map{"evidence_file_id": evidenceFileID, "name": evidenceFileName},
+		nil,
+	)
 }
 
 func (repository *GrapheneRepository) UpsertFile(record FileRecord) error {
 	if repository == nil || repository.graph == nil {
 		return nil
 	}
-	return repository.handle.ExclusiveWrite(func() error {
-		return repository.upsertFile(record)
+	return repository.inBatch(func(batch *duesgraph.Batch) error {
+		return repository.upsertFile(batch, record)
 	})
 }
 
-func (repository *GrapheneRepository) upsertFile(record FileRecord) error {
+// UpsertFiles writes many file records in one commit.
+//
+// One commit per file is one fsync per file, and one attribution record per
+// file. Callers walking a partition should prefer this: EnrichAll on a large
+// image is the difference between a commit per file and a commit per partition.
+func (repository *GrapheneRepository) UpsertFiles(records []FileRecord) error {
+	if repository == nil || repository.graph == nil || len(records) == 0 {
+		return nil
+	}
+	return repository.inBatch(func(batch *duesgraph.Batch) error {
+		for _, record := range records {
+			if err := repository.upsertFile(batch, record); err != nil {
+				return err
+			}
+		}
+		return nil
+	})
+}
+
+func (repository *GrapheneRepository) upsertFile(batch *duesgraph.Batch, record FileRecord) error {
 	// Always create/get evidence file node
-	evidenceNode, err := repository.upsertNode(
-		"evidence_file_id",
-		record.EvidenceFileID,
-		[]graphstore.NodeType{repository.kinds().NodeType(schema.KindEvidenceFile)},
-		map[string]any{"evidence_file_id": record.EvidenceFileID, "name": record.EvidenceFileName},
-	)
+	evidenceNode, err := repository.upsertEvidenceStub(batch, record.EvidenceFileID, record.EvidenceFileName)
 	if err != nil {
 		return err
 	}
@@ -156,23 +207,23 @@ func (repository *GrapheneRepository) upsertFile(record FileRecord) error {
 
 	// For partition and indexed_file levels, create/get partition node
 	if record.Level != "evidence_file" && record.PartitionID != "" {
-		partitionNode, err := repository.upsertNode(
-			"partition_id",
-			record.PartitionID,
+		partitionNode, err := batch.Upsert(
+			duesgraph.UpsertKey{Key: "partition_id", Value: record.PartitionID},
 			[]graphstore.NodeType{repository.kinds().NodeType(schema.KindPartition)},
-			map[string]any{"partition_id": record.PartitionID, "name": record.PartitionName, "evidence_file_id": record.EvidenceFileID},
+			props.Map{"partition_id": record.PartitionID, "name": record.PartitionName, "evidence_file_id": record.EvidenceFileID},
+			nil,
 		)
 		if err != nil {
 			return err
 		}
-		if err := repository.ensureContains(evidenceNode, partitionNode); err != nil {
+		if err := repository.ensureContains(batch, evidenceNode, partitionNode); err != nil {
 			return err
 		}
 		parentNode = partitionNode
 
 		// For indexed_file level, create/get indexed file node
 		if record.Level == "indexed_file" && record.IndexedFileID != "" {
-			indexedProps := map[string]any{
+			indexedProps := props.Map{
 				"indexed_file_id":  record.IndexedFileID,
 				"hash":             record.IndexedFileHash,
 				"size":             record.Size,
@@ -184,16 +235,16 @@ func (repository *GrapheneRepository) upsertFile(record FileRecord) error {
 			if record.HasEntropy {
 				indexedProps["entropy"] = record.Entropy
 			}
-			indexedNode, err := repository.upsertNode(
-				"indexed_file_id",
-				record.IndexedFileID,
+			indexedNode, err := batch.Upsert(
+				duesgraph.UpsertKey{Key: "indexed_file_id", Value: record.IndexedFileID},
 				[]graphstore.NodeType{repository.kinds().NodeType(schema.KindIndexedFile)},
 				indexedProps,
+				nil,
 			)
 			if err != nil {
 				return err
 			}
-			if err := repository.ensureContains(partitionNode, indexedNode); err != nil {
+			if err := repository.ensureContains(batch, partitionNode, indexedNode); err != nil {
 				return err
 			}
 			parentNode = indexedNode
@@ -211,7 +262,7 @@ func (repository *GrapheneRepository) upsertFile(record FileRecord) error {
 	case "indexed_file":
 		fileHash = record.IndexedFileHash
 	}
-	fileProps := map[string]any{
+	fileProps := props.Map{
 		"file_node_id":     fileNodeID,
 		"name":             record.FileName,
 		"path":             record.Path,
@@ -231,33 +282,32 @@ func (repository *GrapheneRepository) upsertFile(record FileRecord) error {
 	if record.HasEntropy {
 		fileProps["entropy"] = record.Entropy
 	}
-	fileNode, err := repository.upsertNode(
-		"file_node_id",
-		fileNodeID,
+	fileNode, err := batch.Upsert(
+		duesgraph.UpsertKey{Key: "file_node_id", Value: fileNodeID},
 		[]graphstore.NodeType{repository.kinds().NodeType(schema.KindFile)},
 		fileProps,
+		nil,
 	)
 	if err != nil {
 		return err
 	}
 
-	if err := repository.graph.IndexNodeProperties(fileNode, map[string][]byte{
+	// strconv encodings, deliberately unchanged. These are equality-only index
+	// values today; switching them to the order-preserving encoders would make
+	// new entries incomparable with the ones already stored. They are re-encoded
+	// by the rebuild migration, which is also what makes ordered range queries
+	// on them possible.
+	batch.Index(fileNode, map[string][]byte{
 		"name":          []byte(record.FileName),
 		"level":         []byte(record.Level),
 		"is_deleted":    []byte(strconv.FormatBool(record.IsDeleted)),
 		"is_fragmented": []byte(strconv.FormatBool(record.IsFragmented)),
 		"mime_type":     []byte(record.MimeType),
 		"tags":          []byte(joinTags(record.Tags)),
-	}); err != nil {
-		return err
-	}
+	})
 
 	// Create edge from parent to file
-	if err := repository.ensureContains(parentNode, fileNode); err != nil {
-		return err
-	}
-
-	return nil
+	return repository.ensureContains(batch, parentNode, fileNode)
 }
 
 // Close releases this repository's reference to the graph handle. The store
@@ -273,38 +323,9 @@ func (repository *GrapheneRepository) Close() error {
 	return handle.Release()
 }
 
-func (repository *GrapheneRepository) upsertNode(indexKey, indexValue string, labels []graphstore.NodeType, properties map[string]any) (graphstore.NodeID, error) {
-	hits, err := repository.graph.NodesByProperty(indexKey, []byte(indexValue))
-	if err != nil {
-		return 0, err
-	}
-	if len(hits) > 0 {
-		return hits[0], nil
-	}
-
-	id, err := repository.graph.AddNode(&graphstore.Node{Labels: labels, Properties: mustPack(properties)})
-	if err != nil {
-		return 0, err
-	}
-	if err := repository.graph.IndexNodeProperty(id, indexKey, []byte(indexValue)); err != nil {
-		return 0, err
-	}
-	return id, nil
+func (repository *GrapheneRepository) ensureContains(batch *duesgraph.Batch, src, dst graphstore.NodeID) error {
+	return batch.EnsureEdge(src, dst, []graphstore.EdgeType{graphstore.EdgeTypeContains}, nil, nil)
 }
-
-func (repository *GrapheneRepository) ensureContains(src, dst graphstore.NodeID) error {
-	exists, err := repository.graph.EdgeExists(src, dst, []graphstore.EdgeType{graphstore.EdgeTypeContains})
-	if err != nil {
-		return err
-	}
-	if exists {
-		return nil
-	}
-	_, err = repository.graph.AddEdge(&graphstore.Edge{Src: src, Dst: dst, Labels: []graphstore.EdgeType{graphstore.EdgeTypeContains}})
-	return err
-}
-
-func mustPack(value any) []byte { return props.MustPack(value) }
 
 // ReadHierarchy walks the enrichment graphdb and returns the full
 // evidence_file → partition → indexed_file hierarchy with file-level metadata.

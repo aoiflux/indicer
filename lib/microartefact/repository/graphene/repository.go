@@ -37,6 +37,9 @@ type Repository struct {
 	handle *duesgraph.Handle
 	graph  *graphenedb.Graph
 	owns   bool
+
+	// actor attributes every write. The zero value writes unattributed.
+	actor duesgraph.ActorRef
 }
 
 // Open acquires a reference to root's graph store. Close releases it.
@@ -74,12 +77,28 @@ func (r *Repository) Store(file model.FileRecord, artefacts []model.Artefact, re
 	if r == nil || r.graph == nil {
 		return nil
 	}
-	return r.handle.ExclusiveWrite(func() error {
-		return r.store(file, artefacts, relations)
-	})
+	writer, err := r.handle.Writer(r.actor)
+	if err != nil {
+		return err
+	}
+	defer writer.Close()
+
+	batch := writer.Batch()
+	if err := r.store(batch, file, artefacts, relations); err != nil {
+		batch.Rollback()
+		return err
+	}
+	return batch.Commit()
 }
 
-func (r *Repository) store(file model.FileRecord, artefacts []model.Artefact, relations []model.Relation) error {
+// SetActor records who subsequent writes are attributed to.
+func (r *Repository) SetActor(actor duesgraph.ActorRef) {
+	if r != nil {
+		r.actor = actor
+	}
+}
+
+func (r *Repository) store(batch *duesgraph.Batch, file model.FileRecord, artefacts []model.Artefact, relations []model.Relation) error {
 	if err := validateStoreHierarchy(file); err != nil {
 		return err
 	}
@@ -108,12 +127,12 @@ func (r *Repository) store(file model.FileRecord, artefacts []model.Artefact, re
 		}
 	}
 
-	artefactNodesByKey, err := r.storeArtefactNodes(indexedFileNode, file.Hash, artefacts)
+	artefactNodesByKey, err := r.storeArtefactNodes(batch, indexedFileNode, file.Hash, artefacts)
 	if err != nil {
 		return err
 	}
 
-	if err := r.storeRelationEdges(artefactNodesByKey, relations); err != nil {
+	if err := r.storeRelationEdges(batch, artefactNodesByKey, relations); err != nil {
 		return err
 	}
 
@@ -169,11 +188,12 @@ func (r *Repository) hasFileArtefacts(fileNodeID graphstore.NodeID) (bool, error
 	return false, nil
 }
 
-func (r *Repository) storeArtefactNodes(indexedFileNode graphstore.NodeID, evidenceHash string, artefacts []model.Artefact) (map[string][]graphstore.NodeID, error) {
+func (r *Repository) storeArtefactNodes(batch *duesgraph.Batch, indexedFileNode graphstore.NodeID, evidenceHash string, artefacts []model.Artefact) (map[string][]graphstore.NodeID, error) {
 	artefactNodesByKey := make(map[string][]graphstore.NodeID, len(artefacts))
+	parents := make(map[graphstore.NodeID]int, len(artefacts))
 
 	for _, artefact := range artefacts {
-		artefactNode, err := r.createArtefactNode(evidenceHash, artefact)
+		artefactNode, err := r.createArtefactNode(batch, evidenceHash, artefact)
 		if err != nil {
 			return nil, err
 		}
@@ -181,36 +201,32 @@ func (r *Repository) storeArtefactNodes(indexedFileNode graphstore.NodeID, evide
 		lookupKey := relationNodeLookupKey(artefact.Kind, artefact.Value)
 		artefactNodesByKey[lookupKey] = append(artefactNodesByKey[lookupKey], artefactNode)
 
-		if err := r.createContainsEdge(indexedFileNode, artefactNode, artefact); err != nil {
+		if err := r.createContainsEdge(batch, indexedFileNode, artefactNode, artefact); err != nil {
 			return nil, err
 		}
-		if err := r.ensureMicroArtefactHasExactlyOneFileParent(indexedFileNode, artefactNode); err != nil {
-			return nil, err
+		parents[artefactNode]++
+	}
+
+	// The one-file-parent invariant is now checked against the batch rather
+	// than by re-querying the store after every insert.
+	//
+	// That re-query cannot work inside a transaction — the containment edge is
+	// not visible to Neighbours until the commit, so every artefact would look
+	// parentless — and it was O(artefacts) round trips on the ingest path.
+	// Every artefact node here is created by this batch, so the batch's own
+	// record of what it linked is the authoritative answer.
+	for node, count := range parents {
+		if count != 1 {
+			return nil, fmt.Errorf(
+				"micro-artefact node %d must have exactly one file parent edge; this batch created %d",
+				node, count)
 		}
 	}
 
 	return artefactNodesByKey, nil
 }
 
-func (r *Repository) createArtefactNode(evidenceHash string, artefact model.Artefact) (graphstore.NodeID, error) {
-	nodeID, err := r.graph.AddNode(&graphstore.Node{
-		Labels: []graphstore.NodeType{graphstore.NodeTypeMicroArtefact},
-		Properties: mustPack(map[string]any{
-			"kind":          artefact.Kind,
-			"detector":      artefact.Detector,
-			"value":         artefact.Value,
-			"summary":       artefact.Summary,
-			"confidence":    artefact.Confidence,
-			"start":         artefact.Span.Start,
-			"end":           artefact.Span.End,
-			"attributes":    artefact.Attributes,
-			"evidence_hash": evidenceHash,
-		}),
-	})
-	if err != nil {
-		return 0, err
-	}
-
+func (r *Repository) createArtefactNode(batch *duesgraph.Batch, evidenceHash string, artefact model.Artefact) (graphstore.NodeID, error) {
 	index := map[string][]byte{
 		"artefact_kind":       []byte(artefact.Kind),
 		"artefact_detector":   []byte(artefact.Detector),
@@ -220,33 +236,45 @@ func (r *Repository) createArtefactNode(evidenceHash string, artefact model.Arte
 	if artefact.Value != "" && len(artefact.Value) <= 256 {
 		index["artefact_value"] = []byte(artefact.Value)
 	}
-	if err := r.graph.IndexNodeProperties(nodeID, index); err != nil {
-		return 0, err
-	}
 
-	return nodeID, nil
+	// Add rather than Upsert: an artefact is an observation anchored to a span
+	// in one file, so two files carrying the same value are two artefacts.
+	// Deduplicating them is the job of the canonical entity layer, not this one.
+	return batch.Add(
+		[]graphstore.NodeType{graphstore.NodeTypeMicroArtefact},
+		props.Map{
+			"kind":          artefact.Kind,
+			"detector":      artefact.Detector,
+			"value":         artefact.Value,
+			"summary":       artefact.Summary,
+			"confidence":    artefact.Confidence,
+			"start":         artefact.Span.Start,
+			"end":           artefact.Span.End,
+			"attributes":    artefact.Attributes,
+			"evidence_hash": evidenceHash,
+		},
+		index,
+	)
 }
 
-func (r *Repository) createContainsEdge(indexedFileNode, artefactNode graphstore.NodeID, artefact model.Artefact) error {
-	edgeID, err := r.graph.AddEdge(&graphstore.Edge{
-		Src:    indexedFileNode,
-		Dst:    artefactNode,
-		Labels: []graphstore.EdgeType{graphstore.EdgeTypeContains},
-		Properties: mustPack(map[string]any{
+func (r *Repository) createContainsEdge(batch *duesgraph.Batch, indexedFileNode, artefactNode graphstore.NodeID, artefact model.Artefact) error {
+	return batch.EnsureEdge(
+		indexedFileNode,
+		artefactNode,
+		[]graphstore.EdgeType{graphstore.EdgeTypeContains},
+		props.Map{
 			"detector": artefact.Detector,
 			"start":    artefact.Span.Start,
 			"end":      artefact.Span.End,
-		}),
-	})
-	if err != nil {
-		return err
-	}
-
-	return r.graph.IndexEdgeProperties(edgeID, map[string][]byte{
-		"contains_kind": []byte(artefact.Kind),
-		"start":         []byte(strconv.FormatInt(artefact.Span.Start, 10)),
-		"end":           []byte(strconv.FormatInt(artefact.Span.End, 10)),
-	})
+		},
+		map[string][]byte{
+			"contains_kind": []byte(artefact.Kind),
+			// strconv encodings, deliberately unchanged — see the note in
+			// lib/enrichment on why these wait for the rebuild.
+			"start": []byte(strconv.FormatInt(artefact.Span.Start, 10)),
+			"end":   []byte(strconv.FormatInt(artefact.Span.End, 10)),
+		},
+	)
 }
 
 func (r *Repository) ExportInteractiveHTML(outPath string) error {
@@ -436,8 +464,14 @@ func unpackNodeProps(data []byte) props.Map { return props.Unpack(data) }
 
 func intProp(m props.Map, key string) int { return m.Int(key) }
 
-func (r *Repository) ensureMicroArtefactHasExactlyOneFileParent(fileNodeID, artefactNodeID graphstore.NodeID) error {
-	parents, err := r.graph.Neighbours(artefactNodeID, graphstore.DirectionInbound, []graphstore.EdgeType{graphstore.EdgeTypeContains})
+// VerifyOneFileParent re-checks the containment invariant against committed
+// state, for use by an integrity command rather than the ingest path.
+//
+// storeArtefactNodes enforces it at write time from the batch's own record;
+// this is the independent after-the-fact check over what is actually stored.
+func (r *Repository) VerifyOneFileParent(artefactNodeID graphstore.NodeID) error {
+	parents, err := r.graph.Neighbours(artefactNodeID, graphstore.DirectionInbound,
+		[]graphstore.EdgeType{graphstore.EdgeTypeContains})
 	if err != nil {
 		return err
 	}
@@ -448,30 +482,36 @@ func (r *Repository) ensureMicroArtefactHasExactlyOneFileParent(fileNodeID, arte
 			continue
 		}
 		fileParentCount++
-		if parent.Node.ID != fileNodeID {
-			return fmt.Errorf("micro-artefact node %d is linked to unexpected file node %d (expected %d)", artefactNodeID, parent.Node.ID, fileNodeID)
-		}
 	}
 
 	if fileParentCount != 1 {
-		return fmt.Errorf("micro-artefact node %d must have exactly one file parent edge; found %d", artefactNodeID, fileParentCount)
+		return fmt.Errorf("micro-artefact node %d must have exactly one file parent edge; found %d",
+			artefactNodeID, fileParentCount)
 	}
-
 	return nil
 }
-
-func mustPack(value any) []byte { return props.MustPack(value) }
 
 func hashText(value string, rest ...string) string { return ids.HashText(value, rest...) }
 
 func relationNodeLookupKey(kind, value string) string { return ids.ArtefactLookupKey(kind, value) }
 
-func (r *Repository) storeRelationEdges(artefactNodesByKey map[string][]graphstore.NodeID, relations []model.Relation) error {
+func (r *Repository) storeRelationEdges(batch *duesgraph.Batch, artefactNodesByKey map[string][]graphstore.NodeID, relations []model.Relation) error {
+	relationLabels := []graphstore.EdgeType{r.kinds().EdgeType(schema.EdgeKindRelation)}
+
 	for _, relation := range relations {
 		fromNodes := artefactNodesByKey[relationNodeLookupKey(relation.FromKind, relation.FromValue)]
 		toNodes := artefactNodesByKey[relationNodeLookupKey(relation.ToKind, relation.ToValue)]
 		if len(fromNodes) == 0 || len(toNodes) == 0 {
 			continue
+		}
+
+		evidence := make([]map[string]string, 0, len(relation.Evidence))
+		for _, field := range relation.Evidence {
+			evidence = append(evidence, map[string]string{
+				"field_name": field.FieldName,
+				"parser":     field.Parser,
+				"raw_value":  field.RawValue,
+			})
 		}
 
 		for _, fromID := range fromNodes {
@@ -480,46 +520,27 @@ func (r *Repository) storeRelationEdges(artefactNodesByKey map[string][]graphsto
 					continue
 				}
 
-				// Match every encoding so a re-run against a legacy store does
-				// not duplicate an edge it already holds under the old value.
-				exists, err := r.graph.EdgeExists(fromID, toID, r.kinds().MatchEdgeTypes(schema.EdgeKindRelation))
-				if err != nil {
-					return err
-				}
-				if exists {
-					continue
-				}
-
-				evidence := make([]map[string]string, 0, len(relation.Evidence))
-				for _, field := range relation.Evidence {
-					evidence = append(evidence, map[string]string{
-						"field_name": field.FieldName,
-						"parser":     field.Parser,
-						"raw_value":  field.RawValue,
-					})
-				}
-
-				edgeID, err := r.graph.AddEdge(&graphstore.Edge{
-					Src:    fromID,
-					Dst:    toID,
-					Labels: []graphstore.EdgeType{r.kinds().EdgeType(schema.EdgeKindRelation)},
-					Properties: mustPack(map[string]any{
+				// relation_type and method discriminate, so two artefacts can
+				// carry more than one relation. EdgeExists, which this
+				// replaced, matched on endpoints and type alone and so
+				// collapsed them into whichever was written first.
+				err := batch.EnsureEdge(
+					fromID, toID, relationLabels,
+					props.Map{
 						"relation_type":      relation.RelationType,
 						"method":             relation.Method,
 						"deterministic_flag": relation.Deterministic,
 						"confidence":         relation.Confidence,
 						"evidence_fields":    evidence,
-					}),
-				})
+					},
+					map[string][]byte{
+						"relation_type":      []byte(relation.RelationType),
+						"relation_method":    []byte(relation.Method),
+						"deterministic_flag": []byte(strconv.FormatBool(relation.Deterministic)),
+					},
+					relation.RelationType, relation.Method,
+				)
 				if err != nil {
-					return err
-				}
-
-				if err := r.graph.IndexEdgeProperties(edgeID, map[string][]byte{
-					"relation_type":      []byte(relation.RelationType),
-					"relation_method":    []byte(relation.Method),
-					"deterministic_flag": []byte(strconv.FormatBool(relation.Deterministic)),
-				}); err != nil {
 					return err
 				}
 			}

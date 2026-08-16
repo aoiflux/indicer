@@ -100,15 +100,27 @@ func registryValueString(valueData *regparser.ValueData) string {
 	return ""
 }
 
-func windowsFiletimeToRFC3339(filetime uint64) string {
+// windowsFiletime converts a FILETIME to a time, returning nil when it carries
+// no usable value. Detectors keep the RFC 3339 rendering in Attributes for
+// display, but the typed value is what a timeline can be built from.
+func windowsFiletime(filetime uint64) *time.Time {
 	if filetime == 0 {
-		return ""
+		return nil
 	}
 	unixSeconds := int64((filetime - 116444736000000000) / 10000000)
 	if unixSeconds <= 0 {
+		return nil
+	}
+	at := time.Unix(unixSeconds, 0).UTC()
+	return &at
+}
+
+func windowsFiletimeToRFC3339(filetime uint64) string {
+	at := windowsFiletime(filetime)
+	if at == nil {
 		return ""
 	}
-	return time.Unix(unixSeconds, 0).UTC().Format(time.RFC3339)
+	return at.Format(time.RFC3339)
 }
 
 func resolveMaxResults(configured, fallback int) int {

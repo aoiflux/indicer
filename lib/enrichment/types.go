@@ -1,6 +1,9 @@
 package enrichment
 
-import "indicer/lib/graph/ids"
+import (
+	"indicer/lib/graph/ids"
+	"indicer/lib/structs"
+)
 
 // FileRecord is a file-level enrichment payload destined for graphdb.
 // Creates FILE nodes at evidence file, partition, or indexed file level.
@@ -20,6 +23,10 @@ type FileRecord struct {
 	Tags         []string
 	Entropy      float64
 	HasEntropy   bool
+
+	// Times are the filesystem MACB timestamps, nil where the source
+	// filesystem does not record them or the evidence predates their capture.
+	Times *structs.Timestamps
 
 	// Hierarchy references
 	EvidenceFileID   string // ID/hash of parent evidence

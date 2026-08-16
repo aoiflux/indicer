@@ -60,6 +60,9 @@ func (d EVTXDetector) Detect(_ model.FileRecord, content []byte) ([]model.Artefa
 				Value:      truncate(eventText, 512),
 				Summary:    truncate(eventText, 128),
 				Confidence: 0.95,
+				// The record's own time, typed. It was previously only in
+				// Attributes as a string, which no timeline could use.
+				ObservedTime: windowsFiletime(record.Header.FileTime),
 				Attributes: map[string]string{
 					"record_id":    strconv.FormatUint(record.Header.RecordID, 10),
 					"timestamp":    windowsFiletimeToRFC3339(record.Header.FileTime),

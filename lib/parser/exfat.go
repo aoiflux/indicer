@@ -6,6 +6,7 @@ import (
 	"indicer/lib/structs"
 	"indicer/lib/util"
 	"os"
+	"time"
 
 	"github.com/aoiflux/libxfat"
 	"github.com/schollz/progressbar/v3"
@@ -69,7 +70,10 @@ func IndexEXFAT(pfile structs.InputFile, eviID []byte, idxChan chan error, enabl
 		iname := string(util.AppendToBytesSlice(eviID, cnst.DataSeperator, encodedPfileHash, cnst.DataSeperator, entry.GetName()))
 		istart := int64(exfatdata.GetClusterOffset(entry.GetEntryCluster()))
 		isize := int64(entry.GetSize())
-		err = registerIndexedRange(idxmap, pfile, eviID, iname, istart, isize, false)
+		// exFAT records modification, access and creation times but no change
+		// time, matching what lib/parser/fs/exfat reports.
+		times := timestampsOf(entry.GetModifiedTime(), entry.GetAccessedTime(), time.Time{}, entry.GetCreatedTime())
+		err = registerIndexedRange(idxmap, pfile, eviID, iname, istart, isize, false, times)
 		if err != nil {
 			idxChan <- err
 			return

@@ -39,6 +39,29 @@ type tuskFile struct {
 	IsDeleted    bool           `json:"is_deleted"`
 	Size         int64          `json:"size"`
 	Fragments    []tuskFragment `json:"fragments"`
+
+	// MACB timestamps as Unix nanoseconds; absent for producers that do not
+	// carry them, which includes every record libtusk itself ever produced.
+	Modified *int64 `json:"mtime,omitempty"`
+	Accessed *int64 `json:"atime,omitempty"`
+	Changed  *int64 `json:"ctime,omitempty"`
+	Born     *int64 `json:"btime,omitempty"`
+}
+
+// times renders the file's timestamps for storage, or nil when it has none, so
+// that a record with no timestamps encodes exactly as it did before this field
+// existed.
+func (f tuskFile) times() *structs.Timestamps {
+	t := &structs.Timestamps{
+		Modified: f.Modified,
+		Accessed: f.Accessed,
+		Changed:  f.Changed,
+		Born:     f.Born,
+	}
+	if !t.Any() {
+		return nil
+	}
+	return t
 }
 
 type tuskFragment struct {

@@ -329,6 +329,7 @@ func (service *Service) buildIndexedFileRecord(context partitionContext, indexed
 		IndexedFileHash:  indexedFile.FileHash,
 		Entropy:          indexedEntropy,
 		HasEntropy:       hasIndexedEntropy,
+		Times:            indexedFile.Times,
 	}
 
 	return buildNameLevelRecord(sharedIndexedRecord, indexedFile.Name, indexedFile.IsDeleted), nil

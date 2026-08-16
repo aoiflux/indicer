@@ -28,13 +28,15 @@ func (d PEMetadataDetector) Detect(_ model.FileRecord, content []byte) ([]model.
 
 	ts := peFile.FileHeader.TimeDateStamp
 	if ts != 0 {
-		timeValue := time.Unix(int64(ts), 0).UTC().Format(time.RFC3339)
+		compiledAt := time.Unix(int64(ts), 0).UTC()
+		timeValue := compiledAt.Format(time.RFC3339)
 		results = append(results, model.Artefact{
-			Kind:       "pe_timestamp",
-			Detector:   d.Name(),
-			Value:      timeValue,
-			Summary:    "PE compile timestamp=" + timeValue,
-			Confidence: 0.95,
+			Kind:         "pe_timestamp",
+			Detector:     d.Name(),
+			Value:        timeValue,
+			Summary:      "PE compile timestamp=" + timeValue,
+			Confidence:   0.95,
+			ObservedTime: &compiledAt,
 		})
 	}
 

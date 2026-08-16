@@ -16,6 +16,28 @@ type baseFile struct {
 	Size int64  `msgpack:"size"`
 }
 
+// Timestamps carries a file's MACB times as Unix nanoseconds.
+//
+// A nil field means the filesystem does not record that time — ext has no
+// birth time, exFAT and FAT have no change time — and that is a different
+// statement from "the epoch". Flattening nil to 0 would assert a timestamp no
+// evidence supports, so the pointers are preserved end to end.
+//
+// The fields are omitempty and msgpack encodes structs as maps, so a record
+// written before timestamps existed decodes with every field nil and a record
+// written without them is byte-identical to the old encoding. No migration.
+type Timestamps struct {
+	Modified *int64 `msgpack:"mtime,omitempty"`
+	Accessed *int64 `msgpack:"atime,omitempty"`
+	Changed  *int64 `msgpack:"ctime,omitempty"`
+	Born     *int64 `msgpack:"btime,omitempty"`
+}
+
+// Any reports whether at least one time is present.
+func (t *Timestamps) Any() bool {
+	return t != nil && (t.Modified != nil || t.Accessed != nil || t.Changed != nil || t.Born != nil)
+}
+
 type IndexedFile struct {
 	baseFile
 	Start        int64  `msgpack:"start"`
@@ -23,6 +45,10 @@ type IndexedFile struct {
 	IsDeleted    bool   `msgpack:"is_deleted"`
 	IsFragmented bool   `msgpack:"is_fragmented"`
 	FileHash     string `msgpack:"file_hash"`
+
+	// Times are the filesystem's MACB timestamps, nil when the source
+	// filesystem did not carry them or the record predates this field.
+	Times *Timestamps `msgpack:"times,omitempty"`
 }
 
 // NewIndexedFile creates a new IndexedFile with optional FileHash

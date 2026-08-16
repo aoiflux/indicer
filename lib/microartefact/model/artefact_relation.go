@@ -1,5 +1,7 @@
 package model
 
+import "time"
+
 type Span struct {
 	Start int64
 	End   int64
@@ -13,6 +15,15 @@ type Artefact struct {
 	Confidence float32
 	Span       Span
 	Attributes map[string]string
+
+	// ObservedTime is when the thing the artefact describes happened, as
+	// distinct from when it was extracted — an event record's own timestamp, a
+	// binary's compile time. Nil for the majority of artefacts, which are
+	// pattern matches with no time of their own.
+	//
+	// Detectors that parse a structured record used to strand these in
+	// Attributes as formatted strings, which made them unusable for a timeline.
+	ObservedTime *time.Time
 }
 
 type CanonicalNode struct {

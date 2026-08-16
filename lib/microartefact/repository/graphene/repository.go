@@ -7,6 +7,7 @@ import (
 
 	duesgraph "indicer/lib/graph"
 	"indicer/lib/graph/ids"
+	"indicer/lib/graph/propindex"
 	"indicer/lib/graph/props"
 	"indicer/lib/graph/schema"
 	"indicer/lib/microartefact/model"
@@ -237,22 +238,31 @@ func (r *Repository) createArtefactNode(batch *duesgraph.Batch, evidenceHash str
 		index["artefact_value"] = []byte(artefact.Value)
 	}
 
+	fields := props.Map{
+		"kind":          artefact.Kind,
+		"detector":      artefact.Detector,
+		"value":         artefact.Value,
+		"summary":       artefact.Summary,
+		"confidence":    artefact.Confidence,
+		"start":         artefact.Span.Start,
+		"end":           artefact.Span.End,
+		"attributes":    artefact.Attributes,
+		"evidence_hash": evidenceHash,
+	}
+	// Only the detectors that parse a structured record supply a time. It is a
+	// new index key with no stored history, so it is written order-preserving
+	// and can back a timeline window immediately.
+	if artefact.ObservedTime != nil && !artefact.ObservedTime.IsZero() {
+		fields["observed_time"] = artefact.ObservedTime.UnixNano()
+		index["observed_time"] = propindex.Time(*artefact.ObservedTime)
+	}
+
 	// Add rather than Upsert: an artefact is an observation anchored to a span
 	// in one file, so two files carrying the same value are two artefacts.
 	// Deduplicating them is the job of the canonical entity layer, not this one.
 	return batch.Add(
 		[]graphstore.NodeType{graphstore.NodeTypeMicroArtefact},
-		props.Map{
-			"kind":          artefact.Kind,
-			"detector":      artefact.Detector,
-			"value":         artefact.Value,
-			"summary":       artefact.Summary,
-			"confidence":    artefact.Confidence,
-			"start":         artefact.Span.Start,
-			"end":           artefact.Span.End,
-			"attributes":    artefact.Attributes,
-			"evidence_hash": evidenceHash,
-		},
+		fields,
 		index,
 	)
 }

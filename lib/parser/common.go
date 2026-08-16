@@ -50,7 +50,7 @@ func buildIdxMap(files []tuskFile, idxmap map[string]structs.IndexedFile, pfile 
 			checkChannel(idxChan)
 			istart := frag.StartOffset
 			isize := frag.EndOffset - frag.StartOffset + 1
-			if err := registerIndexedRange(idxmap, pfile, eviID, iname, istart, isize, f.IsDeleted); err != nil {
+			if err := registerIndexedRange(idxmap, pfile, eviID, iname, istart, isize, f.IsDeleted, f.times()); err != nil {
 				idxChan <- err
 				return
 			}
@@ -58,7 +58,30 @@ func buildIdxMap(files []tuskFile, idxmap map[string]structs.IndexedFile, pfile 
 	}
 }
 
-func registerIndexedRange(idxmap map[string]structs.IndexedFile, pfile structs.InputFile, eviID []byte, iname string, istart, isize int64, isDeleted bool) error {
+// timestampsOf builds a stored timestamp set, dropping zero times as "not
+// carried by this filesystem". It returns nil when nothing is known, so such a
+// record encodes exactly as it did before timestamps existed.
+func timestampsOf(modified, accessed, changed, born time.Time) *structs.Timestamps {
+	nanos := func(t time.Time) *int64 {
+		if t.IsZero() {
+			return nil
+		}
+		n := t.UnixNano()
+		return &n
+	}
+	times := &structs.Timestamps{
+		Modified: nanos(modified),
+		Accessed: nanos(accessed),
+		Changed:  nanos(changed),
+		Born:     nanos(born),
+	}
+	if !times.Any() {
+		return nil
+	}
+	return times
+}
+
+func registerIndexedRange(idxmap map[string]structs.IndexedFile, pfile structs.InputFile, eviID []byte, iname string, istart, isize int64, isDeleted bool, times *structs.Timestamps) error {
 	if isize <= 0 {
 		return fmt.Errorf("invalid indexed file size %d for %s", isize, iname)
 	}
@@ -94,7 +117,9 @@ func registerIndexedRange(idxmap map[string]structs.IndexedFile, pfile structs.I
 	}
 	idB64 := base64.StdEncoding.EncodeToString(indexedID[:])
 	typeHint := util.DetectFileType(iname, chunk)
-	idxmap[idB64] = structs.NewIndexedFile(iname, istart, isize, typeHint, isDeleted, base64.StdEncoding.EncodeToString(ihash))
+	indexed := structs.NewIndexedFile(iname, istart, isize, typeHint, isDeleted, base64.StdEncoding.EncodeToString(ihash))
+	indexed.Times = times
+	idxmap[idB64] = indexed
 	pfile.UpdateInternalObjects(istart, isize, indexedID[:])
 	return nil
 }

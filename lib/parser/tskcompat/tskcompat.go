@@ -9,10 +9,16 @@
 //	    "filesystem": {"type","block_size","offset"},
 //	    "files": [ {"filename","type","is_fragmented","is_deleted","size",
 //	                "fragments": [{"start_offset","end_offset"}] } ] } ] }
+//
+// Files additionally carry optional "mtime"/"atime"/"ctime"/"btime" (Unix
+// nanoseconds). libtusk could not express timestamps, so these are an additive
+// extension rather than part of the shape being mirrored — omitted entirely
+// when the source filesystem does not record them.
 package tskcompat
 
 import (
 	"encoding/json"
+	"time"
 
 	"indicer/lib/parser/core"
 	"indicer/lib/parser/image"
@@ -37,6 +43,15 @@ type fileJSON struct {
 	IsDeleted    bool           `json:"is_deleted"`
 	Size         int64          `json:"size"`
 	Fragments    []fragmentJSON `json:"fragments"`
+
+	// MACB timestamps as Unix nanoseconds, omitted when the source filesystem
+	// does not record them. These are an extension: libtusk's JSON could not
+	// carry timestamps, which is why they were being parsed and discarded. The
+	// fields are additive, so the shape a legacy consumer expects is unchanged.
+	Modified *int64 `json:"mtime,omitempty"`
+	Accessed *int64 `json:"atime,omitempty"`
+	Changed  *int64 `json:"ctime,omitempty"`
+	Born     *int64 `json:"btime,omitempty"`
 }
 
 type partitionJSON struct {
@@ -108,6 +123,10 @@ func toFile(rec core.FileRecord) fileJSON {
 		IsFragmented: rec.IsFragmented,
 		IsDeleted:    rec.IsDeleted,
 		Size:         rec.Size,
+		Modified:     unixNanos(rec.MACB.Modified),
+		Accessed:     unixNanos(rec.MACB.Accessed),
+		Changed:      unixNanos(rec.MACB.Changed),
+		Born:         unixNanos(rec.MACB.Born),
 	}
 	for _, r := range rec.Fragments {
 		if r.Sparse {
@@ -118,6 +137,17 @@ func toFile(rec core.FileRecord) fileJSON {
 		f.Fragments = append(f.Fragments, fragmentJSON{StartOffset: r.Start, EndOffset: r.End})
 	}
 	return f
+}
+
+// unixNanos renders a timestamp for the wire, preserving "not carried" as nil.
+// A zero time is treated as absent: fsutil.TimePtr already uses nil for that,
+// and a filesystem reporting the epoch is reporting no information.
+func unixNanos(t *time.Time) *int64 {
+	if t == nil || t.IsZero() {
+		return nil
+	}
+	n := t.UnixNano()
+	return &n
 }
 
 func nodeTypeString(k core.NodeKind) string {

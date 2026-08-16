@@ -6,8 +6,10 @@ import (
 	"strings"
 
 	duesgraph "indicer/lib/graph"
+	"indicer/lib/graph/propindex"
 	"indicer/lib/graph/props"
 	"indicer/lib/graph/schema"
+	"indicer/lib/structs"
 
 	graphenedb "github.com/aoiflux/graphene"
 	graphstore "github.com/aoiflux/graphene/store"
@@ -235,6 +237,7 @@ func (repository *GrapheneRepository) upsertFile(batch *duesgraph.Batch, record 
 			if record.HasEntropy {
 				indexedProps["entropy"] = record.Entropy
 			}
+			timeProps(indexedProps, record.Times)
 			indexedNode, err := batch.Upsert(
 				duesgraph.UpsertKey{Key: "indexed_file_id", Value: record.IndexedFileID},
 				[]graphstore.NodeType{repository.kinds().NodeType(schema.KindIndexedFile)},
@@ -282,6 +285,7 @@ func (repository *GrapheneRepository) upsertFile(batch *duesgraph.Batch, record 
 	if record.HasEntropy {
 		fileProps["entropy"] = record.Entropy
 	}
+	timeProps(fileProps, record.Times)
 	fileNode, err := batch.Upsert(
 		duesgraph.UpsertKey{Key: "file_node_id", Value: fileNodeID},
 		[]graphstore.NodeType{repository.kinds().NodeType(schema.KindFile)},
@@ -297,14 +301,19 @@ func (repository *GrapheneRepository) upsertFile(batch *duesgraph.Batch, record 
 	// new entries incomparable with the ones already stored. They are re-encoded
 	// by the rebuild migration, which is also what makes ordered range queries
 	// on them possible.
-	batch.Index(fileNode, map[string][]byte{
+	fileIndex := map[string][]byte{
 		"name":          []byte(record.FileName),
 		"level":         []byte(record.Level),
 		"is_deleted":    []byte(strconv.FormatBool(record.IsDeleted)),
 		"is_fragmented": []byte(strconv.FormatBool(record.IsFragmented)),
 		"mime_type":     []byte(record.MimeType),
 		"tags":          []byte(joinTags(record.Tags)),
-	})
+	}
+	// Timestamps are new keys with no stored history, so unlike the above they
+	// are written order-preserving from the start and can back range queries
+	// without waiting for a re-encode.
+	addTimeIndex(fileIndex, record.Times)
+	batch.Index(fileNode, fileIndex)
 
 	// Create edge from parent to file
 	return repository.ensureContains(batch, parentNode, fileNode)
@@ -321,6 +330,44 @@ func (repository *GrapheneRepository) Close() error {
 	handle := repository.handle
 	repository.handle = nil
 	return handle.Release()
+}
+
+// timeProps adds the MACB timestamps to a node's property blob as Unix
+// nanoseconds. Absent times are simply not written, so a consumer can tell
+// "this filesystem does not record a birth time" from "the birth time is the
+// epoch" — a distinction that matters on ext, exFAT and FAT.
+func timeProps(into props.Map, times *structs.Timestamps) {
+	if !times.Any() {
+		return
+	}
+	for key, value := range map[string]*int64{
+		"mtime": times.Modified,
+		"atime": times.Accessed,
+		"ctime": times.Changed,
+		"btime": times.Born,
+	} {
+		if value != nil {
+			into[key] = *value
+		}
+	}
+}
+
+// addTimeIndex registers the timestamps as order-preserving index values, so a
+// timeline window resolves through two binary searches rather than a scan.
+func addTimeIndex(into map[string][]byte, times *structs.Timestamps) {
+	if !times.Any() {
+		return
+	}
+	for key, value := range map[string]*int64{
+		"mtime": times.Modified,
+		"atime": times.Accessed,
+		"ctime": times.Changed,
+		"btime": times.Born,
+	} {
+		if value != nil {
+			into[key] = propindex.Int64(*value)
+		}
+	}
 }
 
 func (repository *GrapheneRepository) ensureContains(batch *duesgraph.Batch, src, dst graphstore.NodeID) error {

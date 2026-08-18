@@ -76,45 +76,65 @@ func DecodeUint64(b []byte) (uint64, bool)   { return encoding.DecodeUint64(b) }
 func DecodeFloat64(b []byte) (float64, bool) { return encoding.DecodeFloat64(b) }
 func DecodeTime(b []byte) (time.Time, bool)  { return encoding.DecodeTime(b) }
 
-// OrderedNodeKeys are the node property keys worth range-querying: size and
-// entropy bands for carve candidates, confidence floors, byte offsets within a
-// file, timeline windows, and path prefixes.
-var OrderedNodeKeys = []string{
-	"size", "entropy", "confidence", "start", "end",
-	"observed_time", "mtime", "btime", "path", "name", "artefact_value",
+// DeclarableNodeKeys are safe to declare on any store, today.
+//
+// Auditing what is actually index-registered showed the original blanket
+// deferral was too cautious. A key is only unsafe to declare if values are
+// already stored under it in a non-order-preserving encoding. These are not:
+//
+//   - mtime/atime/ctime/btime — new keys, written order-preserving from the
+//     first record, with no history at all;
+//   - size, entropy, simhash — not index-registered before now;
+//   - path, name — registered as raw strings, which already compare
+//     lexicographically. Declaring them switches numeric-looking values from
+//     the scan rule's numeric comparison to byte order, which for a filename
+//     is the correct order rather than a regression.
+var DeclarableNodeKeys = []string{
+	"mtime", "atime", "ctime", "btime",
+	"size", "entropy", "simhash",
+	"path", "name",
 }
 
-// OrderedEdgeKeys are the edge property keys worth range-querying.
-var OrderedEdgeKeys = []string{"confidence", "observed_time", "start", "end"}
-
-// ErrLegacyEncoding is returned when a store still holds values that were not
-// written with these encoders.
-var ErrLegacyEncoding = fmt.Errorf(
-	"propindex: this store holds property-index values written with strconv, which are " +
-		"not a valid byte-wise sort order; declaring an ordered key over them would make " +
-		"range queries answer wrongly. Run 'dues graph migrate --rebuild' to re-encode")
-
-// Declare registers the ordered keys against a store.
+// DeferredKeys carry values written with strconv and cannot be declared until
+// the rebuild re-encodes them.
 //
-// It refuses on any store that has not been through the rebuild, because
-// declaring a key is a reinterpretation of every value already stored under it.
+// `start` and `end` are byte offsets stored as decimal strings, where byte
+// order genuinely disagrees with numeric order — "10" sorts below "9" — so a
+// range query over them would answer wrongly. The booleans are strconv too;
+// declaring them would be harmless but pointless, since a two-valued key has no
+// meaningful range.
+var DeferredKeys = []string{"start", "end", "is_deleted", "is_fragmented", "deterministic_flag"}
+
+// ErrLegacyEncoding is returned when a caller asks for a key whose stored
+// values were not written with these encoders.
+var ErrLegacyEncoding = fmt.Errorf(
+	"propindex: values under this key were written with strconv, which is not a valid " +
+		"byte-wise sort order; declaring it would make range queries answer wrongly. " +
+		"Run 'dues graph migrate --rebuild' to re-encode")
+
+// Declare registers the keys that are safe to range-query on this store.
+//
+// It is idempotent and takes no view of the store's vocabulary: the keys it
+// declares have no conflicting history in any store, legacy or current. Asking
+// for a deferred key is refused individually rather than failing the whole set.
 func Declare(g *graphenedb.Graph, kinds *schema.Registry) error {
 	if kinds == nil {
 		return fmt.Errorf("propindex: Declare needs a schema registry")
 	}
-	if kinds.Legacy() {
-		return ErrLegacyEncoding
-	}
-
-	for _, key := range OrderedNodeKeys {
+	for _, key := range DeclarableNodeKeys {
 		if err := g.DeclareOrderedProperty(key); err != nil {
 			return fmt.Errorf("propindex: declare node key %q: %w", key, err)
 		}
 	}
-	for _, key := range OrderedEdgeKeys {
-		if err := g.DeclareOrderedEdgeProperty(key); err != nil {
-			return fmt.Errorf("propindex: declare edge key %q: %w", key, err)
+	return nil
+}
+
+// Deferred reports whether a key is still waiting on the rebuild.
+func Deferred(key string) bool {
+	for _, deferred := range DeferredKeys {
+		if deferred == key {
+			return true
 		}
 	}
-	return nil
+	return false
 }

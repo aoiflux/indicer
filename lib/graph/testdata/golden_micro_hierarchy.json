@@ -29,11 +29,7 @@
                   "Summary": "host extracted from URL",
                   "Confidence": 0.88,
                   "Start": 1031,
-                  "End": 1048,
-                  "ObservedTime": null,
-                  "Attributes": {
-                    "tld": "example"
-                  }
+                  "End": 1048
                 },
                 {
                   "Kind": "ipv4",
@@ -42,9 +38,7 @@
                   "Summary": "resolved address",
                   "Confidence": 0.55,
                   "Start": 2048,
-                  "End": 2060,
-                  "ObservedTime": null,
-                  "Attributes": null
+                  "End": 2060
                 },
                 {
                   "Kind": "url",
@@ -53,12 +47,7 @@
                   "Summary": "download URL",
                   "Confidence": 0.92,
                   "Start": 1024,
-                  "End": 1060,
-                  "ObservedTime": null,
-                  "Attributes": {
-                    "host": "malicious.example",
-                    "scheme": "http"
-                  }
+                  "End": 1060
                 }
               ]
             },

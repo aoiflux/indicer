@@ -8,6 +8,7 @@ import (
 	duesgraph "indicer/lib/graph"
 	"indicer/lib/graph/propindex"
 	"indicer/lib/graph/props"
+	"indicer/lib/graph/schema"
 	"indicer/lib/structs"
 
 	graphstore "github.com/aoiflux/graphene/store"
@@ -109,9 +110,15 @@ func TestTimestamps_SupportARangeQuery(t *testing.T) {
 		t.Fatal(err)
 	}
 
+	// Scoped to indexed-file nodes: a file is modelled at two levels — the
+	// indexed-file node and a per-name FILE node — and both legitimately carry
+	// the timestamp, exactly as they both carry size and entropy.
+	indexedFile := handle.Schema().MatchTypes(schema.KindIndexedFile)
+
 	within := func(from, to time.Time) int {
 		t.Helper()
 		ids, qerr := handle.Graph().QueryNodeIDs(graphstore.NodeQuery{
+			Types: indexedFile,
 			Filters: []graphstore.PropertyFilter{{
 				Key:        "mtime",
 				Op:         graphstore.PropertyOpBetweenInclusive,
@@ -133,6 +140,26 @@ func TestTimestamps_SupportARangeQuery(t *testing.T) {
 	}
 	if got := within(fileModified.Add(-2*time.Hour), fileModified.Add(-time.Hour)); got != 0 {
 		t.Errorf("a window before the file matched %d nodes, want 0", got)
+	}
+
+	// Results alone cannot tell an index lookup from a scan that happened to
+	// agree with it, which is what ExplainNodeQuery exists for. mtime is a
+	// declared ordered key, so the planner must drive from the ordered index.
+	plan, err := handle.Graph().ExplainNodeQuery(graphstore.NodeQuery{
+		Filters: []graphstore.PropertyFilter{{
+			Key:        "mtime",
+			Op:         graphstore.PropertyOpBetweenInclusive,
+			Value:      propindex.Int64(fileModified.Add(-time.Hour).UnixNano()),
+			ValueUpper: propindex.Int64(fileModified.Add(time.Hour).UnixNano()),
+		}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if plan.Driver != graphstore.DriverOrdered {
+		t.Errorf("timeline query planned as %v, want %v — the ordered key is not "+
+			"declared, so every window scans the whole store.\nplan: %s",
+			plan.Driver, graphstore.DriverOrdered, plan)
 	}
 }
 

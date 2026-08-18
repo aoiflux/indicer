@@ -2,7 +2,6 @@ package graphene
 
 import (
 	"sort"
-	"time"
 
 	"indicer/lib/enrichment"
 	"indicer/lib/graph/props"
@@ -113,15 +112,13 @@ func (r *Repository) ReadHierarchy() (*EvidenceFileHierarchy, error) {
 					aProps := unpackProps(an.Node.Properties)
 					ifile.Artefacts = append(ifile.Artefacts, &MicroArtefactNode{
 						MicroArtefactNodeFields: model.MicroArtefactNodeFields{
-							Kind:         strProp(aProps, "kind"),
-							Detector:     strProp(aProps, "detector"),
-							Value:        strProp(aProps, "value"),
-							Summary:      strProp(aProps, "summary"),
-							Confidence:   float32Prop(aProps, "confidence"),
-							Start:        int64Prop(aProps, "start"),
-							End:          int64Prop(aProps, "end"),
-							ObservedTime: observedTime(aProps),
-							Attributes:   stringMapProp(aProps, "attributes"),
+							Kind:       strProp(aProps, "kind"),
+							Detector:   strProp(aProps, "detector"),
+							Value:      strProp(aProps, "value"),
+							Summary:    strProp(aProps, "summary"),
+							Confidence: float32Prop(aProps, "confidence"),
+							Start:      int64Prop(aProps, "start"),
+							End:        int64Prop(aProps, "end"),
 						},
 					})
 					tree.TotalArtefacts++
@@ -189,49 +186,6 @@ func (r *Repository) ReadHierarchy() (*EvidenceFileHierarchy, error) {
 // sets DUES used to carry. See that package's doc for where they disagreed.
 
 func unpackProps(data []byte) props.Map { return props.Unpack(data) }
-
-// observedTime reads an artefact's own timestamp, returning nil when it has
-// none. Most artefacts do not: only detectors that parse a structured record
-// with a time in it — EVTX, PE headers — can supply one.
-func observedTime(m props.Map) *time.Time {
-	if !m.Has("observed_time") {
-		return nil
-	}
-	at := m.Time("observed_time")
-	if at.IsZero() {
-		return nil
-	}
-	return &at
-}
-
-// stringMapProp decodes a detector's attribute map. msgpack hands back
-// map[string]any, so the values are converted element-wise.
-func stringMapProp(m props.Map, key string) map[string]string {
-	raw, ok := m[key]
-	if !ok {
-		return nil
-	}
-	switch typed := raw.(type) {
-	case map[string]string:
-		return typed
-	case map[string]any:
-		if len(typed) == 0 {
-			return nil
-		}
-		out := make(map[string]string, len(typed))
-		for k, v := range typed {
-			switch s := v.(type) {
-			case string:
-				out[k] = s
-			case []byte:
-				out[k] = string(s)
-			}
-		}
-		return out
-	default:
-		return nil
-	}
-}
 
 func strProp(m props.Map, key string) string      { return m.Str(key) }
 func int64Prop(m props.Map, key string) int64     { return m.Int64(key) }

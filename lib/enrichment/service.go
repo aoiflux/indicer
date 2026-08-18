@@ -99,6 +99,24 @@ func (service *Service) EnrichAll() error {
 				evidenceFileName: evidata.Name,
 			}
 
+			// The structural evidence node used to be created as a stub
+			// carrying only an id and a name, because nothing called
+			// UpsertEvidence on this path. Acquisition format and ingest state
+			// are what tell an examiner whether a thin subtree means "nothing
+			// was there" or "we never finished reading it".
+			if err := service.repository.UpsertEvidence(EvidenceRecord{
+				HashBase64:     context.evidenceFileID,
+				Name:           evidata.Name,
+				Size:           evidata.Size,
+				EvidenceType:   evidata.EvidenceType,
+				IngestState:    string(evidata.IngestState),
+				Completed:      evidata.Completed,
+				Failed:         evidata.Failed,
+				PartitionCount: len(evidata.InternalObjects),
+			}); err != nil {
+				return err
+			}
+
 			evidenceEntropy, hasEvidenceEntropy := service.computeEntropyForLogicalFile(cnst.EviFileNamespace, context.evidenceFileID, entropyCache)
 			sharedEvidenceRecord := FileRecord{
 				Level:            "evidence_file",
@@ -182,6 +200,23 @@ func (service *Service) enrichPartitionByHash(txn *badger.Txn, evidence evidence
 		partitionID:     partitionHashB64,
 		partitionName:   pdata.Name,
 	}
+	// Enrich the structural partition node before its files. Its offset, size,
+	// filesystem type and hash are all parsed at ingest and were being dropped,
+	// which left partition nodes carrying nothing but an id and a name.
+	if err := service.repository.UpsertPartition(PartitionRecord{
+		EvidenceFileID:   evidence.evidenceFileID,
+		EvidenceFileName: evidence.evidenceFileName,
+		PartitionID:      partitionHashB64,
+		PartitionName:    pdata.Name,
+		Offset:           pdata.Start,
+		Size:             pdata.Size,
+		FilesystemType:   pdata.IndexedType,
+		Hash:             pdata.FileHash,
+		IndexedFileCount: len(pdata.InternalObjects),
+	}); err != nil {
+		return err
+	}
+
 	partitionEntropy, hasPartitionEntropy := service.computeEntropyForLogicalFile(cnst.PartiFileNamespace, partitionHashB64, entropyCache)
 
 	sharedPartitionRecord := FileRecord{
@@ -281,6 +316,24 @@ func newEnrichmentProgressBar(total int64, description string) *progressbar.Prog
 // working set stays trivial.
 const fileBatchSize = 2000
 
+// fileSimhash reads the file-level similarity fingerprint ingest already
+// computed and cached.
+//
+// It has existed under the F||| namespace since the near-duplicate work, but
+// only lib/near ever read it, so similarity was invisible to the graph. A miss
+// is not an error: the fingerprint is written asynchronously during ingest, so
+// a file enriched very soon after storage may legitimately not have one yet.
+func (service *Service) fileSimhash(rawHash []byte) (uint64, bool) {
+	if service == nil || service.db == nil || len(rawHash) == 0 {
+		return 0, false
+	}
+	value, err := dbio.GetFileSimhash(rawHash, service.db)
+	if err != nil || value == 0 {
+		return 0, false
+	}
+	return value, true
+}
+
 // upsertFiles writes records in one commit where the backend supports it.
 func (service *Service) upsertFiles(records []FileRecord) error {
 	if len(records) == 0 {
@@ -330,7 +383,11 @@ func (service *Service) buildIndexedFileRecord(context partitionContext, indexed
 		Entropy:          indexedEntropy,
 		HasEntropy:       hasIndexedEntropy,
 		Times:            indexedFile.Times,
+		Start:            indexedFile.Start,
+		IsFragmented:     indexedFile.IsFragmented,
 	}
+	sharedIndexedRecord.Simhash, sharedIndexedRecord.HasSimhash =
+		service.fileSimhash(rawIndexedHash)
 
 	return buildNameLevelRecord(sharedIndexedRecord, indexedFile.Name, indexedFile.IsDeleted), nil
 }

@@ -40,9 +40,10 @@ func (a ActorRef) TxContext() graphstore.TxContext {
 //
 // Close must be called; the usual shape is defer.
 type Writer struct {
-	handle *Handle
-	actor  ActorRef
-	closed bool
+	handle   *Handle
+	actor    ActorRef
+	producer Producer
+	closed   bool
 }
 
 // Writer acquires the exclusive write session. It blocks until any current
@@ -55,8 +56,23 @@ func (h *Handle) Writer(actor ActorRef) (*Writer, error) {
 		return nil, fmt.Errorf("graph: %s is open read-only; writes are refused", h.key)
 	}
 	h.writeMu.Lock()
-	return &Writer{handle: h, actor: actor}, nil
+	return &Writer{handle: h, actor: actor, producer: DefaultProducer}, nil
 }
+
+// As names the subsystem and version deriving these writes. Every node and edge
+// the writer's batches create is stamped with it.
+//
+// A writer that names no producer still stamps DefaultProducer, so derived data
+// is never written unattributed — see the Producer doc for why that matters.
+func (w *Writer) As(producer Producer) *Writer {
+	if w != nil && !producer.Zero() {
+		w.producer = producer
+	}
+	return w
+}
+
+// Producer is the stamp applied to this writer's output.
+func (w *Writer) Producer() Producer { return w.producer }
 
 // Close releases the write session.
 func (w *Writer) Close() {

@@ -9,7 +9,6 @@ import (
 	"time"
 
 	"indicer/lib/graph/propindex"
-	"indicer/lib/graph/schema"
 )
 
 // assertByteOrderMatchesValueOrder is the property every encoder must have:
@@ -121,13 +120,52 @@ func TestPrefixUpperBound_BoundsTheRange(t *testing.T) {
 	}
 }
 
-// Declaring over strconv-encoded values would reinterpret them, not convert
-// them, so it is refused until the rebuild has re-encoded the store.
-func TestDeclare_RefusesAStoreHoldingLegacyEncodings(t *testing.T) {
-	if err := propindex.Declare(nil, schema.NewLegacyRegistry()); err == nil {
-		t.Error("Declare accepted a store that still holds strconv-encoded index values")
-	}
+func TestDeclare_RequiresARegistry(t *testing.T) {
 	if err := propindex.Declare(nil, nil); err == nil {
 		t.Error("Declare accepted a nil registry")
+	}
+}
+
+// The two sets must not overlap: a key cannot be both safe to declare and
+// waiting on the rebuild, and getting that wrong would silently reinterpret
+// stored values.
+func TestKeySets_DoNotOverlap(t *testing.T) {
+	for _, declarable := range propindex.DeclarableNodeKeys {
+		if propindex.Deferred(declarable) {
+			t.Errorf("%q is listed as both declarable and deferred", declarable)
+		}
+	}
+}
+
+// The deferred set is exactly the keys DUES still writes with strconv. If a
+// key leaves that set, the write path must have been changed to an
+// order-preserving encoder first.
+func TestDeferredKeys_AreTheStrconvOnes(t *testing.T) {
+	want := map[string]bool{
+		"start": true, "end": true,
+		"is_deleted": true, "is_fragmented": true, "deterministic_flag": true,
+	}
+	for _, key := range propindex.DeferredKeys {
+		if !want[key] {
+			t.Errorf("%q is deferred but is not one of the strconv-encoded keys", key)
+		}
+		delete(want, key)
+	}
+	for key := range want {
+		t.Errorf("%q is written with strconv but is not deferred", key)
+	}
+}
+
+// Timestamps must be declarable — the whole point of landing them was the
+// timeline window.
+func TestDeclarableKeys_IncludeTheTimestamps(t *testing.T) {
+	declarable := map[string]bool{}
+	for _, key := range propindex.DeclarableNodeKeys {
+		declarable[key] = true
+	}
+	for _, key := range []string{"mtime", "atime", "ctime", "btime"} {
+		if !declarable[key] {
+			t.Errorf("%q is not declarable; a timeline query would fall back to a scan", key)
+		}
 	}
 }

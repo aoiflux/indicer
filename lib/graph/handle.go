@@ -6,6 +6,7 @@ import (
 	"sync"
 
 	"indicer/lib/graph/migrate"
+	"indicer/lib/graph/propindex"
 	"indicer/lib/graph/schema"
 	"indicer/lib/util"
 
@@ -136,6 +137,17 @@ func OpenWith(root string, opts OpenOptions) (*Handle, error) {
 		_ = store.Close()
 		_ = lock.release()
 		return nil, err
+	}
+
+	// Declaring the ordered keys turns a range filter into two binary searches.
+	// It is idempotent and covers only keys with no conflicting stored history,
+	// so it is safe on a legacy store as well as a new one.
+	if !opts.ReadOnly {
+		if err := propindex.Declare(store, kinds); err != nil {
+			_ = store.Close()
+			_ = lock.release()
+			return nil, err
+		}
 	}
 
 	handle := &Handle{

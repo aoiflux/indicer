@@ -71,12 +71,21 @@ func (repository *GrapheneRepository) SetActor(actor duesgraph.ActorRef) {
 	}
 }
 
+// producerVersion identifies this enrichment pipeline on every node it derives.
+//
+// Bump it whenever a change alters what enrichment *produces* from the same
+// evidence — a new property, a changed derivation — so a re-derivation can be
+// diffed against what an earlier version wrote. It is not the DUES release
+// version, which moves for reasons that do not affect derived data.
+const producerVersion = "1"
+
 // inBatch runs fn inside one attributed, atomic commit.
 func (repository *GrapheneRepository) inBatch(fn func(*duesgraph.Batch) error) error {
 	writer, err := repository.handle.Writer(repository.actor)
 	if err != nil {
 		return err
 	}
+	writer.As(duesgraph.Producer{Pipeline: "enrichment", Version: producerVersion})
 	defer writer.Close()
 
 	batch := writer.Batch()
@@ -107,6 +116,11 @@ func (repository *GrapheneRepository) upsertEvidence(batch *duesgraph.Batch, rec
 			"size":             record.Size,
 			"evidence_hash":    record.HashBase64,
 			"node_type":        "evidence",
+			"evidence_type":    record.EvidenceType,
+			"ingest_state":     record.IngestState,
+			"completed":        record.Completed,
+			"failed":           record.Failed,
+			"partition_count":  record.PartitionCount,
 		},
 		nil,
 	)
@@ -120,6 +134,9 @@ func (repository *GrapheneRepository) upsertEvidence(batch *duesgraph.Batch, rec
 		"evidence_hash": []byte(record.HashBase64),
 		"name":          []byte(record.Name),
 		"path":          []byte(record.Path),
+		"evidence_type": []byte(record.EvidenceType),
+		"ingest_state":  []byte(record.IngestState),
+		"size":          propindex.Int64(record.Size),
 	})
 	return nil
 }
@@ -143,15 +160,28 @@ func (repository *GrapheneRepository) upsertPartition(batch *duesgraph.Batch, re
 		duesgraph.UpsertKey{Key: "partition_id", Value: record.PartitionID},
 		[]graphstore.NodeType{repository.kinds().NodeType(schema.KindPartition)},
 		props.Map{
-			"partition_id":     record.PartitionID,
-			"name":             record.PartitionName,
-			"evidence_file_id": record.EvidenceFileID,
+			"partition_id":       record.PartitionID,
+			"name":               record.PartitionName,
+			"evidence_file_id":   record.EvidenceFileID,
+			"start":              record.Offset,
+			"size":               record.Size,
+			"filesystem_type":    record.FilesystemType,
+			"hash":               record.Hash,
+			"indexed_file_count": record.IndexedFileCount,
 		},
 		nil,
 	)
 	if err != nil {
 		return err
 	}
+
+	// Registered unconditionally: a partition node may already exist as the
+	// thin stub upsertFile creates when it walks a file before this runs.
+	batch.Index(partitionNode, map[string][]byte{
+		"name":            []byte(record.PartitionName),
+		"filesystem_type": []byte(record.FilesystemType),
+		"size":            propindex.Int64(record.Size),
+	})
 
 	return repository.ensureContains(batch, evidenceNode, partitionNode)
 }
@@ -233,11 +263,35 @@ func (repository *GrapheneRepository) upsertFile(batch *duesgraph.Batch, record 
 				"evidence_file_id": record.EvidenceFileID,
 				"file_type":        record.FileType,
 				"has_entropy":      record.HasEntropy,
+				// The indexed node previously carried none of these: its byte
+				// offset, and whether it was recovered from a deleted entry or
+				// spans discontiguous runs. Those live on the FILE node, which
+				// is a different node from the one a traversal lands on.
+				"start":         record.Start,
+				"is_deleted":    record.IsDeleted,
+				"is_fragmented": record.IsFragmented,
+				"has_simhash":   record.HasSimhash,
 			}
 			if record.HasEntropy {
 				indexedProps["entropy"] = record.Entropy
 			}
+			if record.HasSimhash {
+				indexedProps["simhash"] = record.Simhash
+			}
 			timeProps(indexedProps, record.Times)
+
+			indexedIndex := map[string][]byte{
+				"size":      propindex.Int64(record.Size),
+				"file_type": []byte(record.FileType),
+			}
+			if record.HasEntropy {
+				indexedIndex["entropy"] = propindex.Float64(record.Entropy)
+			}
+			if record.HasSimhash {
+				indexedIndex["simhash"] = propindex.Uint64(record.Simhash)
+			}
+			addTimeIndex(indexedIndex, record.Times)
+
 			indexedNode, err := batch.Upsert(
 				duesgraph.UpsertKey{Key: "indexed_file_id", Value: record.IndexedFileID},
 				[]graphstore.NodeType{repository.kinds().NodeType(schema.KindIndexedFile)},
@@ -247,6 +301,7 @@ func (repository *GrapheneRepository) upsertFile(batch *duesgraph.Batch, record 
 			if err != nil {
 				return err
 			}
+			batch.Index(indexedNode, indexedIndex)
 			if err := repository.ensureContains(batch, partitionNode, indexedNode); err != nil {
 				return err
 			}
@@ -281,6 +336,11 @@ func (repository *GrapheneRepository) upsertFile(batch *duesgraph.Batch, record 
 		"evidence_file_id": record.EvidenceFileID,
 		"partition_id":     record.PartitionID,
 		"indexed_file_id":  record.IndexedFileID,
+		"start":            record.Start,
+		"has_simhash":      record.HasSimhash,
+	}
+	if record.HasSimhash {
+		fileProps["simhash"] = record.Simhash
 	}
 	if record.HasEntropy {
 		fileProps["entropy"] = record.Entropy
@@ -309,10 +369,20 @@ func (repository *GrapheneRepository) upsertFile(batch *duesgraph.Batch, record 
 		"mime_type":     []byte(record.MimeType),
 		"tags":          []byte(joinTags(record.Tags)),
 	}
-	// Timestamps are new keys with no stored history, so unlike the above they
-	// are written order-preserving from the start and can back range queries
-	// without waiting for a re-encode.
+	// Timestamps, size, entropy and simhash are new or previously unindexed
+	// keys, so unlike the above they are written order-preserving from the
+	// start and can back range queries without waiting for a re-encode.
 	addTimeIndex(fileIndex, record.Times)
+	fileIndex["size"] = propindex.Int64(record.Size)
+	if record.HasEntropy {
+		fileIndex["entropy"] = propindex.Float64(record.Entropy)
+	}
+	if record.HasSimhash {
+		fileIndex["simhash"] = propindex.Uint64(record.Simhash)
+	}
+	if record.Path != "" {
+		fileIndex["path"] = propindex.String(record.Path)
+	}
 	batch.Index(fileNode, fileIndex)
 
 	// Create edge from parent to file

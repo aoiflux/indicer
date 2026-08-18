@@ -55,6 +55,11 @@ type Batch struct {
 	tx     *graphenedb.Tx
 	kinds  *schema.Registry
 
+	// producer stamps every node and edge this batch creates. It is applied
+	// here rather than at each call site so that no derived record can be
+	// written unattributed by omission.
+	producer string
+
 	// local resolves nodes created earlier in this same batch. They are not yet
 	// visible to NodesByProperty, which reads committed state.
 	local map[string]graphstore.NodeID
@@ -73,6 +78,7 @@ func (w *Writer) Batch() *Batch {
 		graph:    w.handle.Graph(),
 		tx:       w.handle.Graph().Begin().As(w.actor.TxContext()),
 		kinds:    w.handle.Schema(),
+		producer: w.producer.String(),
 		local:    map[string]graphstore.NodeID{},
 		edgeKeys: map[string]struct{}{},
 	}
@@ -152,7 +158,7 @@ func (b *Batch) Upsert(
 		return hits[0], nil
 	}
 
-	packed, err := props.Pack(map[string]any(properties))
+	packed, err := props.Pack(map[string]any(b.stamped(properties)))
 	if err != nil {
 		return graphstore.InvalidNodeID, fmt.Errorf("graph: Upsert pack properties: %w", err)
 	}
@@ -185,7 +191,7 @@ func (b *Batch) Add(
 		return graphstore.InvalidNodeID, fmt.Errorf("graph: Add on a finished batch")
 	}
 
-	packed, err := props.Pack(map[string]any(properties))
+	packed, err := props.Pack(map[string]any(b.stamped(properties)))
 	if err != nil {
 		return graphstore.InvalidNodeID, fmt.Errorf("graph: Add pack properties: %w", err)
 	}
@@ -198,6 +204,19 @@ func (b *Batch) Add(
 		b.deferred = append(b.deferred, indexOp{node: id, pairs: indexPairs})
 	}
 	return id, nil
+}
+
+// stamped returns the property map with the producer version applied. A caller
+// that has already set one keeps it, so a re-derivation can preserve the stamp
+// of whatever produced the value it is carrying forward.
+func (b *Batch) stamped(fields props.Map) props.Map {
+	if fields == nil {
+		fields = props.Map{}
+	}
+	if _, already := fields[ProducerVersionProperty]; !already {
+		fields[ProducerVersionProperty] = b.producer
+	}
+	return fields
 }
 
 // Index registers property-index entries against a node, whether or not this
@@ -279,7 +298,7 @@ func (b *Batch) EnsureEdge(
 	}
 	properties[EdgeKeyProperty] = edgeKey
 
-	packed, err := props.Pack(map[string]any(properties))
+	packed, err := props.Pack(map[string]any(b.stamped(properties)))
 	if err != nil {
 		return fmt.Errorf("graph: EnsureEdge pack properties: %w", err)
 	}

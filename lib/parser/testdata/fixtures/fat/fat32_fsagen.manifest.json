@@ -1,0 +1,105 @@
+{
+ "format": "raw",
+ "generator": "gen_fixtures.sh unknown",
+ "image": "fat32_fsagen.img",
+ "partitions": [
+  {
+   "deleted": [
+    {
+     "deleted": true,
+     "entry_overwritten": true,
+     "kind": "file",
+     "path": "/big/gap.bin",
+     "recoverable": "partial",
+     "sha256": "5a2f1fcad30348ad312f5c571e8bb079bb816d87f12ede16150c764b53f95e1b",
+     "size": 40000
+    },
+    {
+     "deleted": true,
+     "entry_overwritten": null,
+     "kind": "file",
+     "path": "/old/tobedeleted.bin",
+     "recoverable": "full",
+     "sha256": "a5133c2f44785c5ec337d37fef7a84d552469a3f2473699ee2b97afc266abbaf",
+     "size": 12000
+    }
+   ],
+   "files": [
+    {
+     "kind": "dir",
+     "path": "/big"
+    },
+    {
+     "kind": "file",
+     "path": "/big/a.bin",
+     "sha256": "7cf89d28bd15ed55a5a299a495e8888dd9a74c8b604e06b064929fcbfb96e57a",
+     "size": 300000
+    },
+    {
+     "kind": "file",
+     "path": "/big/b.bin",
+     "sha256": "96c4c6a4ff67fffbd317eeedeaccbf6f90ba49f280598b194bfd59e65a4bd9b6",
+     "size": 200000
+    },
+    {
+     "kind": "file",
+     "path": "/big/frag.bin",
+     "sha256": "95a60ee0905e8d2d0e993cb132382afb8dca8fe97cfd8c21788b5fe2cfef5251",
+     "size": 150000
+    },
+    {
+     "kind": "dir",
+     "path": "/deep"
+    },
+    {
+     "kind": "dir",
+     "path": "/deep/one"
+    },
+    {
+     "kind": "dir",
+     "path": "/deep/one/two"
+    },
+    {
+     "kind": "dir",
+     "path": "/deep/one/two/three"
+    },
+    {
+     "kind": "file",
+     "path": "/deep/one/two/three/leaf.txt",
+     "sha256": "9f91161f43433e49a6de6db680d79f60159f2e4ac9172621a12846428158440b",
+     "size": 4
+    },
+    {
+     "kind": "dir",
+     "path": "/docs"
+    },
+    {
+     "kind": "file",
+     "path": "/docs/readme.txt",
+     "sha256": "109c49e7efb7d7b71aa8ffc46e33f6ecc26a41a607e66759ea6d817ec257a57e",
+     "size": 24
+    },
+    {
+     "kind": "file",
+     "path": "/docs/resident.txt",
+     "sha256": "9ae5fe54157e36a6b56d9963effbca7f4e0447f6f412ea4a11c2d09f3708f468",
+     "size": 400
+    },
+    {
+     "kind": "file",
+     "path": "/empty.txt",
+     "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+     "size": 0
+    }
+   ],
+   "fs": "fat",
+   "offset": 0
+  }
+ ],
+ "schema": 1,
+ "segments": [
+  "fat32_fsagen.img"
+ ],
+ "sha256": "46ea3d855ad870b1f82d904d29b0eb3a5ec4ac14b2d31ed2ca18a5dbd9484229",
+ "size": 41943040
+}

@@ -26,7 +26,7 @@ func IndexEXFAT(pfile structs.InputFile, eviID []byte, idxChan chan error, enabl
 		return
 	}
 
-	indexableEntries, err := exfatdata.GetIndexableEntries(rootEntries)
+	indexableEntries, err := exfatdata.ContiguousFiles(rootEntries)
 	if err != nil {
 		idxChan <- err
 		return
@@ -67,12 +67,19 @@ func IndexEXFAT(pfile structs.InputFile, eviID []byte, idxChan chan error, enabl
 			}
 		}
 
-		iname := string(util.AppendToBytesSlice(eviID, cnst.DataSeperator, encodedPfileHash, cnst.DataSeperator, entry.GetName()))
-		istart := int64(exfatdata.GetClusterOffset(entry.GetEntryCluster()))
-		isize := int64(entry.GetSize())
+		// An entry whose first cluster the volume cannot address (cluster 0
+		// for an empty file) has no content range; libxfat before v1.4.0
+		// returned an offset inside the FAT for it.
+		off, err := exfatdata.ClusterOffset(entry.FirstCluster())
+		if err != nil {
+			continue
+		}
+		iname := string(util.AppendToBytesSlice(eviID, cnst.DataSeperator, encodedPfileHash, cnst.DataSeperator, entry.Name()))
+		istart := int64(off)
+		isize := int64(entry.Size())
 		// exFAT records modification, access and creation times but no change
 		// time, matching what lib/parser/fs/exfat reports.
-		times := timestampsOf(entry.GetModifiedTime(), entry.GetAccessedTime(), time.Time{}, entry.GetCreatedTime())
+		times := timestampsOf(entry.ModifiedTime(), entry.AccessedTime(), time.Time{}, entry.CreatedTime())
 		err = registerIndexedRange(idxmap, pfile, eviID, iname, istart, isize, false, times)
 		if err != nil {
 			idxChan <- err

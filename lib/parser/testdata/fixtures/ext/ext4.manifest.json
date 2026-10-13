@@ -1,0 +1,129 @@
+{
+ "format": "raw",
+ "generator": "gen_fixtures.sh unknown",
+ "image": "ext4.img",
+ "partitions": [
+  {
+   "deleted": [
+    {
+     "deleted": true,
+     "kind": "file",
+     "path": "/deleted.bin",
+     "recoverable": "none",
+     "sha256": "b63fd3367dd1916ed684c109a945e4ef5f6f887e5be5b5104a3ebf21085c4d1e",
+     "size": 9000
+    }
+   ],
+   "files": [
+    {
+     "extents": 0,
+     "kind": "file",
+     "path": "/empty.txt",
+     "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+     "size": 0
+    },
+    {
+     "kind": "symlink",
+     "path": "/fastlink",
+     "size": 10,
+     "target": "inline.txt"
+    },
+    {
+     "extents": 1,
+     "kind": "file",
+     "links": [
+      "/hardlink.bin",
+      "/sub/a.bin"
+     ],
+     "path": "/hardlink.bin",
+     "sha256": "e1bd192aedc24fa41678a0165456042c27d86bf7211dba5128dc918e60eb14bf",
+     "size": 5000
+    },
+    {
+     "extents": 1,
+     "flags": [
+      "inline"
+     ],
+     "kind": "file",
+     "path": "/inline.txt",
+     "sha256": "4fe26d88b6ef06d45658454d4ba4c3c506f0bd6550b83035aebb897597ea8d83",
+     "size": 17
+    },
+    {
+     "kind": "dir",
+     "path": "/lost+found"
+    },
+    {
+     "extents": 1,
+     "flags": [
+      "unwritten"
+     ],
+     "kind": "file",
+     "path": "/prealloc.bin",
+     "sha256": "32154ba431545c9201e18b677e02912afbbc32b595d00ca41fca4d8cf381118d",
+     "size": 32768
+    },
+    {
+     "kind": "symlink",
+     "path": "/slowlink",
+     "size": 87,
+     "target": "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx/target"
+    },
+    {
+     "extents": 1,
+     "flags": [
+      "sparse"
+     ],
+     "kind": "file",
+     "path": "/sparse.bin",
+     "sha256": "53523cf68805c2489aaf8a8fc1d9036bf452ecd0558796b5ee8cf683cb25d892",
+     "size": 266240
+    },
+    {
+     "kind": "dir",
+     "path": "/sub"
+    },
+    {
+     "extents": 1,
+     "kind": "file",
+     "links": [
+      "/hardlink.bin",
+      "/sub/a.bin"
+     ],
+     "path": "/sub/a.bin",
+     "sha256": "e1bd192aedc24fa41678a0165456042c27d86bf7211dba5128dc918e60eb14bf",
+     "size": 5000
+    },
+    {
+     "kind": "dir",
+     "path": "/sub/deeper"
+    },
+    {
+     "extents": 1,
+     "kind": "file",
+     "path": "/sub/deeper/b.bin",
+     "sha256": "ceaca7c6d68a96ea84bb91ba6d07a295941d4fa6b4530a54c32d811a2253f1d5",
+     "size": 70000
+    },
+    {
+     "extents": 1,
+     "flags": [
+      "unwritten"
+     ],
+     "kind": "file",
+     "path": "/unwritten.bin",
+     "sha256": "de2f256064a0af797747c2b97505dc0b9f3df0de4f489eac731c23ae9ca9cc31",
+     "size": 65536
+    }
+   ],
+   "fs": "ext",
+   "offset": 0
+  }
+ ],
+ "schema": 1,
+ "segments": [
+  "ext4.img"
+ ],
+ "sha256": "398662f127badce037365cc6a7d0e3d6ae472b8cddaa991e05368d6871503599",
+ "size": 16777216
+}

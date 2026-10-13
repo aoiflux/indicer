@@ -1,0 +1,56 @@
+{
+ "format": "raw",
+ "generator": "gen_fixtures.sh unknown",
+ "image": "mbr_two.img",
+ "partitions": [
+  {
+   "deleted": [],
+   "files": [
+    {
+     "extents": 1,
+     "kind": "file",
+     "path": "/m1.bin",
+     "sha256": "36504ffa9b1b5ff1b5f86b8ec43ebc2686ea74e6c70824d95061bb9b5a8e3ba8",
+     "size": 3000
+    }
+   ],
+   "fs": "fat",
+   "offset": 1048576
+  },
+  {
+   "deleted": [],
+   "files": [
+    {
+     "kind": "dir",
+     "path": "/dir"
+    },
+    {
+     "extents": 1,
+     "kind": "file",
+     "path": "/dir/note.txt",
+     "sha256": "d70108829590194bee67660de989154bb3dfe113b0d8634db8e0e886d6898e8e",
+     "size": 17
+    },
+    {
+     "kind": "dir",
+     "path": "/lost+found"
+    },
+    {
+     "extents": 1,
+     "kind": "file",
+     "path": "/m2.bin",
+     "sha256": "c2d3f6cb5297d64aea4cb1b5dae8c48daacb04f6661fb99d8d4e11f7ef953052",
+     "size": 6000
+    }
+   ],
+   "fs": "ext",
+   "offset": 2097152
+  }
+ ],
+ "schema": 1,
+ "segments": [
+  "mbr_two.img"
+ ],
+ "sha256": "19940b0145feee4adfba4927230146c80a6265084b5e543168deb765789ed1a3",
+ "size": 12582912
+}

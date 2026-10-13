@@ -10,7 +10,7 @@ import (
 	"indicer/lib/util"
 
 	graphenedb "github.com/aoiflux/graphene"
-	graphstore "github.com/aoiflux/graphene/store"
+	graphenedisk "github.com/aoiflux/graphene/disk"
 )
 
 // cleanRegistry fails the test if a previous case leaked a handle, and clears
@@ -234,17 +234,13 @@ func TestLock_SharedLocksCoexist(t *testing.T) {
 	defer second.release()
 }
 
-// TestTwoDirectStores_DoNotSeeEachOther pins the graphene behaviour this whole
-// package exists to work around, and is what makes the nested-open regression
-// tests meaningful rather than tautological.
-//
-// Opening the same directory twice succeeds — there is no lock in the library —
-// and the two stores then have separate in-memory delta overlays and separate
-// property indexes. A node written through one is invisible to the other, and
-// both are appending to a single WAL. If this test ever starts failing because
-// the second Open is refused, graphene has grown locking of its own and
-// lock.go can be reconsidered.
-func TestTwoDirectStores_DoNotSeeEachOther(t *testing.T) {
+// TestGraphene_SecondWriterRefused pins the graphene behaviour lock.go and the
+// handle registry were written around. Up to v0.4.0 a second Open of the same
+// directory succeeded, and the two stores kept separate overlays and indexes
+// while appending to one WAL. Since v0.9.0 graphene takes its own store lock,
+// so a second writer is refused. If this starts failing, graphene has dropped
+// that lock and the registry in handle.go is load-bearing again.
+func TestGraphene_SecondWriterRefused(t *testing.T) {
 	dir := filepath.Join(t.TempDir(), "graph")
 
 	first, err := graphenedb.Open(dir)
@@ -254,30 +250,12 @@ func TestTwoDirectStores_DoNotSeeEachOther(t *testing.T) {
 	defer first.Close()
 
 	second, err := graphenedb.Open(dir)
-	if err != nil {
-		t.Skipf("graphene refused a second open (%v); it may have grown its own locking", err)
+	if err == nil {
+		second.Close()
+		t.Fatal("graphene opened a second writer on a store that is already open")
 	}
-	defer second.Close()
-
-	id, err := first.AddNode(&graphstore.Node{
-		Labels:     []graphstore.NodeType{graphstore.NodeTypeMicroArtefact},
-		Properties: []byte("x"),
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := first.IndexNodeProperty(id, "probe", []byte("v")); err != nil {
-		t.Fatal(err)
-	}
-
-	hits, err := second.NodesByProperty("probe", []byte("v"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	if len(hits) != 0 {
-		t.Fatalf("the second store saw %d node(s) written through the first; "+
-			"graphene now shares state across handles and the registry in handle.go "+
-			"may no longer be load-bearing", len(hits))
+	if !errors.Is(err, graphenedisk.ErrStoreLocked) {
+		t.Fatalf("second Open failed with %v, want ErrStoreLocked", err)
 	}
 }
 

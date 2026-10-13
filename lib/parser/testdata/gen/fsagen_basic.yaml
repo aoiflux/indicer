@@ -1,0 +1,37 @@
+# Ground-truth scenario for the fsagen fixture images (NTFS, ext4, FAT32).
+# Sizes straddle cluster and MFT-record boundaries; the delete-then-create
+# sequence with first-fit allocation fragments frag.bin into the freed gap.
+operations:
+  - action: create
+    path: docs/readme
+    ext: .txt
+    content: "Deterministic content v1"
+    mtime: "2021-01-01T10:00:00Z"
+  - action: create
+    path: docs/resident.txt
+    content_len: 400
+  - action: create
+    path: big/a.bin
+    content_len: 300000
+  - action: create
+    path: big/gap.bin
+    content_len: 40000
+  - action: create
+    path: big/b.bin
+    content_len: 200000
+  - action: delete
+    path: big/gap.bin
+  - action: create
+    path: big/frag.bin
+    content_len: 150000
+  - action: create
+    path: empty.txt
+    content: ""
+  - action: create
+    path: deep/one/two/three/leaf.txt
+    content: "leaf"
+  - action: create
+    path: old/tobedeleted.bin
+    content_len: 12000
+  - action: delete
+    path: old/tobedeleted.bin

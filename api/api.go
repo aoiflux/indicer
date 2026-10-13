@@ -18,11 +18,19 @@ import (
 	"time"
 
 	"github.com/fatih/color"
-	"golang.org/x/net/http2"
-	"golang.org/x/net/http2/h2c"
 )
 
 const PORT = "50051"
+
+// newHTTPServer returns the server for the Connect handler. It speaks
+// HTTP/1.1 and cleartext HTTP/2 with prior knowledge, which gRPC and Connect
+// clients use on a plain-text listener.
+func newHTTPServer(addr string, h http.Handler) *http.Server {
+	var p http.Protocols
+	p.SetHTTP1(true)
+	p.SetUnencryptedHTTP2(true)
+	return &http.Server{Addr: addr, Handler: h, Protocols: &p}
+}
 
 func Server(chonkSize int, dbpath string, key []byte) error {
 	var err error
@@ -80,11 +88,7 @@ func Server(chonkSize int, dbpath string, key []byte) error {
 	// Wrap with CORS middleware for web clients
 	corsHandler := corsMiddleware(mux)
 
-	// HTTP server with h2c (HTTP/2 without TLS) for Connect
-	httpServer := &http.Server{
-		Addr:    ":" + PORT,
-		Handler: h2c.NewHandler(corsHandler, &http2.Server{}),
-	}
+	httpServer := newHTTPServer(":"+PORT, corsHandler)
 
 	// Start Connect HTTP server in a goroutine
 	serveErr := make(chan error, 1)

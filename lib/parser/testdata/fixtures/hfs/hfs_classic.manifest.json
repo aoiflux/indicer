@@ -1,0 +1,36 @@
+{
+ "format": "raw",
+ "generator": "gen_fixtures.sh unknown",
+ "image": "hfs_classic.img",
+ "partitions": [
+  {
+   "deleted": [],
+   "files": [
+    {
+     "kind": "file",
+     "path": "/hello.txt",
+     "sha256": "904ac5f381eac585b1fff97fdb25b7fe4513c0c3e80a952f87e73489d014d489",
+     "size": 11
+    },
+    {
+     "kind": "dir",
+     "path": "/sub"
+    },
+    {
+     "kind": "file",
+     "path": "/sub/a.bin",
+     "sha256": "9076afd7f0791b2775c9b6dcf22a2eacbf400dee0d5c773bc1f1d3afc30ba121",
+     "size": 5000
+    }
+   ],
+   "fs": "hfs",
+   "offset": 0
+  }
+ ],
+ "schema": 1,
+ "segments": [
+  "hfs_classic.img"
+ ],
+ "sha256": "dfaf3fefcaa03f9d529d02198bbd75d3c9633394d3219329f6afc976c0d8e7a4",
+ "size": 4194304
+}

@@ -22,7 +22,6 @@ import (
 	"strings"
 	"time"
 
-	"github.com/aoiflux/libxfat"
 	"github.com/cheggaaa/pb/v3"
 	"github.com/dgraph-io/badger/v4"
 )
@@ -376,11 +375,7 @@ func GetArbitratyMapKey(kv map[string]struct{}) string {
 	return k
 }
 
-type slicer interface {
-	any | libxfat.Entry
-}
-
-func Reslice[T slicer](slice []T, index int) []T {
+func Reslice[T any](slice []T, index int) []T {
 	slice[index] = slice[len(slice)-1]
 	return slice[:len(slice)-1]
 }

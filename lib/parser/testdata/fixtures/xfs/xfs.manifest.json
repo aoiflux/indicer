@@ -1,0 +1,108 @@
+{
+ "format": "raw",
+ "generator": "gen_fixtures.sh unknown",
+ "image": "xfs.img",
+ "partitions": [
+  {
+   "deleted": [],
+   "files": [
+    {
+     "extents": 0,
+     "kind": "file",
+     "path": "/empty.txt",
+     "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+     "size": 0
+    },
+    {
+     "extents": 1,
+     "kind": "file",
+     "links": [
+      "/hardlink.bin",
+      "/sub/a.bin"
+     ],
+     "path": "/hardlink.bin",
+     "sha256": "e990b75421a3819db24c9928b45bfde79c6de9cd66aba57440f2bde705f7b0c2",
+     "size": 5000
+    },
+    {
+     "extents": 1,
+     "kind": "file",
+     "path": "/hello.txt",
+     "sha256": "904ac5f381eac585b1fff97fdb25b7fe4513c0c3e80a952f87e73489d014d489",
+     "size": 11
+    },
+    {
+     "extents": 19,
+     "flags": [
+      "fragmented"
+     ],
+     "kind": "file",
+     "path": "/multi.bin",
+     "sha256": "e5b96bafcc815c516005769e1ed66488a6dab9a5627944aadc884af40a01f1ae",
+     "size": 131072
+    },
+    {
+     "extents": 1,
+     "kind": "file",
+     "path": "/slack.bin",
+     "sha256": "adf247c035e80d73f1959c8c682ecffd9205ecf4668fcc82180ca860155d4a82",
+     "size": 4097
+    },
+    {
+     "extents": 1,
+     "flags": [
+      "sparse"
+     ],
+     "kind": "file",
+     "path": "/sparse.bin",
+     "sha256": "23c3208356fe7453c35f544952483b97237f7ca325fc10fe3b516f150713918e",
+     "size": 266240
+    },
+    {
+     "kind": "dir",
+     "path": "/sub"
+    },
+    {
+     "extents": 1,
+     "kind": "file",
+     "links": [
+      "/hardlink.bin",
+      "/sub/a.bin"
+     ],
+     "path": "/sub/a.bin",
+     "sha256": "e990b75421a3819db24c9928b45bfde79c6de9cd66aba57440f2bde705f7b0c2",
+     "size": 5000
+    },
+    {
+     "kind": "dir",
+     "path": "/sub/deeper"
+    },
+    {
+     "extents": 1,
+     "kind": "file",
+     "path": "/sub/deeper/b.bin",
+     "sha256": "a18fe021f08130f24cac9b4c9980d9938ba867a5534341123ff367a82bb98308",
+     "size": 70000
+    },
+    {
+     "extents": 1,
+     "flags": [
+      "unwritten"
+     ],
+     "kind": "file",
+     "path": "/unwritten.bin",
+     "sha256": "de2f256064a0af797747c2b97505dc0b9f3df0de4f489eac731c23ae9ca9cc31",
+     "size": 65536
+    }
+   ],
+   "fs": "xfs",
+   "offset": 0
+  }
+ ],
+ "schema": 1,
+ "segments": [
+  "xfs.img"
+ ],
+ "sha256": "fb262e521ef36caca5ef1ed36c0f8209489a07004f46c5cc19ab772b0255ffed",
+ "size": 67108864
+}

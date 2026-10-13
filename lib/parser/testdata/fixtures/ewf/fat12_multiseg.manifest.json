@@ -1,0 +1,58 @@
+{
+ "format": "ewf",
+ "generator": "gen_fixtures.sh unknown",
+ "image": "fat12_multiseg.E01",
+ "partitions": [
+  {
+   "deleted": [],
+   "files": [
+    {
+     "extents": 1,
+     "kind": "file",
+     "path": "/r1.bin",
+     "sha256": "1d975228fd48778853936b1ab5d5fd10703c8461107cbea8b3ccc399f02fcc3a",
+     "size": 60000
+    },
+    {
+     "extents": 1,
+     "kind": "file",
+     "path": "/r2.bin",
+     "sha256": "601559286e6e8bf7cecbd4028cd033d67414deaa498618b229b005ec9c9cb5ee",
+     "size": 60000
+    },
+    {
+     "extents": 1,
+     "kind": "file",
+     "path": "/r3.bin",
+     "sha256": "d323532df0c834f62169629e60998968a71aa9c9b52544af772ee7b6b5bd1802",
+     "size": 60000
+    },
+    {
+     "extents": 1,
+     "kind": "file",
+     "path": "/r4.bin",
+     "sha256": "8f888fcd89903441ca2010b6b1fc4181bd95670c7405c7ea443c1f836342e35a",
+     "size": 60000
+    },
+    {
+     "extents": 1,
+     "kind": "file",
+     "path": "/r5.bin",
+     "sha256": "2d8f21f325f34fa2ec39891dc2a9521d58d7441299ccd42063729c00a411c2d5",
+     "size": 60000
+    }
+   ],
+   "fs": "fat",
+   "offset": 0
+  }
+ ],
+ "schema": 1,
+ "segments": [
+  "fat12_multiseg.E01",
+  "fat12_multiseg.E02",
+  "fat12_multiseg.E03",
+  "fat12_multiseg.E04"
+ ],
+ "sha256": "34bfca341635a58ebe71a301091324be0b928df0612dbed2a6d75fb4c377acac",
+ "size": 3145728
+}

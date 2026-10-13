@@ -1,0 +1,53 @@
+# Ground-truth scenario for the fsagen NTFS fixture: fsagen_basic.yaml plus
+# streams and hard links. Keep the shared part in step with fsagen_basic.yaml.
+# Sizes straddle cluster and MFT-record boundaries; the delete-then-create
+# sequence with first-fit allocation fragments frag.bin into the freed gap.
+operations:
+  - action: create
+    path: docs/readme
+    ext: .txt
+    content: "Deterministic content v1"
+    mtime: "2021-01-01T10:00:00Z"
+  - action: create
+    path: docs/resident.txt
+    content_len: 400
+  - action: create
+    path: big/a.bin
+    content_len: 300000
+  - action: create
+    path: big/gap.bin
+    content_len: 40000
+  - action: create
+    path: big/b.bin
+    content_len: 200000
+  - action: delete
+    path: big/gap.bin
+  - action: create
+    path: big/frag.bin
+    content_len: 150000
+  - action: create
+    path: empty.txt
+    content: ""
+  - action: create
+    path: deep/one/two/three/leaf.txt
+    content: "leaf"
+  - action: create
+    path: old/tobedeleted.bin
+    content_len: 12000
+  - action: delete
+    path: old/tobedeleted.bin
+  # NTFS only: an alternate data stream and a second hard-link name.
+  - action: ads
+    path: docs/readme.txt
+    stream: secret
+    content: "hidden stream content"
+  - action: hardlink
+    path: docs/readme.txt
+    new_path: docs/link.txt
+  - action: create
+    path: docs/nonresident_ads_host.txt
+    content: "host"
+  - action: ads
+    path: docs/nonresident_ads_host.txt
+    stream: big
+    content_len: 5000

@@ -26,9 +26,10 @@ var _ core.Filesystem = (*ntfsFS)(nil)
 // offset within the image, added to data-run offsets so DataRuns returns
 // image-absolute ranges; pass base=0 when r is the whole image. size (the
 // partition length) is unused — libntfs derives geometry internally — but kept
-// for a uniform adapter signature.
+// for a uniform adapter signature. The volume is opened read-only, so a reader
+// that also implements io.WriterAt can never be written through.
 func Open(r io.ReaderAt, base, size int64) (core.Filesystem, error) {
-	vol, err := libntfs.Open(r)
+	vol, err := libntfs.OpenWithOptions(r, libntfs.Options{ReadOnly: true})
 	if err != nil {
 		return nil, err
 	}

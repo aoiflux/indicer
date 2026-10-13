@@ -12,7 +12,6 @@ import (
 	"errors"
 	"io"
 	"path"
-	"strings"
 
 	"github.com/aoiflux/libxfat"
 
@@ -83,16 +82,16 @@ func (a *exfatFS) Walk(fn func(core.Node) error) error {
 	if err != nil {
 		return err
 	}
-	// GetFullPathIndexableEntries recursively walks the tree and stamps each
-	// entry's name with its full path (e.g. "/generator/.git/HEAD"). It returns
-	// the indexable file entries — directory-table entries are intentionally not
-	// surfaced (forensically the content that matters is the files).
-	entries, err := a.ex.GetFullPathIndexableEntries(root, "/")
+	// ContiguousFilePaths recursively walks the tree and stamps each entry's
+	// name with its full path (e.g. "/generator/.git/HEAD"). It returns only
+	// file entries without a FAT chain, so fragmented files and directories are
+	// not surfaced (PAR-3, PAR-15; replaced by Walk in W5).
+	entries, err := a.ex.ContiguousFilePaths(root, "/")
 	if err != nil {
 		return err
 	}
 	for _, e := range entries {
-		full := e.GetName()
+		full := e.Name()
 		node := core.Node{
 			ID:        a.put(e),
 			Name:      path.Base(full),
@@ -105,19 +104,19 @@ func (a *exfatFS) Walk(fn func(core.Node) error) error {
 		}
 	}
 
-	// Deleted-in-place entries. GetFullPathIndexableEntries returns only live
+	// Deleted-in-place entries. ContiguousFilePaths returns only live
 	// entries, but exFAT deletes a file by clearing its directory entry's in-use
 	// bit while the entry (and usually its contiguous clusters) stay intact in an
 	// allocated directory table — so the unallocated-cluster carver
-	// (RecoverDeletedEntries) does not see them. GetAllEntries(indexable=false)
-	// does. These carry a base name with a " (deleted)" suffix and no
-	// reconstructable parent path; surface them as deleted nodes so their content
-	// is still recovered (matching libtusk/TSK deleted-file recovery).
+	// (RecoverDeletedEntries) does not see them. AllEntries(indexable=false)
+	// does. These carry only a base name and no reconstructable parent path;
+	// surface them as deleted nodes so their content is still recovered
+	// (matching libtusk/TSK deleted-file recovery).
 	root2, err := a.ex.ReadRootDir()
 	if err != nil {
 		return nil // best effort: the live walk already succeeded
 	}
-	all, err := a.ex.GetAllEntries(root2, false)
+	all, err := a.ex.AllEntries(root2, false)
 	if err != nil {
 		return nil
 	}
@@ -125,7 +124,7 @@ func (a *exfatFS) Walk(fn func(core.Node) error) error {
 		if !e.IsDeleted() {
 			continue
 		}
-		name := strings.TrimSuffix(e.GetName(), " (deleted)")
+		name := e.Name()
 		node := core.Node{
 			ID:        a.put(e),
 			Name:      name,
@@ -146,15 +145,15 @@ func (a *exfatFS) Stat(n core.Node) (core.FileInfo, error) {
 		return core.FileInfo{}, errUnknownNode
 	}
 	return core.FileInfo{
-		Size:         int64(e.GetSize()),
+		Size:         int64(e.Size()),
 		Kind:         n.Kind,
 		IsDeleted:    e.IsDeleted(),
-		IsFragmented: e.HasFatChain(),
+		IsFragmented: !e.IsContiguous(),
 		Inode:        n.ID,
 		MACB: core.MACB{
-			Modified: fsutil.TimePtr(e.GetModifiedTime()),
-			Accessed: fsutil.TimePtr(e.GetAccessedTime()),
-			Born:     fsutil.TimePtr(e.GetCreatedTime()),
+			Modified: fsutil.TimePtr(e.ModifiedTime()),
+			Accessed: fsutil.TimePtr(e.AccessedTime()),
+			Born:     fsutil.TimePtr(e.CreatedTime()),
 		},
 	}, nil
 }
@@ -166,8 +165,8 @@ func (a *exfatFS) DataRuns(n core.Node) ([]core.AbsRange, error) {
 	if !ok {
 		return nil, errUnknownNode
 	}
-	cs := int64(a.ex.GetClusterSize())
-	clusters, _, err := a.ex.GetClusterList(e)
+	cs := int64(a.ex.ClusterSize())
+	clusters, _, err := a.ex.ClusterList(e)
 	if err != nil || len(clusters) == 0 {
 		// A deleted entry's FAT chain is often unreadable (or absent — exFAT sets
 		// NoFatChain for contiguous files). Fall back to a contiguous run from the
@@ -181,10 +180,17 @@ func (a *exfatFS) DataRuns(n core.Node) ([]core.AbsRange, error) {
 	}
 
 	var out []core.AbsRange
-	flush := func(first uint32, count uint32) {
-		start := a.base + int64(a.ex.GetClusterOffset(first))
+	flush := func(first uint32, count uint32) error {
+		// A cluster the volume cannot address has no offset; libxfat before
+		// v1.4.0 returned one inside the FAT or before the volume.
+		off, err := a.ex.ClusterOffset(first)
+		if err != nil {
+			return err
+		}
+		start := a.base + int64(off)
 		length := int64(count) * cs
 		out = append(out, core.AbsRange{Start: start, End: start + length - 1})
+		return nil
 	}
 
 	runStart, runLen := clusters[0], uint32(1)
@@ -193,12 +199,16 @@ func (a *exfatFS) DataRuns(n core.Node) ([]core.AbsRange, error) {
 			runLen++
 			continue
 		}
-		flush(runStart, runLen)
+		if err := flush(runStart, runLen); err != nil {
+			return nil, err
+		}
 		runStart, runLen = clusters[i], 1
 	}
-	flush(runStart, runLen)
+	if err := flush(runStart, runLen); err != nil {
+		return nil, err
+	}
 
-	return fsutil.TrimToSize(out, int64(e.GetSize())), nil
+	return fsutil.TrimToSize(out, int64(e.Size())), nil
 }
 
 func (a *exfatFS) Open(n core.Node) (io.ReadCloser, error) {
@@ -206,20 +216,24 @@ func (a *exfatFS) Open(n core.Node) (io.ReadCloser, error) {
 	if !ok {
 		return nil, errUnknownNode
 	}
-	clusters, _, err := a.ex.GetClusterList(e)
+	clusters, _, err := a.ex.ClusterList(e)
 	if err != nil {
 		return nil, err
 	}
-	size := int64(e.GetSize())
+	size := int64(e.Size())
 	buf := make([]byte, size)
-	cs := int64(a.ex.GetClusterSize())
+	cs := int64(a.ex.ClusterSize())
 
 	var written int64
 	for _, c := range clusters {
 		if written >= size {
 			break
 		}
-		off := int64(a.ex.GetClusterOffset(c))
+		uoff, err := a.ex.ClusterOffset(c)
+		if err != nil {
+			return nil, err
+		}
+		off := int64(uoff)
 		want := cs
 		if written+want > size {
 			want = size - written
@@ -238,8 +252,8 @@ func (a *exfatFS) Streams(_ core.Node) ([]core.Stream, error) { return nil, nil 
 // if laid out contiguously from its first cluster. Used as a fallback for
 // deleted entries whose FAT chain is no longer resolvable.
 func contiguousClusters(e libxfat.Entry, clusterSize int64) []uint32 {
-	size := int64(e.GetSize())
-	first := e.GetEntryCluster()
+	size := int64(e.Size())
+	first := e.FirstCluster()
 	if size <= 0 || clusterSize <= 0 || first == 0 {
 		return nil
 	}

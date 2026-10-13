@@ -16,16 +16,19 @@ func parseMBR(size int64, fhandle *os.File) []structs.PartitionFile {
 
 	var plist []structs.PartitionFile
 	for _, partition := range mbrdata.Partitions {
-		if partition.GetSize() == 0 || partition.GetSize()*int64(libxfat.SECTOR_SIZE) > size {
+		// go-diskfs reports start and size in bytes; libxfat.New takes the
+		// start in 512-byte sectors.
+		start, psize := partition.GetStart(), partition.GetSize()
+		if psize <= 0 || start < 0 || start > size || psize > size-start {
 			continue
 		}
-		if _, err := libxfat.New(fhandle, true, uint64(partition.GetStart())); err != nil {
+		if _, err := libxfat.New(fhandle, true, uint64(start)/libxfat.SECTOR_SIZE); err != nil {
 			continue
 		}
 
 		var pfile structs.PartitionFile
-		pfile.Start = partition.GetStart() * int64(libxfat.SECTOR_SIZE)
-		pfile.Size = partition.GetSize() * int64(libxfat.SECTOR_SIZE)
+		pfile.Start = start
+		pfile.Size = psize
 
 		plist = append(plist, pfile)
 	}

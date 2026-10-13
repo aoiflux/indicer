@@ -1,0 +1,3100 @@
+{
+  "fixtures": [
+    {
+      "archive": "default.tar.zst",
+      "commit": "41dbc74",
+      "flags": [],
+      "inputs": [
+        {
+          "name": "small.img",
+          "sha256": "31d262da5704c2a41a398419cf6b793c19a11b6cb620f2b8ff33595261510b35",
+          "size": 1048576
+        },
+        {
+          "name": "blob.bin",
+          "sha256": "dc3a4d2a0f7b820fb467b58a6ae390152a275dac6e2639d8aea7b1d5dda52898",
+          "size": 700001
+        }
+      ],
+      "list": {
+        "completedEvidence": 2,
+        "evidence": [
+          {
+            "completed": true,
+            "failed": false,
+            "fileCount": 1,
+            "hash": "ZdkrV4KHvpiKgZ4AsoguhaMGR+i+wBa+cyhol8oihvI=",
+            "id": "AaE2En4xcG+GXYmT+JjlPQ==",
+            "name": "small.img",
+            "partitionCount": 1,
+            "partitions": [
+              {
+                "fileCount": 1,
+                "fileName": "small.img_p0",
+                "hash": "ZdkrV4KHvpiKgZ4AsoguhaMGR+i+wBa+cyhol8oihvI=",
+                "id": "AaE2En5sehCX73NDq0xmhQ==",
+                "indexedCount": 4,
+                "indexedFiles": [
+                  {
+                    "fileName": "/hello.txt",
+                    "hash": "F/G1xVRl8wGO8X7tXwDpPI60eg1b2e4+k+qjWLi5EXg=",
+                    "id": "AaE2En5tcoaOcRqEUOlHSg==",
+                    "isDeleted": false,
+                    "isFragmented": false,
+                    "offset": {
+                      "end": 309770,
+                      "start": 309760
+                    },
+                    "path": "/hello.txt",
+                    "size": 11,
+                    "start": 309760,
+                    "type": "txt"
+                  },
+                  {
+                    "fileName": "/sub/h2.txt",
+                    "hash": "F/G1xVRl8wGO8X7tXwDpPI60eg1b2e4+k+qjWLi5EXg=",
+                    "id": "AaE2En5tcoehRSnlZQF2+g==",
+                    "isDeleted": false,
+                    "isFragmented": false,
+                    "offset": {
+                      "end": 313866,
+                      "start": 313856
+                    },
+                    "path": "/sub/h2.txt",
+                    "size": 11,
+                    "start": 313856,
+                    "type": "txt"
+                  },
+                  {
+                    "fileName": "/pad.bin",
+                    "hash": "ohPjPCaVa2ALk/noui4R2E4uTo83MHup91iHVNfPAzQ=",
+                    "id": "AaE2En5tcoSZuTJNX7g0Lw==",
+                    "isDeleted": false,
+                    "isFragmented": false,
+                    "offset": {
+                      "end": 268543,
+                      "start": 18944
+                    },
+                    "path": "/pad.bin",
+                    "size": 249600,
+                    "start": 18944,
+                    "type": "bin"
+                  },
+                  {
+                    "fileName": "/a.bin",
+                    "hash": "rBRYVPkDukkoIMjDHAHUTpFEY+UlV+kFb1WdvFICjdE=",
+                    "id": "AaE2En5tcoWScoQcD2o50A==",
+                    "isDeleted": false,
+                    "isFragmented": false,
+                    "offset": {
+                      "end": 308799,
+                      "start": 268800
+                    },
+                    "path": "/a.bin",
+                    "size": 40000,
+                    "start": 268800,
+                    "type": "bin"
+                  }
+                ],
+                "size": 1048576,
+                "type": "unknown"
+              }
+            ],
+            "size": 1048576,
+            "status": "completed",
+            "type": "img"
+          },
+          {
+            "completed": true,
+            "failed": false,
+            "fileCount": 1,
+            "hash": "j3LD0gwCXkbB1ImImU9Deb75jXqT8AcwTIJgj5pKpUk=",
+            "id": "AaE2En83fsyfLV7owaJjjQ==",
+            "name": "blob.bin",
+            "partitionCount": 0,
+            "partitions": null,
+            "size": 700001,
+            "status": "completed",
+            "type": "bin"
+          }
+        ],
+        "failedEvidence": 0,
+        "pendingEvidence": 0,
+        "scanCompleted": 2,
+        "scanFailed": 0,
+        "scanPending": 0,
+        "statusFilter": "all",
+        "totalEvidence": 2
+      },
+      "list_error": null,
+      "mode": "default",
+      "password": null,
+      "restores": [
+        {
+          "error": null,
+          "hash": "ZdkrV4KHvpiKgZ4AsoguhaMGR+i+wBa+cyhol8oihvI=",
+          "kind": "evidence",
+          "name": "small.img",
+          "sha256": "31d262da5704c2a41a398419cf6b793c19a11b6cb620f2b8ff33595261510b35",
+          "size": 1048576,
+          "status": "ok"
+        },
+        {
+          "error": null,
+          "hash": "ZdkrV4KHvpiKgZ4AsoguhaMGR+i+wBa+cyhol8oihvI=",
+          "kind": "partition",
+          "name": "small.img_p0",
+          "sha256": "31d262da5704c2a41a398419cf6b793c19a11b6cb620f2b8ff33595261510b35",
+          "size": 1048576,
+          "status": "ok"
+        },
+        {
+          "error": " illegal base64 data at input byte 0 ",
+          "hash": "F/G1xVRl8wGO8X7tXwDpPI60eg1b2e4+k+qjWLi5EXg=",
+          "kind": "indexed",
+          "name": "/hello.txt",
+          "sha256": null,
+          "size": null,
+          "status": "error"
+        },
+        {
+          "error": " illegal base64 data at input byte 0 ",
+          "hash": "F/G1xVRl8wGO8X7tXwDpPI60eg1b2e4+k+qjWLi5EXg=",
+          "kind": "indexed",
+          "name": "/sub/h2.txt",
+          "sha256": null,
+          "size": null,
+          "status": "error"
+        },
+        {
+          "error": " illegal base64 data at input byte 0 ",
+          "hash": "ohPjPCaVa2ALk/noui4R2E4uTo83MHup91iHVNfPAzQ=",
+          "kind": "indexed",
+          "name": "/pad.bin",
+          "sha256": null,
+          "size": null,
+          "status": "error"
+        },
+        {
+          "error": " illegal base64 data at input byte 0 ",
+          "hash": "rBRYVPkDukkoIMjDHAHUTpFEY+UlV+kFb1WdvFICjdE=",
+          "kind": "indexed",
+          "name": "/a.bin",
+          "sha256": null,
+          "size": null,
+          "status": "error"
+        },
+        {
+          "error": null,
+          "hash": "j3LD0gwCXkbB1ImImU9Deb75jXqT8AcwTIJgj5pKpUk=",
+          "kind": "evidence",
+          "name": "blob.bin",
+          "sha256": "dc3a4d2a0f7b820fb467b58a6ae390152a275dac6e2639d8aea7b1d5dda52898",
+          "size": 700001,
+          "status": "ok"
+        }
+      ],
+      "store_errors": null,
+      "store_logs": {
+        "blob.bin": [
+          "683.59 KiB / 683.59 KiB [-------------------------------------] 100.00% ? p/s 0sOperation completed in: 24.0046ms",
+          "Saving Evidence File: blob.bin",
+          "25% {=========>..............................}  [0s:0s]",
+          "62% {========================>...............} (125 MB/s) [0s:0s]",
+          "100% {========================================} (122 MB/s)",
+          "Stored in: 67.2488ms"
+        ],
+        "small.img": [
+          "Linking indexed hash lookups...",
+          "Linking hash lookups 100% {========================================}",
+          "Indexed hash lookup linking complete.",
+          "Persisting partition metadata...",
+          "Partition metadata persist complete.",
+          "Stored in: 69.1569ms"
+        ]
+      },
+      "volume_files": {
+        "/a.bin": {
+          "sha256": "3ba3301ad7d5a00023d4d6ec9a2f7d39613506d8922804d2cae937d988f9a83c",
+          "size": 40000
+        },
+        "/empty.txt": {
+          "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "size": 0
+        },
+        "/hello.txt": {
+          "sha256": "904ac5f381eac585b1fff97fdb25b7fe4513c0c3e80a952f87e73489d014d489",
+          "size": 11
+        },
+        "/pad.bin": {
+          "sha256": "53971c244b86e5f901e0027fb94fba163dbb4540bb2fc750a70e07d032eac045",
+          "size": 249600
+        },
+        "/sub/h2.txt": {
+          "sha256": "904ac5f381eac585b1fff97fdb25b7fe4513c0c3e80a952f87e73489d014d489",
+          "size": 11
+        }
+      }
+    },
+    {
+      "archive": "encrypted.tar.zst",
+      "commit": "41dbc74",
+      "flags": [
+        "--password",
+        "fixture-pass"
+      ],
+      "inputs": [
+        {
+          "name": "small.img",
+          "sha256": "31d262da5704c2a41a398419cf6b793c19a11b6cb620f2b8ff33595261510b35",
+          "size": 1048576
+        },
+        {
+          "name": "blob.bin",
+          "sha256": "dc3a4d2a0f7b820fb467b58a6ae390152a275dac6e2639d8aea7b1d5dda52898",
+          "size": 700001
+        }
+      ],
+      "list": {
+        "completedEvidence": 2,
+        "evidence": [
+          {
+            "completed": true,
+            "failed": false,
+            "fileCount": 1,
+            "hash": "ZdkrV4KHvpiKgZ4AsoguhaMGR+i+wBa+cyhol8oihvI=",
+            "id": "AaE2Eo28fs+In9KyM9okfA==",
+            "name": "small.img",
+            "partitionCount": 1,
+            "partitions": [
+              {
+                "fileCount": 1,
+                "fileName": "small.img_p0",
+                "hash": "ZdkrV4KHvpiKgZ4AsoguhaMGR+i+wBa+cyhol8oihvI=",
+                "id": "AaE2Eo34c5KAGogRSRy7mg==",
+                "indexedCount": 4,
+                "indexedFiles": [
+                  {
+                    "fileName": "/hello.txt",
+                    "hash": "F/G1xVRl8wGO8X7tXwDpPI60eg1b2e4+k+qjWLi5EXg=",
+                    "id": "AaE2Eo34fl2w3Vwvabssyw==",
+                    "isDeleted": false,
+                    "isFragmented": false,
+                    "offset": {
+                      "end": 309770,
+                      "start": 309760
+                    },
+                    "path": "/hello.txt",
+                    "size": 11,
+                    "start": 309760,
+                    "type": "txt"
+                  },
+                  {
+                    "fileName": "/sub/h2.txt",
+                    "hash": "F/G1xVRl8wGO8X7tXwDpPI60eg1b2e4+k+qjWLi5EXg=",
+                    "id": "AaE2Eo34fl6H3VaVLXr/wQ==",
+                    "isDeleted": false,
+                    "isFragmented": false,
+                    "offset": {
+                      "end": 313866,
+                      "start": 313856
+                    },
+                    "path": "/sub/h2.txt",
+                    "size": 11,
+                    "start": 313856,
+                    "type": "txt"
+                  },
+                  {
+                    "fileName": "/pad.bin",
+                    "hash": "ohPjPCaVa2ALk/noui4R2E4uTo83MHup91iHVNfPAzQ=",
+                    "id": "AaE2Eo34flu/pGVnXYSIDw==",
+                    "isDeleted": false,
+                    "isFragmented": false,
+                    "offset": {
+                      "end": 268543,
+                      "start": 18944
+                    },
+                    "path": "/pad.bin",
+                    "size": 249600,
+                    "start": 18944,
+                    "type": "bin"
+                  },
+                  {
+                    "fileName": "/a.bin",
+                    "hash": "rBRYVPkDukkoIMjDHAHUTpFEY+UlV+kFb1WdvFICjdE=",
+                    "id": "AaE2Eo34fly7UC3u672H9w==",
+                    "isDeleted": false,
+                    "isFragmented": false,
+                    "offset": {
+                      "end": 308799,
+                      "start": 268800
+                    },
+                    "path": "/a.bin",
+                    "size": 40000,
+                    "start": 268800,
+                    "type": "bin"
+                  }
+                ],
+                "size": 1048576,
+                "type": "unknown"
+              }
+            ],
+            "size": 1048576,
+            "status": "completed",
+            "type": "img"
+          },
+          {
+            "completed": true,
+            "failed": false,
+            "fileCount": 1,
+            "hash": "j3LD0gwCXkbB1ImImU9Deb75jXqT8AcwTIJgj5pKpUk=",
+            "id": "AaE2Eo7MdQWzErm//TSGHw==",
+            "name": "blob.bin",
+            "partitionCount": 0,
+            "partitions": null,
+            "size": 700001,
+            "status": "completed",
+            "type": "bin"
+          }
+        ],
+        "failedEvidence": 0,
+        "pendingEvidence": 0,
+        "scanCompleted": 2,
+        "scanFailed": 0,
+        "scanPending": 0,
+        "statusFilter": "all",
+        "totalEvidence": 2
+      },
+      "list_error": null,
+      "mode": "encrypted",
+      "password": "fixture-pass",
+      "restores": [
+        {
+          "error": null,
+          "hash": "ZdkrV4KHvpiKgZ4AsoguhaMGR+i+wBa+cyhol8oihvI=",
+          "kind": "evidence",
+          "name": "small.img",
+          "sha256": "31d262da5704c2a41a398419cf6b793c19a11b6cb620f2b8ff33595261510b35",
+          "size": 1048576,
+          "status": "ok"
+        },
+        {
+          "error": null,
+          "hash": "ZdkrV4KHvpiKgZ4AsoguhaMGR+i+wBa+cyhol8oihvI=",
+          "kind": "partition",
+          "name": "small.img_p0",
+          "sha256": "31d262da5704c2a41a398419cf6b793c19a11b6cb620f2b8ff33595261510b35",
+          "size": 1048576,
+          "status": "ok"
+        },
+        {
+          "error": " illegal base64 data at input byte 0 ",
+          "hash": "F/G1xVRl8wGO8X7tXwDpPI60eg1b2e4+k+qjWLi5EXg=",
+          "kind": "indexed",
+          "name": "/hello.txt",
+          "sha256": null,
+          "size": null,
+          "status": "error"
+        },
+        {
+          "error": " illegal base64 data at input byte 0 ",
+          "hash": "F/G1xVRl8wGO8X7tXwDpPI60eg1b2e4+k+qjWLi5EXg=",
+          "kind": "indexed",
+          "name": "/sub/h2.txt",
+          "sha256": null,
+          "size": null,
+          "status": "error"
+        },
+        {
+          "error": " illegal base64 data at input byte 0 ",
+          "hash": "ohPjPCaVa2ALk/noui4R2E4uTo83MHup91iHVNfPAzQ=",
+          "kind": "indexed",
+          "name": "/pad.bin",
+          "sha256": null,
+          "size": null,
+          "status": "error"
+        },
+        {
+          "error": " illegal base64 data at input byte 0 ",
+          "hash": "rBRYVPkDukkoIMjDHAHUTpFEY+UlV+kFb1WdvFICjdE=",
+          "kind": "indexed",
+          "name": "/a.bin",
+          "sha256": null,
+          "size": null,
+          "status": "error"
+        },
+        {
+          "error": null,
+          "hash": "j3LD0gwCXkbB1ImImU9Deb75jXqT8AcwTIJgj5pKpUk=",
+          "kind": "evidence",
+          "name": "blob.bin",
+          "sha256": "dc3a4d2a0f7b820fb467b58a6ae390152a275dac6e2639d8aea7b1d5dda52898",
+          "size": 700001,
+          "status": "ok"
+        }
+      ],
+      "store_errors": null,
+      "store_logs": {
+        "blob.bin": [
+          "683.59 KiB / 683.59 KiB [-------------------------------------] 100.00% ? p/s 0sOperation completed in: 29.8574ms",
+          "Saving Evidence File: blob.bin",
+          "25% {=========>..............................}  [0s:0s]",
+          "62% {========================>...............} (77 MB/s) [0s:0s]",
+          "100% {========================================} (97 MB/s)",
+          "Stored in: 68.7448ms"
+        ],
+        "small.img": [
+          "Linking indexed hash lookups...",
+          "Linking hash lookups 100% {========================================}",
+          "Indexed hash lookup linking complete.",
+          "Persisting partition metadata...",
+          "Partition metadata persist complete.",
+          "Stored in: 70.1608ms"
+        ]
+      },
+      "volume_files": {
+        "/a.bin": {
+          "sha256": "3ba3301ad7d5a00023d4d6ec9a2f7d39613506d8922804d2cae937d988f9a83c",
+          "size": 40000
+        },
+        "/empty.txt": {
+          "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "size": 0
+        },
+        "/hello.txt": {
+          "sha256": "904ac5f381eac585b1fff97fdb25b7fe4513c0c3e80a952f87e73489d014d489",
+          "size": 11
+        },
+        "/pad.bin": {
+          "sha256": "53971c244b86e5f901e0027fb94fba163dbb4540bb2fc750a70e07d032eac045",
+          "size": 249600
+        },
+        "/sub/h2.txt": {
+          "sha256": "904ac5f381eac585b1fff97fdb25b7fe4513c0c3e80a952f87e73489d014d489",
+          "size": 11
+        }
+      }
+    },
+    {
+      "archive": "quick.tar.zst",
+      "commit": "41dbc74",
+      "flags": [
+        "--quick"
+      ],
+      "inputs": [
+        {
+          "name": "small.img",
+          "sha256": "31d262da5704c2a41a398419cf6b793c19a11b6cb620f2b8ff33595261510b35",
+          "size": 1048576
+        },
+        {
+          "name": "blob.bin",
+          "sha256": "dc3a4d2a0f7b820fb467b58a6ae390152a275dac6e2639d8aea7b1d5dda52898",
+          "size": 700001
+        }
+      ],
+      "list": {
+        "completedEvidence": 2,
+        "evidence": [
+          {
+            "completed": true,
+            "failed": false,
+            "fileCount": 1,
+            "hash": "ZdkrV4KHvpiKgZ4AsoguhaMGR+i+wBa+cyhol8oihvI=",
+            "id": "AaE2Ep1lcCO/xbdjEzqJJg==",
+            "name": "small.img",
+            "partitionCount": 1,
+            "partitions": [
+              {
+                "fileCount": 1,
+                "fileName": "small.img_p0",
+                "hash": "ZdkrV4KHvpiKgZ4AsoguhaMGR+i+wBa+cyhol8oihvI=",
+                "id": "AaE2Ep2fciulgYAriQnpAA==",
+                "indexedCount": 4,
+                "indexedFiles": [
+                  {
+                    "fileName": "/a.bin",
+                    "hash": "rBRYVPkDukkoIMjDHAHUTpFEY+UlV+kFb1WdvFICjdE=",
+                    "id": "AaE2Ep2fefyRa1yhnONSKA==",
+                    "isDeleted": false,
+                    "isFragmented": false,
+                    "offset": {
+                      "end": 308799,
+                      "start": 268800
+                    },
+                    "path": "/a.bin",
+                    "size": 40000,
+                    "start": 268800,
+                    "type": "bin"
+                  },
+                  {
+                    "fileName": "/hello.txt",
+                    "hash": "F/G1xVRl8wGO8X7tXwDpPI60eg1b2e4+k+qjWLi5EXg=",
+                    "id": "AaE2Ep2fef2OScOgJ88AbQ==",
+                    "isDeleted": false,
+                    "isFragmented": false,
+                    "offset": {
+                      "end": 309770,
+                      "start": 309760
+                    },
+                    "path": "/hello.txt",
+                    "size": 11,
+                    "start": 309760,
+                    "type": "txt"
+                  },
+                  {
+                    "fileName": "/sub/h2.txt",
+                    "hash": "F/G1xVRl8wGO8X7tXwDpPI60eg1b2e4+k+qjWLi5EXg=",
+                    "id": "AaE2Ep2fef6N/3GWXYebGw==",
+                    "isDeleted": false,
+                    "isFragmented": false,
+                    "offset": {
+                      "end": 313866,
+                      "start": 313856
+                    },
+                    "path": "/sub/h2.txt",
+                    "size": 11,
+                    "start": 313856,
+                    "type": "txt"
+                  },
+                  {
+                    "fileName": "/pad.bin",
+                    "hash": "ohPjPCaVa2ALk/noui4R2E4uTo83MHup91iHVNfPAzQ=",
+                    "id": "AaE2Ep2fefu1dL+ZC8qF9Q==",
+                    "isDeleted": false,
+                    "isFragmented": false,
+                    "offset": {
+                      "end": 268543,
+                      "start": 18944
+                    },
+                    "path": "/pad.bin",
+                    "size": 249600,
+                    "start": 18944,
+                    "type": "bin"
+                  }
+                ],
+                "size": 1048576,
+                "type": "unknown"
+              }
+            ],
+            "size": 1048576,
+            "status": "completed",
+            "type": "img"
+          },
+          {
+            "completed": true,
+            "failed": false,
+            "fileCount": 1,
+            "hash": "j3LD0gwCXkbB1ImImU9Deb75jXqT8AcwTIJgj5pKpUk=",
+            "id": "AaE2Ep5CfaSrnggUkcoSXA==",
+            "name": "blob.bin",
+            "partitionCount": 0,
+            "partitions": null,
+            "size": 700001,
+            "status": "completed",
+            "type": "bin"
+          }
+        ],
+        "failedEvidence": 0,
+        "pendingEvidence": 0,
+        "scanCompleted": 2,
+        "scanFailed": 0,
+        "scanPending": 0,
+        "statusFilter": "all",
+        "totalEvidence": 2
+      },
+      "list_error": null,
+      "mode": "quick",
+      "password": null,
+      "restores": [
+        {
+          "error": null,
+          "hash": "ZdkrV4KHvpiKgZ4AsoguhaMGR+i+wBa+cyhol8oihvI=",
+          "kind": "evidence",
+          "name": "small.img",
+          "sha256": "31d262da5704c2a41a398419cf6b793c19a11b6cb620f2b8ff33595261510b35",
+          "size": 1048576,
+          "status": "ok"
+        },
+        {
+          "error": null,
+          "hash": "ZdkrV4KHvpiKgZ4AsoguhaMGR+i+wBa+cyhol8oihvI=",
+          "kind": "partition",
+          "name": "small.img_p0",
+          "sha256": "31d262da5704c2a41a398419cf6b793c19a11b6cb620f2b8ff33595261510b35",
+          "size": 1048576,
+          "status": "ok"
+        },
+        {
+          "error": " illegal base64 data at input byte 0 ",
+          "hash": "rBRYVPkDukkoIMjDHAHUTpFEY+UlV+kFb1WdvFICjdE=",
+          "kind": "indexed",
+          "name": "/a.bin",
+          "sha256": null,
+          "size": null,
+          "status": "error"
+        },
+        {
+          "error": " illegal base64 data at input byte 0 ",
+          "hash": "F/G1xVRl8wGO8X7tXwDpPI60eg1b2e4+k+qjWLi5EXg=",
+          "kind": "indexed",
+          "name": "/hello.txt",
+          "sha256": null,
+          "size": null,
+          "status": "error"
+        },
+        {
+          "error": " illegal base64 data at input byte 0 ",
+          "hash": "F/G1xVRl8wGO8X7tXwDpPI60eg1b2e4+k+qjWLi5EXg=",
+          "kind": "indexed",
+          "name": "/sub/h2.txt",
+          "sha256": null,
+          "size": null,
+          "status": "error"
+        },
+        {
+          "error": " illegal base64 data at input byte 0 ",
+          "hash": "ohPjPCaVa2ALk/noui4R2E4uTo83MHup91iHVNfPAzQ=",
+          "kind": "indexed",
+          "name": "/pad.bin",
+          "sha256": null,
+          "size": null,
+          "status": "error"
+        },
+        {
+          "error": null,
+          "hash": "j3LD0gwCXkbB1ImImU9Deb75jXqT8AcwTIJgj5pKpUk=",
+          "kind": "evidence",
+          "name": "blob.bin",
+          "sha256": "dc3a4d2a0f7b820fb467b58a6ae390152a275dac6e2639d8aea7b1d5dda52898",
+          "size": 700001,
+          "status": "ok"
+        }
+      ],
+      "store_errors": null,
+      "store_logs": {
+        "blob.bin": [
+          "683.59 KiB / 683.59 KiB [-------------------------------------] 100.00% ? p/s 0sOperation completed in: 25.5446ms",
+          "Saving Evidence File: blob.bin",
+          "25% {=========>..............................}  [0s:0s]",
+          "62% {========================>...............} (206 MB/s) [0s:0s]",
+          "100% {========================================} (189 MB/s)",
+          "Stored in: 32.4245ms"
+        ],
+        "small.img": [
+          "Linking indexed hash lookups...",
+          "Linking hash lookups 100% {========================================}",
+          "Indexed hash lookup linking complete.",
+          "Persisting partition metadata...",
+          "Partition metadata persist complete.",
+          "Stored in: 63.915ms"
+        ]
+      },
+      "volume_files": {
+        "/a.bin": {
+          "sha256": "3ba3301ad7d5a00023d4d6ec9a2f7d39613506d8922804d2cae937d988f9a83c",
+          "size": 40000
+        },
+        "/empty.txt": {
+          "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "size": 0
+        },
+        "/hello.txt": {
+          "sha256": "904ac5f381eac585b1fff97fdb25b7fe4513c0c3e80a952f87e73489d014d489",
+          "size": 11
+        },
+        "/pad.bin": {
+          "sha256": "53971c244b86e5f901e0027fb94fba163dbb4540bb2fc750a70e07d032eac045",
+          "size": 249600
+        },
+        "/sub/h2.txt": {
+          "sha256": "904ac5f381eac585b1fff97fdb25b7fe4513c0c3e80a952f87e73489d014d489",
+          "size": 11
+        }
+      }
+    },
+    {
+      "archive": "quick-password.tar.zst",
+      "commit": "41dbc74",
+      "flags": [
+        "--quick",
+        "--password",
+        "fixture-pass"
+      ],
+      "inputs": [
+        {
+          "name": "small.img",
+          "sha256": "31d262da5704c2a41a398419cf6b793c19a11b6cb620f2b8ff33595261510b35",
+          "size": 1048576
+        },
+        {
+          "name": "blob.bin",
+          "sha256": "dc3a4d2a0f7b820fb467b58a6ae390152a275dac6e2639d8aea7b1d5dda52898",
+          "size": 700001
+        }
+      ],
+      "list": {
+        "completedEvidence": 2,
+        "evidence": [
+          {
+            "completed": true,
+            "failed": false,
+            "fileCount": 1,
+            "hash": "ZdkrV4KHvpiKgZ4AsoguhaMGR+i+wBa+cyhol8oihvI=",
+            "id": "AaE2Eq3sdrKMKIcRnGShMQ==",
+            "name": "small.img",
+            "partitionCount": 1,
+            "partitions": [
+              {
+                "fileCount": 1,
+                "fileName": "small.img_p0",
+                "hash": "ZdkrV4KHvpiKgZ4AsoguhaMGR+i+wBa+cyhol8oihvI=",
+                "id": "AaE2Eq4pe+GYMWl4Cc2pkA==",
+                "indexedCount": 4,
+                "indexedFiles": [
+                  {
+                    "fileName": "/pad.bin",
+                    "hash": "ohPjPCaVa2ALk/noui4R2E4uTo83MHup91iHVNfPAzQ=",
+                    "id": "AaE2Eq4qdF6gyA4vqKi4MQ==",
+                    "isDeleted": false,
+                    "isFragmented": false,
+                    "offset": {
+                      "end": 268543,
+                      "start": 18944
+                    },
+                    "path": "/pad.bin",
+                    "size": 249600,
+                    "start": 18944,
+                    "type": "bin"
+                  },
+                  {
+                    "fileName": "/a.bin",
+                    "hash": "rBRYVPkDukkoIMjDHAHUTpFEY+UlV+kFb1WdvFICjdE=",
+                    "id": "AaE2Eq4qdF+lxRXii/76fQ==",
+                    "isDeleted": false,
+                    "isFragmented": false,
+                    "offset": {
+                      "end": 308799,
+                      "start": 268800
+                    },
+                    "path": "/a.bin",
+                    "size": 40000,
+                    "start": 268800,
+                    "type": "bin"
+                  },
+                  {
+                    "fileName": "/hello.txt",
+                    "hash": "F/G1xVRl8wGO8X7tXwDpPI60eg1b2e4+k+qjWLi5EXg=",
+                    "id": "AaE2Eq4qdGCwHjakYz0bsA==",
+                    "isDeleted": false,
+                    "isFragmented": false,
+                    "offset": {
+                      "end": 309770,
+                      "start": 309760
+                    },
+                    "path": "/hello.txt",
+                    "size": 11,
+                    "start": 309760,
+                    "type": "txt"
+                  },
+                  {
+                    "fileName": "/sub/h2.txt",
+                    "hash": "F/G1xVRl8wGO8X7tXwDpPI60eg1b2e4+k+qjWLi5EXg=",
+                    "id": "AaE2Eq4qdGGaiUNqpfbKiw==",
+                    "isDeleted": false,
+                    "isFragmented": false,
+                    "offset": {
+                      "end": 313866,
+                      "start": 313856
+                    },
+                    "path": "/sub/h2.txt",
+                    "size": 11,
+                    "start": 313856,
+                    "type": "txt"
+                  }
+                ],
+                "size": 1048576,
+                "type": "unknown"
+              }
+            ],
+            "size": 1048576,
+            "status": "completed",
+            "type": "img"
+          },
+          {
+            "completed": true,
+            "failed": false,
+            "fileCount": 1,
+            "hash": "j3LD0gwCXkbB1ImImU9Deb75jXqT8AcwTIJgj5pKpUk=",
+            "id": "AaE2Eq7Tc3ywVfKERSAitA==",
+            "name": "blob.bin",
+            "partitionCount": 0,
+            "partitions": null,
+            "size": 700001,
+            "status": "completed",
+            "type": "bin"
+          }
+        ],
+        "failedEvidence": 0,
+        "pendingEvidence": 0,
+        "scanCompleted": 2,
+        "scanFailed": 0,
+        "scanPending": 0,
+        "statusFilter": "all",
+        "totalEvidence": 2
+      },
+      "list_error": null,
+      "mode": "quick-password",
+      "password": "fixture-pass",
+      "restores": [
+        {
+          "error": null,
+          "hash": "ZdkrV4KHvpiKgZ4AsoguhaMGR+i+wBa+cyhol8oihvI=",
+          "kind": "evidence",
+          "name": "small.img",
+          "sha256": "31d262da5704c2a41a398419cf6b793c19a11b6cb620f2b8ff33595261510b35",
+          "size": 1048576,
+          "status": "ok"
+        },
+        {
+          "error": null,
+          "hash": "ZdkrV4KHvpiKgZ4AsoguhaMGR+i+wBa+cyhol8oihvI=",
+          "kind": "partition",
+          "name": "small.img_p0",
+          "sha256": "31d262da5704c2a41a398419cf6b793c19a11b6cb620f2b8ff33595261510b35",
+          "size": 1048576,
+          "status": "ok"
+        },
+        {
+          "error": " illegal base64 data at input byte 0 ",
+          "hash": "ohPjPCaVa2ALk/noui4R2E4uTo83MHup91iHVNfPAzQ=",
+          "kind": "indexed",
+          "name": "/pad.bin",
+          "sha256": null,
+          "size": null,
+          "status": "error"
+        },
+        {
+          "error": " illegal base64 data at input byte 0 ",
+          "hash": "rBRYVPkDukkoIMjDHAHUTpFEY+UlV+kFb1WdvFICjdE=",
+          "kind": "indexed",
+          "name": "/a.bin",
+          "sha256": null,
+          "size": null,
+          "status": "error"
+        },
+        {
+          "error": " illegal base64 data at input byte 0 ",
+          "hash": "F/G1xVRl8wGO8X7tXwDpPI60eg1b2e4+k+qjWLi5EXg=",
+          "kind": "indexed",
+          "name": "/hello.txt",
+          "sha256": null,
+          "size": null,
+          "status": "error"
+        },
+        {
+          "error": " illegal base64 data at input byte 0 ",
+          "hash": "F/G1xVRl8wGO8X7tXwDpPI60eg1b2e4+k+qjWLi5EXg=",
+          "kind": "indexed",
+          "name": "/sub/h2.txt",
+          "sha256": null,
+          "size": null,
+          "status": "error"
+        },
+        {
+          "error": null,
+          "hash": "j3LD0gwCXkbB1ImImU9Deb75jXqT8AcwTIJgj5pKpUk=",
+          "kind": "evidence",
+          "name": "blob.bin",
+          "sha256": "dc3a4d2a0f7b820fb467b58a6ae390152a275dac6e2639d8aea7b1d5dda52898",
+          "size": 700001,
+          "status": "ok"
+        }
+      ],
+      "store_errors": null,
+      "store_logs": {
+        "blob.bin": [
+          "683.59 KiB / 683.59 KiB [-------------------------------------] 100.00% ? p/s 0sOperation completed in: 31.8911ms",
+          "Saving Evidence File: blob.bin",
+          "25% {=========>..............................}  [0s:0s]",
+          "62% {========================>...............} (205 MB/s) [0s:0s]",
+          "100% {========================================} (188 MB/s)",
+          "Stored in: 38.8868ms"
+        ],
+        "small.img": [
+          "Linking indexed hash lookups...",
+          "Linking hash lookups 100% {========================================}",
+          "Indexed hash lookup linking complete.",
+          "Persisting partition metadata...",
+          "Partition metadata persist complete.",
+          "Stored in: 66.6359ms"
+        ]
+      },
+      "volume_files": {
+        "/a.bin": {
+          "sha256": "3ba3301ad7d5a00023d4d6ec9a2f7d39613506d8922804d2cae937d988f9a83c",
+          "size": 40000
+        },
+        "/empty.txt": {
+          "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "size": 0
+        },
+        "/hello.txt": {
+          "sha256": "904ac5f381eac585b1fff97fdb25b7fe4513c0c3e80a952f87e73489d014d489",
+          "size": 11
+        },
+        "/pad.bin": {
+          "sha256": "53971c244b86e5f901e0027fb94fba163dbb4540bb2fc750a70e07d032eac045",
+          "size": 249600
+        },
+        "/sub/h2.txt": {
+          "sha256": "904ac5f381eac585b1fff97fdb25b7fe4513c0c3e80a952f87e73489d014d489",
+          "size": 11
+        }
+      }
+    },
+    {
+      "archive": "container.tar.zst",
+      "commit": "41dbc74",
+      "flags": [
+        "--container"
+      ],
+      "inputs": [
+        {
+          "name": "small.img",
+          "sha256": "31d262da5704c2a41a398419cf6b793c19a11b6cb620f2b8ff33595261510b35",
+          "size": 1048576
+        },
+        {
+          "name": "blob.bin",
+          "sha256": "dc3a4d2a0f7b820fb467b58a6ae390152a275dac6e2639d8aea7b1d5dda52898",
+          "size": 700001
+        }
+      ],
+      "list": {
+        "completedEvidence": 2,
+        "evidence": [
+          {
+            "completed": true,
+            "failed": false,
+            "fileCount": 1,
+            "hash": "ZdkrV4KHvpiKgZ4AsoguhaMGR+i+wBa+cyhol8oihvI=",
+            "id": "AaE2Er3CeYKew27qVqiGLg==",
+            "name": "small.img",
+            "partitionCount": 1,
+            "partitions": [
+              {
+                "fileCount": 1,
+                "fileName": "small.img_p0",
+                "hash": "ZdkrV4KHvpiKgZ4AsoguhaMGR+i+wBa+cyhol8oihvI=",
+                "id": "AaE2Er4DcxGbOCWyG4wMQw==",
+                "indexedCount": 4,
+                "indexedFiles": [
+                  {
+                    "fileName": "/hello.txt",
+                    "hash": "F/G1xVRl8wGO8X7tXwDpPI60eg1b2e4+k+qjWLi5EXg=",
+                    "id": "AaE2Er4De4W5d3UCks62HQ==",
+                    "isDeleted": false,
+                    "isFragmented": false,
+                    "offset": {
+                      "end": 309770,
+                      "start": 309760
+                    },
+                    "path": "/hello.txt",
+                    "size": 11,
+                    "start": 309760,
+                    "type": "txt"
+                  },
+                  {
+                    "fileName": "/sub/h2.txt",
+                    "hash": "F/G1xVRl8wGO8X7tXwDpPI60eg1b2e4+k+qjWLi5EXg=",
+                    "id": "AaE2Er4De4aLVy8qN5QvNQ==",
+                    "isDeleted": false,
+                    "isFragmented": false,
+                    "offset": {
+                      "end": 313866,
+                      "start": 313856
+                    },
+                    "path": "/sub/h2.txt",
+                    "size": 11,
+                    "start": 313856,
+                    "type": "txt"
+                  },
+                  {
+                    "fileName": "/pad.bin",
+                    "hash": "ohPjPCaVa2ALk/noui4R2E4uTo83MHup91iHVNfPAzQ=",
+                    "id": "AaE2Er4De4OrA+1BbDhA2A==",
+                    "isDeleted": false,
+                    "isFragmented": false,
+                    "offset": {
+                      "end": 268543,
+                      "start": 18944
+                    },
+                    "path": "/pad.bin",
+                    "size": 249600,
+                    "start": 18944,
+                    "type": "bin"
+                  },
+                  {
+                    "fileName": "/a.bin",
+                    "hash": "rBRYVPkDukkoIMjDHAHUTpFEY+UlV+kFb1WdvFICjdE=",
+                    "id": "AaE2Er4De4SCzW1Y3ZnZUA==",
+                    "isDeleted": false,
+                    "isFragmented": false,
+                    "offset": {
+                      "end": 308799,
+                      "start": 268800
+                    },
+                    "path": "/a.bin",
+                    "size": 40000,
+                    "start": 268800,
+                    "type": "bin"
+                  }
+                ],
+                "size": 1048576,
+                "type": "unknown"
+              }
+            ],
+            "size": 1048576,
+            "status": "completed",
+            "type": "img"
+          },
+          {
+            "completed": true,
+            "failed": false,
+            "fileCount": 1,
+            "hash": "j3LD0gwCXkbB1ImImU9Deb75jXqT8AcwTIJgj5pKpUk=",
+            "id": "AaE2Er7Ze8ChY3cu9HbDag==",
+            "name": "blob.bin",
+            "partitionCount": 0,
+            "partitions": null,
+            "size": 700001,
+            "status": "completed",
+            "type": "bin"
+          }
+        ],
+        "failedEvidence": 0,
+        "pendingEvidence": 0,
+        "scanCompleted": 2,
+        "scanFailed": 0,
+        "scanPending": 0,
+        "statusFilter": "all",
+        "totalEvidence": 2
+      },
+      "list_error": null,
+      "mode": "container",
+      "password": null,
+      "restores": [
+        {
+          "error": null,
+          "hash": "ZdkrV4KHvpiKgZ4AsoguhaMGR+i+wBa+cyhol8oihvI=",
+          "kind": "evidence",
+          "name": "small.img",
+          "sha256": "31d262da5704c2a41a398419cf6b793c19a11b6cb620f2b8ff33595261510b35",
+          "size": 1048576,
+          "status": "ok"
+        },
+        {
+          "error": null,
+          "hash": "ZdkrV4KHvpiKgZ4AsoguhaMGR+i+wBa+cyhol8oihvI=",
+          "kind": "partition",
+          "name": "small.img_p0",
+          "sha256": "31d262da5704c2a41a398419cf6b793c19a11b6cb620f2b8ff33595261510b35",
+          "size": 1048576,
+          "status": "ok"
+        },
+        {
+          "error": " illegal base64 data at input byte 0 ",
+          "hash": "F/G1xVRl8wGO8X7tXwDpPI60eg1b2e4+k+qjWLi5EXg=",
+          "kind": "indexed",
+          "name": "/hello.txt",
+          "sha256": null,
+          "size": null,
+          "status": "error"
+        },
+        {
+          "error": " illegal base64 data at input byte 0 ",
+          "hash": "F/G1xVRl8wGO8X7tXwDpPI60eg1b2e4+k+qjWLi5EXg=",
+          "kind": "indexed",
+          "name": "/sub/h2.txt",
+          "sha256": null,
+          "size": null,
+          "status": "error"
+        },
+        {
+          "error": " illegal base64 data at input byte 0 ",
+          "hash": "ohPjPCaVa2ALk/noui4R2E4uTo83MHup91iHVNfPAzQ=",
+          "kind": "indexed",
+          "name": "/pad.bin",
+          "sha256": null,
+          "size": null,
+          "status": "error"
+        },
+        {
+          "error": " illegal base64 data at input byte 0 ",
+          "hash": "rBRYVPkDukkoIMjDHAHUTpFEY+UlV+kFb1WdvFICjdE=",
+          "kind": "indexed",
+          "name": "/a.bin",
+          "sha256": null,
+          "size": null,
+          "status": "error"
+        },
+        {
+          "error": " cipher: message authentication failed ",
+          "hash": "j3LD0gwCXkbB1ImImU9Deb75jXqT8AcwTIJgj5pKpUk=",
+          "kind": "evidence",
+          "name": "blob.bin",
+          "sha256": null,
+          "size": null,
+          "status": "error"
+        }
+      ],
+      "store_errors": null,
+      "store_logs": {
+        "blob.bin": [
+          "683.59 KiB / 683.59 KiB [-------------------------------------] 100.00% ? p/s 0sOperation completed in: 32.0134ms",
+          "Saving Evidence File: blob.bin",
+          "37% {=============>..........................}  [0s:0s]",
+          "62% {========================>...............} (20 MB/s) [0s:0s]",
+          "100% {========================================} (14 MB/s)",
+          "Stored in: 120.2222ms"
+        ],
+        "small.img": [
+          "Linking indexed hash lookups...",
+          "Linking hash lookups 100% {========================================}",
+          "Indexed hash lookup linking complete.",
+          "Persisting partition metadata...",
+          "Partition metadata persist complete.",
+          "Stored in: 73.5915ms"
+        ]
+      },
+      "volume_files": {
+        "/a.bin": {
+          "sha256": "3ba3301ad7d5a00023d4d6ec9a2f7d39613506d8922804d2cae937d988f9a83c",
+          "size": 40000
+        },
+        "/empty.txt": {
+          "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "size": 0
+        },
+        "/hello.txt": {
+          "sha256": "904ac5f381eac585b1fff97fdb25b7fe4513c0c3e80a952f87e73489d014d489",
+          "size": 11
+        },
+        "/pad.bin": {
+          "sha256": "53971c244b86e5f901e0027fb94fba163dbb4540bb2fc750a70e07d032eac045",
+          "size": 249600
+        },
+        "/sub/h2.txt": {
+          "sha256": "904ac5f381eac585b1fff97fdb25b7fe4513c0c3e80a952f87e73489d014d489",
+          "size": 11
+        }
+      }
+    },
+    {
+      "archive": "container-password.tar.zst",
+      "commit": "41dbc74",
+      "flags": [
+        "--container",
+        "--password",
+        "fixture-pass"
+      ],
+      "inputs": [
+        {
+          "name": "small.img",
+          "sha256": "31d262da5704c2a41a398419cf6b793c19a11b6cb620f2b8ff33595261510b35",
+          "size": 1048576
+        },
+        {
+          "name": "blob.bin",
+          "sha256": "dc3a4d2a0f7b820fb467b58a6ae390152a275dac6e2639d8aea7b1d5dda52898",
+          "size": 700001
+        }
+      ],
+      "list": {
+        "completedEvidence": 2,
+        "evidence": [
+          {
+            "completed": true,
+            "failed": false,
+            "fileCount": 1,
+            "hash": "ZdkrV4KHvpiKgZ4AsoguhaMGR+i+wBa+cyhol8oihvI=",
+            "id": "AaE2Es8kdm24NOCSHfXH9Q==",
+            "name": "small.img",
+            "partitionCount": 1,
+            "partitions": [
+              {
+                "fileCount": 1,
+                "fileName": "small.img_p0",
+                "hash": "ZdkrV4KHvpiKgZ4AsoguhaMGR+i+wBa+cyhol8oihvI=",
+                "id": "AaE2Es9ydky9Bu8RVQVjtQ==",
+                "indexedCount": 4,
+                "indexedFiles": [
+                  {
+                    "fileName": "/a.bin",
+                    "hash": "rBRYVPkDukkoIMjDHAHUTpFEY+UlV+kFb1WdvFICjdE=",
+                    "id": "AaE2Es9yfhSTho/oWQcGaA==",
+                    "isDeleted": false,
+                    "isFragmented": false,
+                    "offset": {
+                      "end": 308799,
+                      "start": 268800
+                    },
+                    "path": "/a.bin",
+                    "size": 40000,
+                    "start": 268800,
+                    "type": "bin"
+                  },
+                  {
+                    "fileName": "/hello.txt",
+                    "hash": "F/G1xVRl8wGO8X7tXwDpPI60eg1b2e4+k+qjWLi5EXg=",
+                    "id": "AaE2Es9yfhW/6gocrNNLqg==",
+                    "isDeleted": false,
+                    "isFragmented": false,
+                    "offset": {
+                      "end": 309770,
+                      "start": 309760
+                    },
+                    "path": "/hello.txt",
+                    "size": 11,
+                    "start": 309760,
+                    "type": "txt"
+                  },
+                  {
+                    "fileName": "/sub/h2.txt",
+                    "hash": "F/G1xVRl8wGO8X7tXwDpPI60eg1b2e4+k+qjWLi5EXg=",
+                    "id": "AaE2Es9yfha/5Jpm1zeQPA==",
+                    "isDeleted": false,
+                    "isFragmented": false,
+                    "offset": {
+                      "end": 313866,
+                      "start": 313856
+                    },
+                    "path": "/sub/h2.txt",
+                    "size": 11,
+                    "start": 313856,
+                    "type": "txt"
+                  },
+                  {
+                    "fileName": "/pad.bin",
+                    "hash": "ohPjPCaVa2ALk/noui4R2E4uTo83MHup91iHVNfPAzQ=",
+                    "id": "AaE2Es9yfhOuXKCeIEL5Dw==",
+                    "isDeleted": false,
+                    "isFragmented": false,
+                    "offset": {
+                      "end": 268543,
+                      "start": 18944
+                    },
+                    "path": "/pad.bin",
+                    "size": 249600,
+                    "start": 18944,
+                    "type": "bin"
+                  }
+                ],
+                "size": 1048576,
+                "type": "unknown"
+              }
+            ],
+            "size": 1048576,
+            "status": "completed",
+            "type": "img"
+          },
+          {
+            "completed": true,
+            "failed": false,
+            "fileCount": 1,
+            "hash": "j3LD0gwCXkbB1ImImU9Deb75jXqT8AcwTIJgj5pKpUk=",
+            "id": "AaE2EtBZfEGmKmWKPYf4+g==",
+            "name": "blob.bin",
+            "partitionCount": 0,
+            "partitions": null,
+            "size": 700001,
+            "status": "completed",
+            "type": "bin"
+          }
+        ],
+        "failedEvidence": 0,
+        "pendingEvidence": 0,
+        "scanCompleted": 2,
+        "scanFailed": 0,
+        "scanPending": 0,
+        "statusFilter": "all",
+        "totalEvidence": 2
+      },
+      "list_error": null,
+      "mode": "container-password",
+      "password": "fixture-pass",
+      "restores": [
+        {
+          "error": null,
+          "hash": "ZdkrV4KHvpiKgZ4AsoguhaMGR+i+wBa+cyhol8oihvI=",
+          "kind": "evidence",
+          "name": "small.img",
+          "sha256": "31d262da5704c2a41a398419cf6b793c19a11b6cb620f2b8ff33595261510b35",
+          "size": 1048576,
+          "status": "ok"
+        },
+        {
+          "error": null,
+          "hash": "ZdkrV4KHvpiKgZ4AsoguhaMGR+i+wBa+cyhol8oihvI=",
+          "kind": "partition",
+          "name": "small.img_p0",
+          "sha256": "31d262da5704c2a41a398419cf6b793c19a11b6cb620f2b8ff33595261510b35",
+          "size": 1048576,
+          "status": "ok"
+        },
+        {
+          "error": " illegal base64 data at input byte 0 ",
+          "hash": "rBRYVPkDukkoIMjDHAHUTpFEY+UlV+kFb1WdvFICjdE=",
+          "kind": "indexed",
+          "name": "/a.bin",
+          "sha256": null,
+          "size": null,
+          "status": "error"
+        },
+        {
+          "error": " illegal base64 data at input byte 0 ",
+          "hash": "F/G1xVRl8wGO8X7tXwDpPI60eg1b2e4+k+qjWLi5EXg=",
+          "kind": "indexed",
+          "name": "/hello.txt",
+          "sha256": null,
+          "size": null,
+          "status": "error"
+        },
+        {
+          "error": " illegal base64 data at input byte 0 ",
+          "hash": "F/G1xVRl8wGO8X7tXwDpPI60eg1b2e4+k+qjWLi5EXg=",
+          "kind": "indexed",
+          "name": "/sub/h2.txt",
+          "sha256": null,
+          "size": null,
+          "status": "error"
+        },
+        {
+          "error": " illegal base64 data at input byte 0 ",
+          "hash": "ohPjPCaVa2ALk/noui4R2E4uTo83MHup91iHVNfPAzQ=",
+          "kind": "indexed",
+          "name": "/pad.bin",
+          "sha256": null,
+          "size": null,
+          "status": "error"
+        },
+        {
+          "error": " cipher: message authentication failed ",
+          "hash": "j3LD0gwCXkbB1ImImU9Deb75jXqT8AcwTIJgj5pKpUk=",
+          "kind": "evidence",
+          "name": "blob.bin",
+          "sha256": null,
+          "size": null,
+          "status": "error"
+        }
+      ],
+      "store_errors": null,
+      "store_logs": {
+        "blob.bin": [
+          "683.59 KiB / 683.59 KiB [-------------------------------------] 100.00% ? p/s 0sOperation completed in: 28.9198ms",
+          "Saving Evidence File: blob.bin",
+          "25% {=========>..............................}  [0s:0s]",
+          "62% {========================>...............} (17 MB/s) [0s:0s]",
+          "100% {========================================} (7.8 MB/s)",
+          "Stored in: 146.6512ms"
+        ],
+        "small.img": [
+          "Linking indexed hash lookups...",
+          "Linking hash lookups 100% {========================================}",
+          "Indexed hash lookup linking complete.",
+          "Persisting partition metadata...",
+          "Partition metadata persist complete.",
+          "Stored in: 89.2577ms"
+        ]
+      },
+      "volume_files": {
+        "/a.bin": {
+          "sha256": "3ba3301ad7d5a00023d4d6ec9a2f7d39613506d8922804d2cae937d988f9a83c",
+          "size": 40000
+        },
+        "/empty.txt": {
+          "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "size": 0
+        },
+        "/hello.txt": {
+          "sha256": "904ac5f381eac585b1fff97fdb25b7fe4513c0c3e80a952f87e73489d014d489",
+          "size": 11
+        },
+        "/pad.bin": {
+          "sha256": "53971c244b86e5f901e0027fb94fba163dbb4540bb2fc750a70e07d032eac045",
+          "size": 249600
+        },
+        "/sub/h2.txt": {
+          "sha256": "904ac5f381eac585b1fff97fdb25b7fe4513c0c3e80a952f87e73489d014d489",
+          "size": 11
+        }
+      }
+    },
+    {
+      "archive": "container-bidx.tar.zst",
+      "commit": "41dbc74",
+      "flags": [
+        "--container",
+        "--hierarchical"
+      ],
+      "inputs": [
+        {
+          "name": "small.img",
+          "sha256": "31d262da5704c2a41a398419cf6b793c19a11b6cb620f2b8ff33595261510b35",
+          "size": 1048576
+        },
+        {
+          "name": "blob.bin",
+          "sha256": "dc3a4d2a0f7b820fb467b58a6ae390152a275dac6e2639d8aea7b1d5dda52898",
+          "size": 700001
+        }
+      ],
+      "list": {
+        "completedEvidence": 2,
+        "evidence": [
+          {
+            "completed": true,
+            "failed": false,
+            "fileCount": 1,
+            "hash": "ZdkrV4KHvpiKgZ4AsoguhaMGR+i+wBa+cyhol8oihvI=",
+            "id": "AaE2Et/DdwmK593zotoVlQ==",
+            "name": "small.img",
+            "partitionCount": 1,
+            "partitions": [
+              {
+                "fileCount": 1,
+                "fileName": "small.img_p0",
+                "hash": "ZdkrV4KHvpiKgZ4AsoguhaMGR+i+wBa+cyhol8oihvI=",
+                "id": "AaE2EuABdmys5FtY+/gW9w==",
+                "indexedCount": 4,
+                "indexedFiles": [
+                  {
+                    "fileName": "/sub/h2.txt",
+                    "hash": "F/G1xVRl8wGO8X7tXwDpPI60eg1b2e4+k+qjWLi5EXg=",
+                    "id": "AaE2EuABfiyDhYBWocE5+A==",
+                    "isDeleted": false,
+                    "isFragmented": false,
+                    "offset": {
+                      "end": 313866,
+                      "start": 313856
+                    },
+                    "path": "/sub/h2.txt",
+                    "size": 11,
+                    "start": 313856,
+                    "type": "txt"
+                  },
+                  {
+                    "fileName": "/pad.bin",
+                    "hash": "ohPjPCaVa2ALk/noui4R2E4uTo83MHup91iHVNfPAzQ=",
+                    "id": "AaE2EuABfim1Icw0nsg9qQ==",
+                    "isDeleted": false,
+                    "isFragmented": false,
+                    "offset": {
+                      "end": 268543,
+                      "start": 18944
+                    },
+                    "path": "/pad.bin",
+                    "size": 249600,
+                    "start": 18944,
+                    "type": "bin"
+                  },
+                  {
+                    "fileName": "/a.bin",
+                    "hash": "rBRYVPkDukkoIMjDHAHUTpFEY+UlV+kFb1WdvFICjdE=",
+                    "id": "AaE2EuABfiqYGlLR6+7r4g==",
+                    "isDeleted": false,
+                    "isFragmented": false,
+                    "offset": {
+                      "end": 308799,
+                      "start": 268800
+                    },
+                    "path": "/a.bin",
+                    "size": 40000,
+                    "start": 268800,
+                    "type": "bin"
+                  },
+                  {
+                    "fileName": "/hello.txt",
+                    "hash": "F/G1xVRl8wGO8X7tXwDpPI60eg1b2e4+k+qjWLi5EXg=",
+                    "id": "AaE2EuABfiu7que/BN7RsQ==",
+                    "isDeleted": false,
+                    "isFragmented": false,
+                    "offset": {
+                      "end": 309770,
+                      "start": 309760
+                    },
+                    "path": "/hello.txt",
+                    "size": 11,
+                    "start": 309760,
+                    "type": "txt"
+                  }
+                ],
+                "size": 1048576,
+                "type": "unknown"
+              }
+            ],
+            "size": 1048576,
+            "status": "completed",
+            "type": "img"
+          },
+          {
+            "completed": true,
+            "failed": false,
+            "fileCount": 1,
+            "hash": "j3LD0gwCXkbB1ImImU9Deb75jXqT8AcwTIJgj5pKpUk=",
+            "id": "AaE2EuDrdJmE/Mihjie9mg==",
+            "name": "blob.bin",
+            "partitionCount": 0,
+            "partitions": null,
+            "size": 700001,
+            "status": "completed",
+            "type": "bin"
+          }
+        ],
+        "failedEvidence": 0,
+        "pendingEvidence": 0,
+        "scanCompleted": 2,
+        "scanFailed": 0,
+        "scanPending": 0,
+        "statusFilter": "all",
+        "totalEvidence": 2
+      },
+      "list_error": null,
+      "mode": "container-bidx",
+      "password": null,
+      "restores": [
+        {
+          "error": null,
+          "hash": "ZdkrV4KHvpiKgZ4AsoguhaMGR+i+wBa+cyhol8oihvI=",
+          "kind": "evidence",
+          "name": "small.img",
+          "sha256": "31d262da5704c2a41a398419cf6b793c19a11b6cb620f2b8ff33595261510b35",
+          "size": 1048576,
+          "status": "ok"
+        },
+        {
+          "error": null,
+          "hash": "ZdkrV4KHvpiKgZ4AsoguhaMGR+i+wBa+cyhol8oihvI=",
+          "kind": "partition",
+          "name": "small.img_p0",
+          "sha256": "31d262da5704c2a41a398419cf6b793c19a11b6cb620f2b8ff33595261510b35",
+          "size": 1048576,
+          "status": "ok"
+        },
+        {
+          "error": " illegal base64 data at input byte 0 ",
+          "hash": "F/G1xVRl8wGO8X7tXwDpPI60eg1b2e4+k+qjWLi5EXg=",
+          "kind": "indexed",
+          "name": "/sub/h2.txt",
+          "sha256": null,
+          "size": null,
+          "status": "error"
+        },
+        {
+          "error": " illegal base64 data at input byte 0 ",
+          "hash": "ohPjPCaVa2ALk/noui4R2E4uTo83MHup91iHVNfPAzQ=",
+          "kind": "indexed",
+          "name": "/pad.bin",
+          "sha256": null,
+          "size": null,
+          "status": "error"
+        },
+        {
+          "error": " illegal base64 data at input byte 0 ",
+          "hash": "rBRYVPkDukkoIMjDHAHUTpFEY+UlV+kFb1WdvFICjdE=",
+          "kind": "indexed",
+          "name": "/a.bin",
+          "sha256": null,
+          "size": null,
+          "status": "error"
+        },
+        {
+          "error": " illegal base64 data at input byte 0 ",
+          "hash": "F/G1xVRl8wGO8X7tXwDpPI60eg1b2e4+k+qjWLi5EXg=",
+          "kind": "indexed",
+          "name": "/hello.txt",
+          "sha256": null,
+          "size": null,
+          "status": "error"
+        },
+        {
+          "error": " cipher: message authentication failed ",
+          "hash": "j3LD0gwCXkbB1ImImU9Deb75jXqT8AcwTIJgj5pKpUk=",
+          "kind": "evidence",
+          "name": "blob.bin",
+          "sha256": null,
+          "size": null,
+          "status": "error"
+        }
+      ],
+      "store_errors": null,
+      "store_logs": {
+        "blob.bin": [
+          "683.59 KiB / 683.59 KiB [-------------------------------------] 100.00% ? p/s 0sOperation completed in: 26.9821ms",
+          "Saving Evidence File: blob.bin",
+          "25% {=========>..............................}  [0s:0s]",
+          "62% {========================>...............} (16 MB/s) [0s:0s]",
+          "100% {========================================} (14 MB/s)",
+          "Stored in: 106.9864ms"
+        ],
+        "small.img": [
+          "Linking indexed hash lookups...",
+          "Linking hash lookups 100% {========================================}",
+          "Indexed hash lookup linking complete.",
+          "Persisting partition metadata...",
+          "Partition metadata persist complete.",
+          "Stored in: 71.8031ms"
+        ]
+      },
+      "volume_files": {
+        "/a.bin": {
+          "sha256": "3ba3301ad7d5a00023d4d6ec9a2f7d39613506d8922804d2cae937d988f9a83c",
+          "size": 40000
+        },
+        "/empty.txt": {
+          "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "size": 0
+        },
+        "/hello.txt": {
+          "sha256": "904ac5f381eac585b1fff97fdb25b7fe4513c0c3e80a952f87e73489d014d489",
+          "size": 11
+        },
+        "/pad.bin": {
+          "sha256": "53971c244b86e5f901e0027fb94fba163dbb4540bb2fc750a70e07d032eac045",
+          "size": 249600
+        },
+        "/sub/h2.txt": {
+          "sha256": "904ac5f381eac585b1fff97fdb25b7fe4513c0c3e80a952f87e73489d014d489",
+          "size": 11
+        }
+      }
+    },
+    {
+      "archive": "sha3.tar.zst",
+      "commit": "41dbc74",
+      "flags": [
+        "--hash-algo",
+        "sha3"
+      ],
+      "inputs": [
+        {
+          "name": "small.img",
+          "sha256": "31d262da5704c2a41a398419cf6b793c19a11b6cb620f2b8ff33595261510b35",
+          "size": 1048576
+        },
+        {
+          "name": "blob.bin",
+          "sha256": "dc3a4d2a0f7b820fb467b58a6ae390152a275dac6e2639d8aea7b1d5dda52898",
+          "size": 700001
+        }
+      ],
+      "list": {
+        "completedEvidence": 2,
+        "evidence": [
+          {
+            "completed": true,
+            "failed": false,
+            "fileCount": 1,
+            "hash": "SgWDhCfy4GZ2CaRsPEvo4M+DfJe9liJuflNJJRlhsfs=",
+            "id": "AaE2Eu6CeMip/AzPSrDS5w==",
+            "name": "small.img",
+            "partitionCount": 1,
+            "partitions": [
+              {
+                "fileCount": 1,
+                "fileName": "small.img_p0",
+                "hash": "SgWDhCfy4GZ2CaRsPEvo4M+DfJe9liJuflNJJRlhsfs=",
+                "id": "AaE2Eu65dXWtrzv+maUW5Q==",
+                "indexedCount": 4,
+                "indexedFiles": [
+                  {
+                    "fileName": "/a.bin",
+                    "hash": "zr20XezlC31Ed6NhwqcYc0L8iSBDBiHI8tLOKkTyFzM=",
+                    "id": "AaE2Eu66djGiQnXTsD9nmg==",
+                    "isDeleted": false,
+                    "isFragmented": false,
+                    "offset": {
+                      "end": 308799,
+                      "start": 268800
+                    },
+                    "path": "/a.bin",
+                    "size": 40000,
+                    "start": 268800,
+                    "type": "bin"
+                  },
+                  {
+                    "fileName": "/hello.txt",
+                    "hash": "YBsBwUfHCVXUcwcP4TC39fWxi2g8fc+KHkByVQvH850=",
+                    "id": "AaE2Eu66djKRqBWO5kmsaQ==",
+                    "isDeleted": false,
+                    "isFragmented": false,
+                    "offset": {
+                      "end": 309770,
+                      "start": 309760
+                    },
+                    "path": "/hello.txt",
+                    "size": 11,
+                    "start": 309760,
+                    "type": "txt"
+                  },
+                  {
+                    "fileName": "/sub/h2.txt",
+                    "hash": "YBsBwUfHCVXUcwcP4TC39fWxi2g8fc+KHkByVQvH850=",
+                    "id": "AaE2Eu66djOLncD0GX3ZrQ==",
+                    "isDeleted": false,
+                    "isFragmented": false,
+                    "offset": {
+                      "end": 313866,
+                      "start": 313856
+                    },
+                    "path": "/sub/h2.txt",
+                    "size": 11,
+                    "start": 313856,
+                    "type": "txt"
+                  },
+                  {
+                    "fileName": "/pad.bin",
+                    "hash": "44RPQa9Vi4zHHXBp/DdpRw6leWjFwA4vfoh1c0eQpZI=",
+                    "id": "AaE2Eu66djClK5AGCtYigQ==",
+                    "isDeleted": false,
+                    "isFragmented": false,
+                    "offset": {
+                      "end": 268543,
+                      "start": 18944
+                    },
+                    "path": "/pad.bin",
+                    "size": 249600,
+                    "start": 18944,
+                    "type": "bin"
+                  }
+                ],
+                "size": 1048576,
+                "type": "unknown"
+              }
+            ],
+            "size": 1048576,
+            "status": "completed",
+            "type": "img"
+          },
+          {
+            "completed": true,
+            "failed": false,
+            "fileCount": 1,
+            "hash": "Ka51l56KHRzHBLWWmlp5B02XYcAV9zpOh8o+yVC4JdM=",
+            "id": "AaE2Eu9gfOONpZS6FaqAKw==",
+            "name": "blob.bin",
+            "partitionCount": 0,
+            "partitions": null,
+            "size": 700001,
+            "status": "completed",
+            "type": "bin"
+          }
+        ],
+        "failedEvidence": 0,
+        "pendingEvidence": 0,
+        "scanCompleted": 2,
+        "scanFailed": 0,
+        "scanPending": 0,
+        "statusFilter": "all",
+        "totalEvidence": 2
+      },
+      "list_error": null,
+      "mode": "sha3",
+      "password": null,
+      "restores": [
+        {
+          "error": null,
+          "hash": "SgWDhCfy4GZ2CaRsPEvo4M+DfJe9liJuflNJJRlhsfs=",
+          "kind": "evidence",
+          "name": "small.img",
+          "sha256": "31d262da5704c2a41a398419cf6b793c19a11b6cb620f2b8ff33595261510b35",
+          "size": 1048576,
+          "status": "ok"
+        },
+        {
+          "error": null,
+          "hash": "SgWDhCfy4GZ2CaRsPEvo4M+DfJe9liJuflNJJRlhsfs=",
+          "kind": "partition",
+          "name": "small.img_p0",
+          "sha256": "31d262da5704c2a41a398419cf6b793c19a11b6cb620f2b8ff33595261510b35",
+          "size": 1048576,
+          "status": "ok"
+        },
+        {
+          "error": " illegal base64 data at input byte 0 ",
+          "hash": "zr20XezlC31Ed6NhwqcYc0L8iSBDBiHI8tLOKkTyFzM=",
+          "kind": "indexed",
+          "name": "/a.bin",
+          "sha256": null,
+          "size": null,
+          "status": "error"
+        },
+        {
+          "error": " illegal base64 data at input byte 0 ",
+          "hash": "YBsBwUfHCVXUcwcP4TC39fWxi2g8fc+KHkByVQvH850=",
+          "kind": "indexed",
+          "name": "/hello.txt",
+          "sha256": null,
+          "size": null,
+          "status": "error"
+        },
+        {
+          "error": " illegal base64 data at input byte 0 ",
+          "hash": "YBsBwUfHCVXUcwcP4TC39fWxi2g8fc+KHkByVQvH850=",
+          "kind": "indexed",
+          "name": "/sub/h2.txt",
+          "sha256": null,
+          "size": null,
+          "status": "error"
+        },
+        {
+          "error": " illegal base64 data at input byte 0 ",
+          "hash": "44RPQa9Vi4zHHXBp/DdpRw6leWjFwA4vfoh1c0eQpZI=",
+          "kind": "indexed",
+          "name": "/pad.bin",
+          "sha256": null,
+          "size": null,
+          "status": "error"
+        },
+        {
+          "error": null,
+          "hash": "Ka51l56KHRzHBLWWmlp5B02XYcAV9zpOh8o+yVC4JdM=",
+          "kind": "evidence",
+          "name": "blob.bin",
+          "sha256": "dc3a4d2a0f7b820fb467b58a6ae390152a275dac6e2639d8aea7b1d5dda52898",
+          "size": 700001,
+          "status": "ok"
+        }
+      ],
+      "store_errors": null,
+      "store_logs": {
+        "blob.bin": [
+          "683.59 KiB / 683.59 KiB [-------------------------------------] 100.00% ? p/s 0sOperation completed in: 25.273ms",
+          "Saving Evidence File: blob.bin",
+          "25% {=========>..............................}  [0s:0s]",
+          "62% {========================>...............} (92 MB/s) [0s:0s]",
+          "100% {========================================} (93 MB/s)",
+          "Stored in: 70.2996ms"
+        ],
+        "small.img": [
+          "Linking indexed hash lookups...",
+          "Linking hash lookups 100% {========================================}",
+          "Indexed hash lookup linking complete.",
+          "Persisting partition metadata...",
+          "Partition metadata persist complete.",
+          "Stored in: 62.7498ms"
+        ]
+      },
+      "volume_files": {
+        "/a.bin": {
+          "sha256": "3ba3301ad7d5a00023d4d6ec9a2f7d39613506d8922804d2cae937d988f9a83c",
+          "size": 40000
+        },
+        "/empty.txt": {
+          "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "size": 0
+        },
+        "/hello.txt": {
+          "sha256": "904ac5f381eac585b1fff97fdb25b7fe4513c0c3e80a952f87e73489d014d489",
+          "size": 11
+        },
+        "/pad.bin": {
+          "sha256": "53971c244b86e5f901e0027fb94fba163dbb4540bb2fc750a70e07d032eac045",
+          "size": 249600
+        },
+        "/sub/h2.txt": {
+          "sha256": "904ac5f381eac585b1fff97fdb25b7fe4513c0c3e80a952f87e73489d014d489",
+          "size": 11
+        }
+      }
+    },
+    {
+      "archive": "chunk64k.tar.zst",
+      "commit": "41dbc74",
+      "flags": [
+        "--chonksize",
+        "64"
+      ],
+      "inputs": [
+        {
+          "name": "small.img",
+          "sha256": "31d262da5704c2a41a398419cf6b793c19a11b6cb620f2b8ff33595261510b35",
+          "size": 1048576
+        },
+        {
+          "name": "blob.bin",
+          "sha256": "dc3a4d2a0f7b820fb467b58a6ae390152a275dac6e2639d8aea7b1d5dda52898",
+          "size": 700001
+        }
+      ],
+      "list": {
+        "completedEvidence": 2,
+        "evidence": [
+          {
+            "completed": true,
+            "failed": false,
+            "fileCount": 1,
+            "hash": "ZdkrV4KHvpiKgZ4AsoguhaMGR+i+wBa+cyhol8oihvI=",
+            "id": "AaE2EvxDfqaCMFw0EmrOwA==",
+            "name": "small.img",
+            "partitionCount": 1,
+            "partitions": [
+              {
+                "fileCount": 1,
+                "fileName": "small.img_p0",
+                "hash": "ZdkrV4KHvpiKgZ4AsoguhaMGR+i+wBa+cyhol8oihvI=",
+                "id": "AaE2Evx/fsm1K7RiVDZcgQ==",
+                "indexedCount": 4,
+                "indexedFiles": [
+                  {
+                    "fileName": "/pad.bin",
+                    "hash": "ohPjPCaVa2ALk/noui4R2E4uTo83MHup91iHVNfPAzQ=",
+                    "id": "AaE2EvyAdzmdBnH6eCUKfA==",
+                    "isDeleted": false,
+                    "isFragmented": false,
+                    "offset": {
+                      "end": 268543,
+                      "start": 18944
+                    },
+                    "path": "/pad.bin",
+                    "size": 249600,
+                    "start": 18944,
+                    "type": "bin"
+                  },
+                  {
+                    "fileName": "/a.bin",
+                    "hash": "rBRYVPkDukkoIMjDHAHUTpFEY+UlV+kFb1WdvFICjdE=",
+                    "id": "AaE2EvyAdzqABBWxaf4V6g==",
+                    "isDeleted": false,
+                    "isFragmented": false,
+                    "offset": {
+                      "end": 308799,
+                      "start": 268800
+                    },
+                    "path": "/a.bin",
+                    "size": 40000,
+                    "start": 268800,
+                    "type": "bin"
+                  },
+                  {
+                    "fileName": "/hello.txt",
+                    "hash": "F/G1xVRl8wGO8X7tXwDpPI60eg1b2e4+k+qjWLi5EXg=",
+                    "id": "AaE2EvyAdzuShA78GNtKoA==",
+                    "isDeleted": false,
+                    "isFragmented": false,
+                    "offset": {
+                      "end": 309770,
+                      "start": 309760
+                    },
+                    "path": "/hello.txt",
+                    "size": 11,
+                    "start": 309760,
+                    "type": "txt"
+                  },
+                  {
+                    "fileName": "/sub/h2.txt",
+                    "hash": "F/G1xVRl8wGO8X7tXwDpPI60eg1b2e4+k+qjWLi5EXg=",
+                    "id": "AaE2EvyAdzyytleFqlWoyw==",
+                    "isDeleted": false,
+                    "isFragmented": false,
+                    "offset": {
+                      "end": 313866,
+                      "start": 313856
+                    },
+                    "path": "/sub/h2.txt",
+                    "size": 11,
+                    "start": 313856,
+                    "type": "txt"
+                  }
+                ],
+                "size": 1048576,
+                "type": "unknown"
+              }
+            ],
+            "size": 1048576,
+            "status": "completed",
+            "type": "img"
+          },
+          {
+            "completed": true,
+            "failed": false,
+            "fileCount": 1,
+            "hash": "j3LD0gwCXkbB1ImImU9Deb75jXqT8AcwTIJgj5pKpUk=",
+            "id": "AaE2Ev0wc6W9ooi/f9i9bA==",
+            "name": "blob.bin",
+            "partitionCount": 0,
+            "partitions": null,
+            "size": 700001,
+            "status": "completed",
+            "type": "bin"
+          }
+        ],
+        "failedEvidence": 0,
+        "pendingEvidence": 0,
+        "scanCompleted": 2,
+        "scanFailed": 0,
+        "scanPending": 0,
+        "statusFilter": "all",
+        "totalEvidence": 2
+      },
+      "list_error": null,
+      "mode": "chunk64k",
+      "password": null,
+      "restores": [
+        {
+          "error": null,
+          "hash": "ZdkrV4KHvpiKgZ4AsoguhaMGR+i+wBa+cyhol8oihvI=",
+          "kind": "evidence",
+          "name": "small.img",
+          "sha256": "31d262da5704c2a41a398419cf6b793c19a11b6cb620f2b8ff33595261510b35",
+          "size": 1048576,
+          "status": "ok"
+        },
+        {
+          "error": null,
+          "hash": "ZdkrV4KHvpiKgZ4AsoguhaMGR+i+wBa+cyhol8oihvI=",
+          "kind": "partition",
+          "name": "small.img_p0",
+          "sha256": "31d262da5704c2a41a398419cf6b793c19a11b6cb620f2b8ff33595261510b35",
+          "size": 1048576,
+          "status": "ok"
+        },
+        {
+          "error": " illegal base64 data at input byte 0 ",
+          "hash": "ohPjPCaVa2ALk/noui4R2E4uTo83MHup91iHVNfPAzQ=",
+          "kind": "indexed",
+          "name": "/pad.bin",
+          "sha256": null,
+          "size": null,
+          "status": "error"
+        },
+        {
+          "error": " illegal base64 data at input byte 0 ",
+          "hash": "rBRYVPkDukkoIMjDHAHUTpFEY+UlV+kFb1WdvFICjdE=",
+          "kind": "indexed",
+          "name": "/a.bin",
+          "sha256": null,
+          "size": null,
+          "status": "error"
+        },
+        {
+          "error": " illegal base64 data at input byte 0 ",
+          "hash": "F/G1xVRl8wGO8X7tXwDpPI60eg1b2e4+k+qjWLi5EXg=",
+          "kind": "indexed",
+          "name": "/hello.txt",
+          "sha256": null,
+          "size": null,
+          "status": "error"
+        },
+        {
+          "error": " illegal base64 data at input byte 0 ",
+          "hash": "F/G1xVRl8wGO8X7tXwDpPI60eg1b2e4+k+qjWLi5EXg=",
+          "kind": "indexed",
+          "name": "/sub/h2.txt",
+          "sha256": null,
+          "size": null,
+          "status": "error"
+        },
+        {
+          "error": null,
+          "hash": "j3LD0gwCXkbB1ImImU9Deb75jXqT8AcwTIJgj5pKpUk=",
+          "kind": "evidence",
+          "name": "blob.bin",
+          "sha256": "dc3a4d2a0f7b820fb467b58a6ae390152a275dac6e2639d8aea7b1d5dda52898",
+          "size": 700001,
+          "status": "ok"
+        }
+      ],
+      "store_errors": null,
+      "store_logs": {
+        "blob.bin": [
+          "62% {========================>...............} (57 MB/s) [0s:0s]",
+          "71% {===========================>............} (57 MB/s) [0s:0s]",
+          "81% {===============================>........} (58 MB/s) [0s:0s]",
+          "90% {===================================>....} (58 MB/s) [0s:0s]",
+          "100% {========================================} (61 MB/s)",
+          "Stored in: 71.9627ms"
+        ],
+        "small.img": [
+          "Linking indexed hash lookups...",
+          "Linking hash lookups 100% {========================================}",
+          "Indexed hash lookup linking complete.",
+          "Persisting partition metadata...",
+          "Partition metadata persist complete.",
+          "Stored in: 67.9106ms"
+        ]
+      },
+      "volume_files": {
+        "/a.bin": {
+          "sha256": "3ba3301ad7d5a00023d4d6ec9a2f7d39613506d8922804d2cae937d988f9a83c",
+          "size": 40000
+        },
+        "/empty.txt": {
+          "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "size": 0
+        },
+        "/hello.txt": {
+          "sha256": "904ac5f381eac585b1fff97fdb25b7fe4513c0c3e80a952f87e73489d014d489",
+          "size": 11
+        },
+        "/pad.bin": {
+          "sha256": "53971c244b86e5f901e0027fb94fba163dbb4540bb2fc750a70e07d032eac045",
+          "size": 249600
+        },
+        "/sub/h2.txt": {
+          "sha256": "904ac5f381eac585b1fff97fdb25b7fe4513c0c3e80a952f87e73489d014d489",
+          "size": 11
+        }
+      }
+    },
+    {
+      "archive": "revrel.tar.zst",
+      "commit": "41dbc74",
+      "flags": [
+        "--revrel"
+      ],
+      "inputs": [
+        {
+          "name": "small.img",
+          "sha256": "31d262da5704c2a41a398419cf6b793c19a11b6cb620f2b8ff33595261510b35",
+          "size": 1048576
+        },
+        {
+          "name": "blob.bin",
+          "sha256": "dc3a4d2a0f7b820fb467b58a6ae390152a275dac6e2639d8aea7b1d5dda52898",
+          "size": 700001
+        }
+      ],
+      "list": {
+        "completedEvidence": 2,
+        "evidence": [
+          {
+            "completed": true,
+            "failed": false,
+            "fileCount": 1,
+            "hash": "ZdkrV4KHvpiKgZ4AsoguhaMGR+i+wBa+cyhol8oihvI=",
+            "id": "AaE2EwqNcDiA1OZi9RzC0w==",
+            "name": "small.img",
+            "partitionCount": 1,
+            "partitions": [
+              {
+                "fileCount": 1,
+                "fileName": "small.img_p0",
+                "hash": "ZdkrV4KHvpiKgZ4AsoguhaMGR+i+wBa+cyhol8oihvI=",
+                "id": "AaE2EwrCfyOgTcMyX8rBzQ==",
+                "indexedCount": 4,
+                "indexedFiles": [
+                  {
+                    "fileName": "/pad.bin",
+                    "hash": "ohPjPCaVa2ALk/noui4R2E4uTo83MHup91iHVNfPAzQ=",
+                    "id": "AaE2EwrDeICd89gC5x1rEA==",
+                    "isDeleted": false,
+                    "isFragmented": false,
+                    "offset": {
+                      "end": 268543,
+                      "start": 18944
+                    },
+                    "path": "/pad.bin",
+                    "size": 249600,
+                    "start": 18944,
+                    "type": "bin"
+                  },
+                  {
+                    "fileName": "/a.bin",
+                    "hash": "rBRYVPkDukkoIMjDHAHUTpFEY+UlV+kFb1WdvFICjdE=",
+                    "id": "AaE2EwrDeIG54I4vijy4vA==",
+                    "isDeleted": false,
+                    "isFragmented": false,
+                    "offset": {
+                      "end": 308799,
+                      "start": 268800
+                    },
+                    "path": "/a.bin",
+                    "size": 40000,
+                    "start": 268800,
+                    "type": "bin"
+                  },
+                  {
+                    "fileName": "/hello.txt",
+                    "hash": "F/G1xVRl8wGO8X7tXwDpPI60eg1b2e4+k+qjWLi5EXg=",
+                    "id": "AaE2EwrDeIKGLI+HBJjB6g==",
+                    "isDeleted": false,
+                    "isFragmented": false,
+                    "offset": {
+                      "end": 309770,
+                      "start": 309760
+                    },
+                    "path": "/hello.txt",
+                    "size": 11,
+                    "start": 309760,
+                    "type": "txt"
+                  },
+                  {
+                    "fileName": "/sub/h2.txt",
+                    "hash": "F/G1xVRl8wGO8X7tXwDpPI60eg1b2e4+k+qjWLi5EXg=",
+                    "id": "AaE2EwrDeIOAs3WokzbuBA==",
+                    "isDeleted": false,
+                    "isFragmented": false,
+                    "offset": {
+                      "end": 313866,
+                      "start": 313856
+                    },
+                    "path": "/sub/h2.txt",
+                    "size": 11,
+                    "start": 313856,
+                    "type": "txt"
+                  }
+                ],
+                "size": 1048576,
+                "type": "unknown"
+              }
+            ],
+            "size": 1048576,
+            "status": "completed",
+            "type": "img"
+          },
+          {
+            "completed": true,
+            "failed": false,
+            "fileCount": 1,
+            "hash": "j3LD0gwCXkbB1ImImU9Deb75jXqT8AcwTIJgj5pKpUk=",
+            "id": "AaE2Ewt1e7q/joGFo0w9+A==",
+            "name": "blob.bin",
+            "partitionCount": 0,
+            "partitions": null,
+            "size": 700001,
+            "status": "completed",
+            "type": "bin"
+          }
+        ],
+        "failedEvidence": 0,
+        "pendingEvidence": 0,
+        "scanCompleted": 2,
+        "scanFailed": 0,
+        "scanPending": 0,
+        "statusFilter": "all",
+        "totalEvidence": 2
+      },
+      "list_error": null,
+      "mode": "revrel",
+      "password": null,
+      "restores": [
+        {
+          "error": null,
+          "hash": "ZdkrV4KHvpiKgZ4AsoguhaMGR+i+wBa+cyhol8oihvI=",
+          "kind": "evidence",
+          "name": "small.img",
+          "sha256": "31d262da5704c2a41a398419cf6b793c19a11b6cb620f2b8ff33595261510b35",
+          "size": 1048576,
+          "status": "ok"
+        },
+        {
+          "error": null,
+          "hash": "ZdkrV4KHvpiKgZ4AsoguhaMGR+i+wBa+cyhol8oihvI=",
+          "kind": "partition",
+          "name": "small.img_p0",
+          "sha256": "31d262da5704c2a41a398419cf6b793c19a11b6cb620f2b8ff33595261510b35",
+          "size": 1048576,
+          "status": "ok"
+        },
+        {
+          "error": " illegal base64 data at input byte 0 ",
+          "hash": "ohPjPCaVa2ALk/noui4R2E4uTo83MHup91iHVNfPAzQ=",
+          "kind": "indexed",
+          "name": "/pad.bin",
+          "sha256": null,
+          "size": null,
+          "status": "error"
+        },
+        {
+          "error": " illegal base64 data at input byte 0 ",
+          "hash": "rBRYVPkDukkoIMjDHAHUTpFEY+UlV+kFb1WdvFICjdE=",
+          "kind": "indexed",
+          "name": "/a.bin",
+          "sha256": null,
+          "size": null,
+          "status": "error"
+        },
+        {
+          "error": " illegal base64 data at input byte 0 ",
+          "hash": "F/G1xVRl8wGO8X7tXwDpPI60eg1b2e4+k+qjWLi5EXg=",
+          "kind": "indexed",
+          "name": "/hello.txt",
+          "sha256": null,
+          "size": null,
+          "status": "error"
+        },
+        {
+          "error": " illegal base64 data at input byte 0 ",
+          "hash": "F/G1xVRl8wGO8X7tXwDpPI60eg1b2e4+k+qjWLi5EXg=",
+          "kind": "indexed",
+          "name": "/sub/h2.txt",
+          "sha256": null,
+          "size": null,
+          "status": "error"
+        },
+        {
+          "error": null,
+          "hash": "j3LD0gwCXkbB1ImImU9Deb75jXqT8AcwTIJgj5pKpUk=",
+          "kind": "evidence",
+          "name": "blob.bin",
+          "sha256": "dc3a4d2a0f7b820fb467b58a6ae390152a275dac6e2639d8aea7b1d5dda52898",
+          "size": 700001,
+          "status": "ok"
+        }
+      ],
+      "store_errors": null,
+      "store_logs": {
+        "blob.bin": [
+          "683.59 KiB / 683.59 KiB [-------------------------------------] 100.00% ? p/s 0sOperation completed in: 23.0309ms",
+          "Saving Evidence File: blob.bin",
+          "25% {=========>..............................}  [0s:0s]",
+          "62% {========================>...............} (79 MB/s) [0s:0s]",
+          "100% {========================================} (92 MB/s)",
+          "Stored in: 70.2771ms"
+        ],
+        "small.img": [
+          "Linking indexed hash lookups...",
+          "Linking hash lookups 100% {========================================}",
+          "Indexed hash lookup linking complete.",
+          "Persisting partition metadata...",
+          "Partition metadata persist complete.",
+          "Stored in: 61.9509ms"
+        ]
+      },
+      "volume_files": {
+        "/a.bin": {
+          "sha256": "3ba3301ad7d5a00023d4d6ec9a2f7d39613506d8922804d2cae937d988f9a83c",
+          "size": 40000
+        },
+        "/empty.txt": {
+          "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "size": 0
+        },
+        "/hello.txt": {
+          "sha256": "904ac5f381eac585b1fff97fdb25b7fe4513c0c3e80a952f87e73489d014d489",
+          "size": 11
+        },
+        "/pad.bin": {
+          "sha256": "53971c244b86e5f901e0027fb94fba163dbb4540bb2fc750a70e07d032eac045",
+          "size": 249600
+        },
+        "/sub/h2.txt": {
+          "sha256": "904ac5f381eac585b1fff97fdb25b7fe4513c0c3e80a952f87e73489d014d489",
+          "size": 11
+        }
+      }
+    },
+    {
+      "archive": "hocho.tar.zst",
+      "commit": "41dbc74",
+      "flags": [
+        "--hash-strategy",
+        "hocho"
+      ],
+      "inputs": [
+        {
+          "name": "small.img",
+          "sha256": "31d262da5704c2a41a398419cf6b793c19a11b6cb620f2b8ff33595261510b35",
+          "size": 1048576
+        },
+        {
+          "name": "blob.bin",
+          "sha256": "dc3a4d2a0f7b820fb467b58a6ae390152a275dac6e2639d8aea7b1d5dda52898",
+          "size": 700001
+        }
+      ],
+      "list": {
+        "completedEvidence": 2,
+        "evidence": [
+          {
+            "completed": true,
+            "failed": false,
+            "fileCount": 1,
+            "hash": "Qo9h1SsoLTAmchvQ0pnxyqg8MrtshszVR0YrIAERugY=",
+            "id": "AaE2ExhccfuJiCzdt7KrBw==",
+            "name": "small.img",
+            "partitionCount": 1,
+            "partitions": [
+              {
+                "fileCount": 1,
+                "fileName": "small.img_p0",
+                "hash": "ZdkrV4KHvpiKgZ4AsoguhaMGR+i+wBa+cyhol8oihvI=",
+                "id": "AaE2Exh8edCv26YIRcNZSQ==",
+                "indexedCount": 4,
+                "indexedFiles": [
+                  {
+                    "fileName": "/sub/h2.txt",
+                    "hash": "F/G1xVRl8wGO8X7tXwDpPI60eg1b2e4+k+qjWLi5EXg=",
+                    "id": "AaE2Exh9dCmQyLDpfdiAhw==",
+                    "isDeleted": false,
+                    "isFragmented": false,
+                    "offset": {
+                      "end": 313866,
+                      "start": 313856
+                    },
+                    "path": "/sub/h2.txt",
+                    "size": 11,
+                    "start": 313856,
+                    "type": "txt"
+                  },
+                  {
+                    "fileName": "/pad.bin",
+                    "hash": "ohPjPCaVa2ALk/noui4R2E4uTo83MHup91iHVNfPAzQ=",
+                    "id": "AaE2Exh9dCaZThQlJ3ttoA==",
+                    "isDeleted": false,
+                    "isFragmented": false,
+                    "offset": {
+                      "end": 268543,
+                      "start": 18944
+                    },
+                    "path": "/pad.bin",
+                    "size": 249600,
+                    "start": 18944,
+                    "type": "bin"
+                  },
+                  {
+                    "fileName": "/a.bin",
+                    "hash": "rBRYVPkDukkoIMjDHAHUTpFEY+UlV+kFb1WdvFICjdE=",
+                    "id": "AaE2Exh9dCeJQ0LWMC4wbQ==",
+                    "isDeleted": false,
+                    "isFragmented": false,
+                    "offset": {
+                      "end": 308799,
+                      "start": 268800
+                    },
+                    "path": "/a.bin",
+                    "size": 40000,
+                    "start": 268800,
+                    "type": "bin"
+                  },
+                  {
+                    "fileName": "/hello.txt",
+                    "hash": "F/G1xVRl8wGO8X7tXwDpPI60eg1b2e4+k+qjWLi5EXg=",
+                    "id": "AaE2Exh9dCirgXc3BaT+qw==",
+                    "isDeleted": false,
+                    "isFragmented": false,
+                    "offset": {
+                      "end": 309770,
+                      "start": 309760
+                    },
+                    "path": "/hello.txt",
+                    "size": 11,
+                    "start": 309760,
+                    "type": "txt"
+                  }
+                ],
+                "size": 1048576,
+                "type": "unknown"
+              }
+            ],
+            "size": 1048576,
+            "status": "completed",
+            "type": "img"
+          },
+          {
+            "completed": true,
+            "failed": false,
+            "fileCount": 1,
+            "hash": "ONF9xKgrahHFhq509Q68MQNGxGrULzmq+BGPsaB7HSM=",
+            "id": "AaE2ExkefjqW4wBJrTY5ug==",
+            "name": "blob.bin",
+            "partitionCount": 0,
+            "partitions": null,
+            "size": 700001,
+            "status": "completed",
+            "type": "bin"
+          }
+        ],
+        "failedEvidence": 0,
+        "pendingEvidence": 0,
+        "scanCompleted": 2,
+        "scanFailed": 0,
+        "scanPending": 0,
+        "statusFilter": "all",
+        "totalEvidence": 2
+      },
+      "list_error": null,
+      "mode": "hocho",
+      "password": null,
+      "restores": [
+        {
+          "error": null,
+          "hash": "Qo9h1SsoLTAmchvQ0pnxyqg8MrtshszVR0YrIAERugY=",
+          "kind": "evidence",
+          "name": "small.img",
+          "sha256": "31d262da5704c2a41a398419cf6b793c19a11b6cb620f2b8ff33595261510b35",
+          "size": 1048576,
+          "status": "ok"
+        },
+        {
+          "error": null,
+          "hash": "ZdkrV4KHvpiKgZ4AsoguhaMGR+i+wBa+cyhol8oihvI=",
+          "kind": "partition",
+          "name": "small.img_p0",
+          "sha256": "31d262da5704c2a41a398419cf6b793c19a11b6cb620f2b8ff33595261510b35",
+          "size": 1048576,
+          "status": "ok"
+        },
+        {
+          "error": " illegal base64 data at input byte 0 ",
+          "hash": "F/G1xVRl8wGO8X7tXwDpPI60eg1b2e4+k+qjWLi5EXg=",
+          "kind": "indexed",
+          "name": "/sub/h2.txt",
+          "sha256": null,
+          "size": null,
+          "status": "error"
+        },
+        {
+          "error": " illegal base64 data at input byte 0 ",
+          "hash": "ohPjPCaVa2ALk/noui4R2E4uTo83MHup91iHVNfPAzQ=",
+          "kind": "indexed",
+          "name": "/pad.bin",
+          "sha256": null,
+          "size": null,
+          "status": "error"
+        },
+        {
+          "error": " illegal base64 data at input byte 0 ",
+          "hash": "rBRYVPkDukkoIMjDHAHUTpFEY+UlV+kFb1WdvFICjdE=",
+          "kind": "indexed",
+          "name": "/a.bin",
+          "sha256": null,
+          "size": null,
+          "status": "error"
+        },
+        {
+          "error": " illegal base64 data at input byte 0 ",
+          "hash": "F/G1xVRl8wGO8X7tXwDpPI60eg1b2e4+k+qjWLi5EXg=",
+          "kind": "indexed",
+          "name": "/hello.txt",
+          "sha256": null,
+          "size": null,
+          "status": "error"
+        },
+        {
+          "error": null,
+          "hash": "ONF9xKgrahHFhq509Q68MQNGxGrULzmq+BGPsaB7HSM=",
+          "kind": "evidence",
+          "name": "blob.bin",
+          "sha256": "dc3a4d2a0f7b820fb467b58a6ae390152a275dac6e2639d8aea7b1d5dda52898",
+          "size": 700001,
+          "status": "ok"
+        }
+      ],
+      "store_errors": null,
+      "store_logs": {
+        "blob.bin": [
+          "Pre-store checks....",
+          "Saving Evidence File: blob.bin",
+          "25% {=========>..............................}  [0s:0s]",
+          "62% {========================>...............} (137 MB/s) [0s:0s]",
+          "100% {========================================} (146 MB/s)",
+          "Stored in: 30.1768ms"
+        ],
+        "small.img": [
+          "Linking indexed hash lookups...",
+          "Linking hash lookups 100% {========================================}",
+          "Indexed hash lookup linking complete.",
+          "Persisting partition metadata...",
+          "Partition metadata persist complete.",
+          "Stored in: 41.0199ms"
+        ]
+      },
+      "volume_files": {
+        "/a.bin": {
+          "sha256": "3ba3301ad7d5a00023d4d6ec9a2f7d39613506d8922804d2cae937d988f9a83c",
+          "size": 40000
+        },
+        "/empty.txt": {
+          "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "size": 0
+        },
+        "/hello.txt": {
+          "sha256": "904ac5f381eac585b1fff97fdb25b7fe4513c0c3e80a952f87e73489d014d489",
+          "size": 11
+        },
+        "/pad.bin": {
+          "sha256": "53971c244b86e5f901e0027fb94fba163dbb4540bb2fc750a70e07d032eac045",
+          "size": 249600
+        },
+        "/sub/h2.txt": {
+          "sha256": "904ac5f381eac585b1fff97fdb25b7fe4513c0c3e80a952f87e73489d014d489",
+          "size": 11
+        }
+      }
+    },
+    {
+      "archive": "e01.tar.zst",
+      "commit": "41dbc74",
+      "flags": [
+        "--password",
+        "fixture-pass"
+      ],
+      "inputs": [
+        {
+          "name": "small.E01",
+          "sha256": "48b35c3f5799d1b21091f9baa2e7a5f43159f50c999ac9492ed9ba1729c54a36",
+          "size": 46857
+        }
+      ],
+      "list": {
+        "completedEvidence": 1,
+        "evidence": [
+          {
+            "completed": true,
+            "failed": false,
+            "fileCount": 1,
+            "hash": "WEB4MlI7Iz0PdHoxjdgl6Jfy/mlpi8mQTpqndPNchNA=",
+            "id": "AaE2EyUqdGubYGrauilhDQ==",
+            "name": "small.E01",
+            "partitionCount": 0,
+            "partitions": null,
+            "size": 46857,
+            "status": "completed",
+            "type": "e01"
+          }
+        ],
+        "failedEvidence": 0,
+        "pendingEvidence": 0,
+        "scanCompleted": 1,
+        "scanFailed": 0,
+        "scanPending": 0,
+        "statusFilter": "all",
+        "totalEvidence": 1
+      },
+      "list_error": null,
+      "mode": "e01",
+      "password": "fixture-pass",
+      "restores": [
+        {
+          "error": null,
+          "hash": "WEB4MlI7Iz0PdHoxjdgl6Jfy/mlpi8mQTpqndPNchNA=",
+          "kind": "evidence",
+          "name": "small.E01",
+          "sha256": "48b35c3f5799d1b21091f9baa2e7a5f43159f50c999ac9492ed9ba1729c54a36",
+          "size": 46857,
+          "status": "ok"
+        }
+      ],
+      "store_errors": "store small.E01 exited 1\n",
+      "store_logs": {
+        "small.E01": [
+          "Generating blake3 hash ....",
+          "45.76 KiB / 45.76 KiB [---------------------------------------] 100.00% ? p/s 0sOperation completed in: 21.9902ms",
+          "Saving Evidence File: small.E01",
+          "Generating blake3 hash ....",
+          "100% {========================================}",
+          "EOF"
+        ]
+      },
+      "volume_files": {
+        "/a.bin": {
+          "sha256": "3ba3301ad7d5a00023d4d6ec9a2f7d39613506d8922804d2cae937d988f9a83c",
+          "size": 40000
+        },
+        "/empty.txt": {
+          "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "size": 0
+        },
+        "/hello.txt": {
+          "sha256": "904ac5f381eac585b1fff97fdb25b7fe4513c0c3e80a952f87e73489d014d489",
+          "size": 11
+        },
+        "/pad.bin": {
+          "sha256": "53971c244b86e5f901e0027fb94fba163dbb4540bb2fc750a70e07d032eac045",
+          "size": 249600
+        },
+        "/sub/h2.txt": {
+          "sha256": "904ac5f381eac585b1fff97fdb25b7fe4513c0c3e80a952f87e73489d014d489",
+          "size": 11
+        }
+      }
+    },
+    {
+      "archive": "duplicate.tar.zst",
+      "commit": "41dbc74",
+      "flags": [
+        "--password",
+        "fixture-pass"
+      ],
+      "inputs": [
+        {
+          "name": "small.img",
+          "sha256": "31d262da5704c2a41a398419cf6b793c19a11b6cb620f2b8ff33595261510b35",
+          "size": 1048576
+        },
+        {
+          "name": "small.img",
+          "sha256": "31d262da5704c2a41a398419cf6b793c19a11b6cb620f2b8ff33595261510b35",
+          "size": 1048576
+        },
+        {
+          "name": "blob.bin",
+          "sha256": "dc3a4d2a0f7b820fb467b58a6ae390152a275dac6e2639d8aea7b1d5dda52898",
+          "size": 700001
+        }
+      ],
+      "list": {
+        "completedEvidence": 3,
+        "evidence": [
+          {
+            "completed": true,
+            "failed": false,
+            "fileCount": 1,
+            "hash": "ZdkrV4KHvpiKgZ4AsoguhaMGR+i+wBa+cyhol8oihvI=",
+            "id": "AaE2EytRdyOpzoELuDthPA==",
+            "name": "small.img",
+            "partitionCount": 1,
+            "partitions": [
+              {
+                "fileCount": 1,
+                "fileName": "small.img_p0",
+                "hash": "ZdkrV4KHvpiKgZ4AsoguhaMGR+i+wBa+cyhol8oihvI=",
+                "id": "AaE2EyuCdhuigTo1qfcYNA==",
+                "indexedCount": 4,
+                "indexedFiles": [
+                  {
+                    "fileName": "/pad.bin",
+                    "hash": "ohPjPCaVa2ALk/noui4R2E4uTo83MHup91iHVNfPAzQ=",
+                    "id": "AaE2EyuCdhyZH24TPmA23Q==",
+                    "isDeleted": false,
+                    "isFragmented": false,
+                    "offset": {
+                      "end": 268543,
+                      "start": 18944
+                    },
+                    "path": "/pad.bin",
+                    "size": 249600,
+                    "start": 18944,
+                    "type": "bin"
+                  },
+                  {
+                    "fileName": "/a.bin",
+                    "hash": "rBRYVPkDukkoIMjDHAHUTpFEY+UlV+kFb1WdvFICjdE=",
+                    "id": "AaE2EyuCdh2gmy4vgEcs0Q==",
+                    "isDeleted": false,
+                    "isFragmented": false,
+                    "offset": {
+                      "end": 308799,
+                      "start": 268800
+                    },
+                    "path": "/a.bin",
+                    "size": 40000,
+                    "start": 268800,
+                    "type": "bin"
+                  },
+                  {
+                    "fileName": "/hello.txt",
+                    "hash": "F/G1xVRl8wGO8X7tXwDpPI60eg1b2e4+k+qjWLi5EXg=",
+                    "id": "AaE2EyuCfcyRUfV3wo+Obw==",
+                    "isDeleted": false,
+                    "isFragmented": false,
+                    "offset": {
+                      "end": 309770,
+                      "start": 309760
+                    },
+                    "path": "/hello.txt",
+                    "size": 11,
+                    "start": 309760,
+                    "type": "txt"
+                  },
+                  {
+                    "fileName": "/sub/h2.txt",
+                    "hash": "F/G1xVRl8wGO8X7tXwDpPI60eg1b2e4+k+qjWLi5EXg=",
+                    "id": "AaE2EyuCfc2E2YGaJkUGSA==",
+                    "isDeleted": false,
+                    "isFragmented": false,
+                    "offset": {
+                      "end": 313866,
+                      "start": 313856
+                    },
+                    "path": "/sub/h2.txt",
+                    "size": 11,
+                    "start": 313856,
+                    "type": "txt"
+                  }
+                ],
+                "size": 1048576,
+                "type": "unknown"
+              }
+            ],
+            "size": 1048576,
+            "status": "completed",
+            "type": "img"
+          },
+          {
+            "completed": true,
+            "failed": false,
+            "fileCount": 1,
+            "hash": "ZdkrV4KHvpiKgZ4AsoguhaMGR+i+wBa+cyhol8oihvI=",
+            "id": "AaE2Eywmd6+Ry5/tOmolxw==",
+            "name": "small.img",
+            "partitionCount": 1,
+            "partitions": [
+              {
+                "fileCount": 1,
+                "fileName": "small.img_p0",
+                "hash": "ZdkrV4KHvpiKgZ4AsoguhaMGR+i+wBa+cyhol8oihvI=",
+                "id": "AaE2EyxXc2+VPSvSzSLL3Q==",
+                "indexedCount": 4,
+                "indexedFiles": [
+                  {
+                    "fileName": "/hello.txt",
+                    "hash": "F/G1xVRl8wGO8X7tXwDpPI60eg1b2e4+k+qjWLi5EXg=",
+                    "id": "AaE2EyxXc3KFXrdssQMk3g==",
+                    "isDeleted": false,
+                    "isFragmented": false,
+                    "offset": {
+                      "end": 309770,
+                      "start": 309760
+                    },
+                    "path": "/hello.txt",
+                    "size": 11,
+                    "start": 309760,
+                    "type": "txt"
+                  },
+                  {
+                    "fileName": "/sub/h2.txt",
+                    "hash": "F/G1xVRl8wGO8X7tXwDpPI60eg1b2e4+k+qjWLi5EXg=",
+                    "id": "AaE2EyxXc3OCdgYl8lcWog==",
+                    "isDeleted": false,
+                    "isFragmented": false,
+                    "offset": {
+                      "end": 313866,
+                      "start": 313856
+                    },
+                    "path": "/sub/h2.txt",
+                    "size": 11,
+                    "start": 313856,
+                    "type": "txt"
+                  },
+                  {
+                    "fileName": "/pad.bin",
+                    "hash": "ohPjPCaVa2ALk/noui4R2E4uTo83MHup91iHVNfPAzQ=",
+                    "id": "AaE2EyxXc3C+X1r52K5dSw==",
+                    "isDeleted": false,
+                    "isFragmented": false,
+                    "offset": {
+                      "end": 268543,
+                      "start": 18944
+                    },
+                    "path": "/pad.bin",
+                    "size": 249600,
+                    "start": 18944,
+                    "type": "bin"
+                  },
+                  {
+                    "fileName": "/a.bin",
+                    "hash": "rBRYVPkDukkoIMjDHAHUTpFEY+UlV+kFb1WdvFICjdE=",
+                    "id": "AaE2EyxXc3GO1j8DQGsSNg==",
+                    "isDeleted": false,
+                    "isFragmented": false,
+                    "offset": {
+                      "end": 308799,
+                      "start": 268800
+                    },
+                    "path": "/a.bin",
+                    "size": 40000,
+                    "start": 268800,
+                    "type": "bin"
+                  }
+                ],
+                "size": 1048576,
+                "type": "unknown"
+              }
+            ],
+            "size": 1048576,
+            "status": "completed",
+            "type": "img"
+          },
+          {
+            "completed": true,
+            "failed": false,
+            "fileCount": 1,
+            "hash": "j3LD0gwCXkbB1ImImU9Deb75jXqT8AcwTIJgj5pKpUk=",
+            "id": "AaE2Eyzqeqa6ye4dLlf5kg==",
+            "name": "blob.bin",
+            "partitionCount": 0,
+            "partitions": null,
+            "size": 700001,
+            "status": "completed",
+            "type": "bin"
+          }
+        ],
+        "failedEvidence": 0,
+        "pendingEvidence": 0,
+        "scanCompleted": 3,
+        "scanFailed": 0,
+        "scanPending": 0,
+        "statusFilter": "all",
+        "totalEvidence": 3
+      },
+      "list_error": null,
+      "mode": "duplicate",
+      "password": "fixture-pass",
+      "restores": [
+        {
+          "error": null,
+          "hash": "ZdkrV4KHvpiKgZ4AsoguhaMGR+i+wBa+cyhol8oihvI=",
+          "kind": "evidence",
+          "name": "small.img",
+          "sha256": "31d262da5704c2a41a398419cf6b793c19a11b6cb620f2b8ff33595261510b35",
+          "size": 1048576,
+          "status": "ok"
+        },
+        {
+          "error": null,
+          "hash": "ZdkrV4KHvpiKgZ4AsoguhaMGR+i+wBa+cyhol8oihvI=",
+          "kind": "partition",
+          "name": "small.img_p0",
+          "sha256": "31d262da5704c2a41a398419cf6b793c19a11b6cb620f2b8ff33595261510b35",
+          "size": 1048576,
+          "status": "ok"
+        },
+        {
+          "error": " illegal base64 data at input byte 0 ",
+          "hash": "ohPjPCaVa2ALk/noui4R2E4uTo83MHup91iHVNfPAzQ=",
+          "kind": "indexed",
+          "name": "/pad.bin",
+          "sha256": null,
+          "size": null,
+          "status": "error"
+        },
+        {
+          "error": " illegal base64 data at input byte 0 ",
+          "hash": "rBRYVPkDukkoIMjDHAHUTpFEY+UlV+kFb1WdvFICjdE=",
+          "kind": "indexed",
+          "name": "/a.bin",
+          "sha256": null,
+          "size": null,
+          "status": "error"
+        },
+        {
+          "error": " illegal base64 data at input byte 0 ",
+          "hash": "F/G1xVRl8wGO8X7tXwDpPI60eg1b2e4+k+qjWLi5EXg=",
+          "kind": "indexed",
+          "name": "/hello.txt",
+          "sha256": null,
+          "size": null,
+          "status": "error"
+        },
+        {
+          "error": " illegal base64 data at input byte 0 ",
+          "hash": "F/G1xVRl8wGO8X7tXwDpPI60eg1b2e4+k+qjWLi5EXg=",
+          "kind": "indexed",
+          "name": "/sub/h2.txt",
+          "sha256": null,
+          "size": null,
+          "status": "error"
+        },
+        {
+          "error": null,
+          "hash": "ZdkrV4KHvpiKgZ4AsoguhaMGR+i+wBa+cyhol8oihvI=",
+          "kind": "evidence",
+          "name": "small.img",
+          "sha256": "31d262da5704c2a41a398419cf6b793c19a11b6cb620f2b8ff33595261510b35",
+          "size": 1048576,
+          "status": "ok"
+        },
+        {
+          "error": null,
+          "hash": "ZdkrV4KHvpiKgZ4AsoguhaMGR+i+wBa+cyhol8oihvI=",
+          "kind": "partition",
+          "name": "small.img_p0",
+          "sha256": "31d262da5704c2a41a398419cf6b793c19a11b6cb620f2b8ff33595261510b35",
+          "size": 1048576,
+          "status": "ok"
+        },
+        {
+          "error": " illegal base64 data at input byte 0 ",
+          "hash": "F/G1xVRl8wGO8X7tXwDpPI60eg1b2e4+k+qjWLi5EXg=",
+          "kind": "indexed",
+          "name": "/hello.txt",
+          "sha256": null,
+          "size": null,
+          "status": "error"
+        },
+        {
+          "error": " illegal base64 data at input byte 0 ",
+          "hash": "F/G1xVRl8wGO8X7tXwDpPI60eg1b2e4+k+qjWLi5EXg=",
+          "kind": "indexed",
+          "name": "/sub/h2.txt",
+          "sha256": null,
+          "size": null,
+          "status": "error"
+        },
+        {
+          "error": " illegal base64 data at input byte 0 ",
+          "hash": "ohPjPCaVa2ALk/noui4R2E4uTo83MHup91iHVNfPAzQ=",
+          "kind": "indexed",
+          "name": "/pad.bin",
+          "sha256": null,
+          "size": null,
+          "status": "error"
+        },
+        {
+          "error": " illegal base64 data at input byte 0 ",
+          "hash": "rBRYVPkDukkoIMjDHAHUTpFEY+UlV+kFb1WdvFICjdE=",
+          "kind": "indexed",
+          "name": "/a.bin",
+          "sha256": null,
+          "size": null,
+          "status": "error"
+        },
+        {
+          "error": null,
+          "hash": "j3LD0gwCXkbB1ImImU9Deb75jXqT8AcwTIJgj5pKpUk=",
+          "kind": "evidence",
+          "name": "blob.bin",
+          "sha256": "dc3a4d2a0f7b820fb467b58a6ae390152a275dac6e2639d8aea7b1d5dda52898",
+          "size": 700001,
+          "status": "ok"
+        }
+      ],
+      "store_errors": null,
+      "store_logs": {
+        "blob.bin": [
+          "683.59 KiB / 683.59 KiB [-------------------------------------] 100.00% ? p/s 0sOperation completed in: 20.9441ms",
+          "Saving Evidence File: blob.bin",
+          "25% {=========>..............................}  [0s:0s]",
+          "62% {========================>...............} (114 MB/s) [0s:0s]",
+          "100% {========================================} (130 MB/s)",
+          "Stored in: 52.328ms"
+        ],
+        "small.img": [
+          "Linking indexed hash lookups...",
+          "Linking hash lookups 100% {========================================}",
+          "Indexed hash lookup linking complete.",
+          "Persisting partition metadata...",
+          "Partition metadata persist complete.",
+          "Stored in: 56.5371ms"
+        ]
+      },
+      "volume_files": {
+        "/a.bin": {
+          "sha256": "3ba3301ad7d5a00023d4d6ec9a2f7d39613506d8922804d2cae937d988f9a83c",
+          "size": 40000
+        },
+        "/empty.txt": {
+          "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "size": 0
+        },
+        "/hello.txt": {
+          "sha256": "904ac5f381eac585b1fff97fdb25b7fe4513c0c3e80a952f87e73489d014d489",
+          "size": 11
+        },
+        "/pad.bin": {
+          "sha256": "53971c244b86e5f901e0027fb94fba163dbb4540bb2fc750a70e07d032eac045",
+          "size": 249600
+        },
+        "/sub/h2.txt": {
+          "sha256": "904ac5f381eac585b1fff97fdb25b7fe4513c0c3e80a952f87e73489d014d489",
+          "size": 11
+        }
+      }
+    }
+  ],
+  "schema": 1
+}

@@ -2,22 +2,24 @@ module indicer
 
 go 1.26.2
 
+toolchain go1.27.2
+
 require (
 	charm.land/bubbles/v2 v2.1.0
 	charm.land/bubbletea/v2 v2.0.7
 	charm.land/lipgloss/v2 v2.0.3
 	connectrpc.com/connect v1.20.0
 	github.com/alecthomas/kingpin/v2 v2.4.0
-	github.com/aoiflux/graphene v0.4.0
+	github.com/aoiflux/graphene v0.9.0
 	github.com/aoiflux/libewf v0.2.1
-	github.com/aoiflux/libext v0.2.0
-	github.com/aoiflux/libfat v0.2.0
-	github.com/aoiflux/libhfs v0.2.0
-	github.com/aoiflux/libntfs v0.3.1
-	github.com/aoiflux/libtable v0.2.2
-	github.com/aoiflux/libvhdi v0.2.0
-	github.com/aoiflux/libxfat v1.2.0
-	github.com/aoiflux/libxfs v0.3.1
+	github.com/aoiflux/libext v0.4.1
+	github.com/aoiflux/libfat v0.3.3
+	github.com/aoiflux/libhfs v0.3.2
+	github.com/aoiflux/libntfs v0.3.5
+	github.com/aoiflux/libtable v0.2.3
+	github.com/aoiflux/libvhdi v0.4.1
+	github.com/aoiflux/libxfat v1.4.0
+	github.com/aoiflux/libxfs v0.4.1
 	github.com/atotto/clipboard v0.1.4
 	github.com/blevesearch/bleve/v2 v2.6.0
 	github.com/cheggaaa/pb/v3 v3.1.7
@@ -27,7 +29,7 @@ require (
 	github.com/edsrzf/mmap-go v1.2.0
 	github.com/fatih/color v1.19.0
 	github.com/google/uuid v1.6.0
-	github.com/klauspost/compress v1.18.6
+	github.com/klauspost/compress v1.20.3
 	github.com/pdfcpu/pdfcpu v0.12.1
 	github.com/saferwall/elf v0.3.1
 	github.com/saferwall/pe v1.6.5
@@ -37,9 +39,8 @@ require (
 	github.com/vmihailenco/msgpack/v5 v5.4.1
 	github.com/zeebo/blake3 v0.2.4
 	go.uber.org/zap v1.28.0
-	golang.org/x/net v0.55.0
-	golang.org/x/sys v0.45.0
-	google.golang.org/grpc v1.81.1
+	golang.org/x/sys v0.49.0
+	google.golang.org/grpc v1.84.0
 	google.golang.org/protobuf v1.36.11
 	www.velocidex.com/golang/evtx v0.2.0
 	www.velocidex.com/golang/regparser v0.0.0-20250203141505-31e704a67ef7
@@ -128,12 +129,13 @@ require (
 	go.opentelemetry.io/otel/metric v1.44.0 // indirect
 	go.opentelemetry.io/otel/trace v1.44.0 // indirect
 	go.uber.org/multierr v1.11.0 // indirect
-	golang.org/x/crypto v0.52.0 // indirect
-	golang.org/x/image v0.41.0 // indirect
-	golang.org/x/sync v0.20.0 // indirect
-	golang.org/x/term v0.43.0 // indirect
-	golang.org/x/text v0.37.0 // indirect
-	google.golang.org/genproto/googleapis/rpc v0.0.0-20260526163538-3dc84a4a5aaa // indirect
+	golang.org/x/crypto v0.58.0 // indirect
+	golang.org/x/image v0.47.0 // indirect
+	golang.org/x/net v0.61.0 // indirect
+	golang.org/x/sync v0.24.0 // indirect
+	golang.org/x/term v0.47.0 // indirect
+	golang.org/x/text v0.43.0 // indirect
+	google.golang.org/genproto/googleapis/rpc v0.0.0-20260706201446-f0a921348800 // indirect
 	gopkg.in/yaml.v2 v2.4.0 // indirect
 	www.velocidex.com/golang/binparsergen v0.1.1-0.20201101234514-bbdb29f9ee31 // indirect
 	www.velocidex.com/golang/go-pe v0.1.1-0.20211006062218-8f6d1ad6b2d5 // indirect

@@ -3,7 +3,7 @@ package store
 import (
 	"encoding/base64"
 	"encoding/json"
-	"fmt"
+	"indicer/internal/console"
 
 	"indicer/lib/cnst"
 	"indicer/lib/dbio"
@@ -48,7 +48,7 @@ func Repair(db *badger.DB, fix bool) error {
 		return err
 	}
 
-	fmt.Println(string(jsonData))
+	console.Println(string(jsonData))
 	return nil
 }
 

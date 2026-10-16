@@ -1,184 +1,232 @@
+// Package logging is DUES's structured log.
+//
+// Each process writes its own NDJSON file, one JSON object per line, under a
+// per-user log directory. Every record carries the run id, pid and component,
+// so concurrent processes never share a file, and a crash log is never
+// overwritten by the next start. Logging can never stop DUES from running: if
+// no directory is writable, or the disk fills, it degrades to stderr warnings.
+//
+// Until Init is called, GetLogger returns a no-op logger, so library and FFI
+// code never creates log files on its own.
 package logging
 
 import (
-	"bytes"
+	"crypto/rand"
+	"encoding/hex"
+	"errors"
+	"fmt"
+	"io"
 	"log"
 	"os"
 	"path/filepath"
 	"sync"
+	"sync/atomic"
 
 	"go.uber.org/zap"
 	"go.uber.org/zap/zapcore"
 )
 
-var (
-	Logger *zap.Logger
-	Sugar  *zap.SugaredLogger
-	once   sync.Once
+const (
+	// DefaultMaxBytes is the size at which a log file is rotated.
+	DefaultMaxBytes = 50 << 20
+	// DefaultKeep is how many log files are kept per directory, the current
+	// one included.
+	DefaultKeep = 10
+	// EnvDir names the environment variable that sets the log directory.
+	EnvDir = "DUES_LOG_DIR"
 )
 
-type jsonArrayWriteSyncer struct {
-	mu         sync.Mutex
-	file       *os.File
-	hasEntries bool
+// Config controls Init.
+type Config struct {
+	Component string // file prefix and "component" field; "dues" when empty
+	Dir       string // explicit directory (--log-dir); empty to resolve one
+	Debug     bool
+	MaxBytes  int64     // rotation size; DefaultMaxBytes when zero
+	Keep      int       // files kept; DefaultKeep when zero
+	Stderr    io.Writer // where warnings about logging itself go; os.Stderr when nil
 }
 
-func newJSONArrayWriteSyncer(path string) (*jsonArrayWriteSyncer, error) {
-	file, err := os.OpenFile(path, os.O_CREATE|os.O_RDWR|os.O_TRUNC, 0o644)
-	if err != nil {
-		return nil, err
-	}
-
-	if _, err := file.WriteString("[\n]\n"); err != nil {
-		_ = file.Close()
-		return nil, err
-	}
-
-	return &jsonArrayWriteSyncer{file: file}, nil
+// Info describes the log Init set up.
+type Info struct {
+	RunID string
+	Dir   string // empty when logging fell back to stderr only
+	Path  string // the current log file; empty when Dir is
 }
 
-func (w *jsonArrayWriteSyncer) Write(p []byte) (int, error) {
-	trimmed := bytes.TrimSpace(p)
-	if len(trimmed) == 0 {
-		return len(p), nil
-	}
-
-	w.mu.Lock()
-	defer w.mu.Unlock()
-
-	if _, err := w.file.Seek(-2, 2); err != nil {
-		return 0, err
-	}
-
-	entry := trimmed
-	if w.hasEntries {
-		entry = append([]byte(",\n"), entry...)
-	}
-	entry = append(entry, []byte("\n]\n")...)
-
-	if _, err := w.file.Write(entry); err != nil {
-		return 0, err
-	}
-
-	w.hasEntries = true
-	return len(p), nil
+type state struct {
+	logger *zap.Logger
+	sugar  *zap.SugaredLogger
+	info   Info
+	out    *rotatingWriter
 }
 
-func (w *jsonArrayWriteSyncer) Sync() error {
-	w.mu.Lock()
-	defer w.mu.Unlock()
+var (
+	current atomic.Pointer[state]
+	initMu  sync.Mutex
+	nop     = &state{logger: zap.NewNop(), sugar: zap.NewNop().Sugar()}
+)
 
-	if w.file == nil {
-		return nil
+// dirCandidates lists where a log may go, in order. Tests replace it.
+var dirCandidates = func(explicit string) []string {
+	var dirs []string
+	if explicit != "" {
+		dirs = append(dirs, explicit)
 	}
-	return w.file.Sync()
+	if env := os.Getenv(EnvDir); env != "" {
+		dirs = append(dirs, env)
+	}
+	if cache, err := os.UserCacheDir(); err == nil {
+		dirs = append(dirs, filepath.Join(cache, "dues", "logs"))
+	}
+	user := "user"
+	if u := os.Getenv("USER"); u != "" {
+		user = u
+	} else if u := os.Getenv("USERNAME"); u != "" {
+		user = u
+	}
+	return append(dirs, filepath.Join(os.TempDir(), "dues-"+user, "logs"))
 }
 
-// InitLogger initializes the global zap logger with structured output
-// Call this once at application startup from main.go
-func InitLogger(debug bool) error {
-	var err error
-	once.Do(func() {
-		logDir := "log"
-		if mkErr := os.MkdirAll(logDir, 0o755); mkErr != nil {
-			err = mkErr
-			return
+func newRunID() string {
+	var b [8]byte
+	_, _ = rand.Read(b[:])
+	return hex.EncodeToString(b[:])
+}
+
+// Init sets up the process log and returns where it went. It never fails:
+// when no directory is usable it warns once on cfg.Stderr and logs nothing.
+// Calling Init again replaces the previous log.
+func Init(cfg Config) Info {
+	initMu.Lock()
+	defer initMu.Unlock()
+
+	if cfg.Component == "" {
+		cfg.Component = "dues"
+	}
+	if cfg.MaxBytes <= 0 {
+		cfg.MaxBytes = DefaultMaxBytes
+	}
+	if cfg.Keep <= 0 {
+		cfg.Keep = DefaultKeep
+	}
+	if cfg.Stderr == nil {
+		cfg.Stderr = os.Stderr
+	}
+	runID := newRunID()
+
+	var (
+		out  *rotatingWriter
+		errs []error
+	)
+	for _, dir := range dirCandidates(cfg.Dir) {
+		w, err := openRotating(dir, cfg.Component, cfg.MaxBytes, cfg.Keep, cfg.Stderr)
+		if err == nil {
+			out = w
+			break
 		}
-		logPath := filepath.Join(logDir, "dues.json")
+		errs = append(errs, err)
+	}
 
-		writeSyncer, wsErr := newJSONArrayWriteSyncer(logPath)
-		if wsErr != nil {
-			err = wsErr
-			return
-		}
-
-		level := zap.NewAtomicLevelAt(zapcore.InfoLevel)
-		encoderConfig := zap.NewProductionEncoderConfig()
-		if debug {
-			level = zap.NewAtomicLevelAt(zapcore.DebugLevel)
-			encoderConfig = zap.NewDevelopmentEncoderConfig()
-		}
-
-		encoderConfig.TimeKey = "timestamp"
-		encoderConfig.EncodeTime = zapcore.ISO8601TimeEncoder
-		encoderConfig.CallerKey = "caller"
-		encoderConfig.FunctionKey = zapcore.OmitKey
-
-		core := zapcore.NewCore(
-			zapcore.NewJSONEncoder(encoderConfig),
-			writeSyncer,
-			level,
+	st := &state{info: Info{RunID: runID}}
+	if out == nil {
+		fmt.Fprintf(cfg.Stderr, "dues: warning: logging disabled, no writable log directory: %v\n", errors.Join(errs...))
+		st.logger = zap.NewNop()
+	} else {
+		st.out = out
+		st.info.Dir = out.dir
+		st.info.Path = out.Path()
+		st.logger = newLogger(out, cfg.Debug).With(
+			zap.String("run_id", runID),
+			zap.Int("pid", os.Getpid()),
+			zap.String("component", cfg.Component),
 		)
+	}
+	st.sugar = st.logger.Sugar()
 
-		Logger = zap.New(
-			core,
-			zap.AddCaller(),
-			zap.AddCallerSkip(1),
-			zap.AddStacktrace(zapcore.PanicLevel),
-			zap.ErrorOutput(writeSyncer),
-		)
-		if err != nil {
-			return
-		}
-
-		_, _ = zap.RedirectStdLogAt(Logger, zapcore.InfoLevel)
+	if prev := current.Swap(st); prev != nil && prev.out != nil {
+		_ = prev.logger.Sync()
+		_ = prev.out.Close()
+	}
+	if out != nil {
+		_, _ = zap.RedirectStdLogAt(st.logger, zapcore.InfoLevel)
 		log.SetFlags(0)
-
-		// Sugar logger for convenient APIs
-		Sugar = Logger.Sugar()
-
-		// Sync on exit
-		registerShutdown()
-	})
-
-	return err
-}
-
-// registerShutdown ensures logger is flushed on exit
-func registerShutdown() {
-	// Will be called by main.go's defer
-}
-
-// Sync flushes any buffered log entries
-// Call this with defer in main() after InitLogger
-func Sync() error {
-	if Logger != nil {
-		return Logger.Sync()
 	}
+	return st.info
+}
+
+func newLogger(w zapcore.WriteSyncer, debug bool) *zap.Logger {
+	level := zapcore.InfoLevel
+	if debug {
+		level = zapcore.DebugLevel
+	}
+	enc := zap.NewProductionEncoderConfig()
+	enc.TimeKey = "timestamp"
+	enc.EncodeTime = zapcore.ISO8601TimeEncoder
+	enc.FunctionKey = zapcore.OmitKey
+	core := redactingCore{zapcore.NewCore(zapcore.NewJSONEncoder(enc), w, level)}
+	return zap.New(core,
+		zap.AddCaller(),
+		zap.AddStacktrace(zapcore.PanicLevel),
+		zap.ErrorOutput(zapcore.AddSync(io.Discard)),
+	)
+}
+
+// InitLogger is the original entry point, kept for existing callers.
+func InitLogger(debug bool) error {
+	Init(Config{Debug: debug})
 	return nil
 }
 
-// GetLogger returns the global logger instance
-func GetLogger() *zap.Logger {
-	if Logger == nil {
-		_ = InitLogger(false)
-		if Logger == nil {
-			Logger = zap.NewNop()
-			Sugar = Logger.Sugar()
-		}
+func load() *state {
+	if st := current.Load(); st != nil {
+		return st
 	}
-	return Logger
+	return nop
 }
 
-// GetSugar returns the sugared logger for convenient APIs
-func GetSugar() *zap.SugaredLogger {
-	if Sugar == nil {
-		_ = InitLogger(true)
+// GetLogger returns the process logger, or a no-op logger before Init.
+func GetLogger() *zap.Logger { return load().logger }
+
+// GetSugar returns the sugared process logger, or a no-op one before Init.
+func GetSugar() *zap.SugaredLogger { return load().sugar }
+
+// Current describes the log set up by the last Init, with the file currently
+// written after any rotation; the zero Info before Init.
+func Current() Info {
+	st := load()
+	info := st.info
+	if st.out != nil {
+		info.Path = st.out.Path()
 	}
-	return Sugar
+	return info
 }
 
-// WithField returns a logger with a field attached (chainable)
+// Sync flushes buffered log entries.
+func Sync() error { return load().logger.Sync() }
+
+// Close flushes and closes the log file and reverts to the no-op logger.
+func Close() error {
+	initMu.Lock()
+	defer initMu.Unlock()
+	st := current.Swap(nil)
+	if st == nil || st.out == nil {
+		return nil
+	}
+	_ = st.logger.Sync()
+	return st.out.Close()
+}
+
+// WithField returns a logger with a field attached.
 func WithField(key string, value interface{}) *zap.Logger {
 	return GetLogger().With(zap.Any(key, value))
 }
 
-// WithFields returns a logger with multiple fields attached (chainable)
+// WithFields returns a logger with fields attached.
 func WithFields(fields ...zap.Field) *zap.Logger {
 	return GetLogger().With(fields...)
 }
 
-// DebugFunc logs entry/exit of a function (useful for tracing execution flow)
+// DebugFunc logs entry to and exit from a function.
 // Usage: defer logging.DebugFunc("FunctionName")()
 func DebugFunc(name string, fields ...zap.Field) func() {
 	GetLogger().Debug("ENTER: "+name, fields...)
@@ -187,19 +235,19 @@ func DebugFunc(name string, fields ...zap.Field) func() {
 	}
 }
 
-// TraceOperation logs a long-running operation with start/end timing
+// TraceContext logs the start and end of a long-running operation.
 type TraceContext struct {
 	name   string
 	fields []zap.Field
 }
 
-// StartTrace begins logging an operation
+// StartTrace begins logging an operation.
 func StartTrace(name string, fields ...zap.Field) *TraceContext {
 	GetLogger().Debug("TRACE_START: "+name, fields...)
 	return &TraceContext{name: name, fields: fields}
 }
 
-// End completes the trace and logs duration
+// End logs the end of the operation.
 func (tc *TraceContext) End() {
 	GetLogger().Debug("TRACE_END: " + tc.name)
 }

@@ -2,6 +2,7 @@ package parser
 
 import (
 	"fmt"
+	"indicer/internal/console"
 	"indicer/lib/cnst"
 	"indicer/lib/structs"
 	"indicer/lib/util"
@@ -37,7 +38,7 @@ func IndexEXFAT(pfile structs.InputFile, eviID []byte, idxChan chan error, enabl
 	bar := progressbar.NewOptions64(
 		total,
 		progressbar.OptionSetDescription("Indexing files"),
-		progressbar.OptionSetWriter(os.Stderr),
+		progressbar.OptionSetWriter(console.Progress()),
 		progressbar.OptionSetTheme(cnst.CommonProgressBarTheme),
 	)
 	bar.Clear()
@@ -98,7 +99,7 @@ func IndexEXFAT(pfile structs.InputFile, eviID []byte, idxChan chan error, enabl
 	}
 	if flag {
 		bar.Finish()
-		fmt.Fprintln(os.Stderr)
+		fmt.Fprintln(console.Err())
 	}
 
 	idxChan <- nil

@@ -25,7 +25,6 @@ func TestMatrixStoreRestoreRoundTrip(t *testing.T) {
 	testdb.ForEachMode(t, func(t *testing.T, m testdb.Mode) {
 		dir := t.TempDir()
 		dbPath := filepath.Join(dir, "db")
-		key := m.Key(t)
 		util.SetChonkSize(matrixChunkKB)
 
 		type stored struct {
@@ -36,7 +35,7 @@ func TestMatrixStoreRestoreRoundTrip(t *testing.T) {
 		for i, n := range sizes {
 			p := testutil.WriteRandomFile(t, dir, "in/obj"+string(rune('a'+i))+".bin", uint64(100+i), n)
 			// Each object is a separate store session, as separate CLI runs are.
-			if err := StoreData(matrixChunkKB, dbPath, p, key, false, true, false, false); err != nil {
+			if err := StoreData(t.Context(), optsForMode(dbPath, matrixChunkKB, m), p, false, true, false, false); err != nil {
 				t.Fatalf("store %d bytes: %v", n, err)
 			}
 			objs = append(objs, stored{path: p, hash: plainHashB64(t, p), size: n})
@@ -51,7 +50,7 @@ func TestMatrixStoreRestoreRoundTrip(t *testing.T) {
 				if err := os.MkdirAll(filepath.Dir(out), 0o755); err != nil {
 					t.Fatal(err)
 				}
-				if err := RestoreData(matrixChunkKB, dbPath, o.hash, out, key); err != nil {
+				if err := RestoreData(t.Context(), optsForMode(dbPath, matrixChunkKB, m), o.hash, out); err != nil {
 					t.Fatalf("restore %d-byte object: %v", o.size, err)
 				}
 				if testutil.FileSHA256(t, out) != testutil.FileSHA256(t, o.path) {

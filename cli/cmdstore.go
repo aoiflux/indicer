@@ -5,8 +5,10 @@ import (
 	"encoding/base64"
 	"errors"
 	"fmt"
+	"indicer/internal/console"
 	"indicer/lib/cnst"
 	"indicer/lib/dbio"
+	"indicer/lib/dbopen"
 	"indicer/lib/enrichment"
 	"indicer/lib/logging"
 	"indicer/lib/parser"
@@ -97,18 +99,13 @@ func prepareEvidenceFileHash(filePath string) (evidenceHashOutcome, error) {
 	}
 }
 
-func StoreData(chonkSize int, dbpath, evipath string, key []byte, syncIndex bool, noIndex bool, enableFTS bool, enableEnrichment bool) error {
-	return StoreDataWithContext(context.Background(), chonkSize, dbpath, evipath, key, syncIndex, noIndex, enableFTS, enableEnrichment)
-}
-
-func StoreDataWithContext(ctx context.Context, chonkSize int, dbpath, evipath string, key []byte, syncIndex bool, noIndex bool, enableFTS bool, enableEnrichment bool) error {
+func StoreData(ctx context.Context, opts DBOptions, evipath string, syncIndex bool, noIndex bool, enableFTS bool, enableEnrichment bool) (err error) {
 	if ctx == nil {
 		ctx = context.Background()
 	}
 	start := time.Now()
 	logging.GetLogger().Info("StoreData START",
-		zap.Int("chonk_size", chonkSize),
-		zap.String("db_path", dbpath),
+		zap.String("db_path", opts.Path),
 		zap.String("evidence_path", evipath),
 		zap.Bool("sync_index", syncIndex),
 		zap.Bool("no_index", noIndex),
@@ -116,11 +113,15 @@ func StoreDataWithContext(ctx context.Context, chonkSize int, dbpath, evipath st
 		zap.Bool("enable_enrichment", enableEnrichment),
 	)
 
-	db, dbpath, err := Common(chonkSize, dbpath, key)
+	h, err := Common(ctx, opts, dbopen.ReadWrite, true)
 	if err != nil {
 		logging.GetLogger().Error("StoreData DB_CONNECT_ERROR", zap.Error(err))
 		return err
 	}
+	defer closeDB(h, &err)
+	db, dbpath := h.DB, h.Root
+	chonkSize := h.Manifest.Layout.ChunkKiB
+	var key []byte // the store path takes its keys from the database
 	err = util.EnsureBlobPath(dbpath)
 	if err != nil {
 		logging.GetLogger().Error("StoreData ENSURE_BLOB_PATH_ERROR", zap.Error(err), zap.String("db_path", dbpath))
@@ -138,7 +139,7 @@ func StoreDataWithContext(ctx context.Context, chonkSize int, dbpath, evipath st
 			return err
 		}
 		logging.GetLogger().Info("StoreData STORE_FOLDER_EXECUTE", zap.String("evidence_path", evipath))
-		fmt.Println("Storing Entire Folder")
+		console.Println("Storing Entire Folder")
 		err = StoreFolderWithContext(ctx, chonkSize, evipath, key, syncIndex, noIndex, enableFTS, enableEnrichment, db)
 		if err != nil {
 			logging.GetLogger().Error("StoreData STORE_FOLDER_ERROR", zap.Error(err), zap.String("evidence_path", evipath))
@@ -155,11 +156,7 @@ func StoreDataWithContext(ctx context.Context, chonkSize int, dbpath, evipath st
 		return err
 	}
 
-	err = db.Close()
-	if err != nil {
-		logging.GetLogger().Error("StoreData DB_CLOSE_ERROR", zap.Error(err))
-		return err
-	}
+	compactValueLog(h, "StoreData")
 	logging.GetLogger().Info("StoreData COMPLETE", zap.Int64("duration_ms", time.Since(start).Milliseconds()))
 	return nil
 }
@@ -203,8 +200,8 @@ func StoreFolderWithContext(ctx context.Context, chonkSize int, evidir string, k
 		return err
 	}
 
-	fmt.Println()
-	fmt.Println("Folder Store Time: ", time.Since(start))
+	console.Println()
+	console.Println("Folder Store Time: ", time.Since(start))
 	logging.GetLogger().Info("StoreFolder COMPLETE", zap.Int64("duration_ms", time.Since(start).Milliseconds()))
 	return nil
 }
@@ -240,7 +237,7 @@ func StoreFileWithContext(ctx context.Context, chonkSize int, evipath string, ke
 		return err
 	}
 
-	fmt.Println("Pre-store checks....")
+	console.Println("Pre-store checks....")
 	logging.GetLogger().Debug("StoreFile INIT_EVIDENCE_FILE", zap.String("file_path", evipath))
 	eviFile, err := initEvidenceFile(evipath, db)
 	if err != nil {
@@ -293,7 +290,7 @@ func StoreFileWithContext(ctx context.Context, chonkSize int, evipath string, ke
 	}
 
 	eviname := filepath.Base(evipath)
-	fmt.Printf("\nSaving Evidence File: %s\n", eviname)
+	console.Printf("\nSaving Evidence File: %s\n", eviname)
 
 	echan := make(chan error)
 	go store.StoreWithContext(ctx, eviFile, echan)
@@ -342,7 +339,7 @@ func StoreFileWithContext(ctx context.Context, chonkSize int, evipath string, ke
 		return err
 	}
 
-	fmt.Printf("\nStored in: %v\n\n", time.Since(start))
+	console.Printf("\nStored in: %v\n\n", time.Since(start))
 	logging.GetLogger().Info("StoreFile COMPLETE",
 		zap.Int64("duration_ms", time.Since(start).Milliseconds()),
 		zap.String("result", "stored"),

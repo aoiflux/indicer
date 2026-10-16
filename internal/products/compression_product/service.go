@@ -23,6 +23,8 @@ import (
 	coreerr "indicer/internal/core/errors"
 	"indicer/lib/cnst"
 	"indicer/lib/dbio"
+	"indicer/lib/dbmeta"
+	"indicer/lib/dbopen"
 	"indicer/lib/store"
 	"indicer/lib/structs"
 	"indicer/lib/util"
@@ -1231,17 +1233,12 @@ func (s *Service) createArchiveWithProgressCtx(ctx context.Context, req createAr
 
 	dbPath := filepath.Join(workDir, manifestDbRelativePath)
 
-	key, err := util.HashPassword(req.Password)
-	if err != nil {
-		return createArchiveRes{}, coreerr.NewWithDetails(coreerr.CodeInternal, errDeriveKeyFailed, map[string]string{detailCause: err.Error()})
-	}
-
 	// Reuse existing DUES store pipeline for dedup+compress USP.
 	emitProgress(report, "ingesting", 35, "ingesting input into dedup store")
 	if err := ensureStoreRuntime(); err != nil {
 		return createArchiveRes{}, coreerr.NewWithDetails(coreerr.CodeInternal, errStoreRuntimeInitFailed, map[string]string{detailCause: err.Error()})
 	}
-	if err := cli.StoreDataWithContext(ctx, chunkSize, dbPath, storeInputPath, key, false, true, false, false); err != nil {
+	if err := cli.StoreData(ctx, archiveDBOptions(dbPath, req.Password, chunkSize), storeInputPath, false, true, false, false); err != nil {
 		if errors.Is(err, context.Canceled) {
 			return createArchiveRes{}, canceledError()
 		}
@@ -2948,11 +2945,6 @@ func restoreArchiveFilesWithProgressCtx(ctx context.Context, stagingDir, outputR
 		return 0, fmt.Errorf(errExtractDbPathMissing)
 	}
 
-	key, err := util.HashPassword(password)
-	if err != nil {
-		return 0, err
-	}
-
 	chunkSize := manifest.ChunkSizeKB
 	if chunkSize <= 0 {
 		chunkSize = defaultChunkSizeKB
@@ -2961,11 +2953,12 @@ func restoreArchiveFilesWithProgressCtx(ctx context.Context, stagingDir, outputR
 		return 0, err
 	}
 
-	db, _, err := cli.Common(chunkSize, dbPath, key)
+	h, err := cli.Common(ctx, archiveDBOptions(dbPath, password, chunkSize), dbopen.ReadWrite, false)
 	if err != nil {
 		return 0, err
 	}
-	defer db.Close()
+	defer h.Close()
+	db := h.DB
 
 	if err := remapArchiveChunkPathsCtx(ctx, db, util.BlobPath(dbPath)); err != nil {
 		return 0, err
@@ -3040,21 +3033,17 @@ func listArchiveLogicalFilesCtx(ctx context.Context, stagingDir string, manifest
 		return nil, fmt.Errorf(errExtractDbPathMissing)
 	}
 
-	key, err := util.HashPassword(password)
-	if err != nil {
-		return nil, err
-	}
-
 	chunkSize := manifest.ChunkSizeKB
 	if chunkSize <= 0 {
 		chunkSize = defaultChunkSizeKB
 	}
 
-	db, _, err := cli.Common(chunkSize, dbPath, key)
+	h, err := cli.Common(ctx, archiveDBOptions(dbPath, password, chunkSize), dbopen.ReadOnly, false)
 	if err != nil {
 		return nil, err
 	}
-	defer db.Close()
+	defer h.Close()
+	db := h.DB
 
 	evidenceKeys, err := listEvidenceKeysCtx(ctx, db)
 	if err != nil {
@@ -3575,4 +3564,15 @@ func ensureStoreRuntime() error {
 		cnst.ENCODER = encoder
 	}
 	return nil
+}
+
+// archiveDBOptions opens an archive's embedded DUES database. An empty
+// password means none: the database is unencrypted, or a legacy one keyed
+// with the empty password.
+func archiveDBOptions(dbPath, password string, chunkSizeKB int) cli.DBOptions {
+	creds := dbmeta.NoPassword()
+	if password != "" {
+		creds = dbmeta.Password(password)
+	}
+	return cli.DBOptions{Path: dbPath, Creds: creds, Layout: dbopen.Requested{ChunkKiB: chunkSizeKB}}
 }

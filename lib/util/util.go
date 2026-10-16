@@ -9,9 +9,9 @@ import (
 	"crypto/sha3"
 	"encoding/base32"
 	"encoding/base64"
-	"fmt"
 	"hash"
 	"hash/fnv"
+	"indicer/internal/console"
 	"indicer/lib/cnst"
 	"io"
 	"math/bits"
@@ -128,13 +128,13 @@ func GetLogicalFileHash(fileHandle *os.File, hasher hash.Hash, start, size int64
 func getHash(fileHandle *os.File, hasher hash.Hash, size int64, showBar bool) ([]byte, error) {
 	var startTime time.Time
 	if showBar {
-		fmt.Printf("Generating %s hash ....\n", cnst.HASHALGO)
+		console.Printf("Generating %s hash ....\n", cnst.HASHALGO)
 		startTime = time.Now()
 	}
 
 	bar := pb.New64(100)
 	if showBar {
-		bar = pb.Full.Start64(size)
+		bar = pb.New64(size).SetTemplate(pb.Full).SetWriter(console.Progress()).Start()
 	}
 	barReader := bar.NewProxyReader(fileHandle)
 
@@ -146,7 +146,7 @@ func getHash(fileHandle *os.File, hasher hash.Hash, size int64, showBar bool) ([
 
 	if showBar {
 		bar.Finish()
-		fmt.Printf("Operation completed in: %s\n\n", time.Since(startTime))
+		console.Printf("Operation completed in: %s\n\n", time.Since(startTime))
 	}
 	return hash, nil
 }
@@ -357,12 +357,15 @@ func UnsealAES(key, ciphertext []byte) ([]byte, error) {
 	return plaintext, nil
 }
 
+// InitBatch returns a write batch whose pending transactions are bounded by
+// cnst.GetMaxBatchCount. The batch is created only once that succeeds, so an
+// error leaks nothing (CFG-10).
 func InitBatch(db *badger.DB) (*badger.WriteBatch, error) {
-	batch := db.NewWriteBatch()
 	count, err := cnst.GetMaxBatchCount()
 	if err != nil {
 		return nil, err
 	}
+	batch := db.NewWriteBatch()
 	batch.SetMaxPendingTxns(count)
 	return batch, nil
 }

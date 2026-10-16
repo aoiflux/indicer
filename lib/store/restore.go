@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"bytes"
 	"fmt"
+	"indicer/internal/console"
 	"indicer/lib/cnst"
 	"indicer/lib/dbio"
 	"indicer/lib/fio"
@@ -165,7 +166,7 @@ func restoreData(meta structs.FileMeta, dst *os.File, db *badger.DB) error {
 	bar := progressbar.NewOptions64(
 		meta.Size,
 		progressbar.OptionShowBytes(true),
-		progressbar.OptionSetWriter(os.Stderr),
+		progressbar.OptionSetWriter(console.Progress()),
 		progressbar.OptionSetTheme(cnst.CommonProgressBarTheme),
 	)
 
@@ -355,8 +356,8 @@ func restoreData(meta structs.FileMeta, dst *os.File, db *badger.DB) error {
 	}
 
 	bar.Finish()
-	fmt.Fprintln(os.Stderr)
-	fmt.Println("Restored file with size: ", humanize.Bytes(uint64(meta.Size)))
+	fmt.Fprintln(console.Err())
+	console.Println("Restored file with size: ", humanize.Bytes(uint64(meta.Size)))
 	return bar.Close()
 }
 
@@ -382,7 +383,7 @@ func getRestoredChunkData(meta structs.FileMeta, restoreIndex, dbstart, end int6
 		return data, nil
 	}
 
-	data, err := dbio.GetChonkDataWithMetadata(restoreIndex, meta.Start, meta.Size, dbstart, end, metadata, db)
+	data, err := dbio.GetChonkDataWithMetadata(restoreIndex, meta.Start, meta.Size, dbstart, end, chunkKey, metadata, db)
 	if err != nil {
 		return nil, err
 	}

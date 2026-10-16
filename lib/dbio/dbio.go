@@ -4,7 +4,9 @@ import (
 	"bytes"
 	"encoding/base64"
 	"encoding/binary"
+	"errors"
 	"fmt"
+	"indicer/lib/blobcodec"
 	"indicer/lib/cnst"
 	"indicer/lib/fio"
 	"indicer/lib/logging"
@@ -25,7 +27,27 @@ func ConnectDB(datadir string, key []byte) (*badger.DB, error) {
 	if err := os.MkdirAll(datadir, cnst.DirPerm); err != nil {
 		return nil, err
 	}
+	// Legacy quick mode used badger's default (Snappy) tables and no key.
+	if cnst.QUICKOPT {
+		return badger.Open(BadgerOptions(datadir, nil, options.Snappy))
+	}
+	return badger.Open(BadgerOptions(datadir, key, options.ZSTD))
+}
 
+// badgerLogger sends badger's own messages to the DUES log. Its default logger
+// writes to stderr, which corrupts the TUI and pollutes FFI hosts' output.
+type badgerLogger struct{}
+
+func (badgerLogger) Errorf(f string, a ...any)   { logging.GetSugar().Errorf("badger: "+f, a...) }
+func (badgerLogger) Warningf(f string, a ...any) { logging.GetSugar().Warnf("badger: "+f, a...) }
+func (badgerLogger) Infof(f string, a ...any)    { logging.GetSugar().Debugf("badger: "+f, a...) }
+func (badgerLogger) Debugf(f string, a ...any)   { logging.GetSugar().Debugf("badger: "+f, a...) }
+
+// BadgerOptions builds the options a badger directory is opened with. key is
+// the encryption key (nil for none). Both key and table compression are fixed
+// when the database is created: badger decodes every table with the
+// compression it is opened with.
+func BadgerOptions(datadir string, key []byte, compression options.CompressionType) badger.Options {
 	cacheLimit, err := cnst.GetCacheLimit()
 	if err != nil {
 		cacheLimit = 256 * cnst.MB
@@ -44,25 +66,32 @@ func ConnectDB(datadir string, key []byte) (*badger.DB, error) {
 	}
 
 	opts := badger.DefaultOptions(datadir)
-	opts = opts.WithLoggingLevel(badger.ERROR)
+	// WithLoggingLevel installs badger's stderr logger, so it must not follow
+	// WithLogger.
+	opts = opts.WithLogger(badgerLogger{})
 	opts.IndexCacheSize = indexCache
 	opts.SyncWrites = true
 	opts.NumGoroutines = cnst.GetMaxThreadCount()
-	if !cnst.QUICKOPT {
-		opts.Compression = options.ZSTD
+	opts.Compression = compression
+	if compression == options.ZSTD {
 		opts.ZSTDCompressionLevel = 15
+	}
+	if len(key) > 0 {
 		opts.EncryptionKey = key
 		opts.EncryptionKeyRotationDuration = time.Hour * 168
 	}
 	opts.CompactL0OnClose = true
 	opts.LmaxCompaction = true
-	opts.NumCompactors = opts.NumGoroutines
+	// badger refuses fewer than two compactors, and low-resource mode runs a
+	// single worker thread (CFG-4). More than eight adds contention, not speed.
+	opts.NumCompactors = min(max(opts.NumGoroutines, 2), 8)
 	opts.BlockCacheSize = blockCache
 	opts.IndexCacheSize = indexCache
 	opts.ValueLogFileSize = 64 << 20
-	opts.ValueLogMaxEntries = uint32(opts.NumGoroutines)
+	// ValueLogMaxEntries keeps badger's default. Tying it to the worker count
+	// rotated value-log files after a few dozen entries (CFG-9).
 
-	return badger.Open(opts)
+	return opts
 }
 
 func SetFile[T structs.FileTypes](id []byte, filenode T, db *badger.DB) error {
@@ -571,7 +600,9 @@ func MaterializeChonkNode(key, data []byte, db *badger.DB, containerMgr *fio.Con
 }
 
 func materializeContainerChonkNode(key, data []byte, originalSize int64, db *badger.DB, containerMgr *fio.ContainerManager, blockMgr *fio.BlockManager) ([]byte, error) {
-	containerPath, offset, size, err := containerMgr.WriteChunkToContainer(data, key, db.Opts().EncryptionKey)
+	containerPath, offset, size, err := containerMgr.WriteChunkToContainer(key, func() ([]byte, error) {
+		return blobcodec.For(db).Encode(key, data)
+	})
 	if err != nil {
 		return nil, err
 	}
@@ -596,13 +627,9 @@ func materializeContainerChonkNode(key, data []byte, originalSize int64, db *bad
 }
 
 func materializeFileChonkNode(key, data []byte, originalSize int64, db *badger.DB) ([]byte, error) {
-	if !cnst.QUICKOPT {
-		data = cnst.ENCODER.EncodeAll(data, make([]byte, 0, len(data)))
-		var err error
-		data, err = util.SealAES(db.Opts().EncryptionKey, data)
-		if err != nil {
-			return nil, err
-		}
+	data, err := blobcodec.For(db).Encode(key, data)
+	if err != nil {
+		return nil, err
 	}
 
 	cfpath, err := fio.WriteChonk(db.Opts().Dir, data, key, db.Opts().EncryptionKey)
@@ -672,8 +699,10 @@ func GetChonkData(restoreIndex, start, size, dbstart, end int64, key []byte, db 
 	return trimLogicalChunkData(data, restoreIndex, start, size, dbstart, end), nil
 }
 
-func GetChonkDataWithMetadata(restoreIndex, start, size, dbstart, end int64, metadata []byte, db *badger.DB) ([]byte, error) {
-	data, err := readChonkFromMetadata(metadata, db)
+// GetChonkDataWithMetadata is GetChonkData for a caller that already holds
+// the chunk's metadata; key is still needed to check what is read.
+func GetChonkDataWithMetadata(restoreIndex, start, size, dbstart, end int64, key, metadata []byte, db *badger.DB) ([]byte, error) {
+	data, err := readChonkFromMetadata(key, metadata, db)
 	if err != nil {
 		return nil, err
 	}
@@ -706,12 +735,12 @@ func GetStoredChonkSealedSize(metadata []byte) (int64, bool) {
 	return parsed.StoredSize, true
 }
 
-func GetChonkSizeWithMetadata(restoreIndex, start, size, dbstart, end int64, metadata []byte, db *badger.DB) (int64, error) {
-	data, err := GetChonkDataWithMetadata(restoreIndex, start, size, dbstart, end, metadata, db)
+func GetChonkSizeWithMetadata(restoreIndex, start, size, dbstart, end int64, key, metadata []byte, db *badger.DB) (int64, error) {
+	data, err := GetChonkDataWithMetadata(restoreIndex, start, size, dbstart, end, key, metadata, db)
 	if err != nil {
 		return -1, err
 	}
-	return getSealedChunkSize(data, db)
+	return getSealedChunkSize(key, data, db)
 }
 
 func GetChonkSize(restoreIndex, start, size, dbstart, end int64, key []byte, db *badger.DB) (int64, error) {
@@ -719,23 +748,24 @@ func GetChonkSize(restoreIndex, start, size, dbstart, end int64, key []byte, db 
 	if err != nil {
 		return -1, err
 	}
-	return getSealedChunkSize(data, db)
+	return getSealedChunkSize(key, data, db)
 }
 
-func getSealedChunkSize(data []byte, db *badger.DB) (int64, error) {
-	data = cnst.ENCODER.EncodeAll(data, make([]byte, 0, len(data)))
-	var err error
-	data, err = util.SealAES(db.Opts().EncryptionKey, data)
+// getSealedChunkSize reports how large data is once encoded for storage.
+func getSealedChunkSize(key, data []byte, db *badger.DB) (int64, error) {
+	encoded, err := blobcodec.For(db).Encode(key, data)
 	if err != nil {
 		return -1, err
 	}
-	return int64(len(data)), nil
+	return int64(len(encoded)), nil
 }
+
+// GetChonkNode returns the decoded content of the chunk whose key is key.
 func GetChonkNode(key []byte, db *badger.DB) ([]byte, error) {
 	// Try to get from database first (backward compatibility or non-hierarchical mode)
 	metadata, err := GetNode(key, db)
 	if err == nil {
-		return readChonkFromMetadata(metadata, db)
+		return readChonkFromMetadata(key, metadata, db)
 	}
 
 	// Not found in DB, try hierarchical block index
@@ -745,20 +775,29 @@ func GetChonkNode(key []byte, db *badger.DB) ([]byte, error) {
 		return nil, fmt.Errorf("chunk not found in DB or block index: %w", err)
 	}
 
-	return fio.ReadChunkFromContainer(containerPath, offset, size, db.Opts().EncryptionKey)
+	stored, err := fio.ReadChunkFromContainer(containerPath, offset, size)
+	if err != nil {
+		return nil, err
+	}
+	return blobcodec.For(db).Decode(key, stored)
 }
 
-func readChonkFromMetadata(metadata []byte, db *badger.DB) ([]byte, error) {
+func readChonkFromMetadata(key, metadata []byte, db *badger.DB) ([]byte, error) {
 	parsed, err := parseChonkMetadata(metadata)
 	if err != nil {
 		return nil, err
 	}
 
+	var stored []byte
 	if parsed.Container {
-		return fio.ReadChunkFromContainer(parsed.Path, parsed.Offset, parsed.EncodedSize, db.Opts().EncryptionKey)
+		stored, err = fio.ReadChunkFromContainer(parsed.Path, parsed.Offset, parsed.EncodedSize)
+	} else {
+		stored, err = fio.ReadChonk(parsed.Path)
 	}
-
-	return fio.ReadChonk([]byte(parsed.Path), db.Opts().EncryptionKey)
+	if err != nil {
+		return nil, err
+	}
+	return blobcodec.For(db).Decode(key, stored)
 }
 
 func parseChonkMetadata(metadata []byte) (structs.ChonkMetadata, error) {
@@ -1011,4 +1050,31 @@ func GuessFileTypes(encodedHash string, db *badger.DB) ([][]byte, error) {
 		return nil, badger.ErrKeyNotFound
 	}
 	return matches, nil
+}
+
+// valueLogGCBudget bounds how long CompactValueLog may run.
+const valueLogGCBudget = 30 * time.Second
+
+// CompactValueLog reclaims value-log space after a store or repair, rewriting
+// files that are at least half garbage until none is left or the time budget
+// is spent. Read-only databases are left alone. It returns the number of
+// files rewritten.
+func CompactValueLog(db *badger.DB) (int, error) {
+	if db.Opts().ReadOnly {
+		return 0, nil
+	}
+	deadline := time.Now().Add(valueLogGCBudget)
+	n := 0
+	for time.Now().Before(deadline) {
+		err := db.RunValueLogGC(0.5)
+		switch {
+		case err == nil:
+			n++
+		case errors.Is(err, badger.ErrNoRewrite), errors.Is(err, badger.ErrRejected):
+			return n, nil
+		default:
+			return n, err
+		}
+	}
+	return n, nil
 }

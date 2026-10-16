@@ -45,7 +45,6 @@ const MaxContainerSize = 1 * cnst.GB // 1GB max per container file
 // WriteRequest represents a lock-free write request
 type WriteRequest struct {
 	data       []byte
-	key        []byte
 	responseCh chan WriteResponse
 }
 
@@ -91,8 +90,11 @@ func NewContainerManager(dbpath string) *ContainerManager {
 	return cm
 }
 
-// WriteChunkToContainer writes a chunk to a container file using lock-free queue
-func (cm *ContainerManager) WriteChunkToContainer(data, ckey, key []byte) (containerPath string, offset int64, size int64, err error) {
+// WriteChunkToContainer appends the chunk ckey to a container, unless this
+// manager has already written it. encode returns the bytes to store (see
+// lib/blobcodec); it runs in the caller's goroutine and only for chunks not
+// yet written.
+func (cm *ContainerManager) WriteChunkToContainer(ckey []byte, encode func() ([]byte, error)) (containerPath string, offset int64, size int64, err error) {
 	hashKey := base64.RawURLEncoding.EncodeToString(ckey)
 	cm.seenMu.RLock()
 	if cached, ok := cm.seen[hashKey]; ok {
@@ -101,10 +103,14 @@ func (cm *ContainerManager) WriteChunkToContainer(data, ckey, key []byte) (conta
 	}
 	cm.seenMu.RUnlock()
 
+	data, err := encode()
+	if err != nil {
+		return "", 0, 0, err
+	}
+
 	// Create write request with response channel
 	req := &WriteRequest{
 		data:       data,
-		key:        key,
 		responseCh: make(chan WriteResponse, 1),
 	}
 
@@ -138,7 +144,7 @@ func (cm *ContainerManager) writerLoop() {
 
 	for req := range cm.writeQueue {
 		// Process write request
-		path, offset, size, err := cm.doWrite(req.data, req.key)
+		path, offset, size, err := cm.doWrite(req.data)
 
 		// Send response back to caller
 		req.responseCh <- WriteResponse{
@@ -150,20 +156,9 @@ func (cm *ContainerManager) writerLoop() {
 	}
 }
 
-// doWrite performs the actual write operation (called only by writer goroutine)
-func (cm *ContainerManager) doWrite(data, key []byte) (containerPath string, offset int64, size int64, err error) {
-	// Encrypt and compress data
-	var processedData []byte
-	if !cnst.QUICKOPT {
-		processedData = cnst.ENCODER.EncodeAll(data, make([]byte, 0, len(data)))
-		processedData, err = util.SealAES(key, processedData)
-		if err != nil {
-			return "", 0, 0, err
-		}
-	} else {
-		processedData = data
-	}
-
+// doWrite appends already-encoded chunk bytes (called only by the writer
+// goroutine).
+func (cm *ContainerManager) doWrite(processedData []byte) (containerPath string, offset int64, size int64, err error) {
 	dataSize := int64(len(processedData))
 
 	// Check if we need a new container (first time, or current won't fit)
@@ -386,8 +381,9 @@ func resolveContainerPath(containerPath string) string {
 	return containerPath
 }
 
-// ReadChunkFromContainer reads a chunk from a container file at the specified offset
-func ReadChunkFromContainer(containerPath string, offset, size int64, key []byte) ([]byte, error) {
+// ReadChunkFromContainer returns the stored (still encoded) bytes of the chunk
+// at offset; lib/blobcodec decodes them.
+func ReadChunkFromContainer(containerPath string, offset, size int64) ([]byte, error) {
 	if size < 0 || offset < 0 {
 		return nil, fmt.Errorf("invalid offset/size: offset=%d size=%d", offset, size)
 	}
@@ -417,23 +413,5 @@ func ReadChunkFromContainer(containerPath string, offset, size int64, key []byte
 		}
 	}
 
-	// Decrypt and decompress
-	var data []byte
-	if !cnst.QUICKOPT {
-		decrypted, err := util.UnsealAES(key, encoded)
-		if err != nil {
-			return nil, err
-		}
-		data = decrypted
-
-		decoded, err := cnst.DECODER.DecodeAll(data, nil)
-		if err != nil {
-			return nil, err
-		}
-		data = decoded
-	} else {
-		data = encoded
-	}
-
-	return data, nil
+	return encoded, nil
 }

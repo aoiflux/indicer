@@ -3,6 +3,7 @@ package store
 import (
 	"bytes"
 	"fmt"
+	"indicer/internal/console"
 	"os"
 	"path/filepath"
 	"strings"
@@ -233,9 +234,9 @@ func printStats(s *DBStats) {
 	color.New(color.FgCyan, color.Bold).Println("  ╚══════════════════════════════════════════════╝")
 
 	// ── FILES ──────────────────────────────────────────────────────────────
-	fmt.Println()
+	console.Println()
 	sectionHdr.Println("  FILES")
-	fmt.Println("  ", dim.Sprint(sep))
+	console.Println("  ", dim.Sprint(sep))
 
 	statRow("Total files", humanize.Comma(s.TotalFiles), val)
 	statRow("Completed", humanize.Comma(s.CompletedFiles), good)
@@ -249,9 +250,9 @@ func printStats(s *DBStats) {
 	}
 
 	// ── CHUNKS ─────────────────────────────────────────────────────────────
-	fmt.Println()
+	console.Println()
 	sectionHdr.Println("  CHUNKS")
-	fmt.Println("  ", dim.Sprint(sep))
+	console.Println("  ", dim.Sprint(sep))
 
 	statRow("Unique chunks stored", humanize.Comma(s.UniqueChunks), val)
 	statRow("Total chunk references", humanize.Comma(s.TotalChunkRefs), val)
@@ -283,9 +284,9 @@ func printStats(s *DBStats) {
 	}
 
 	// ── STRUCTURE ──────────────────────────────────────────────────────────
-	fmt.Println()
+	console.Println()
 	sectionHdr.Println("  STRUCTURE")
-	fmt.Println("  ", dim.Sprint(sep))
+	console.Println("  ", dim.Sprint(sep))
 
 	statRow("Partition files", humanize.Comma(s.TotalPartitions), val)
 	statRow("Indexed FS objects", humanize.Comma(s.TotalIndexedFiles), val)
@@ -314,9 +315,9 @@ func printStats(s *DBStats) {
 	}
 
 	// ── STORAGE ────────────────────────────────────────────────────────────
-	fmt.Println()
+	console.Println()
 	sectionHdr.Println("  STORAGE")
-	fmt.Println("  ", dim.Sprint(sep))
+	console.Println("  ", dim.Sprint(sep))
 
 	statRow("Logical size", humanize.Bytes(uint64(s.TotalLogicalSize)), val)
 	statRow("On-disk size (blobs)", humanize.Bytes(uint64(s.OnDiskBytes)), val)
@@ -335,9 +336,9 @@ func printStats(s *DBStats) {
 	// ── WRITE ENGINE ───────────────────────────────────────────────────────
 	fioStats := fio.GetWriteBackendStats()
 
-	fmt.Println()
+	console.Println()
 	sectionHdr.Println("  WRITE ENGINE")
-	fmt.Println("  ", dim.Sprint(sep))
+	console.Println("  ", dim.Sprint(sep))
 
 	statRow("Requested engine", fioStats.RequestedEngine, val)
 	statRow("Selected engine", fioStats.SelectedEngine, val)
@@ -359,5 +360,5 @@ func printStats(s *DBStats) {
 		}
 	}
 
-	fmt.Println()
+	console.Println()
 }

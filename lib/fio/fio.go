@@ -48,23 +48,8 @@ func WriteChonk(dbpath string, data, ckey, key []byte) ([]byte, error) {
 	return []byte(cfpath), nil
 }
 
-func ReadChonk(cfpath, key []byte) ([]byte, error) {
-	encoded, err := os.ReadFile(string(cfpath))
-	if err != nil {
-		return nil, err
-	}
-	if cnst.QUICKOPT {
-		return encoded, nil
-	}
-
-	decrypted, err := util.UnsealAES(key, encoded)
-	if err != nil {
-		return nil, err
-	}
-	decoded, err := cnst.DECODER.DecodeAll(decrypted, nil)
-	if err != nil {
-		return nil, err
-	}
-
-	return decoded, nil
+// ReadChonk returns the stored (still encoded) bytes of a chunk blob;
+// lib/blobcodec decodes them.
+func ReadChonk(cfpath string) ([]byte, error) {
+	return os.ReadFile(cfpath)
 }

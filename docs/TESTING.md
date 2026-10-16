@@ -144,9 +144,13 @@ $env:DUES_CORPUS_VHD = 'E:\hyper\vhd'
 go test ./lib/parser/image/
 ```
 
-`lib/parser/image` uses the small `drive.vhdx` snapshot chain to check that a
-differencing disk resolves its parents from its own directory only. It also
-checks that an incomplete chain refuses to open.
+`lib/parser/image` uses the corpus snapshot chains for three checks:
+- The small `drive.vhdx` chain checks that a differencing disk resolves its
+  parents from its own directory only.
+- An incomplete chain must refuse to open.
+- The first `ubuntu` snapshot checks that a read starting inside a sector of a
+  partially present VHDX block returns the right bytes. Its ground truth comes
+  from libyal `vhdimount`.
 
 `cmd/dues-parsemanifest` writes a JSONL manifest of every partition and file
 the parser finds in an image, with content digests computed two independent

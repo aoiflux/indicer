@@ -5,6 +5,7 @@ import (
 	"os"
 	"testing"
 
+	"indicer/lib/blobcodec"
 	"indicer/lib/cnst"
 	"indicer/lib/dbio"
 	"indicer/lib/fio"
@@ -113,7 +114,13 @@ func setupRestoreBenchmarkDataset(tb testing.TB, chunks int, start int64) (struc
 		}
 
 		ckey := util.AppendToBytesSlice(cnst.ChonkNamespace, chash)
-		path, err := fio.WriteChonk(db.Opts().Dir, chunkData, ckey, db.Opts().EncryptionKey)
+		// Store the chunk encoded, as ingest does; a raw payload in an encrypted
+		// database fails to decrypt on read (HYG-2).
+		stored, err := blobcodec.For(db).Encode(ckey, chunkData)
+		if err != nil {
+			tb.Fatalf("encode chunk failed: %v", err)
+		}
+		path, err := fio.WriteChonk(db.Opts().Dir, stored, ckey, db.Opts().EncryptionKey)
 		if err != nil {
 			tb.Fatalf("write chunk failed: %v", err)
 		}

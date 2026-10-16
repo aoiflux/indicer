@@ -5,16 +5,16 @@ import (
 	"errors"
 	"fmt"
 	"indicer/cli"
+	"indicer/internal/console"
 	"indicer/lib/cnst"
+	"indicer/lib/dbopen"
 	"indicer/lib/server"
 	"indicer/lib/util"
 	"indicer/pb/pbconnect"
 	"net/http"
 	"net/url"
 	"os"
-	"os/signal"
 	"path/filepath"
-	"syscall"
 	"time"
 
 	"github.com/fatih/color"
@@ -32,19 +32,19 @@ func newHTTPServer(addr string, h http.Handler) *http.Server {
 	return &http.Server{Addr: addr, Handler: h, Protocols: &p}
 }
 
-func Server(chonkSize int, dbpath string, key []byte) error {
-	var err error
-
-	cnst.DB, dbpath, err = cli.Common(chonkSize, dbpath, key)
+func Server(ctx context.Context, opts cli.DBOptions) (err error) {
+	h, err := cli.Common(ctx, opts, dbopen.ReadWrite, true)
 	if err != nil {
 		printErr("Server startup failed", []string{fmt.Sprintf("Database connection failed: %v", err)})
 		return err
 	}
-	defer cnst.DB.Close()
-	dbpath, err = filepath.Abs(dbpath)
-	if err != nil {
-		return err
-	}
+	defer func() {
+		if cerr := h.Close(); cerr != nil && err == nil {
+			err = cerr
+		}
+	}()
+	cnst.DB = h.DB
+	dbpath := h.Root
 
 	err = util.EnsureBlobPath(dbpath)
 	if err != nil {
@@ -106,16 +106,12 @@ func Server(chonkSize int, dbpath string, key []byte) error {
 		"Press Ctrl+C to stop gracefully",
 	})
 
-	// Set up signal handling for graceful shutdown
-	sigs := make(chan os.Signal, 1)
-	signal.Notify(sigs, os.Interrupt, syscall.SIGTERM)
-	defer signal.Stop(sigs)
-
+	// The root context ends on the first interrupt or termination signal.
 	var serveRuntimeErr error
 
 	select {
-	case sig := <-sigs:
-		printWarn("Shutdown requested", []string{fmt.Sprintf("Signal received: %v", sig)})
+	case <-ctx.Done():
+		printWarn("Shutdown requested", []string{context.Cause(ctx).Error()})
 	case serveRuntimeErr = <-serveErr:
 		if serveRuntimeErr != nil {
 			printErr("Server exited unexpectedly", []string{serveRuntimeErr.Error()})
@@ -126,12 +122,12 @@ func Server(chonkSize int, dbpath string, key []byte) error {
 	}
 
 	// Graceful shutdown
-	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	shutdownCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 
 	// Shutdown Connect server
 	printInfo("Graceful shutdown", []string{"Stopping HTTP server"})
-	if err := httpServer.Shutdown(ctx); err != nil {
+	if err := httpServer.Shutdown(shutdownCtx); err != nil {
 		printErr("Server shutdown failed", []string{err.Error()})
 		return err
 	}
@@ -183,9 +179,9 @@ func printSection(icon, title string, lines []string, c *color.Color) {
 	dim := color.New(color.FgHiBlack)
 	for _, line := range lines {
 		dim.Print("     · ")
-		fmt.Println(line)
+		console.Println(line)
 	}
-	fmt.Println()
+	console.Println()
 }
 
 func isLocalhostOrigin(origin string) bool {

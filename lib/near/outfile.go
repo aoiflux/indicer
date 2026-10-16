@@ -3,7 +3,7 @@ package near
 import (
 	"bytes"
 	"encoding/base64"
-	"fmt"
+	"indicer/internal/console"
 	"indicer/lib/cnst"
 	"indicer/lib/dbio"
 	"indicer/lib/structs"
@@ -65,8 +65,8 @@ func NearOutFile(fpath string, db *badger.DB, deep, explainExact, verify bool, t
 		if err != nil {
 			return err
 		}
-		fmt.Printf("Exact file match found, skipping chunk drilldown.\n")
-		fmt.Printf("NeAR report generated: %s\n", reportPath)
+		console.Printf("Exact file match found, skipping chunk drilldown.\n")
+		console.Printf("NeAR report generated: %s\n", reportPath)
 		return nil
 	}
 
@@ -114,8 +114,8 @@ func NearOutFile(fpath string, db *badger.DB, deep, explainExact, verify bool, t
 	if err != nil {
 		return err
 	}
-	fmt.Printf("NeAR report generated: %s\n", reportPath)
-	fmt.Printf("\n\nNumber of chonks: %d", count)
+	console.Printf("NeAR report generated: %s\n", reportPath)
+	console.Printf("\n\nNumber of chonks: %d", count)
 
 	return nil
 }

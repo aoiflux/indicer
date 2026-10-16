@@ -2,6 +2,7 @@ package parser
 
 import (
 	"fmt"
+	"indicer/internal/termsafe"
 	"strings"
 
 	"github.com/fatih/color"
@@ -30,6 +31,12 @@ func (r *indexReport) warning(label, msg string) {
 func (r *indexReport) print() {
 	if len(r.entries) == 0 {
 		return
+	}
+	// Labels and messages carry evidence data (partition names, paths):
+	// neutralise terminal controls before printing them (PAR-24).
+	for i := range r.entries {
+		r.entries[i].label = termsafe.Line(r.entries[i].label)
+		r.entries[i].msg = termsafe.Line(r.entries[i].msg)
 	}
 
 	labelColor := color.New(color.FgCyan, color.Bold)

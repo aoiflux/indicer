@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"indicer/internal/console"
 	"indicer/lib/cnst"
 	"indicer/lib/dbio"
 	"indicer/lib/structs"
@@ -160,7 +161,7 @@ func isNearExactMatchID(id string) bool {
 }
 
 func NearInFile(fhash string, db *badger.DB, deep, verify bool, topK int) error {
-	fmt.Println("Finding NeAR artefacts & generating Artefact Relation Graph")
+	console.Println("Finding NeAR artefacts & generating Artefact Relation Graph")
 	start := time.Now()
 	resetNearChunkContributions()
 
@@ -232,14 +233,14 @@ func NearInFile(fhash string, db *badger.DB, deep, verify bool, topK int) error 
 	if err != nil {
 		return err
 	}
-	fmt.Printf("NeAR report generated: %s\n", reportPath)
+	console.Printf("NeAR report generated: %s\n", reportPath)
 
 	// err = visualise(fid, idmap, db)
 	// if err != nil {
 	// 	return err
 	// }
 
-	fmt.Printf("Done.... %v\n", time.Since(start))
+	console.Printf("Done.... %v\n", time.Since(start))
 	return nil
 }
 
@@ -335,7 +336,7 @@ func writeNearJSONReportWithInput(input nearReportInput, idmap *structs.ConcMap,
 			var freeGB float64
 			var threads int
 			k, freeGB, threads = computeDynamicTopKWithReason(len(report.Matches))
-			fmt.Printf("[advanced-deep] auto-selected top-K = %d "+
+			console.Printf("[advanced-deep] auto-selected top-K = %d "+
 				"(%.1f GB available memory × %d CPU threads, bounded [5, 100], capped at %d total matches)\n",
 				k, freeGB, threads, len(report.Matches))
 		}
@@ -630,11 +631,11 @@ func getNearFile(start, size int64, ehash, fid []byte, db *badger.DB, deep ...bo
 	fhash := bytes.Split(fid, []byte(cnst.NamespaceSeperator))[1]
 	idmap := structs.NewConcMap()
 
-	fmt.Println("Finding NeAR Artefacts....")
+	console.Println("Finding NeAR Artefacts....")
 	bar := progressbar.NewOptions64(
 		size,
 		progressbar.OptionShowBytes(true),
-		progressbar.OptionSetWriter(os.Stderr),
+		progressbar.OptionSetWriter(console.Progress()),
 		progressbar.OptionSetTheme(cnst.CommonProgressBarTheme),
 	)
 
@@ -677,8 +678,8 @@ func getNearFile(start, size int64, ehash, fid []byte, db *badger.DB, deep ...bo
 	}
 
 	bar.Finish()
-	fmt.Fprintln(os.Stderr)
-	fmt.Println("Found NeAR Artefacts. Generating Artefact Relation Graph....")
+	fmt.Fprintln(console.Err())
+	console.Println("Found NeAR Artefacts. Generating Artefact Relation Graph....")
 	return idmap, bar.Close()
 }
 

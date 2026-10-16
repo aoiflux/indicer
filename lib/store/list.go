@@ -4,7 +4,7 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"errors"
-	"fmt"
+	"indicer/internal/console"
 
 	"indicer/lib/structs"
 
@@ -114,7 +114,7 @@ func List(db *badger.DB, statusFilter string) error {
 			return err
 		}
 
-		fmt.Println(string(jsonData))
+		console.Println(string(jsonData))
 		return nil
 	})
 }

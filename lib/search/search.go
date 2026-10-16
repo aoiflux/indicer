@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"indicer/internal/console"
 	"indicer/lib/cnst"
 	"indicer/lib/dbio"
 	"indicer/lib/fts"
@@ -141,27 +142,27 @@ func SearchToPathWithContextFullTextFallback(ctx context.Context, query, reportP
 	}
 	if err != nil {
 		logging.GetLogger().Debug("SearchToPathWithContextFullTextFallback FTS_FALLBACK", zap.Error(err))
-		color.New(color.FgHiYellow, color.Bold).Fprintf(os.Stderr, "[search] Full-text index unavailable, falling back to scan search\n")
+		color.New(color.FgHiYellow, color.Bold).Fprintf(console.Err(), "[search] Full-text index unavailable, falling back to scan search\n")
 		return SearchToPathWithContext(ctx, query, reportPath, db)
 	}
 	if len(ftScores) == 0 {
 		rawScores, rawErr := fts.SearchFileScores(ctx, db, query, 5000)
 		if rawErr == nil && len(rawScores) > 0 {
 			ftScores = rawScores
-			color.New(color.FgHiCyan, color.Bold).Fprintf(os.Stderr, "[search] Full-text search active (raw-query candidate filtering enabled)\n")
+			color.New(color.FgHiCyan, color.Bold).Fprintf(console.Err(), "[search] Full-text search active (raw-query candidate filtering enabled)\n")
 			ftsActivePrinted = true
 		} else {
 			docCount, countErr := fts.IndexDocumentCount(db)
 			if countErr == nil {
-				color.New(color.FgHiYellow, color.Bold).Fprintf(os.Stderr, "[search] Full-text index available (%d docs) but query returned no candidates, falling back to scan search\n", docCount)
+				color.New(color.FgHiYellow, color.Bold).Fprintf(console.Err(), "[search] Full-text index available (%d docs) but query returned no candidates, falling back to scan search\n", docCount)
 			} else {
-				color.New(color.FgHiYellow, color.Bold).Fprintf(os.Stderr, "[search] Full-text index returned no candidates for query, falling back to scan search\n")
+				color.New(color.FgHiYellow, color.Bold).Fprintf(console.Err(), "[search] Full-text index returned no candidates for query, falling back to scan search\n")
 			}
 			return SearchToPathWithContext(ctx, query, reportPath, db)
 		}
 	}
 	if len(ftScores) > 0 && !ftsActivePrinted {
-		color.New(color.FgHiCyan, color.Bold).Fprintf(os.Stderr, "[search] Full-text search active (candidate filtering enabled)\n")
+		color.New(color.FgHiCyan, color.Bold).Fprintf(console.Err(), "[search] Full-text search active (candidate filtering enabled)\n")
 	}
 
 	candidates := fts.TopCandidateIDs(ftScores)
@@ -172,7 +173,7 @@ func SearchToPathWithContextFullTextFallback(ctx context.Context, query, reportP
 	bar := progressbar.NewOptions64(
 		totalWork,
 		progressbar.OptionSetDescription("Searching...."),
-		progressbar.OptionSetWriter(os.Stderr),
+		progressbar.OptionSetWriter(console.Progress()),
 		progressbar.OptionSetTheme(cnst.CommonProgressBarTheme),
 	)
 	var progressMu sync.Mutex
@@ -200,7 +201,7 @@ func SearchToPathWithContextFullTextFallback(ctx context.Context, query, reportP
 		}
 	}
 	if !hasHits {
-		color.New(color.FgHiYellow, color.Bold).Fprintf(os.Stderr, "[search] Full-text path produced no hits, falling back to scan search\n")
+		color.New(color.FgHiYellow, color.Bold).Fprintf(console.Err(), "[search] Full-text path produced no hits, falling back to scan search\n")
 		return SearchToPathWithContext(ctx, query, reportPath, db)
 	}
 
@@ -221,8 +222,8 @@ func SearchToPathWithContextFullTextFallback(ctx context.Context, query, reportP
 	onProcessed()
 
 	bar.Finish()
-	fmt.Fprintln(os.Stderr)
-	fmt.Println("Done....", time.Since(start))
+	fmt.Fprintln(console.Err())
+	console.Println("Done....", time.Since(start))
 	logging.GetLogger().Info("SearchToPathWithContextFullTextFallback COMPLETE",
 		zap.Int64("duration_ms", time.Since(start).Milliseconds()),
 		zap.Int64("total_files", totalFiles),
@@ -266,7 +267,7 @@ func SearchToPathWithContext(ctx context.Context, query, reportPath string, db *
 	bar := progressbar.NewOptions64(
 		totalWork,
 		progressbar.OptionSetDescription("Searching...."),
-		progressbar.OptionSetWriter(os.Stderr),
+		progressbar.OptionSetWriter(console.Progress()),
 		progressbar.OptionSetTheme(cnst.CommonProgressBarTheme),
 	)
 	var progressMu sync.Mutex
@@ -302,8 +303,8 @@ func SearchToPathWithContext(ctx context.Context, query, reportPath string, db *
 	onProcessed()
 
 	bar.Finish()
-	fmt.Fprintln(os.Stderr)
-	fmt.Println("Done....", time.Since(start))
+	fmt.Fprintln(console.Err())
+	console.Println("Done....", time.Since(start))
 	logging.GetLogger().Info("SearchToPathWithContext COMPLETE",
 		zap.Int64("duration_ms", time.Since(start).Milliseconds()),
 		zap.Int64("total_files", totalFiles),

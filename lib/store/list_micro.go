@@ -2,7 +2,7 @@ package store
 
 import (
 	"encoding/json"
-	"fmt"
+	"indicer/internal/console"
 
 	"indicer/lib/microartefact"
 )
@@ -27,7 +27,7 @@ func ListMicroArtefacts(repo *microartefact.GrapheneRepository) error {
 		return err
 	}
 
-	fmt.Println(string(jsonData))
+	console.Println(string(jsonData))
 	return nil
 }
 

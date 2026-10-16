@@ -1,3 +1,7 @@
 # Fuzz targets run by the verify gate for FUZZTIME each (default 60s).
 # One per line: <package> <FuzzFunction>. Lines starting with # are ignored.
 ./internal/faultinject FuzzParseSpec
+./internal/appconfig FuzzResolve
+./internal/termsafe FuzzString
+./lib/logging FuzzRedactJSON
+./lib/logging FuzzRedactArgs

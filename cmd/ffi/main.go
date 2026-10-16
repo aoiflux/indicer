@@ -9,8 +9,13 @@ import (
 	"context"
 	"unsafe"
 
+	"indicer/internal/console"
 	platformapi "indicer/pkg/api"
 )
+
+// The library runs inside a host process whose stdout and stderr are not
+// DUES's to write to (FFI-3).
+func init() { console.Quiet() }
 
 const (
 	emptyRequestJSON = "{}"

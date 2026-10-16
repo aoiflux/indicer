@@ -6,12 +6,12 @@ import (
 	"encoding/binary"
 	"errors"
 	"fmt"
+	"indicer/internal/console"
 	"indicer/lib/cnst"
 	"indicer/lib/dbio"
 	"indicer/lib/fio"
 	"indicer/lib/structs"
 	"indicer/lib/util"
-	"os"
 	"sync"
 
 	"github.com/dgraph-io/badger/v4"
@@ -69,7 +69,7 @@ func storeEvidenceDataStaged(parentCtx context.Context, infile structs.InputFile
 	bar := progressbar.NewOptions64(
 		infile.GetSize(),
 		progressbar.OptionShowBytes(true),
-		progressbar.OptionSetWriter(os.Stderr),
+		progressbar.OptionSetWriter(console.Progress()),
 		progressbar.OptionSetTheme(cnst.CommonProgressBarTheme),
 	)
 
@@ -186,7 +186,7 @@ func storeEvidenceDataStaged(parentCtx context.Context, infile structs.InputFile
 	}
 
 	bar.Finish()
-	fmt.Fprintln(os.Stderr)
+	fmt.Fprintln(console.Err())
 	barErr := bar.Close()
 
 	select {

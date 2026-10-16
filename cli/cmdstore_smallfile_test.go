@@ -38,7 +38,7 @@ func TestStoreDataSmallFileWithIndexingAcrossHashStrategies(t *testing.T) {
 			cnst.StoreHashStrategy = strategy
 			cnst.HochoMode = cnst.HochoModeBaseline
 			dbPath := filepath.Join(t.TempDir(), "db-"+strategy)
-			if err := StoreData(chunkKB, dbPath, inputPath, key, false, false, false, false); err != nil {
+			if err := StoreData(t.Context(), optsFor(dbPath, chunkKB, key), inputPath, false, false, false, false); err != nil {
 				t.Fatalf("StoreData %s small file: %v", strategy, err)
 			}
 		})

@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"os"
 
+	"indicer/internal/console"
 	"indicer/internal/core/jsonbridge"
 	platformapi "indicer/pkg/api"
 )
@@ -79,6 +80,8 @@ type command struct {
 }
 
 func main() {
+	// Stdout carries the JSON result; library output goes to stderr (FFI-3).
+	console.Configure(os.Stderr, os.Stderr)
 	commands := map[string]command{
 		cmdDispatch:       {name: cmdDispatch, run: runDispatch},
 		cmdCapabilities:   {name: cmdCapabilities, run: runCapabilities},

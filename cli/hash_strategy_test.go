@@ -6,6 +6,7 @@ import (
 	"encoding/binary"
 	"encoding/json"
 	"errors"
+	"indicer/internal/console"
 	"io"
 	"os"
 	"path/filepath"
@@ -42,11 +43,12 @@ func ensureZstdReadyForTests(t *testing.T) {
 func collectEvidenceHashState(t *testing.T, dbPath string, key []byte, rawHash []byte) (string, []byte) {
 	t.Helper()
 
-	db, err := dbio.ConnectDB(dbPath, key)
+	h, err := openTestDB(dbPath, key)
 	if err != nil {
 		t.Fatalf("ConnectDB: %v", err)
 	}
-	defer db.Close()
+	defer h.Close()
+	db := h.DB
 
 	rhash := base64.StdEncoding.EncodeToString(rawHash)
 
@@ -193,14 +195,14 @@ func TestStoreHashStrategyEvidenceParity(t *testing.T) {
 
 	dbPathSync := filepath.Join(t.TempDir(), "db-sync")
 	cnst.StoreHashStrategy = cnst.SyncHashStrategy
-	if err := StoreData(64, dbPathSync, inputPath, key, false, true, false, false); err != nil {
+	if err := StoreData(t.Context(), optsFor(dbPathSync, 64, key), inputPath, false, true, false, false); err != nil {
 		t.Fatalf("StoreData sync: %v", err)
 	}
 	syncHash, _ := collectEvidenceHashState(t, dbPathSync, key, expectedHashRaw)
 
 	dbPathAsync := filepath.Join(t.TempDir(), "db-async")
 	cnst.StoreHashStrategy = cnst.AsyncHashStrategy
-	if err := StoreData(64, dbPathAsync, inputPath, key, false, true, false, false); err != nil {
+	if err := StoreData(t.Context(), optsFor(dbPathAsync, 64, key), inputPath, false, true, false, false); err != nil {
 		t.Fatalf("StoreData async: %v", err)
 	}
 	asyncHash, _ := collectEvidenceHashState(t, dbPathAsync, key, expectedHashRaw)
@@ -217,7 +219,7 @@ func TestStoreHashStrategyEvidenceParity(t *testing.T) {
 
 	dbPathHocho := filepath.Join(t.TempDir(), "db-hocho")
 	cnst.StoreHashStrategy = cnst.HochoHashStrategy
-	if err := StoreData(64, dbPathHocho, inputPath, key, false, true, false, false); err != nil {
+	if err := StoreData(t.Context(), optsFor(dbPathHocho, 64, key), inputPath, false, true, false, false); err != nil {
 		t.Fatalf("StoreData hocho: %v", err)
 	}
 	hochoRaw, err := base64.StdEncoding.DecodeString(expectedHocho)
@@ -278,7 +280,7 @@ func TestStoreHashStrategyKeyModelContract(t *testing.T) {
 		t.Run(strategy, func(t *testing.T) {
 			dbPath := filepath.Join(t.TempDir(), "db-"+strategy)
 			cnst.StoreHashStrategy = strategy
-			if err := StoreData(64, dbPath, inputPath, key, false, true, false, false); err != nil {
+			if err := StoreData(t.Context(), optsFor(dbPath, 64, key), inputPath, false, true, false, false); err != nil {
 				t.Fatalf("StoreData %s: %v", strategy, err)
 			}
 
@@ -304,11 +306,12 @@ func TestStoreHashStrategyKeyModelContract(t *testing.T) {
 
 			partitionHash, indexedHash := attachSyntheticPartitionAndIndexed(t, dbPath, key, evidenceID, inputPath, strategy, strategy)
 
-			db, err := dbio.ConnectDB(dbPath, key)
+			h, err := openTestDB(dbPath, key)
 			if err != nil {
 				t.Fatalf("ConnectDB: %v", err)
 			}
-			defer db.Close()
+			defer h.Close()
+			db := h.DB
 
 			partitionRaw, err := base64.StdEncoding.DecodeString(partitionHash)
 			if err != nil {
@@ -391,14 +394,14 @@ func TestStoreHashStrategyPartitionIndexedParityAndListVisibility(t *testing.T) 
 
 	dbPathSync := filepath.Join(t.TempDir(), "db-sync")
 	cnst.StoreHashStrategy = cnst.SyncHashStrategy
-	if err := StoreData(64, dbPathSync, inputPath, key, false, true, false, false); err != nil {
+	if err := StoreData(t.Context(), optsFor(dbPathSync, 64, key), inputPath, false, true, false, false); err != nil {
 		t.Fatalf("StoreData sync: %v", err)
 	}
 	_, syncFID := collectEvidenceHashState(t, dbPathSync, key, expectedEvidenceRaw)
 
 	dbPathHocho := filepath.Join(t.TempDir(), "db-hocho")
 	cnst.StoreHashStrategy = cnst.HochoHashStrategy
-	if err := StoreData(64, dbPathHocho, inputPath, key, false, true, false, false); err != nil {
+	if err := StoreData(t.Context(), optsFor(dbPathHocho, 64, key), inputPath, false, true, false, false); err != nil {
 		t.Fatalf("StoreData hocho: %v", err)
 	}
 	expectedHochoEvidence, err := computeExpectedHochoHashForTest(inputPath)
@@ -431,7 +434,8 @@ func TestHochoModeLogicalHashContract(t *testing.T) {
 	originalStrategy := cnst.StoreHashStrategy
 	originalChunkSize := cnst.ChonkSize
 	originalHochoMode := cnst.HochoMode
-	const chunkKB = 1
+	// The smallest chunk size DUES accepts, so the input spans many chunks.
+	const chunkKB = 4
 	util.SetChonkSize(chunkKB)
 	t.Cleanup(func() {
 		cnst.StoreHashStrategy = originalStrategy
@@ -450,7 +454,7 @@ func TestHochoModeLogicalHashContract(t *testing.T) {
 	cntsStrategy := cnst.HochoHashStrategy
 	cnst.StoreHashStrategy = cntsStrategy
 	cnst.HochoMode = cnst.HochoModeReuse
-	if err := StoreData(chunkKB, dbPath, inputPath, key, false, true, false, false); err != nil {
+	if err := StoreData(t.Context(), optsFor(dbPath, chunkKB, key), inputPath, false, true, false, false); err != nil {
 		t.Fatalf("StoreData hocho reuse: %v", err)
 	}
 
@@ -465,11 +469,12 @@ func TestHochoModeLogicalHashContract(t *testing.T) {
 	_, evidenceKey := collectEvidenceHashState(t, dbPath, key, expectedHochoRaw)
 	fileID := dbio.EvidenceRawID(evidenceKey)
 
-	db, err := dbio.ConnectDB(dbPath, key)
+	h, err := openTestDB(dbPath, key)
 	if err != nil {
 		t.Fatalf("ConnectDB: %v", err)
 	}
-	defer db.Close()
+	defer h.Close()
+	db := h.DB
 
 	handle, err := os.Open(inputPath)
 	if err != nil {
@@ -482,8 +487,10 @@ func TestHochoModeLogicalHashContract(t *testing.T) {
 		t.Fatalf("read input file: %v", err)
 	}
 
-	start := int64(100)
-	size := int64(3000)
+	// The range covers an edge chunk, two interior chunks and another edge
+	// chunk at any chunk size.
+	start := int64(100 * chunkKB)
+	size := int64(3000 * chunkKB)
 	directRaw, err := util.GetLogicalFileHash(handle, cnst.GetHashAlgo(true), start, size, false)
 	if err != nil {
 		t.Fatalf("GetLogicalFileHash direct: %v", err)
@@ -538,11 +545,12 @@ func attachSyntheticPartitionAndIndexed(t *testing.T, dbPath string, key []byte,
 	cnst.StoreHashStrategy = strategy
 	defer func() { cnst.StoreHashStrategy = previousStrategy }()
 
-	db, err := dbio.ConnectDB(dbPath, key)
+	h, err := openTestDB(dbPath, key)
 	if err != nil {
 		t.Fatalf("ConnectDB: %v", err)
 	}
-	defer db.Close()
+	defer h.Close()
+	db := h.DB
 
 	evi, err := dbio.GetEvidenceFile(evidenceID, db)
 	if err != nil {
@@ -625,31 +633,21 @@ func attachSyntheticPartitionAndIndexed(t *testing.T, dbPath string, key []byte,
 func assertListContainsSyntheticHierarchy(t *testing.T, dbPath string, key []byte, expectedPartitionHash string, expectedIndexedHash string) {
 	t.Helper()
 
-	db, err := dbio.ConnectDB(dbPath, key)
+	h, err := openTestDB(dbPath, key)
 	if err != nil {
 		t.Fatalf("ConnectDB: %v", err)
 	}
-	defer db.Close()
+	defer h.Close()
+	db := h.DB
 
-	oldStdout := os.Stdout
-	r, w, err := os.Pipe()
-	if err != nil {
-		t.Fatalf("os.Pipe: %v", err)
-	}
-	os.Stdout = w
-
+	var out bytes.Buffer
+	console.Configure(&out, io.Discard)
 	listErr := store.List(db, "")
-	_ = w.Close()
-	os.Stdout = oldStdout
+	console.Reset()
 	if listErr != nil {
 		t.Fatalf("store.List: %v", listErr)
 	}
-
-	output, err := io.ReadAll(r)
-	_ = r.Close()
-	if err != nil {
-		t.Fatalf("read list output: %v", err)
-	}
+	output := out.Bytes()
 
 	var decoded map[string]interface{}
 	if err := json.Unmarshal(output, &decoded); err != nil {

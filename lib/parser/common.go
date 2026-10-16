@@ -3,6 +3,7 @@ package parser
 import (
 	"encoding/base64"
 	"fmt"
+	"indicer/internal/console"
 	"indicer/lib/cnst"
 	"indicer/lib/dbio"
 	"indicer/lib/enrichment"
@@ -10,7 +11,6 @@ import (
 	"indicer/lib/store"
 	"indicer/lib/structs"
 	"indicer/lib/util"
-	"os"
 	"time"
 
 	"github.com/dgraph-io/badger/v4"
@@ -142,21 +142,21 @@ func finalizeIndexedFiles(idxmap map[string]structs.IndexedFile, pfile structs.I
 		return err
 	}
 
-	fmt.Fprintln(os.Stderr, "Flushing indexed metadata batch...")
+	fmt.Fprintln(console.Err(), "Flushing indexed metadata batch...")
 	err = batch.Flush()
 	if err != nil {
 		return err
 	}
-	fmt.Fprintln(os.Stderr, "Indexed metadata batch flush complete.")
+	fmt.Fprintln(console.Err(), "Indexed metadata batch flush complete.")
 
-	fmt.Fprintln(os.Stderr, "Linking indexed hash lookups...")
+	fmt.Fprintln(console.Err(), "Linking indexed hash lookups...")
 	if err := appendIndexedHashLookupsBatched(pfile.GetDB(), refs); err != nil {
 		return err
 	}
-	fmt.Fprintln(os.Stderr, "Indexed hash lookup linking complete.")
+	fmt.Fprintln(console.Err(), "Indexed hash lookup linking complete.")
 
 	pchan := make(chan error)
-	fmt.Fprintln(os.Stderr, "Persisting partition metadata...")
+	fmt.Fprintln(console.Err(), "Persisting partition metadata...")
 	go store.Store(pfile, pchan)
 	select {
 	case err := <-pchan:
@@ -166,7 +166,7 @@ func finalizeIndexedFiles(idxmap map[string]structs.IndexedFile, pfile structs.I
 	case <-time.After(2 * time.Minute):
 		return fmt.Errorf("partition metadata persist timed out for %s", pfile.GetName())
 	}
-	fmt.Fprintln(os.Stderr, "Partition metadata persist complete.")
+	fmt.Fprintln(console.Err(), "Partition metadata persist complete.")
 
 	if enableEnrichment {
 		repo, err := enrichment.OpenGrapheneRepository(pfile.GetDB().Opts().Dir)
@@ -195,7 +195,7 @@ func appendIndexedHashLookupsBatched(db *badger.DB, refs []indexedRef) error {
 	bar := progressbar.NewOptions64(
 		int64(len(refs)),
 		progressbar.OptionSetDescription("Linking hash lookups"),
-		progressbar.OptionSetWriter(os.Stderr),
+		progressbar.OptionSetWriter(console.Progress()),
 		progressbar.OptionSetTheme(cnst.CommonProgressBarTheme),
 	)
 
@@ -226,7 +226,7 @@ func appendIndexedHashLookupsBatched(db *badger.DB, refs []indexedRef) error {
 	}
 
 	bar.Finish()
-	fmt.Fprintln(os.Stderr)
+	fmt.Fprintln(console.Err())
 	return nil
 }
 
@@ -237,11 +237,11 @@ func indexFullTextSidecar(db *badger.DB, jobs []ftsIndexJob) error {
 		return nil
 	}
 
-	fmt.Fprintln(os.Stderr, "Updating full-text index sidecar...")
+	fmt.Fprintln(console.Err(), "Updating full-text index sidecar...")
 	bar := progressbar.NewOptions64(
 		int64(len(jobs)),
 		progressbar.OptionSetDescription("Indexing full-text sidecar"),
-		progressbar.OptionSetWriter(os.Stderr),
+		progressbar.OptionSetWriter(console.Progress()),
 		progressbar.OptionSetTheme(cnst.CommonProgressBarTheme),
 	)
 
@@ -252,8 +252,8 @@ func indexFullTextSidecar(db *badger.DB, jobs []ftsIndexJob) error {
 	}
 
 	bar.Finish()
-	fmt.Fprintln(os.Stderr, "Full-text index sidecar update complete.")
-	fmt.Fprintln(os.Stderr)
+	fmt.Fprintln(console.Err(), "Full-text index sidecar update complete.")
+	fmt.Fprintln(console.Err())
 	return nil
 }
 
@@ -264,7 +264,7 @@ func storeIndexedFiles(idxmap map[string]structs.IndexedFile, batch *badger.Writ
 	bar := progressbar.NewOptions64(
 		total,
 		progressbar.OptionSetDescription("Indexing files"),
-		progressbar.OptionSetWriter(os.Stderr),
+		progressbar.OptionSetWriter(console.Progress()),
 		progressbar.OptionSetTheme(cnst.CommonProgressBarTheme),
 	)
 	bar.Clear()
@@ -291,7 +291,7 @@ func storeIndexedFiles(idxmap map[string]structs.IndexedFile, batch *badger.Writ
 
 	if pflag {
 		bar.Finish()
-		fmt.Fprintln(os.Stderr)
+		fmt.Fprintln(console.Err())
 	}
 	return ftsJobs, nil
 }

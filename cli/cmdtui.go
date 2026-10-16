@@ -3,7 +3,9 @@ package cli
 import (
 	"context"
 	"fmt"
+	"indicer/internal/console"
 	"indicer/lib/cnst"
+	"indicer/lib/dbopen"
 	"indicer/lib/near"
 	"indicer/lib/search"
 	"indicer/lib/store"
@@ -16,42 +18,34 @@ import (
 
 var tuiIOGuard sync.Mutex
 
+// runQuiet runs a TUI action with DUES's own terminal output silenced, so it
+// cannot draw over the TUI.
 func runQuiet(fn func() error) error {
 	tuiIOGuard.Lock()
 	defer tuiIOGuard.Unlock()
-
-	devNull, err := os.OpenFile(os.DevNull, os.O_WRONLY, 0)
-	if err != nil {
-		return err
-	}
-	defer devNull.Close()
-
-	stdout := os.Stdout
-	stderr := os.Stderr
-	os.Stdout = devNull
-	os.Stderr = devNull
-	defer func() {
-		os.Stdout = stdout
-		os.Stderr = stderr
-	}()
-
+	defer console.Quiet()()
 	return fn()
 }
 
 // TUICmd launches the interactive TUI interface
-func TUICmd(chonkSize int, dbpath string, key []byte) error {
-	util.SetChonkSize(chonkSize)
-	db, _, err := Common(chonkSize, dbpath, key)
+func TUICmd(ctx context.Context, opts DBOptions) (err error) {
+	h, err := Common(ctx, opts, dbopen.ReadWrite, true)
 	if err != nil {
 		return err
 	}
+	db := h.DB
+	chonkSize := h.Manifest.Layout.ChunkKiB
+	var key []byte // the store path takes its keys from the database
 
 	resetRequested := false
 	actions := tui.Actions{
 		Store: func(filePath string, syncIndex bool, noIndex bool, hashAlgo string) error {
 			return runQuiet(func() error {
-				if err := cnst.SetHashAlgo(hashAlgo); err != nil {
-					return err
+				// The chunk hash is part of the database's layout. The TUI's
+				// per-store toggle goes in W11; until then it may only
+				// confirm the database's own algorithm.
+				if want := h.Manifest.Layout.ChunkHash; !strings.EqualFold(hashAlgo, want) {
+					return fmt.Errorf("this database uses %s; its hash algorithm cannot change", want)
 				}
 				if err := util.EnsureBlobPath(db.Opts().Dir); err != nil {
 					return err
@@ -117,10 +111,7 @@ func TUICmd(chonkSize int, dbpath string, key []byte) error {
 
 	err = tui.RunTUI(db, actions)
 	if !resetRequested {
-		closeErr := db.Close()
-		if err == nil {
-			err = closeErr
-		}
+		closeDB(h, &err)
 	}
 
 	return err

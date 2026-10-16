@@ -2,6 +2,7 @@ package cli
 
 import (
 	"fmt"
+	"indicer/internal/console"
 	"indicer/lib/logging"
 	"indicer/lib/util"
 	"os"
@@ -60,7 +61,7 @@ func ResetData(dbpath string) error {
 	}
 
 	color.Red("WARNING! This command will DELETE ALL the saved files.")
-	fmt.Printf("Are you sure about this? [y/N] ")
+	console.Printf("Are you sure about this? [y/N] ")
 
 	var in string
 	fmt.Scanln(&in)

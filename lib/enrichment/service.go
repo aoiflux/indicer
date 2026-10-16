@@ -4,12 +4,12 @@ import (
 	"bytes"
 	"encoding/base64"
 	"fmt"
+	"indicer/internal/console"
 	"indicer/lib/cnst"
 	"indicer/lib/dbio"
 	"indicer/lib/structs"
 	"indicer/lib/util"
 	"math"
-	"os"
 	"strings"
 
 	"github.com/dgraph-io/badger/v4"
@@ -65,7 +65,7 @@ func (service *Service) EnrichAll() error {
 	bar := newEnrichmentProgressBar(totalWork, "enriching graphdb")
 	defer func() {
 		bar.Finish()
-		fmt.Fprintln(os.Stderr)
+		fmt.Fprintln(console.Err())
 	}()
 	entropyCache := make(map[string]float64)
 
@@ -154,7 +154,7 @@ func (service *Service) EnrichPartition(pfile structs.InputFile, eviID []byte, i
 	bar := newEnrichmentProgressBar(int64(len(indexedHashes)), "Enriching graphdb")
 	defer func() {
 		bar.Finish()
-		fmt.Fprintln(os.Stderr)
+		fmt.Fprintln(console.Err())
 	}()
 
 	partitionID := base64.StdEncoding.EncodeToString(pfile.GetID())
@@ -303,7 +303,7 @@ func newEnrichmentProgressBar(total int64, description string) *progressbar.Prog
 	return progressbar.NewOptions64(
 		total,
 		progressbar.OptionSetDescription(description),
-		progressbar.OptionSetWriter(os.Stderr),
+		progressbar.OptionSetWriter(console.Progress()),
 		progressbar.OptionSetTheme(cnst.CommonProgressBarTheme),
 	)
 }

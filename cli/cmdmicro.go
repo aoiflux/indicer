@@ -2,11 +2,15 @@ package cli
 
 import (
 	"bytes"
+	"context"
 	"encoding/base64"
 	"errors"
 	"fmt"
+	"indicer/internal/console"
+	"indicer/internal/termsafe"
 	"indicer/lib/cnst"
 	"indicer/lib/dbio"
+	"indicer/lib/dbopen"
 	"indicer/lib/enrichment"
 	"indicer/lib/logging"
 	"indicer/lib/microartefact"
@@ -51,21 +55,21 @@ type microFileNodeStatus struct {
 // every indexed file that has been stored in the hierarchy:
 //
 // evidence_file → partition → indexed_file → micro_artefact
-func MicroArtefactCmd(chonkSize int, dbpath string, key []byte, force bool, topK int) error {
+func MicroArtefactCmd(ctx context.Context, opts DBOptions, force bool, topK int) (err error) {
 	start := time.Now()
 	logging.GetLogger().Info("MicroArtefactCmd START",
-		zap.Int("chonk_size", chonkSize),
-		zap.String("db_path", dbpath),
+		zap.String("db_path", opts.Path),
 		zap.Bool("force", force),
 		zap.Int("top_k", topK),
 	)
 
-	db, dbpath, err := Common(chonkSize, dbpath, key)
+	h, err := Common(ctx, opts, dbopen.ReadWrite, true)
 	if err != nil {
 		logging.GetLogger().Error("MicroArtefactCmd DB_CONNECT_ERROR", zap.Error(err))
 		return err
 	}
-	defer db.Close()
+	defer closeDB(h, &err)
+	db, dbpath := h.DB, h.Root
 
 	repo, err := microartefact.OpenGrapheneRepository(dbpath)
 	if err != nil {
@@ -84,11 +88,11 @@ func MicroArtefactCmd(chonkSize int, dbpath string, key []byte, force bool, topK
 	}
 
 	if status.backfilled {
-		fmt.Println("[micro] File-level graph nodes were missing; enrichment backfill completed before micro extraction.")
+		console.Println("[micro] File-level graph nodes were missing; enrichment backfill completed before micro extraction.")
 	} else if status.checked {
-		fmt.Println("[micro] File-level graph nodes already present; enrichment backfill not needed.")
+		console.Println("[micro] File-level graph nodes already present; enrichment backfill not needed.")
 	} else {
-		fmt.Println("[micro] No indexed files found for micro extraction.")
+		console.Println("[micro] No indexed files found for micro extraction.")
 	}
 
 	tree, err := repo.ReadHierarchy()
@@ -104,7 +108,7 @@ func MicroArtefactCmd(chonkSize int, dbpath string, key []byte, force bool, topK
 	}
 
 	printHierarchyTree(tree)
-	fmt.Printf("HTML graph visualisation: %s\n", htmlPath)
+	console.Printf("HTML graph visualisation: %s\n", htmlPath)
 	logging.GetLogger().Info("MicroArtefactCmd COMPLETE",
 		zap.Int64("duration_ms", time.Since(start).Milliseconds()),
 		zap.String("html_path", htmlPath),
@@ -205,7 +209,7 @@ func processPartition(txn *badger.Txn, db *badger.DB, service *microartefact.Ser
 		if err := processIndexedFile(db, service, repo, force, status, partitionCtx, ihashB64); err != nil {
 			// Non-fatal: log and continue so one bad file does not abort the run.
 			logging.GetLogger().Error("processPartition PROCESS_INDEXED_FILE_ERROR", zap.Error(err), zap.String("indexed_file_id", ihashB64))
-			fmt.Printf("warning: skipping indexed file %s: %v\n", ihashB64, err)
+			console.Printf("warning: skipping indexed file %s: %v\n", ihashB64, err)
 		}
 	}
 	return nil
@@ -246,7 +250,7 @@ func processIndexedFile(db *badger.DB, service *microartefact.Service, repo *mic
 				return fmt.Errorf("check indexed file extraction status: %w", err)
 			}
 			if exists {
-				fmt.Printf("Skipping already-extracted indexed file node: %s\n", record.Path)
+				console.Printf("Skipping already-extracted indexed file node: %s\n", termsafe.Line(record.Path))
 				continue
 			}
 			pending = append(pending, record)
@@ -268,7 +272,7 @@ func processIndexedFile(db *badger.DB, service *microartefact.Service, repo *mic
 			logging.GetLogger().Error("processIndexedFile PROCESS_ERROR", zap.Error(err), zap.String("record_name", record.Name))
 			return fmt.Errorf("micro-artefact process: %w", err)
 		}
-		fmt.Printf("Micro-artefacts extracted: %s\n", record.Name)
+		console.Printf("Micro-artefacts extracted: %s\n", termsafe.Line(record.Name))
 	}
 	logging.GetLogger().Debug("processIndexedFile COMPLETE",
 		zap.String("indexed_file_id", indexedFileHashB64),
@@ -302,7 +306,7 @@ func ensureIndexedFileNodes(db *badger.DB, repo *microartefact.GrapheneRepositor
 	}
 
 	if status != nil && !status.backfilled {
-		fmt.Println("Missing file-level graph nodes detected. Running enrichment backfill...")
+		console.Println("Missing file-level graph nodes detected. Running enrichment backfill...")
 		enrichmentRepo, err := enrichment.OpenGrapheneRepository(db.Opts().Dir)
 		if err != nil {
 			return err
@@ -387,11 +391,11 @@ func resolveIndexedFileNameSingle(name string) (fileName, path string) {
 // ASCII tree after extraction completes.
 func printHierarchyTree(tree *microartefact.EvidenceFileHierarchy) {
 	if tree == nil || len(tree.EvidenceFiles) == 0 {
-		fmt.Println("\n  (no micro-artefacts found — run 'dues microartefacts' on a populated database)")
+		console.Println("\n  (no micro-artefacts found — run 'dues microartefacts' on a populated database)")
 		return
 	}
 
-	fmt.Printf("\n🔬 Micro-Artefact Graph  (%d evidence file(s) · %d artefact(s) · %d relation(s): %d deterministic, %d probabilistic)\n\n",
+	console.Printf("\n🔬 Micro-Artefact Graph  (%d evidence file(s) · %d artefact(s) · %d relation(s): %d deterministic, %d probabilistic)\n\n",
 		len(tree.EvidenceFiles), tree.TotalArtefacts, tree.TotalRelations, tree.DeterministicRelations, tree.ProbabilisticRelations)
 
 	for di, disk := range tree.EvidenceFiles {
@@ -407,18 +411,18 @@ func printHierarchyTree(tree *microartefact.EvidenceFileHierarchy) {
 		if diskName == "" {
 			diskName = disk.ID
 		}
-		fmt.Printf("🖥  %s  [%d artefact(s)]\n", diskName, totalForDisk)
+		console.Printf("🖥  %s  [%d artefact(s)]\n", termsafe.Line(diskName), totalForDisk)
 
 		for pi, part := range disk.Partitions {
 			isLastPart := pi == len(disk.Partitions)-1
 			partPfx := cliLevelPfx(isLastDisk)
-			fmt.Printf("%s%s🗂  %s\n", partPfx, cliBranch(isLastPart), partDisplayNameCLI(part.Name, part.ID))
+			console.Printf("%s%s🗂  %s\n", partPfx, cliBranch(isLastPart), termsafe.Line(partDisplayNameCLI(part.Name, part.ID)))
 
 			for fi, file := range part.Files {
 				isLastFile := fi == len(part.Files)-1
 				filePfx := partPfx + cliLevelPfx(isLastPart)
-				fmt.Printf("%s%s📄 %s  (%s · %d artefact(s))\n",
-					filePfx, cliBranch(isLastFile), file.Name,
+				console.Printf("%s%s📄 %s  (%s · %d artefact(s))\n",
+					filePfx, cliBranch(isLastFile), termsafe.Line(file.Name),
 					humanReadableSize(file.Size), len(file.Artefacts))
 
 				grouped := cliGroupByKind(file.Artefacts)
@@ -427,7 +431,7 @@ func printHierarchyTree(tree *microartefact.EvidenceFileHierarchy) {
 					isLastKind := ki == len(kinds)-1
 					kindPfx := filePfx + cliLevelPfx(isLastFile)
 					arts := grouped[kind]
-					fmt.Printf("%s%s%s %s  ×%d\n", kindPfx, cliBranch(isLastKind), cliKindIcon(kind), kind, len(arts))
+					console.Printf("%s%s%s %s  ×%d\n", kindPfx, cliBranch(isLastKind), cliKindIcon(kind), kind, len(arts))
 
 					limit := len(arts)
 					truncated := 0
@@ -442,20 +446,21 @@ func printHierarchyTree(tree *microartefact.EvidenceFileHierarchy) {
 						if len(val) > 100 {
 							val = val[:99] + "…"
 						}
-						fmt.Printf("%s%s%s\n", valPfx, cliBranch(isLastVal), val)
+						// Artefact values are strings found in evidence content.
+						console.Printf("%s%s%s\n", valPfx, cliBranch(isLastVal), termsafe.Line(val))
 					}
 					if truncated > 0 {
-						fmt.Printf("%s└─ … %d more\n", valPfx, truncated)
+						console.Printf("%s└─ … %d more\n", valPfx, truncated)
 					}
 				}
 			}
 		}
 
 		if !isLastDisk {
-			fmt.Println()
+			console.Println()
 		}
 	}
-	fmt.Println()
+	console.Println()
 }
 
 func cliLevelPfx(isLast bool) string {
@@ -573,13 +578,14 @@ func humanReadableSize(n int64) string {
 }
 
 // ListMicroArtefactsCmd lists all micro-artefacts in JSON format
-func ListMicroArtefactsCmd(chonkSize int, dbpath string, key []byte) error {
-	_, dbpath, err := Common(chonkSize, dbpath, key)
+func ListMicroArtefactsCmd(ctx context.Context, opts DBOptions) (err error) {
+	h, err := Common(ctx, opts, dbopen.ReadOnly, false)
 	if err != nil {
 		return err
 	}
+	defer closeDB(h, &err)
 
-	repo, err := microartefact.OpenGrapheneRepository(dbpath)
+	repo, err := microartefact.OpenGrapheneRepository(h.Root)
 	if err != nil {
 		return err
 	}

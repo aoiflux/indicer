@@ -1,7 +1,9 @@
 package cli
 
 import (
-	"fmt"
+	"context"
+	"indicer/internal/console"
+	"indicer/lib/dbopen"
 	"indicer/lib/enrichment"
 	"indicer/lib/logging"
 	"time"
@@ -9,22 +11,22 @@ import (
 	"go.uber.org/zap"
 )
 
-func EnrichData(chonkSize int, dbpath string, key []byte) error {
+func EnrichData(ctx context.Context, opts DBOptions) (err error) {
 	start := time.Now()
 	logging.GetLogger().Info("EnrichData START",
-		zap.Int("chonk_size", chonkSize),
-		zap.String("db_path", dbpath),
+		zap.String("db_path", opts.Path),
 	)
 
-	db, dbpath, err := Common(chonkSize, dbpath, key)
+	h, err := Common(ctx, opts, dbopen.ReadWrite, true)
 	if err != nil {
 		logging.GetLogger().Error("EnrichData DB_CONNECT_ERROR", zap.Error(err))
 		return err
 	}
-	defer db.Close()
+	defer closeDB(h, &err)
+	db := h.DB
 
 	logging.GetLogger().Debug("EnrichData OPEN_GRAPH_REPOSITORY")
-	repo, err := enrichment.OpenGrapheneRepository(dbpath)
+	repo, err := enrichment.OpenGrapheneRepository(h.Root)
 	if err != nil {
 		logging.GetLogger().Error("EnrichData OPEN_GRAPH_REPOSITORY_ERROR", zap.Error(err))
 		return err
@@ -39,7 +41,7 @@ func EnrichData(chonkSize int, dbpath string, key []byte) error {
 		return err
 	}
 
-	fmt.Println("Graph enrichment complete: evidence files, partitions, and indexed-file metadata upserted.")
+	console.Println("Graph enrichment complete: evidence files, partitions, and indexed-file metadata upserted.")
 	logging.GetLogger().Info("EnrichData COMPLETE", zap.Int64("duration_ms", time.Since(start).Milliseconds()))
 	return nil
 }

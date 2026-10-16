@@ -3,6 +3,7 @@ package fio
 import (
 	"errors"
 	"fmt"
+	"indicer/internal/console"
 	"indicer/lib/cnst"
 	"io"
 	"os"
@@ -159,7 +160,7 @@ func initWriteBackend() {
 func warnBackendFallback(requested, reason string) {
 	atomic.AddUint64(&backendFallbacks, 1)
 	backendWarningOnce.Do(func() {
-		_, _ = fmt.Fprintf(os.Stderr, "[fio] store io engine %q fallback to %q: %s\n", requested, cnst.StoreIOEngineStdlib, reason)
+		_, _ = fmt.Fprintf(console.Err(), "[fio] store io engine %q fallback to %q: %s\n", requested, cnst.StoreIOEngineStdlib, reason)
 	})
 }
 

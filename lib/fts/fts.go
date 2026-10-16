@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"indicer/internal/console"
 	"indicer/lib/cnst"
 	"indicer/lib/dbio"
 	"indicer/lib/util"
@@ -268,7 +269,7 @@ func BuildFromIndexedFiles(ctx context.Context, db *badger.DB) error {
 	bar := progressbar.NewOptions64(
 		int64(len(ids)),
 		progressbar.OptionSetDescription("building full-text index (names + extracted content)"),
-		progressbar.OptionSetWriter(os.Stderr),
+		progressbar.OptionSetWriter(console.Progress()),
 		progressbar.OptionSetTheme(cnst.CommonProgressBarTheme),
 	)
 
@@ -298,7 +299,7 @@ func BuildFromIndexedFiles(ctx context.Context, db *badger.DB) error {
 		bar.Add(1) //nolint:errcheck
 	}
 	bar.Finish()
-	fmt.Fprintln(os.Stderr)
+	fmt.Fprintln(console.Err())
 	return nil
 }
 

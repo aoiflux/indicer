@@ -1,0 +1,579 @@
+// Package dbopen is the one way to open a DUES database.
+//
+// Open resolves the data root, takes the root lock, reads (or for a legacy
+// database infers) the manifest, checks the password before badger is
+// touched, opens badger with the options the manifest fixes, and checks the
+// manifest against the marker stored inside badger. A read-only open never
+// writes: no manifest, no marker, no recovery, and no database is created.
+package dbopen
+
+import (
+	"context"
+	"encoding/json"
+	"errors"
+	"fmt"
+	"io/fs"
+	"os"
+	"path/filepath"
+	"runtime"
+	"slices"
+	"strings"
+	"time"
+
+	"indicer/internal/lifecycle"
+	"indicer/lib/blobcodec"
+	"indicer/lib/cnst"
+	"indicer/lib/dbio"
+	"indicer/lib/dbmeta"
+	"indicer/lib/fsx"
+	"indicer/lib/logging"
+
+	"github.com/dgraph-io/badger/v4"
+	"github.com/dgraph-io/badger/v4/options"
+	"go.uber.org/zap"
+)
+
+// Mode says how a database is opened.
+type Mode int
+
+const (
+	// ReadOnly opens an existing database for reading. Several read-only
+	// opens may share a database; none may share it with a writer.
+	ReadOnly Mode = iota
+	// ReadWrite opens a database for writing, creating it if missing.
+	ReadWrite
+)
+
+// LockName is the root lock file. It covers the whole data root: badger,
+// blobs, graph and full-text index.
+const LockName = ".dues.lock"
+
+// Requested is the layout the command line asks for. For a new database it
+// is the layout; for an existing one, a field the user set explicitly must
+// match the manifest, and the rest are ignored.
+type Requested struct {
+	ChunkKiB     int
+	ChunkHash    string
+	Container    bool
+	Hierarchical bool
+	// Quick creates a database without badger table compression.
+	Quick bool
+	// Set holds the flag names the user set explicitly (cnst.Flag*).
+	Set map[string]bool
+}
+
+// Request describes an open.
+type Request struct {
+	// Path is the data root, or its kvdb directory. Empty means ~/.dues.
+	Path  string
+	Mode  Mode
+	Creds dbmeta.Credentials
+	// Layout is the requested layout; zero fields take the defaults.
+	Layout Requested
+	// KDF overrides dbmeta.DefaultKDF for a new encrypted database (tests).
+	KDF *dbmeta.KDFParams
+	// WrittenBy names the program in a new manifest.
+	WrittenBy string
+}
+
+// Handle is an open database.
+type Handle struct {
+	DB       *badger.DB
+	Root     string
+	Manifest dbmeta.Manifest
+	ReadOnly bool
+	// Created is set when this open created the database.
+	Created bool
+	// Notices are one-line messages for the user (an unencrypted database,
+	// an ignored password, a skipped lock).
+	Notices []string
+
+	lock *fsx.Lock
+}
+
+// Errors.
+var (
+	// ErrNoDatabase: a read-only open found no database at the root.
+	ErrNoDatabase = errors.New("no DUES database")
+	// ErrInUse: another DUES process holds the database.
+	ErrInUse = errors.New("database is in use by another DUES process")
+	// ErrNeedsRecovery: the database was not closed cleanly and cannot be
+	// repaired without write access.
+	ErrNeedsRecovery = errors.New("database needs recovery")
+	// ErrMarkerMismatch: the manifest file does not describe the database.
+	ErrMarkerMismatch = errors.New("manifest does not match the database")
+)
+
+// DefaultRoot is the data root used when no path is given: ~/.dues, or .dues
+// in the working directory when there is no home directory. It is not created.
+func DefaultRoot() (string, error) {
+	base, err := os.UserHomeDir()
+	if err != nil {
+		if base, err = os.Getwd(); err != nil {
+			return "", err
+		}
+	}
+	return filepath.Abs(filepath.Join(base, ".dues"))
+}
+
+// ResolveRoot turns a --dbpath value into an absolute data root.
+func ResolveRoot(path string) (string, error) {
+	if path == "" {
+		return DefaultRoot()
+	}
+	clean := filepath.Clean(path)
+	if filepath.Base(clean) == cnst.KVDBDIR {
+		clean = filepath.Dir(clean)
+	}
+	return filepath.Abs(clean)
+}
+
+// Open opens the database req describes.
+func Open(ctx context.Context, req Request) (*Handle, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	root, err := ResolveRoot(req.Path)
+	if err != nil {
+		return nil, err
+	}
+	h := &Handle{Root: root, ReadOnly: req.Mode == ReadOnly}
+	if err := h.open(ctx, req); err != nil {
+		h.release()
+		return nil, err
+	}
+	logging.GetLogger().Info("database opened",
+		zap.String("root", root), zap.Bool("read_only", h.ReadOnly), zap.Bool("created", h.Created),
+		zap.String("encryption", h.Manifest.Encryption.Scheme), zap.Int("chunk_kib", h.Manifest.Layout.ChunkKiB),
+		zap.String("storage", h.Manifest.Layout.Storage), zap.Strings("notices", h.Notices))
+	return h, nil
+}
+
+func (h *Handle) open(ctx context.Context, req Request) error {
+	exists := dbmeta.HasDatabase(h.Root)
+	if !exists && req.Mode == ReadOnly {
+		return fmt.Errorf("%w at %s", ErrNoDatabase, h.Root)
+	}
+	if !exists {
+		for _, dir := range []string{h.Root, filepath.Join(h.Root, cnst.KVDBDIR), filepath.Join(h.Root, cnst.BLOBSDIR)} {
+			if err := os.MkdirAll(dir, cnst.DirPerm); err != nil {
+				return err
+			}
+		}
+	}
+	if err := h.takeLock(); err != nil {
+		return err
+	}
+	// Another process may have created the database while we waited.
+	exists = dbmeta.HasDatabase(h.Root)
+
+	m, keys, err := h.loadManifest(ctx, req, exists)
+	if err != nil {
+		return err
+	}
+	if h.DB == nil {
+		if err := h.openBadger(m, keys); err != nil {
+			return err
+		}
+	}
+	h.Manifest = m
+	if err := h.checkMarker(); err != nil {
+		return err
+	}
+
+	codec, err := codecFor(m.Layout, keys)
+	if err != nil {
+		return err
+	}
+	blobcodec.Register(h.DB, codec)
+	ApplyToGlobals(m)
+
+	if !h.ReadOnly {
+		if n, err := fsx.SweepTemps(filepath.Join(h.Root, cnst.BLOBSDIR), time.Hour); err != nil {
+			logging.GetLogger().Warn("dbopen temp sweep failed", zap.Error(err))
+		} else if n > 0 {
+			logging.GetLogger().Info("dbopen removed stale temp files", zap.Int("count", n))
+		}
+	}
+	return nil
+}
+
+func (h *Handle) notice(format string, args ...any) {
+	h.Notices = append(h.Notices, fmt.Sprintf(format, args...))
+}
+
+func (h *Handle) takeLock() error {
+	l, err := fsx.TryLock(filepath.Join(h.Root, LockName), h.ReadOnly)
+	switch {
+	case err == nil:
+		h.lock = l
+		return nil
+	case errors.Is(err, fsx.ErrLocked):
+		return fmt.Errorf("%w (%s)", ErrInUse, h.Root)
+	case h.ReadOnly && (errors.Is(err, fs.ErrNotExist) || errors.Is(err, fs.ErrPermission)):
+		// Read-only media: the lock file cannot be created, and nothing can
+		// write here anyway (CFG-12).
+		h.notice("data root %s is not writable; opening without a lock", h.Root)
+		return nil
+	}
+	return err
+}
+
+// loadManifest returns the manifest and keys: from the manifest file, by
+// inference for a legacy database, or newly made for a new one.
+func (h *Handle) loadManifest(ctx context.Context, req Request, exists bool) (dbmeta.Manifest, dbmeta.Keys, error) {
+	m, err := dbmeta.Load(h.Root)
+	switch {
+	case err == nil:
+		if err := checkRequested(h.Root, m, req.Layout); err != nil {
+			return m, dbmeta.Keys{}, err
+		}
+		keys, err := dbmeta.DeriveKeys(m.Encryption, req.Creds)
+		if err != nil {
+			return m, keys, h.keyError(err, req.Creds)
+		}
+		if !m.Encrypted() && req.Creds.IsSet() {
+			h.notice("database %s is not encrypted; the password was not used", h.Root)
+		}
+		return m, keys, nil
+	case !errors.Is(err, dbmeta.ErrNoManifest):
+		return m, dbmeta.Keys{}, fmt.Errorf("reading the manifest of %s: %w", h.Root, err)
+	case exists:
+		return h.inferLegacy(ctx, req)
+	}
+	return h.create(req)
+}
+
+func (h *Handle) keyError(err error, creds dbmeta.Credentials) error {
+	switch {
+	case errors.Is(err, dbmeta.ErrPasswordRequired):
+		return lifecycle.Usagef("database %s is encrypted; pass --password", h.Root)
+	case errors.Is(err, dbmeta.ErrWrongPassword) && !creds.IsSet():
+		return lifecycle.Usagef("database %s is encrypted; pass --password", h.Root)
+	case errors.Is(err, dbmeta.ErrWrongPassword):
+		return lifecycle.Usagef("wrong password for database %s", h.Root)
+	}
+	return err
+}
+
+// create makes the manifest for a new database and writes it before badger
+// exists: a database whose keys depend on a salt must never exist without it.
+func (h *Handle) create(req Request) (dbmeta.Manifest, dbmeta.Keys, error) {
+	r := req.Layout
+	kdf := dbmeta.DefaultKDF
+	if req.KDF != nil {
+		kdf = *req.KDF
+	}
+	enc, keys, err := dbmeta.NewEncryption(req.Creds, kdf)
+	if err != nil {
+		return dbmeta.Manifest{}, keys, err
+	}
+	l := dbmeta.Layout{
+		ChunkKiB:          r.ChunkKiB,
+		ChunkHash:         r.ChunkHash,
+		Storage:           storageOf(r.Container, r.Hierarchical),
+		BlobEncoding:      blobcodec.V2,
+		ValueEncoding:     dbmeta.EncodingZstd,
+		BadgerCompression: dbmeta.EncodingZstd,
+	}
+	if l.ChunkKiB == 0 {
+		l.ChunkKiB = 256
+	}
+	if l.ChunkHash == "" {
+		l.ChunkHash = dbmeta.HashBLAKE3
+	}
+	if r.Quick {
+		l.BadgerCompression = dbmeta.EncodingNone
+	}
+	m := dbmeta.Manifest{
+		Format: dbmeta.FormatName, Version: dbmeta.FormatVersion, Created: time.Now().UTC(),
+		WrittenBy: req.WrittenBy, Layout: l, Encryption: enc,
+	}
+	if err := m.Validate(); err != nil {
+		return m, keys, err
+	}
+	if err := dbmeta.Save(h.Root, m); err != nil {
+		return m, keys, err
+	}
+	h.Created = true
+	if !m.Encrypted() {
+		h.notice("created database %s without encryption (no --password given)", h.Root)
+	}
+	return m, keys, nil
+}
+
+func storageOf(container, hierarchical bool) string {
+	switch {
+	case hierarchical:
+		return dbmeta.StorageContainerBIDX
+	case container:
+		return dbmeta.StorageContainer
+	}
+	return dbmeta.StorageFile
+}
+
+// inferLegacy reconstructs the manifest of a database written before
+// manifests existed. A writable open persists it; a read-only one does not.
+func (h *Handle) inferLegacy(ctx context.Context, req Request) (dbmeta.Manifest, dbmeta.Keys, error) {
+	kvdb := filepath.Join(h.Root, cnst.KVDBDIR)
+	enc, base, err := dbmeta.LegacyEncryption(kvdb)
+	if err != nil {
+		return dbmeta.Manifest{}, dbmeta.Keys{}, fmt.Errorf("%s: %w", h.Root, err)
+	}
+	keys, err := dbmeta.DeriveKeys(enc, req.Creds)
+	if err != nil {
+		return dbmeta.Manifest{}, keys, err
+	}
+	if enc.Scheme == dbmeta.SchemeSHA3Legacy {
+		if err := dbmeta.CheckLegacyKey(kvdb, keys.Badger); err != nil {
+			return dbmeta.Manifest{}, keys, h.keyError(err, req.Creds)
+		}
+	} else if req.Creds.IsSet() {
+		h.notice("database %s is not encrypted (written in quick mode); the password was not used", h.Root)
+	}
+
+	// Inference reads badger; the handle stays open for the caller.
+	if err := h.openBadger(dbmeta.Manifest{Layout: base}, keys); err != nil {
+		return dbmeta.Manifest{}, keys, err
+	}
+	if err := ctx.Err(); err != nil {
+		return dbmeta.Manifest{}, keys, err
+	}
+	l, inf := dbmeta.InferLayout(h.DB, h.Root, base)
+
+	r := req.Layout
+	if l.ChunkKiB == 0 {
+		l.ChunkKiB = orDefault(r.ChunkKiB, 256)
+	}
+	if l.ChunkHash == "" {
+		l.ChunkHash = orDefault(r.ChunkHash, dbmeta.HashBLAKE3)
+	}
+	m := dbmeta.Manifest{
+		Format: dbmeta.FormatName, Version: dbmeta.FormatVersion, Created: inf.At,
+		WrittenBy: req.WrittenBy, Layout: l, Encryption: enc, Inferred: &inf,
+	}
+	if err := m.Validate(); err != nil {
+		return m, keys, fmt.Errorf("inferring the layout of %s: %w", h.Root, err)
+	}
+	// An explicit flag cannot override what the data shows, but it does
+	// settle a field the data could not show.
+	if err := checkRequested(h.Root, m, withoutUnverified(r, inf.Unverified)); err != nil {
+		return m, keys, err
+	}
+	for _, f := range inf.Notes {
+		h.notice("%s: %s", h.Root, f)
+	}
+	if !h.ReadOnly {
+		if err := dbmeta.Save(h.Root, m); err != nil {
+			return m, keys, err
+		}
+	}
+	return m, keys, nil
+}
+
+func orDefault[T comparable](v, def T) T {
+	var zero T
+	if v == zero {
+		return def
+	}
+	return v
+}
+
+func withoutUnverified(r Requested, unverified []string) Requested {
+	set := map[string]bool{}
+	for k, v := range r.Set {
+		set[k] = v
+	}
+	if slices.Contains(unverified, "chunk_kib") {
+		delete(set, cnst.FlagChonkSize)
+	}
+	if slices.Contains(unverified, "chunk_hash") {
+		delete(set, cnst.FlagHashAlgo)
+	}
+	r.Set = set
+	return r
+}
+
+// checkRequested rejects explicit flags that contradict an existing layout.
+func checkRequested(root string, m dbmeta.Manifest, r Requested) error {
+	var errs []error
+	l := m.Layout
+	if r.Set[cnst.FlagChonkSize] && r.ChunkKiB != l.ChunkKiB {
+		errs = append(errs, fmt.Errorf("--%s %d: database %s uses %d KiB chunks; omit --%s",
+			cnst.FlagChonkSize, r.ChunkKiB, root, l.ChunkKiB, cnst.FlagChonkSize))
+	}
+	if r.Set[cnst.FlagHashAlgo] && !strings.EqualFold(r.ChunkHash, l.ChunkHash) {
+		errs = append(errs, fmt.Errorf("--%s %s: database %s uses %s; omit --%s",
+			cnst.FlagHashAlgo, r.ChunkHash, root, l.ChunkHash, cnst.FlagHashAlgo))
+	}
+	want := storageOf(r.Container, r.Hierarchical)
+	if (r.Set[cnst.FlagContainerMode] || r.Set[cnst.FlagHierarchicalIndex]) && want != l.Storage {
+		errs = append(errs, fmt.Errorf("--%s/--%s: database %s uses %s storage; omit them",
+			cnst.FlagContainerMode, cnst.FlagHierarchicalIndex, root, l.Storage))
+	}
+	if len(errs) > 0 {
+		return &lifecycle.UsageError{Err: errors.Join(errs...)}
+	}
+	return nil
+}
+
+func compressionOf(l dbmeta.Layout) options.CompressionType {
+	switch l.BadgerCompression {
+	case dbmeta.EncodingZstd:
+		return options.ZSTD
+	case dbmeta.EncodingSnappy:
+		return options.Snappy
+	}
+	return options.None
+}
+
+func (h *Handle) badgerOptions(l dbmeta.Layout, keys dbmeta.Keys, readOnly bool) badger.Options {
+	opts := dbio.BadgerOptions(filepath.Join(h.Root, cnst.KVDBDIR), keys.Badger, compressionOf(l))
+	if readOnly {
+		opts.ReadOnly = true
+		// badger has no read-only directory lock on Windows; the shared root
+		// lock keeps writers out instead.
+		opts.BypassLockGuard = runtime.GOOS == "windows"
+	}
+	return opts
+}
+
+func (h *Handle) badgerError(err error) error {
+	switch {
+	case errors.Is(err, badger.ErrEncryptionKeyMismatch):
+		return lifecycle.Usagef("wrong password for database %s", h.Root)
+	case strings.Contains(err.Error(), "Another process is using this Badger database"),
+		strings.Contains(err.Error(), "resource temporarily unavailable"):
+		return fmt.Errorf("%w (%s)", ErrInUse, h.Root)
+	}
+	return fmt.Errorf("opening database %s: %w", h.Root, err)
+}
+
+// openBadger opens badger. A read-only open of a database that was not closed
+// cleanly switches to a writable open, so badger can recover, when the root
+// is writable.
+func (h *Handle) openBadger(m dbmeta.Manifest, keys dbmeta.Keys) error {
+	db, err := badger.Open(h.badgerOptions(m.Layout, keys, h.ReadOnly))
+	if err != nil && h.ReadOnly && errors.Is(err, badger.ErrTruncateNeeded) {
+		if !h.upgradeLock() {
+			return fmt.Errorf("%w: %s was not closed cleanly; run `dues repair --fix` with write access", ErrNeedsRecovery, h.Root)
+		}
+		h.notice("database %s was not closed cleanly; recovered it", h.Root)
+		h.ReadOnly = false
+		db, err = badger.Open(h.badgerOptions(m.Layout, keys, false))
+	}
+	if err != nil {
+		return h.badgerError(err)
+	}
+	h.DB = db
+	return nil
+}
+
+// upgradeLock swaps the shared lock for an exclusive one.
+func (h *Handle) upgradeLock() bool {
+	if h.lock == nil {
+		return false
+	}
+	if err := h.lock.Unlock(); err != nil {
+		return false
+	}
+	h.lock = nil
+	l, err := fsx.TryLock(filepath.Join(h.Root, LockName), false)
+	if err != nil {
+		return false
+	}
+	h.lock = l
+	return true
+}
+
+// checkMarker compares the manifest with the copy inside badger, and writes
+// that copy (and a missing manifest file) on a writable open.
+func (h *Handle) checkMarker() error {
+	var stored []byte
+	err := h.DB.View(func(txn *badger.Txn) error {
+		item, err := txn.Get([]byte(dbmeta.MarkerKey))
+		if err != nil {
+			return err
+		}
+		stored, err = item.ValueCopy(nil)
+		return err
+	})
+	switch {
+	case err == nil:
+		var marker dbmeta.Manifest
+		if err := json.Unmarshal(stored, &marker); err != nil {
+			return fmt.Errorf("%w: unreadable marker in %s: %v", ErrMarkerMismatch, h.Root, err)
+		}
+		if marker.Version > dbmeta.FormatVersion {
+			return fmt.Errorf("%s: %w", h.Root, dbmeta.ErrNewerFormat)
+		}
+		if !dbmeta.SameLayout(marker, h.Manifest) {
+			return fmt.Errorf("%w: %s; restore %s from %s",
+				ErrMarkerMismatch, h.Root, dbmeta.ManifestName, dbmeta.MirrorName)
+		}
+		return nil
+	case !errors.Is(err, badger.ErrKeyNotFound):
+		return err
+	case h.ReadOnly:
+		return nil
+	}
+	b, err := json.Marshal(h.Manifest)
+	if err != nil {
+		return err
+	}
+	return h.DB.Update(func(txn *badger.Txn) error {
+		return txn.Set([]byte(dbmeta.MarkerKey), b)
+	})
+}
+
+func codecFor(l dbmeta.Layout, keys dbmeta.Keys) (blobcodec.Codec, error) {
+	switch l.BlobEncoding {
+	case blobcodec.LegacySealed:
+		return blobcodec.NewLegacySealed(keys.Blob), nil
+	case blobcodec.LegacyRaw:
+		return blobcodec.NewLegacyRaw(), nil
+	case blobcodec.V2:
+		return blobcodec.NewV2(keys.Blob)
+	}
+	return nil, fmt.Errorf("unknown blob encoding %q", l.BlobEncoding)
+}
+
+// ApplyToGlobals sets the process-wide layout globals the storage code still
+// reads, from the manifest, so every command reads data the way it was
+// written whatever flags it was given.
+func ApplyToGlobals(m dbmeta.Manifest) {
+	l := m.Layout
+	cnst.ChonkSize = int64(l.ChunkKiB) * cnst.KB
+	cnst.HASHALGO = l.ChunkHash
+	cnst.QUICKOPT = l.ValueEncoding == dbmeta.EncodingRaw
+	cnst.CONTAINERMODE = l.Storage != dbmeta.StorageFile
+	cnst.HIERARCHICALINDEX = l.Storage == dbmeta.StorageContainerBIDX
+}
+
+func (h *Handle) release() {
+	if h.DB != nil {
+		blobcodec.Unregister(h.DB)
+		h.DB.Close()
+		h.DB = nil
+	}
+	if h.lock != nil {
+		h.lock.Unlock()
+		h.lock = nil
+	}
+}
+
+// Close closes the database, then releases the root lock.
+func (h *Handle) Close() error {
+	if h == nil || h.DB == nil {
+		return nil
+	}
+	db := h.DB
+	h.DB = nil
+	blobcodec.Unregister(db)
+	err := db.Close()
+	if h.lock != nil {
+		err = errors.Join(err, h.lock.Unlock())
+		h.lock = nil
+	}
+	return err
+}

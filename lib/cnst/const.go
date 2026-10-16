@@ -402,12 +402,16 @@ func GetMaxThreadCount() int {
 	return runtime.NumCPU() * 2
 }
 
-// GetStorePipelineTuning returns worker count and task queue depth for the
-// batch-owner ingest pipeline. Non-container mode benefits from higher worker
-// parallelism for chunk materialization, while container/hierarchical modes
-// involve additional serialized components and are tuned for steadier flow.
-func GetStorePipelineTuning(containerMode bool, hierarchicalMode bool) (int, int) {
-	workers := GetMaxThreadCount()
+// DefaultStoreTuning returns the batch-owner ingest pipeline's worker count
+// and task queue depth for a machine with cpus CPUs, before any override.
+// Non-container mode benefits from higher worker parallelism for chunk
+// materialization, while container/hierarchical modes involve additional
+// serialized components and are tuned for steadier flow.
+func DefaultStoreTuning(cpus int, memOpt, containerMode, hierarchicalMode bool) (int, int) {
+	workers := cpus * 2
+	if memOpt {
+		workers = 1
+	}
 	queueDepth := workers * 2
 
 	if containerMode {
@@ -420,6 +424,14 @@ func GetStorePipelineTuning(containerMode bool, hierarchicalMode bool) (int, int
 			queueDepth = workers * 6
 		}
 	}
+	return workers, queueDepth
+}
+
+// GetStorePipelineTuning returns worker count and task queue depth for the
+// batch-owner ingest pipeline: the defaults for this machine, replaced by
+// StoreWorkerCount and StoreTaskQueueDepth when those are set.
+func GetStorePipelineTuning(containerMode bool, hierarchicalMode bool) (int, int) {
+	workers, queueDepth := DefaultStoreTuning(runtime.NumCPU(), MEMOPT, containerMode, hierarchicalMode)
 
 	if StoreWorkerCount > 0 {
 		workers = StoreWorkerCount
@@ -438,11 +450,12 @@ func GetStorePipelineTuning(containerMode bool, hierarchicalMode bool) (int, int
 	return workers, queueDepth
 }
 
-// GetRestorePipelineTuning returns worker count and queue depth for restore.
-// Restore is read/decode heavy, so defaults are moderately parallel and bounded.
-func GetRestorePipelineTuning() (int, int) {
-	workers := runtime.NumCPU()
-	if MEMOPT {
+// DefaultRestoreTuning returns restore's worker count and queue depth for a
+// machine with cpus CPUs, before any override. Restore is read/decode heavy,
+// so defaults are moderately parallel and bounded.
+func DefaultRestoreTuning(cpus int, memOpt bool) (int, int) {
+	workers := cpus
+	if memOpt {
 		workers = workers / 2
 	}
 	if workers < 2 {
@@ -451,8 +464,14 @@ func GetRestorePipelineTuning() (int, int) {
 	if workers > 16 {
 		workers = 16
 	}
+	return workers, workers * 4
+}
 
-	queueDepth := workers * 4
+// GetRestorePipelineTuning returns worker count and queue depth for restore:
+// the defaults for this machine, replaced by RestoreWorkerCount and
+// RestoreTaskQueueDepth when those are set.
+func GetRestorePipelineTuning() (int, int) {
+	workers, queueDepth := DefaultRestoreTuning(runtime.NumCPU(), MEMOPT)
 
 	if RestoreWorkerCount > 0 {
 		workers = RestoreWorkerCount
@@ -527,17 +546,26 @@ func GetCacheLimit() (int64, error) {
 
 	return cacheLimit, nil
 }
+
+// MaxPendingBatchTxns bounds a write batch's pending transactions: each one
+// holds a transaction's worth of memory until it commits.
+const MaxPendingBatchTxns = 64
+
+// GetMaxBatchCount returns how many transactions a write batch may have
+// pending: a quarter of available memory in chunks, between 1 (0 deadlocks
+// badger) and MaxPendingBatchTxns.
 func GetMaxBatchCount() (int, error) {
 	if MEMOPT {
 		return 16, nil
 	}
 	vmemstat, err := mem.VirtualMemory()
-	if err != nil {
-		return int(IgnoreVar), err
+	if err != nil || ChonkSize <= 0 {
+		// Reliability first: a modest limit when memory or the chunk size
+		// is unknown.
+		return 16, nil
 	}
-	limit := vmemstat.Available / 4
-	batchCount := limit / uint64(ChonkSize)
-	return int(batchCount), nil
+	n := vmemstat.Available / 4 / uint64(ChonkSize)
+	return int(max(1, min(n, MaxPendingBatchTxns))), nil
 }
 
 const GRAPH_START = `<!DOCTYPE html>

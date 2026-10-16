@@ -9,6 +9,7 @@ import (
 	"strings"
 
 	"github.com/aoiflux/libvhdi"
+	"github.com/aoiflux/libvhdi/types"
 
 	"indicer/lib/parser/core"
 )
@@ -16,12 +17,62 @@ import (
 // vhdImage adapts a libvhdi virtual disk (VHD/VHDX) to core.Image.
 type vhdImage struct {
 	d *libvhdi.Disk
+	r io.ReaderAt // d, or d behind sectorAlignedReader for differencing VHDX
 }
 
-func (im *vhdImage) ReadAt(p []byte, off int64) (int, error) { return im.d.ReadAt(p, off) }
+func newVHDImage(d *libvhdi.Disk) *vhdImage {
+	im := &vhdImage{d: d, r: d}
+	if d.IsDifferencing() && d.Format() == types.FileFormatVHDX {
+		sector := int64(d.SectorSize())
+		if sector <= 0 {
+			sector = types.DefaultSectorSize
+		}
+		im.r = sectorAlignedReader{r: d, sector: sector}
+	}
+	return im
+}
+
+func (im *vhdImage) ReadAt(p []byte, off int64) (int, error) { return im.r.ReadAt(p, off) }
 func (im *vhdImage) Size() int64                             { return int64(im.d.Size()) }
 func (im *vhdImage) Format() core.ImageFormat                { return core.FormatVHD }
 func (im *vhdImage) Close() error                            { return im.d.Close() }
+
+// sectorAlignedReader makes every read start on a sector boundary.
+//
+// libvhdi v0.4.1 mis-serves a read that starts inside a sector of a VHDX
+// PARTIALLY_PRESENT block: it returns bytes from the start of that sector, so
+// an ext4 inode 256 bytes into a sector reads as its neighbour. Reads that
+// start aligned are served correctly, including those ending mid-sector, and
+// the differencing resolver keeps them aligned down the parent chain. So only
+// the head of an unaligned read is fetched as a whole sector and copied out.
+type sectorAlignedReader struct {
+	r      io.ReaderAt
+	sector int64
+}
+
+func (a sectorAlignedReader) ReadAt(p []byte, off int64) (int, error) {
+	head := off % a.sector
+	if head == 0 || len(p) == 0 {
+		return a.r.ReadAt(p, off)
+	}
+	buf := make([]byte, a.sector)
+	n, err := a.r.ReadAt(buf, off-head)
+	if int64(n) <= head {
+		if err == nil {
+			err = io.ErrUnexpectedEOF
+		}
+		return 0, err
+	}
+	got := copy(p, buf[head:n])
+	if got == len(p) {
+		return got, nil
+	}
+	if err != nil {
+		return got, err
+	}
+	rest, err := a.r.ReadAt(p[got:], off+int64(got))
+	return got + rest, err
+}
 
 // ChainDepth reports how many disks the opened chain holds, counting the
 // image itself; 1 for a disk that is not differencing.
@@ -46,7 +97,7 @@ func OpenVHDFile(path string) (core.Image, error) {
 	if err != nil {
 		return nil, err
 	}
-	return &vhdImage{d: d}, nil
+	return newVHDImage(d), nil
 }
 
 // OpenVHD wraps an already-open io.ReaderAt VHD/VHDX source (size derived from
@@ -64,7 +115,7 @@ func OpenVHD(r io.ReaderAt) (core.Image, error) {
 		return nil, fmt.Errorf("%w: differencing disk %q opened without its path; open it by path to resolve the parent chain",
 			libvhdi.ErrParentRequired, d.ParentFilename())
 	}
-	return &vhdImage{d: d}, nil
+	return newVHDImage(d), nil
 }
 
 // siblingResolver finds a differencing disk's parent in the child's own

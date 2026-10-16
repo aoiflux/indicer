@@ -1,6 +1,8 @@
 package cli
 
 import (
+	"context"
+	"indicer/lib/dbopen"
 	"indicer/lib/enrichment"
 	"indicer/lib/logging"
 	"indicer/lib/store"
@@ -9,24 +11,26 @@ import (
 	"go.uber.org/zap"
 )
 
-func ListData(chonkSize int, dbpath string, key []byte, statusFilter string) error {
+func ListData(ctx context.Context, opts DBOptions, statusFilter string) (err error) {
 	start := time.Now()
 	logging.GetLogger().Info("ListData START",
-		zap.Int("chonk_size", chonkSize),
-		zap.String("db_path", dbpath),
+		zap.String("db_path", opts.Path),
 		zap.String("status_filter", statusFilter),
 	)
 
-	db, _, err := Common(chonkSize, dbpath, key)
+	h, err := Common(ctx, opts, dbopen.ReadOnly, false)
 	if err != nil {
 		logging.GetLogger().Error("ListData DB_CONNECT_ERROR", zap.Error(err))
 		return err
 	}
-	defer db.Close()
+	defer closeDB(h, &err)
+	db := h.DB
+	encryptionNotice(h)
 
-	// Try to open enrichment graphdb for graphdb-first retrieval
+	// Try to open enrichment graphdb for graphdb-first retrieval. It lives in
+	// the data root, not the working directory (CFG-7).
 	logging.GetLogger().Debug("ListData OPEN_GRAPH_REPOSITORY")
-	enrichRepo, err := enrichment.OpenGrapheneRepository(dbpath)
+	enrichRepo, err := enrichment.OpenGrapheneRepository(h.Root)
 	if err != nil {
 		// Graphdb not available, fall back to KVDB-only
 		logging.GetLogger().Debug("ListData GRAPH_REPOSITORY_UNAVAILABLE", zap.Error(err))

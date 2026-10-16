@@ -1,7 +1,10 @@
 package cli
 
 import (
+	"context"
 	"fmt"
+	"indicer/internal/console"
+	"indicer/lib/dbopen"
 	"indicer/lib/logging"
 	"indicer/lib/store"
 	"os"
@@ -11,29 +14,21 @@ import (
 	"go.uber.org/zap"
 )
 
-func RestoreData(chonkSize int, dbpath, rhash, rpath string, key []byte) (err error) {
+func RestoreData(ctx context.Context, opts DBOptions, rhash, rpath string) (err error) {
 	start := time.Now()
 	logging.GetLogger().Info("RestoreData START",
-		zap.Int("chonk_size", chonkSize),
-		zap.String("db_path", dbpath),
+		zap.String("db_path", opts.Path),
 		zap.String("restore_hash", rhash),
 		zap.String("restore_path", rpath),
 	)
 
-	db, _, err := Common(chonkSize, dbpath, key)
+	h, err := Common(ctx, opts, dbopen.ReadOnly, false)
 	if err != nil {
 		logging.GetLogger().Error("RestoreData DB_CONNECT_ERROR", zap.Error(err))
 		return err
 	}
-	defer func() {
-		closeErr := db.Close()
-		if closeErr != nil {
-			logging.GetLogger().Error("RestoreData DB_CLOSE_ERROR", zap.Error(closeErr))
-			if err == nil {
-				err = closeErr
-			}
-		}
-	}()
+	defer closeDB(h, &err)
+	db := h.DB
 
 	tempDir := filepath.Dir(rpath)
 	tempPattern := filepath.Base(rpath) + ".tmp-*"
@@ -63,7 +58,7 @@ func RestoreData(chonkSize int, dbpath, rhash, rpath string, key []byte) (err er
 	}()
 
 	logging.GetLogger().Info("RestoreData RESTORE_EXECUTE")
-	fmt.Println("Restoring file ...")
+	console.Println("Restoring file ...")
 	err = store.Restore(rhash, fhandle, db)
 	if err != nil {
 		logging.GetLogger().Error("RestoreData RESTORE_ERROR", zap.Error(err), zap.String("restore_hash", rhash))
@@ -93,7 +88,7 @@ func RestoreData(chonkSize int, dbpath, rhash, rpath string, key []byte) (err er
 	}
 	keepTemp = true
 
-	fmt.Println("Restored in: ", time.Since(start))
+	console.Println("Restored in: ", time.Since(start))
 	logging.GetLogger().Info("RestoreData COMPLETE",
 		zap.Int64("duration_ms", time.Since(start).Milliseconds()),
 		zap.String("restore_path", rpath),

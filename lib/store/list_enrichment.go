@@ -3,7 +3,7 @@ package store
 import (
 	"encoding/json"
 	"errors"
-	"fmt"
+	"indicer/internal/console"
 	"strings"
 
 	"indicer/lib/enrichment"
@@ -188,7 +188,7 @@ func ListWithEnrichment(db *badger.DB, enrichRepo enrichment.Repository, statusF
 		return err
 	}
 
-	fmt.Println(string(jsonData))
+	console.Println(string(jsonData))
 	return nil
 }
 

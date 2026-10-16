@@ -52,7 +52,9 @@ func TestHierarchicalContainerStoreRestoreRoundTrip(t *testing.T) {
 	}
 
 	key := []byte("01234567890123456789012345678901")
-	if err := StoreData(64, dbPath, inputPath, key, false, true, false, false); err != nil {
+	opts := optsFor(dbPath, 64, key)
+	opts.Layout.Container, opts.Layout.Hierarchical = true, true
+	if err := StoreData(t.Context(), opts, inputPath, false, true, false, false); err != nil {
 		t.Fatalf("StoreData: %v", err)
 	}
 
@@ -70,10 +72,11 @@ func TestHierarchicalContainerStoreRestoreRoundTrip(t *testing.T) {
 	}
 
 	rhash := base64.StdEncoding.EncodeToString(hash)
-	db, err := dbio.ConnectDB(dbPath, key)
+	h, err := openTestDB(dbPath, key)
 	if err != nil {
 		t.Fatalf("ConnectDB: %v", err)
 	}
+	db := h.DB
 
 	fid, err := dbio.GuessFileType(rhash, db)
 	if err != nil {
@@ -105,11 +108,11 @@ func TestHierarchicalContainerStoreRestoreRoundTrip(t *testing.T) {
 	if !found {
 		t.Fatal("expected hash lookup to contain committed evidence id")
 	}
-	if err := db.Close(); err != nil {
+	if err := h.Close(); err != nil {
 		t.Fatalf("db.Close: %v", err)
 	}
 
-	if err := RestoreData(64, dbPath, rhash, outputPath, key); err != nil {
+	if err := RestoreData(t.Context(), opts, rhash, outputPath); err != nil {
 		t.Fatalf("RestoreData: %v", err)
 	}
 

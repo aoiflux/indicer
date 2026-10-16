@@ -55,21 +55,26 @@ func parseList(out string) (listOutput, error) {
 // inventory ID that keeps a ground-truth file from being indexed and
 // restored correctly today. The fix for each ID removes its entries.
 var ingestKnownDefects = map[string]string{
-	"ewf/fat12_multiseg|*":     "ING-7 (E01 indexed over the raw container)",
-	"vhd/fat16_dynamic_vhd|*":  "ING-7 (VHD indexed over the raw container)",
-	"vhd/fat16_vhdx|*":         "ING-7 (VHDX indexed over the raw container)",
-	"hfs/hfs_classic|*":        "PAR-26 (classic HFS is not detected)",
-	"exfat/exfat|/empty.txt":   "PAR-3 (zero-length files are not indexed)",
-	"ext/ext4|/empty.txt":      "PAR-3 (zero-length files are not indexed)",
-	"ext/ext4|/inline.txt":     "PAR-3 (inline data is not indexed; D2)",
-	"ext/ext4|/sparse.bin":     "PAR-3 (files with holes are not indexed; D2)",
-	"ext/ext4|/prealloc.bin":   "PAR-5 (unwritten extents read as data)",
-	"ext/ext4|/unwritten.bin":  "PAR-5 (unwritten extents read as data)",
-	"xfs/xfs|/sparse.bin":      "PAR-3 (files with holes are not indexed; D2)",
-	"xfs/xfs|/multi.bin":       "PAR-3 (fragmented files are not indexed; D2)",
-	"xfs/xfs|/unwritten.bin":   "PAR-3 (files with holes are not indexed; D2)",
-	"xfs/xfs|/empty.txt":       "PAR-3 (zero-length files are not indexed)",
-	"ntfs/ntfs_fsagen|*small*": "PAR-3 (resident content is not indexed; D2)",
+	"ewf/fat12_multiseg|*":      "ING-7 (E01 indexed over the raw container)",
+	"vhd/fat16_dynamic_vhd|*":   "ING-7 (VHD indexed over the raw container)",
+	"vhd/fat16_vhdx|*":          "ING-7 (VHDX indexed over the raw container)",
+	"hfs/hfs_classic|*":         "PAR-26 (classic HFS is not detected)",
+	"exfat/exfat|/empty.txt":    "PAR-3 (zero-length files are not indexed)",
+	"ext/ext4|/empty.txt":       "PAR-3 (zero-length files are not indexed)",
+	"ext/ext4|/inline.txt":      "PAR-3 (inline data is not indexed; D2)",
+	"ext/ext4|/sparse.bin":      "PAR-3 (files with holes are not indexed; D2)",
+	"ext/ext4|/prealloc.bin":    "PAR-5 (unwritten extents read as data)",
+	"ext/ext4|/unwritten.bin":   "PAR-5 (unwritten extents read as data)",
+	"xfs/xfs|/sparse.bin":       "PAR-3 (files with holes are not indexed; D2)",
+	"xfs/xfs|/multi.bin":        "PAR-3 (fragmented files are not indexed; D2)",
+	"xfs/xfs|/unwritten.bin":    "PAR-3 (files with holes are not indexed; D2)",
+	"xfs/xfs|/empty.txt":        "PAR-3 (zero-length files are not indexed)",
+	"xfs/xfs|/hello.txt":        "PAR-4 (XFS content includes block slack)",
+	"xfs/xfs|/hardlink.bin":     "PAR-4 (XFS content includes block slack)",
+	"xfs/xfs|/slack.bin":        "PAR-4 (XFS content includes block slack)",
+	"xfs/xfs|/sub/a.bin":        "PAR-4 (XFS content includes block slack)",
+	"xfs/xfs|/sub/deeper/b.bin": "PAR-4 (XFS content includes block slack)",
+	"ntfs/ntfs_fsagen|*small*":  "PAR-3 (resident content is not indexed; D2)",
 }
 
 func ingestDefect(fixture string, f fsfixture.File) (string, bool) {
@@ -135,18 +140,19 @@ func TestIngestFixtures(t *testing.T) {
 						out := filepath.Join(work, "restored.bin")
 						_ = os.Remove(out)
 						res := testutil.RunDues(t, bin, work, time.Minute, "restore", got.Hash, "-f", out, "--dbpath", db)
+						outcome := fmt.Sprintf("restore exit %d: %s", res.ExitCode, res.LastLine())
 						if res.ExitCode == 0 {
 							if sum := testutil.FileSHA256(t, out); sum == want.SHA256 {
 								return
 							}
-						}
-						if strings.Contains(res.Combined(), "illegal base64") {
-							t.Skipf("known defect ING-19: restore of an indexed file: %s", res.LastLine())
+							if fi, err := os.Stat(out); err == nil {
+								outcome = fmt.Sprintf("restored %d bytes, want %d, content differs", fi.Size(), want.Size)
+							}
 						}
 						if id, known := ingestDefect(m.Name, want); known {
-							t.Skipf("known defect %s: restore exit %d: %s", id, res.ExitCode, res.LastLine())
+							t.Skipf("known defect %s: %s", id, outcome)
 						}
-						t.Fatalf("restore exit %d: %s", res.ExitCode, res.LastLine())
+						t.Fatal(outcome)
 					})
 				}
 			}

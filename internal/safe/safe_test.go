@@ -23,8 +23,8 @@ func TestCallRecoversPanic(t *testing.T) {
 	site := Site{Component: "test/call", Op: "walk", Path: "/a/b", Inode: 7}
 	for i := 0; i < 3; i++ {
 		err := Call(site, func() error {
-			var m map[string]int
-			m["x"] = 1 // a nil map write panics
+			none := []int{}
+			_ = none[i] // an out-of-range index is a runtime panic
 			return nil
 		})
 		var pe *PanicError

@@ -9,6 +9,8 @@ import (
 	"indicer/lib/util"
 	"indicer/pb"
 	"strings"
+
+	"github.com/dgraph-io/badger/v4"
 )
 
 func StoreStreamedFile(fpath string) error {
@@ -25,8 +27,8 @@ func AddEvidenceMetadata(meta *pb.StreamFileMeta) (structs.EvidenceFile, error) 
 		return efile, err
 	}
 	fileType := strings.ToLower(strings.TrimSpace(meta.FileType))
-	if fileType != "" && fileType != cnst.UnknownEvidenceType {
-		efile.EvidenceType = fileType
+	if fileType == "" || fileType == cnst.UnknownEvidenceType {
+		return efile, nil
 	}
 
 	fileHash, err := base64.StdEncoding.DecodeString(meta.FileHash)
@@ -35,6 +37,10 @@ func AddEvidenceMetadata(meta *pb.StreamFileMeta) (structs.EvidenceFile, error) 
 	}
 	eid := util.AppendToBytesSlice(cnst.EviFileNamespace, fileHash)
 
-	err = dbio.SetFile(eid, efile, cnst.DB)
+	err = dbio.UpdateEvidence(cnst.DB, eid, func(_ *badger.Txn, current *structs.EvidenceFile) error {
+		current.EvidenceType = fileType
+		efile = *current
+		return nil
+	})
 	return efile, err
 }

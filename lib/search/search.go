@@ -229,7 +229,10 @@ func SearchToPathWithContextFullTextFallback(ctx context.Context, query, reportP
 		zap.Int64("total_files", totalFiles),
 		zap.Int("result_count", len(ranked)),
 	)
-	return bar.Close()
+	// A progress bar error (an empty input has nothing to show) is not the
+	// operation's error.
+	_ = bar.Close()
+	return nil
 }
 
 func SearchToPathWithContext(ctx context.Context, query, reportPath string, db *badger.DB) error {
@@ -310,7 +313,10 @@ func SearchToPathWithContext(ctx context.Context, query, reportPath string, db *
 		zap.Int64("total_files", totalFiles),
 		zap.Int("result_count", len(ranked)),
 	)
-	return bar.Close()
+	// A progress bar error (an empty input has nothing to show) is not the
+	// operation's error.
+	_ = bar.Close()
+	return nil
 }
 
 func validateParsedQuery(pq parsedQuery) error {
@@ -581,7 +587,7 @@ func searchChonks(ctx context.Context, settings searchSettings, fidStr string, c
 }
 
 func searchChonk(sindex, dbstart, end int64, fid string, settings searchSettings, cmap *structs.SeenChonkMap, idmap *structs.SearchIDMap, meta structs.FileMeta, db *badger.DB) error {
-	s1key, state1, err := getChonkState(sindex, dbstart, end, meta, db)
+	s1key, state1, err := getChonkState(sindex, end, meta, db)
 	if err != nil {
 		if errors.Is(err, badger.ErrKeyNotFound) {
 			return nil
@@ -599,7 +605,7 @@ func searchChonk(sindex, dbstart, end int64, fid string, settings searchSettings
 		return nil
 	}
 
-	_, state2, err := getChonkState(nxtidx, dbstart, end, meta, db)
+	_, state2, err := getChonkState(nxtidx, end, meta, db)
 	if err != nil {
 		if errors.Is(err, badger.ErrKeyNotFound) {
 			return nil
@@ -622,14 +628,14 @@ func searchChonk(sindex, dbstart, end int64, fid string, settings searchSettings
 	return nil
 }
 
-func getChonkState(searchIndex, dbstart, end int64, meta structs.FileMeta, db *badger.DB) ([]byte, []byte, error) {
+func getChonkState(searchIndex, end int64, meta structs.FileMeta, db *badger.DB) ([]byte, []byte, error) {
 	relKey := util.AppendToBytesSlice(cnst.RelationNamespace, meta.EviHash, cnst.DataSeperator, searchIndex)
 	chash, err := dbio.GetNode(relKey, db)
 	if err != nil {
 		return nil, nil, err
 	}
 	ckey := util.AppendToBytesSlice(cnst.ChonkNamespace, chash)
-	state, err := dbio.GetChonkData(searchIndex, meta.Start, meta.Size, dbstart, end, ckey, db)
+	state, err := dbio.GetChonkData(searchIndex, meta.Start, end, ckey, db)
 	return ckey, state, err
 }
 

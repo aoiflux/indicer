@@ -112,7 +112,7 @@ func TestHierarchicalContainerStoreRestoreRoundTrip(t *testing.T) {
 		t.Fatalf("db.Close: %v", err)
 	}
 
-	if err := RestoreData(t.Context(), opts, rhash, outputPath); err != nil {
+	if err := RestoreData(t.Context(), opts, rhash, outputPath, false); err != nil {
 		t.Fatalf("RestoreData: %v", err)
 	}
 

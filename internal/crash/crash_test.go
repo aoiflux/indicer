@@ -20,12 +20,13 @@ func TestMain(m *testing.M) {
 			if _, err := Setup(os.Getenv("CRASH_DIR"), "child"); err != nil {
 				return 3
 			}
-			done := make(chan struct{})
 			go func() {
-				defer close(done)
 				panic("unguarded goroutine panic")
 			}()
-			<-done
+			// The panic ends the process. Waiting on a channel the goroutine
+			// closed in a defer let this return 0 first: deferred calls run
+			// before the runtime prints the trace and exits.
+			time.Sleep(time.Minute)
 			return 0
 		},
 	}))

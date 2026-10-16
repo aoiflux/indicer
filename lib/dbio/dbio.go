@@ -690,39 +690,25 @@ func PingNode(key []byte, db *badger.DB) error {
 		return err
 	})
 }
-func GetChonkData(restoreIndex, start, size, dbstart, end int64, key []byte, db *badger.DB) ([]byte, error) {
+
+// GetChonkData reads the chunk stored at evidence offset chunkOff and returns
+// the part of it inside the logical range [start, end).
+func GetChonkData(chunkOff, start, end int64, key []byte, db *badger.DB) ([]byte, error) {
 	data, err := GetChonkNode(key, db)
 	if err != nil {
 		return nil, err
 	}
-
-	return trimLogicalChunkData(data, restoreIndex, start, size, dbstart, end), nil
+	return trimChunk(data, chunkOff, cnst.ChonkSize, start, end)
 }
 
 // GetChonkDataWithMetadata is GetChonkData for a caller that already holds
 // the chunk's metadata; key is still needed to check what is read.
-func GetChonkDataWithMetadata(restoreIndex, start, size, dbstart, end int64, key, metadata []byte, db *badger.DB) ([]byte, error) {
+func GetChonkDataWithMetadata(chunkOff, start, end int64, key, metadata []byte, db *badger.DB) ([]byte, error) {
 	data, err := readChonkFromMetadata(key, metadata, db)
 	if err != nil {
 		return nil, err
 	}
-
-	return trimLogicalChunkData(data, restoreIndex, start, size, dbstart, end), nil
-}
-
-func trimLogicalChunkData(data []byte, restoreIndex, start, size, dbstart, end int64) []byte {
-	if restoreIndex == dbstart {
-		actualStart := start - restoreIndex
-		data = data[actualStart:]
-	}
-	if size < int64(len(data)) {
-		data = data[:size]
-	} else if (restoreIndex + cnst.ChonkSize) > end {
-		actualEnd := end - restoreIndex
-		data = data[:actualEnd]
-	}
-
-	return data
+	return trimChunk(data, chunkOff, cnst.ChonkSize, start, end)
 }
 
 // GetStoredChonkSealedSize extracts the full-chunk sealed size persisted in
@@ -735,16 +721,16 @@ func GetStoredChonkSealedSize(metadata []byte) (int64, bool) {
 	return parsed.StoredSize, true
 }
 
-func GetChonkSizeWithMetadata(restoreIndex, start, size, dbstart, end int64, key, metadata []byte, db *badger.DB) (int64, error) {
-	data, err := GetChonkDataWithMetadata(restoreIndex, start, size, dbstart, end, key, metadata, db)
+func GetChonkSizeWithMetadata(chunkOff, start, end int64, key, metadata []byte, db *badger.DB) (int64, error) {
+	data, err := GetChonkDataWithMetadata(chunkOff, start, end, key, metadata, db)
 	if err != nil {
 		return -1, err
 	}
 	return getSealedChunkSize(key, data, db)
 }
 
-func GetChonkSize(restoreIndex, start, size, dbstart, end int64, key []byte, db *badger.DB) (int64, error) {
-	data, err := GetChonkData(restoreIndex, start, size, dbstart, end, key, db)
+func GetChonkSize(chunkOff, start, end int64, key []byte, db *badger.DB) (int64, error) {
+	data, err := GetChonkData(chunkOff, start, end, key, db)
 	if err != nil {
 		return -1, err
 	}
@@ -841,7 +827,7 @@ func StreamLogicalFileBytes(fid []byte, db *badger.DB, fn func([]byte) error) er
 			return err
 		}
 		ckey := util.AppendToBytesSlice(cnst.ChonkNamespace, chash)
-		data, err := GetChonkData(restoreIndex, start, size, dbstart, end, ckey, db)
+		data, err := GetChonkData(restoreIndex, start, end, ckey, db)
 		if err != nil {
 			return err
 		}

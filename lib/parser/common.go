@@ -1,6 +1,7 @@
 package parser
 
 import (
+	"context"
 	"encoding/base64"
 	"fmt"
 	"indicer/internal/console"
@@ -38,7 +39,7 @@ func countDeleted(files []tuskFile) int {
 	return n
 }
 
-func buildIdxMap(files []tuskFile, idxmap map[string]structs.IndexedFile, pfile structs.InputFile, encodedPfileHash []byte, eviID []byte, idxChan chan error) {
+func buildIdxMap(files []tuskFile, idxmap map[string]structs.IndexedFile, pfile structs.InputFile, encodedPfileHash []byte, eviID []byte) error {
 	for _, f := range files {
 		if f.IsFragmented {
 			// Current parser behavior: fragmented entries are intentionally skipped.
@@ -47,15 +48,14 @@ func buildIdxMap(files []tuskFile, idxmap map[string]structs.IndexedFile, pfile 
 		}
 		iname := string(util.AppendToBytesSlice(eviID, cnst.DataSeperator, encodedPfileHash, cnst.DataSeperator, []byte(f.Filename)))
 		for _, frag := range f.Fragments {
-			checkChannel(idxChan)
 			istart := frag.StartOffset
 			isize := frag.EndOffset - frag.StartOffset + 1
 			if err := registerIndexedRange(idxmap, pfile, eviID, iname, istart, isize, f.IsDeleted, f.times()); err != nil {
-				idxChan <- err
-				return
+				return err
 			}
 		}
 	}
+	return nil
 }
 
 // timestampsOf builds a stored timestamp set, dropping zero times as "not
@@ -129,7 +129,7 @@ type indexedRef struct {
 	hashB64 string
 }
 
-func finalizeIndexedFiles(idxmap map[string]structs.IndexedFile, pfile structs.InputFile, batch *badger.WriteBatch, idxChan chan error, eviID []byte, enableFTS bool, enableEnrichment bool) error {
+func finalizeIndexedFiles(idxmap map[string]structs.IndexedFile, pfile structs.InputFile, batch *badger.WriteBatch, eviID []byte, enableFTS bool, enableEnrichment bool) error {
 	indexedIDs := make([]string, 0, len(idxmap))
 	refs := make([]indexedRef, 0, len(idxmap))
 	for indexedID, ifile := range idxmap {
@@ -137,7 +137,7 @@ func finalizeIndexedFiles(idxmap map[string]structs.IndexedFile, pfile structs.I
 		refs = append(refs, indexedRef{idB64: indexedID, hashB64: ifile.FileHash})
 	}
 
-	ftsJobs, err := storeIndexedFiles(idxmap, batch, idxChan)
+	ftsJobs, err := storeIndexedFiles(idxmap, batch)
 	if err != nil {
 		return err
 	}
@@ -155,16 +155,10 @@ func finalizeIndexedFiles(idxmap map[string]structs.IndexedFile, pfile structs.I
 	}
 	fmt.Fprintln(console.Err(), "Indexed hash lookup linking complete.")
 
-	pchan := make(chan error)
+	// A timeout here once abandoned the write still running (ING-3).
 	fmt.Fprintln(console.Err(), "Persisting partition metadata...")
-	go store.Store(pfile, pchan)
-	select {
-	case err := <-pchan:
-		if err != nil {
-			return err
-		}
-	case <-time.After(2 * time.Minute):
-		return fmt.Errorf("partition metadata persist timed out for %s", pfile.GetName())
+	if err := store.StoreInputFile(context.Background(), pfile); err != nil {
+		return err
 	}
 	fmt.Fprintln(console.Err(), "Partition metadata persist complete.")
 
@@ -257,8 +251,7 @@ func indexFullTextSidecar(db *badger.DB, jobs []ftsIndexJob) error {
 	return nil
 }
 
-func storeIndexedFiles(idxmap map[string]structs.IndexedFile, batch *badger.WriteBatch, idxChan chan error) ([]ftsIndexJob, error) {
-	var pflag bool
+func storeIndexedFiles(idxmap map[string]structs.IndexedFile, batch *badger.WriteBatch) ([]ftsIndexJob, error) {
 	ftsJobs := make([]ftsIndexJob, 0, len(idxmap))
 	total := int64(len(idxmap))
 	bar := progressbar.NewOptions64(
@@ -270,13 +263,6 @@ func storeIndexedFiles(idxmap map[string]structs.IndexedFile, batch *badger.Writ
 	bar.Clear()
 
 	for indexedID, newIdxfile := range idxmap {
-		if !pflag {
-			pflag = checkChannel(idxChan)
-			if pflag {
-				bar.Set(1)
-			}
-		}
-
 		rawID, err := base64.StdEncoding.DecodeString(indexedID)
 		if err != nil {
 			return nil, err
@@ -289,7 +275,7 @@ func storeIndexedFiles(idxmap map[string]structs.IndexedFile, batch *badger.Writ
 		bar.Add(1)
 	}
 
-	if pflag {
+	if len(idxmap) > 0 {
 		bar.Finish()
 		fmt.Fprintln(console.Err())
 	}

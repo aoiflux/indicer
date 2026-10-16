@@ -1,7 +1,10 @@
 package store
 
 import (
-	"indicer/lib/dbio"
+	"cmp"
+	"errors"
+	"fmt"
+
 	"indicer/lib/logging"
 	"indicer/lib/structs"
 
@@ -51,20 +54,25 @@ func RecoverIncompleteIngests(db *badger.DB) (RecoveryReport, error) {
 		return report, err
 	}
 
+	// Each change below is a read-modify-write of the current record, which
+	// skips a record another writer already finished or failed. Only material
+	// known to be missing fails a FLUSHED ingest; a read error leaves it
+	// FLUSHED for the next writable open and is returned (ING-10).
+	var readErrs []error
 	for _, orphan := range orphans {
 		orphanID := orphan.key
 		evidenceFile := orphan.file
-		if evidenceFile.IngestState == "" {
-			evidenceFile.IngestState = structs.IngestStatePending
-		}
 		if evidenceFile.IngestState == structs.IngestStateFlushed {
-			if err := ValidateFlushedEvidenceMaterialized(orphanID, evidenceFile, db); err == nil {
+			err := validateFlushed(orphanID, evidenceFile, db)
+			if err != nil && !errors.Is(err, ErrMaterialMissing) {
+				readErrs = append(readErrs, fmt.Errorf("validate flushed evidence %s: %w", firstCleanName(evidenceFile.Name), err))
+				continue
+			}
+			if err == nil {
 				// FLUSHED means chunk/relation dependencies were written; only the
 				// COMPLETED marker was not written before the crash. Auto-complete
 				// only after validating required dependencies are present.
-				evidenceFile.Completed = true
-				evidenceFile.IngestState = structs.IngestStateCompleted
-				if err := dbio.SetFile(orphanID, evidenceFile, db); err != nil {
+				if err := CompleteEvidenceFile(orphanID, db); err != nil {
 					return report, err
 				}
 				report.CompletedFlushed++
@@ -72,8 +80,7 @@ func RecoverIncompleteIngests(db *badger.DB) (RecoveryReport, error) {
 					zap.String("file_name", firstCleanName(evidenceFile.Name)),
 				)
 			} else {
-				evidenceFile.Failed = true
-				if err := dbio.SetFile(orphanID, evidenceFile, db); err != nil {
+				if err := MarkEvidenceFileFailed(orphanID, db); err != nil {
 					return report, err
 				}
 				report.MarkedFailed++
@@ -84,14 +91,13 @@ func RecoverIncompleteIngests(db *badger.DB) (RecoveryReport, error) {
 			}
 		} else {
 			// PENDING means the ingest was interrupted mid-write; mark failed.
-			evidenceFile.Failed = true
-			if err := dbio.SetFile(orphanID, evidenceFile, db); err != nil {
+			if err := MarkEvidenceFileFailed(orphanID, db); err != nil {
 				return report, err
 			}
 			report.MarkedFailed++
 			logging.GetLogger().Warn("RecoverIncompleteIngests MARKED_FAILED",
 				zap.String("file_name", firstCleanName(evidenceFile.Name)),
-				zap.String("ingest_state", string(evidenceFile.IngestState)),
+				zap.String("ingest_state", string(cmp.Or(evidenceFile.IngestState, structs.IngestStatePending))),
 			)
 		}
 	}
@@ -103,5 +109,5 @@ func RecoverIncompleteIngests(db *badger.DB) (RecoveryReport, error) {
 		zap.Int("completed_flushed", report.CompletedFlushed),
 	)
 
-	return report, nil
+	return report, errors.Join(readErrs...)
 }

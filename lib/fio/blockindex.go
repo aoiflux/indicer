@@ -3,6 +3,7 @@ package fio
 import (
 	"bytes"
 	"encoding/binary"
+	"errors"
 	"fmt"
 	"indicer/lib/cnst"
 	"indicer/lib/util"
@@ -110,13 +111,17 @@ func (bm *BlockManager) AddChunkMetadata(chunkHash []byte, containerPath string,
 }
 
 // GetChunkMetadata retrieves chunk metadata using binary search in the v2 block file.
+// ErrChunkNotIndexed is a block-index lookup for a chunk the index does not
+// hold, as opposed to an index that could not be read.
+var ErrChunkNotIndexed = errors.New("chunk not in block index")
+
 func (bm *BlockManager) GetChunkMetadata(chunkHash []byte) (string, int64, int64, error) {
 	actualHash := chunkHash[ChonkNamespaceLength:]
 	blockID := bm.getBlockID(actualHash)
 	blockFilePath := bm.getBlockFilePath(blockID)
 
 	if _, err := os.Stat(blockFilePath); os.IsNotExist(err) {
-		return "", 0, 0, fmt.Errorf("block file not found for block %s", blockID)
+		return "", 0, 0, fmt.Errorf("%w: block file not found for block %s", ErrChunkNotIndexed, blockID)
 	}
 
 	file, err := os.Open(blockFilePath)
@@ -146,7 +151,7 @@ func searchBlockFileBinary(file *os.File, targetHash []byte) (string, int64, int
 	}
 	count := int(binary.LittleEndian.Uint32(header[5:9]))
 	if count == 0 {
-		return "", 0, 0, fmt.Errorf("chunk not found in block")
+		return "", 0, 0, fmt.Errorf("%w: empty block", ErrChunkNotIndexed)
 	}
 
 	buf := make([]byte, blockRecordSize)
@@ -185,7 +190,7 @@ func searchBlockFileBinary(file *os.File, targetHash []byte) (string, int64, int
 			hi = mid - 1
 		}
 	}
-	return "", 0, 0, fmt.Errorf("chunk not found in block")
+	return "", 0, 0, fmt.Errorf("%w: chunk not found in block", ErrChunkNotIndexed)
 }
 
 // flushBlock sorts, deduplicates, merges with any existing on-disk records, and

@@ -25,18 +25,23 @@ func CheckAndAppend(filePath, fileHashStr string, db *badger.DB) (structs.Eviden
 	}
 	eid := util.AppendToBytesSlice(cnst.EviFileNamespace, fileHash)
 
-	appendded, err := appendFile(eid, filePath, efile, db)
+	appendded, err := appendFile(eid, filePath, db)
 	return efile, appendded, err
 }
 
-func appendFile(eid []byte, filePath string, efile structs.EvidenceFile, db *badger.DB) (string, error) {
-	if efile.Name == filePath {
-		return cnst.FILE_EXISTS, nil
-	}
-	efile.Name = filePath
-	err := dbio.SetFile(eid, efile, db)
+func appendFile(eid []byte, filePath string, db *badger.DB) (string, error) {
+	result := cnst.FILE_EXISTS
+	err := dbio.UpdateEvidence(db, eid, func(_ *badger.Txn, efile *structs.EvidenceFile) error {
+		if efile.Name == filePath {
+			result = cnst.FILE_EXISTS
+			return dbio.ErrNoChange
+		}
+		efile.Name = filePath
+		result = cnst.FILE_APPENDED
+		return nil
+	})
 	if err != nil {
 		return "", err
 	}
-	return cnst.FILE_APPENDED, nil
+	return result, nil
 }

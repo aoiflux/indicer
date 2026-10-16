@@ -47,6 +47,7 @@ type cliFlags struct {
 	storeQueue          *int
 
 	rpath             *string
+	restoreForce      *bool
 	restoreWorkers    *int
 	restoreQueue      *int
 	restoreProgressMs *int
@@ -55,6 +56,7 @@ type cliFlags struct {
 
 	listStatus *string
 	repairFix  *bool
+	resetYes   *bool
 
 	deep            *bool
 	inVerify        *bool
@@ -149,6 +151,7 @@ func newCLIDefinition() cliDefinition {
 
 	commands.restore = app.Command(cnst.CmdRestore, "Restore file from database")
 	flags.rpath = commands.restore.Flag(cnst.FlagRestoreFilePath, "Path for restoring the file").Short(cnst.FlagRestoreFilePathShort).Default("restored").String()
+	flags.restoreForce = commands.restore.Flag("force", "Replace the restore path if it already exists").Default("false").Bool()
 	flags.restoreWorkers = commands.restore.Flag(cnst.FlagRestoreWorkers, "Override restore worker count (0 = adaptive default)").Short(cnst.FlagRestoreWorkersShort).Default("0").Int()
 	flags.restoreQueue = commands.restore.Flag(cnst.FlagRestoreQueue, "Override restore pipeline queue depth (0 = adaptive default)").Short(cnst.FlagRestoreQueueShort).Default("0").Int()
 	flags.restoreProgressMs = commands.restore.Flag(cnst.FlagRestoreProgressMs, "Restore progress update interval in milliseconds (default: 120)").Short(cnst.FlagRestoreProgressMsShort).Default("120").Int()
@@ -192,6 +195,7 @@ func newCLIDefinition() cliDefinition {
 	flags.serverHashAlgo = commands.server.Flag(cnst.FlagHashAlgo, "Hashing algorithm to use [sha3|blake3] (default: BLAKE3)").Short(cnst.FlagHashAlgoShort).Default(cnst.BLAKE3).String()
 
 	commands.reset = app.Command(cnst.CmdReset, "Delete the database").Alias(cnst.CmdPurge).Alias(cnst.CmdDelete).Alias(cnst.CmdDestroy)
+	flags.resetYes = commands.reset.Flag("yes", "Delete without asking for the folder name (required when stdin is not a terminal)").Default("false").Bool()
 
 	return cliDefinition{app: app, flags: flags, commands: commands}
 }

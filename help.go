@@ -526,11 +526,15 @@ func printServerHelp() {
 
 func printResetHelp() {
 	printHelpHeader("reset")
-	fmt.Println("Usage: dues reset [global options]")
-	fmt.Println("Deletes the database.")
+	fmt.Println("Usage: dues reset [--yes] [global options]")
+	fmt.Println("Deletes the DUES database in the data folder, and nothing else there.")
+	fmt.Println("Asks you to type the folder name; --yes skips that, and is required when")
+	fmt.Println("stdin is not a terminal. Refuses a folder that holds no DUES database, and")
+	fmt.Println("your home folder, the working folder or a drive root.")
 	printExamples(
 		"dues reset",
 		"dues reset --dbpath ./caseA",
+		"dues reset --dbpath ./caseA --yes",
 	)
 }
 

@@ -3138,7 +3138,7 @@ func computeLogicalFileCompressedSize(ctx context.Context, eviKey []byte, eviden
 			totalStored += stored
 			continue
 		}
-		chunkStored, err := dbio.GetChonkSize(restoreIndex, start, size, dbstart, end, chunkKey, db)
+		chunkStored, err := dbio.GetChonkSize(restoreIndex, start, end, chunkKey, db)
 		if err != nil {
 			return 0, err
 		}
@@ -3367,7 +3367,7 @@ func restoreEvidenceToPathCtx(ctx context.Context, hashB64, targetPath string, d
 	if err := ctx.Err(); err != nil {
 		return err
 	}
-	if err := store.Restore(hashB64, tempFile, db); err != nil {
+	if err := store.Restore(ctx, hashB64, tempFile, db); err != nil {
 		return err
 	}
 	if err := ctx.Err(); err != nil {

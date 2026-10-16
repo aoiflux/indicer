@@ -233,7 +233,7 @@ func buildCommandHandlers(cliDef cliDefinition, dbOpts cli.DBOptions, tuning pip
 				zap.Int("restore_buffer_mb", *cliDef.flags.restoreBufferMB),
 				zap.Int("restore_workers_effective", tuning.restoreWorkers),
 				zap.Int("restore_queue_effective", tuning.restoreQueue))
-			return cli.RestoreData(ctx, dbOpts, *cliDef.flags.rhash, *cliDef.flags.rpath)
+			return cli.RestoreData(ctx, dbOpts, *cliDef.flags.rhash, *cliDef.flags.rpath, *cliDef.flags.restoreForce)
 		},
 		cliDef.commands.list.FullCommand(): func(ctx context.Context) error {
 			logging.GetLogger().Info("Command: list",
@@ -297,7 +297,7 @@ func buildCommandHandlers(cliDef cliDefinition, dbOpts cli.DBOptions, tuning pip
 		},
 		cliDef.commands.reset.FullCommand(): func(ctx context.Context) error {
 			logging.GetLogger().Info("Command: reset", zap.String("dbpath", *cliDef.flags.dbpath))
-			return cli.ResetData(*cliDef.flags.dbpath)
+			return cli.ResetData(*cliDef.flags.dbpath, *cliDef.flags.resetYes)
 		},
 		cliDef.commands.server.FullCommand(): func(ctx context.Context) error {
 			logging.GetLogger().Info("Command: server", zap.String("dbpath", *cliDef.flags.dbpath), zap.Int("chonksize_kb", *cliDef.flags.chonkSize))

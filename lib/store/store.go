@@ -15,34 +15,29 @@ import (
 	"go.uber.org/zap"
 )
 
-func Store(infile structs.InputFile, errchan chan error) {
-	StoreWithContext(context.Background(), infile, errchan)
-}
-
-func StoreWithContext(ctx context.Context, infile structs.InputFile, errchan chan error) {
+// StoreInputFile stores infile, a partition or an evidence file, and returns
+// only when nothing it started is still running, so the caller may close the
+// database straight after (I6). A cancelled ctx stops an evidence store early.
+func StoreInputFile(ctx context.Context, infile structs.InputFile) error {
 	if ctx == nil {
 		ctx = context.Background()
 	}
 	if string(infile.GetNamespace()) == cnst.PartiFileNamespace {
-		errchan <- storePartitionFile(infile)
-	} else {
-		errchan <- storeEvidenceFile(ctx, infile)
+		return storePartitionFile(infile)
 	}
+	return storeEvidenceFile(ctx, infile)
 }
 func EvidenceFilePreStoreCheck(infile structs.InputFile) error {
-	evidenceFile, err := dbio.GetEvidenceFile(infile.GetID(), infile.GetDB())
-	if err != nil {
-		return err
-	}
-	if !evidenceFile.Completed {
-		return cnst.ErrIncompleteFile
-	}
-	if evidenceFile.Name == infile.GetName() {
+	return dbio.UpdateEvidence(infile.GetDB(), infile.GetID(), func(_ *badger.Txn, evidenceFile *structs.EvidenceFile) error {
+		if !evidenceFile.Completed {
+			return cnst.ErrIncompleteFile
+		}
+		if evidenceFile.Name == infile.GetName() {
+			return dbio.ErrNoChange
+		}
+		evidenceFile.Name = infile.GetName()
 		return nil
-	}
-
-	evidenceFile.Name = infile.GetName()
-	return dbio.SetFile(infile.GetID(), evidenceFile, infile.GetDB())
+	})
 }
 
 // EnsureEvidenceFilePreStoreState makes sure the evidence metadata row exists
@@ -53,70 +48,58 @@ func EnsureEvidenceFilePreStoreState(infile structs.InputFile) error {
 }
 
 func MarkEvidenceFileFailed(fileID []byte, db *badger.DB) error {
-	evidenceFile, err := dbio.GetEvidenceFile(fileID, db)
+	err := dbio.UpdateEvidence(db, fileID, func(_ *badger.Txn, evidenceFile *structs.EvidenceFile) error {
+		if evidenceFile.Completed || evidenceFile.Failed {
+			return dbio.ErrNoChange
+		}
+		evidenceFile.Failed = true
+		if evidenceFile.IngestState == "" {
+			evidenceFile.IngestState = structs.IngestStatePending
+		}
+		return nil
+	})
 	if errors.Is(err, badger.ErrKeyNotFound) {
 		return nil
 	}
-	if err != nil {
-		return err
-	}
-	if evidenceFile.Completed {
-		return nil
-	}
-	if evidenceFile.Failed {
-		return nil
-	}
-
-	evidenceFile.Failed = true
-	if evidenceFile.IngestState == "" {
-		evidenceFile.IngestState = structs.IngestStatePending
-	}
-	return dbio.SetFile(fileID, evidenceFile, db)
+	return err
 }
 
 // MarkEvidenceFileFailedUnlessFlushed marks an ingest as failed unless it is
 // already in FLUSHED state. FLUSHED ingests should remain recoverable so
 // startup recovery/repair can auto-complete the final marker write.
 func MarkEvidenceFileFailedUnlessFlushed(fileID []byte, db *badger.DB) error {
-	evidenceFile, err := dbio.GetEvidenceFile(fileID, db)
+	err := dbio.UpdateEvidence(db, fileID, func(_ *badger.Txn, evidenceFile *structs.EvidenceFile) error {
+		if evidenceFile.Completed || evidenceFile.Failed || evidenceFile.IngestState == structs.IngestStateFlushed {
+			return dbio.ErrNoChange
+		}
+		evidenceFile.Failed = true
+		if evidenceFile.IngestState == "" {
+			evidenceFile.IngestState = structs.IngestStatePending
+		}
+		return nil
+	})
 	if errors.Is(err, badger.ErrKeyNotFound) {
 		return nil
 	}
-	if err != nil {
-		return err
-	}
-	if evidenceFile.Completed || evidenceFile.Failed {
-		return nil
-	}
-	if evidenceFile.IngestState == structs.IngestStateFlushed {
-		return nil
-	}
-
-	evidenceFile.Failed = true
-	if evidenceFile.IngestState == "" {
-		evidenceFile.IngestState = structs.IngestStatePending
-	}
-	return dbio.SetFile(fileID, evidenceFile, db)
+	return err
 }
 
 // CompleteEvidenceFile atomically marks an evidence record as completed.
 // It is used by the repair/recovery path to finish a FLUSHED ingest whose
 // final COMPLETED marker was never written before a crash.
 func CompleteEvidenceFile(fileID []byte, db *badger.DB) error {
-	evidenceFile, err := dbio.GetEvidenceFile(fileID, db)
+	err := dbio.UpdateEvidence(db, fileID, func(_ *badger.Txn, evidenceFile *structs.EvidenceFile) error {
+		if evidenceFile.Completed {
+			return dbio.ErrNoChange
+		}
+		evidenceFile.Completed = true
+		evidenceFile.IngestState = structs.IngestStateCompleted
+		return nil
+	})
 	if errors.Is(err, badger.ErrKeyNotFound) {
 		return nil
 	}
-	if err != nil {
-		return err
-	}
-	if evidenceFile.Completed {
-		return nil
-	}
-
-	evidenceFile.Completed = true
-	evidenceFile.IngestState = structs.IngestStateCompleted
-	return dbio.SetFile(fileID, evidenceFile, db)
+	return err
 }
 
 func storePartitionFile(infile structs.InputFile) error {
@@ -201,16 +184,13 @@ func failEvidenceStore(infile structs.InputFile, storeErr error) error {
 func markEvidenceFileFlushed(infile structs.InputFile, hochoEvidenceHash string) error {
 	// Mark as FLUSHED: all chunk data has been written to persistent storage.
 	// The caller (cmdstore.go) atomically transitions this to COMPLETED.
-	evidenceFile, err := dbio.GetEvidenceFile(infile.GetID(), infile.GetDB())
-	if err != nil {
-		logging.GetLogger().Error("storeEvidenceFile GET_EVIDENCE_AFTER_STORE_ERROR", zap.Error(err))
-		return err
-	}
-	if cnst.StoreHashStrategy == cnst.HochoHashStrategy && hochoEvidenceHash != "" {
-		evidenceFile.FileHash = hochoEvidenceHash
-	}
-	evidenceFile.IngestState = structs.IngestStateFlushed
-	err = dbio.SetFile(infile.GetID(), evidenceFile, infile.GetDB())
+	err := dbio.UpdateEvidence(infile.GetDB(), infile.GetID(), func(_ *badger.Txn, evidenceFile *structs.EvidenceFile) error {
+		if cnst.StoreHashStrategy == cnst.HochoHashStrategy && hochoEvidenceHash != "" {
+			evidenceFile.FileHash = hochoEvidenceHash
+		}
+		evidenceFile.IngestState = structs.IngestStateFlushed
+		return nil
+	})
 	if err != nil {
 		logging.GetLogger().Error("storeEvidenceFile MARK_FLUSHED_ERROR", zap.Error(err))
 	}
@@ -221,26 +201,53 @@ func evidenceFilePreflight(infile structs.InputFile) (structs.EvidenceFile, erro
 	detectedType := util.DetectEvidenceType(infile.GetName(), infile.GetMappedFile())
 
 	evidenceFile, created, err := loadOrCreateEvidenceFile(infile, detectedType)
-	if err != nil {
-		return evidenceFile, err
-	}
-	if created {
-		return evidenceFile, nil
-	}
-
-	if err := maybeUpdateEvidenceType(infile, &evidenceFile, detectedType); err != nil {
+	if err != nil || created {
 		return evidenceFile, err
 	}
 
-	if err := maybeSyncCompletedIngestState(infile, &evidenceFile); err != nil {
-		return evidenceFile, err
-	}
+	err = dbio.UpdateEvidence(infile.GetDB(), infile.GetID(), func(_ *badger.Txn, current *structs.EvidenceFile) error {
+		changed := applyPreflight(current, infile.GetName(), detectedType)
+		evidenceFile = *current
+		if !changed {
+			return dbio.ErrNoChange
+		}
+		return nil
+	})
+	return evidenceFile, err
+}
 
-	if !evidenceFile.Completed {
-		return ensureIncompleteEvidenceState(infile, evidenceFile)
+// applyPreflight brings an existing evidence record into the state an ingest
+// starts from, and reports whether anything changed:
+//   - an unknown evidence type takes the detected one;
+//   - a COMPLETED record's ingest state says so;
+//   - an incomplete record is PENDING and no longer failed, ready for retry;
+//   - a completed one is renamed to this ingest's name.
+func applyPreflight(e *structs.EvidenceFile, name, detectedType string) bool {
+	changed := false
+	if (e.EvidenceType == "" || e.EvidenceType == cnst.UnknownEvidenceType) && detectedType != e.EvidenceType {
+		e.EvidenceType = detectedType
+		changed = true
 	}
-
-	return ensureEvidenceAlias(infile, evidenceFile)
+	if e.Completed && e.IngestState != structs.IngestStateCompleted {
+		e.IngestState = structs.IngestStateCompleted
+		changed = true
+	}
+	if !e.Completed {
+		if e.IngestState == "" {
+			e.IngestState = structs.IngestStatePending
+			changed = true
+		}
+		if e.Failed {
+			e.Failed = false
+			changed = true
+		}
+		return changed
+	}
+	if e.Name != name {
+		e.Name = name
+		changed = true
+	}
+	return changed
 }
 
 func loadOrCreateEvidenceFile(infile structs.InputFile, detectedType string) (structs.EvidenceFile, bool, error) {
@@ -254,58 +261,13 @@ func loadOrCreateEvidenceFile(infile structs.InputFile, detectedType string) (st
 			detectedType,
 			"", // FileHash placeholder
 		)
-		err = dbio.SetFile(infile.GetID(), evidenceFile, infile.GetDB())
+		err = dbio.CreateEvidence(infile.GetDB(), infile.GetID(), evidenceFile)
 		return evidenceFile, true, err
 	}
 	if err != nil {
 		return evidenceFile, false, err
 	}
 	return evidenceFile, false, nil
-}
-
-func maybeUpdateEvidenceType(infile structs.InputFile, evidenceFile *structs.EvidenceFile, detectedType string) error {
-	if evidenceFile.EvidenceType != "" && evidenceFile.EvidenceType != cnst.UnknownEvidenceType {
-		return nil
-	}
-	if detectedType == evidenceFile.EvidenceType {
-		return nil
-	}
-	evidenceFile.EvidenceType = detectedType
-	return dbio.SetFile(infile.GetID(), *evidenceFile, infile.GetDB())
-}
-
-func maybeSyncCompletedIngestState(infile structs.InputFile, evidenceFile *structs.EvidenceFile) error {
-	if !evidenceFile.Completed || evidenceFile.IngestState == structs.IngestStateCompleted {
-		return nil
-	}
-	evidenceFile.IngestState = structs.IngestStateCompleted
-	return dbio.SetFile(infile.GetID(), *evidenceFile, infile.GetDB())
-}
-
-func ensureIncompleteEvidenceState(infile structs.InputFile, evidenceFile structs.EvidenceFile) (structs.EvidenceFile, error) {
-	needsUpdate := false
-	if evidenceFile.IngestState == "" {
-		evidenceFile.IngestState = structs.IngestStatePending
-		needsUpdate = true
-	}
-	if evidenceFile.Failed {
-		evidenceFile.Failed = false
-		needsUpdate = true
-	}
-	if !needsUpdate {
-		return evidenceFile, nil
-	}
-	err := dbio.SetFile(infile.GetID(), evidenceFile, infile.GetDB())
-	return evidenceFile, err
-}
-
-func ensureEvidenceAlias(infile structs.InputFile, evidenceFile structs.EvidenceFile) (structs.EvidenceFile, error) {
-	if evidenceFile.Name == infile.GetName() {
-		return evidenceFile, nil
-	}
-	evidenceFile.Name = infile.GetName()
-	err := dbio.SetFile(infile.GetID(), evidenceFile, infile.GetDB())
-	return evidenceFile, err
 }
 
 func processRel(index int64, fhash, chash []byte, db *badger.DB, batch *badger.WriteBatch) error {

@@ -10,6 +10,9 @@ import (
 	"github.com/dgraph-io/badger/v4"
 )
 
+// chunkSimHash computes a chunk's signature; tests replace it.
+var chunkSimHash = util.ChunkSimHash64
+
 type simhashAsyncWriter struct {
 	db      *badger.DB
 	sem     chan struct{}
@@ -28,17 +31,18 @@ func newSimhashAsyncWriter(db *badger.DB, limit int) *simhashAsyncWriter {
 	}
 }
 
+// enqueue computes and stores the signature of one chunk in the background.
+// It blocks while every worker slot is busy, so at most limit chunk copies
+// exist at once whatever the size of the evidence (STO-13).
 func (w *simhashAsyncWriter) enqueue(cdata, chash []byte) {
-	// Copy cdata here at the async handoff boundary so the goroutine does not
-	// hold a reference to a caller-owned slice (e.g. a mapped file sub-slice)
-	// past the caller's lifetime.
-	cdataCopy := make([]byte, len(cdata))
-	copy(cdataCopy, cdata)
+	w.sem <- struct{}{}
+	// Copy at the async handoff so the goroutine does not hold caller-owned
+	// slices (e.g. a mapped file sub-slice) past the caller's lifetime.
+	cdataCopy := append([]byte(nil), cdata...)
+	chash = append([]byte(nil), chash...)
 	w.wg.Add(1)
 	go func() {
 		defer w.wg.Done()
-
-		w.sem <- struct{}{}
 		defer func() {
 			<-w.sem
 		}()
@@ -53,7 +57,7 @@ func (w *simhashAsyncWriter) enqueue(cdata, chash []byte) {
 			return
 		}
 
-		sig := util.ChunkSimHash64(cdataCopy)
+		sig := chunkSimHash(cdataCopy)
 		if err = dbio.SetChonkSignature(chash, sig, w.db); err != nil {
 			w.captureErr(err)
 		}

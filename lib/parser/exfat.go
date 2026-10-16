@@ -13,27 +13,29 @@ import (
 	"github.com/schollz/progressbar/v3"
 )
 
+// IndexEXFAT indexes the contiguous files of the exFAT volume pfile holds.
+// It sends exactly one result on idxChan, which the caller reads once (ING-2).
 func IndexEXFAT(pfile structs.InputFile, eviID []byte, idxChan chan error, enableFTS bool, enableEnrichment bool) {
+	idxChan <- indexEXFAT(pfile, eviID, enableFTS, enableEnrichment)
+}
+
+func indexEXFAT(pfile structs.InputFile, eviID []byte, enableFTS bool, enableEnrichment bool) error {
 	startOffset := getStartOffset(uint64(pfile.GetStartIndex()))
 	exfatdata, err := libxfat.New(pfile.GetHandle(), true, startOffset)
 	if err != nil {
-		idxChan <- cnst.ErrIncompatibleFileSystem
-		return
+		return cnst.ErrIncompatibleFileSystem
 	}
 
 	rootEntries, err := exfatdata.ReadRootDir()
 	if err != nil {
-		idxChan <- err
-		return
+		return err
 	}
 
 	indexableEntries, err := exfatdata.ContiguousFiles(rootEntries)
 	if err != nil {
-		idxChan <- err
-		return
+		return err
 	}
 
-	var flag bool
 	total := int64(len(indexableEntries))
 	bar := progressbar.NewOptions64(
 		total,
@@ -45,28 +47,21 @@ func IndexEXFAT(pfile structs.InputFile, eviID []byte, idxChan chan error, enabl
 
 	encodedPfileHash, err := pfile.GetEncodedHash()
 	if err != nil {
-		idxChan <- err
-		return
+		return err
 	}
 
 	batch, err := util.InitBatch(pfile.GetDB())
 	if err != nil {
-		idxChan <- err
-		return
+		return err
 	}
+	// A partition that fails commits nothing; after a flush this is a no-op.
+	defer batch.Cancel()
 
-	var index int
 	var entry libxfat.Entry
 	idxmap := make(map[string]structs.IndexedFile)
-	for index, entry = range indexableEntries {
+	bar.Set(0)
+	for _, entry = range indexableEntries {
 		indexableEntries = util.Reslice(indexableEntries, 0)
-
-		if !flag {
-			flag = checkChannel(idxChan)
-			if flag {
-				bar.Set(index)
-			}
-		}
 
 		// An entry whose first cluster the volume cannot address (cluster 0
 		// for an empty file) has no content range; libxfat before v1.4.0
@@ -83,31 +78,17 @@ func IndexEXFAT(pfile structs.InputFile, eviID []byte, idxChan chan error, enabl
 		times := timestampsOf(entry.ModifiedTime(), entry.AccessedTime(), time.Time{}, entry.CreatedTime())
 		err = registerIndexedRange(idxmap, pfile, eviID, iname, istart, isize, false, times)
 		if err != nil {
-			idxChan <- err
-			return
+			return err
 		}
-
-		if flag {
-			bar.Add(1)
-		}
+		bar.Add(1)
 	}
 
-	err = finalizeIndexedFiles(idxmap, pfile, batch, idxChan, eviID, enableFTS, enableEnrichment)
-	if err != nil {
-		idxChan <- err
-		return
+	if err := finalizeIndexedFiles(idxmap, pfile, batch, eviID, enableFTS, enableEnrichment); err != nil {
+		return err
 	}
-	if flag {
-		bar.Finish()
-		fmt.Fprintln(console.Err())
-	}
-
-	idxChan <- nil
-}
-
-func checkChannel(idxChan chan error) bool {
-	_ = idxChan
-	return true
+	bar.Finish()
+	fmt.Fprintln(console.Err())
+	return nil
 }
 
 func getStartOffset(pfileStart uint64) uint64 {

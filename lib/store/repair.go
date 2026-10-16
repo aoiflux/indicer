@@ -3,14 +3,14 @@ package store
 import (
 	"encoding/base64"
 	"encoding/json"
+	"errors"
+	"fmt"
 	"indicer/internal/console"
 
-	"indicer/lib/cnst"
 	"indicer/lib/dbio"
 	"indicer/lib/structs"
 
 	"github.com/dgraph-io/badger/v4"
-	"github.com/vmihailenco/msgpack/v5"
 )
 
 type RepairReport struct {
@@ -56,35 +56,12 @@ func InspectEvidenceRepairs(db *badger.DB, fix bool) (RepairReport, error) {
 	var report RepairReport
 	report.Fixed = fix
 
+	// Only evidence records are inspected; decoding every key in the
+	// database as one reported whatever happened to decode (ING-10).
 	err := db.View(func(txn *badger.Txn) error {
-		opts := badger.DefaultIteratorOptions
-		opts.PrefetchSize = 1000
-		it := txn.NewIterator(opts)
-		defer it.Close()
-
-		for it.Rewind(); it.Valid(); it.Next() {
-			item := it.Item()
-			key := item.KeyCopy(nil)
-			rawID := dbio.EvidenceRawID(key)
-			value, err := item.ValueCopy(nil)
-			if err != nil {
-				return err
-			}
-
-			decoded, err := cnst.DECODER.DecodeAll(value, nil)
-			if err == nil {
-				value = decoded
-			}
-
-			var evidenceFile structs.EvidenceFile
-			if err := msgpack.Unmarshal(value, &evidenceFile); err != nil {
-				continue
-			}
-			if evidenceFile.EvidenceType == "" && evidenceFile.IngestState == "" && !evidenceFile.Completed && !evidenceFile.Failed {
-				continue
-			}
+		return forEachEvidenceRecord(txn, func(rawID []byte, evidenceFile structs.EvidenceFile) error {
 			if evidenceFile.Completed {
-				continue
+				return nil
 			}
 
 			row := RepairEvidenceRow{
@@ -109,8 +86,8 @@ func InspectEvidenceRepairs(db *badger.DB, fix bool) (RepairReport, error) {
 				row.Action = "pending"
 			}
 			report.Evidence = append(report.Evidence, row)
-		}
-		return nil
+			return nil
+		})
 	})
 	if err != nil {
 		return report, err
@@ -126,7 +103,10 @@ func InspectEvidenceRepairs(db *badger.DB, fix bool) (RepairReport, error) {
 				if err != nil {
 					return report, err
 				}
-				if err := ValidateFlushedEvidenceMaterialized(report.Evidence[index].id, evidenceFile, db); err != nil {
+				if err := validateFlushed(report.Evidence[index].id, evidenceFile, db); err != nil {
+					if !errors.Is(err, ErrMaterialMissing) {
+						return report, fmt.Errorf("validate flushed evidence %s: %w", report.Evidence[index].Name, err)
+					}
 					if err := MarkEvidenceFileFailed(report.Evidence[index].id, db); err != nil {
 						return report, err
 					}

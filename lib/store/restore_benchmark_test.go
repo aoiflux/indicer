@@ -1,6 +1,7 @@
 package store
 
 import (
+	"context"
 	"encoding/binary"
 	"os"
 	"testing"
@@ -57,7 +58,7 @@ func BenchmarkRestoreDataPath(b *testing.B) {
 					b.Fatalf("create temp destination: %v", err)
 				}
 
-				if err := restoreData(meta, dst, db); err != nil {
+				if err := restoreData(context.Background(), meta, dst, db); err != nil {
 					dst.Close()
 					b.Fatalf("restoreData: %v", err)
 				}

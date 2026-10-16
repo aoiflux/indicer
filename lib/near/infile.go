@@ -680,7 +680,10 @@ func getNearFile(start, size int64, ehash, fid []byte, db *badger.DB, deep ...bo
 	bar.Finish()
 	fmt.Fprintln(console.Err())
 	console.Println("Found NeAR Artefacts. Generating Artefact Relation Graph....")
-	return idmap, bar.Close()
+	// A progress bar error (an empty input has nothing to show) is not the
+	// operation's error.
+	_ = bar.Close()
+	return idmap, nil
 }
 
 func updateConfidence(idmap *structs.ConcMap, db *badger.DB) error {

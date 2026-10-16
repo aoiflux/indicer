@@ -295,7 +295,7 @@ func (c chunkMapWorkerContext) processIndex(idx int) {
 			zap.String("type", chunkType))
 
 		startRecompute := time.Now()
-		csize, err = dbio.GetChonkSizeWithMetadata(restoreIndex, c.meta.Start, c.meta.Size, c.dbstart, c.end, c.chunkKeys[idx], c.chunkMetadata[idx], c.db)
+		csize, err = dbio.GetChonkSizeWithMetadata(restoreIndex, c.meta.Start, c.end, c.chunkKeys[idx], c.chunkMetadata[idx], c.db)
 		recomputeDuration := time.Since(startRecompute)
 
 		if err == nil {
@@ -312,7 +312,7 @@ func (c chunkMapWorkerContext) processIndex(idx int) {
 			zap.Int("idx", idx),
 			zap.String("hash", chashB64[:16]),
 			zap.Int64("restoreIdx", restoreIndex))
-		csize, err = dbio.GetChonkSize(restoreIndex, c.meta.Start, c.meta.Size, c.dbstart, c.end, c.chunkKeys[idx], c.db)
+		csize, err = dbio.GetChonkSize(restoreIndex, c.meta.Start, c.end, c.chunkKeys[idx], c.db)
 
 	default:
 		err = c.chunkMetadataErrs[idx]

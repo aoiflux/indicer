@@ -23,7 +23,6 @@ import (
 
 	"github.com/dgraph-io/badger/v4"
 	"github.com/edsrzf/mmap-go"
-	"github.com/vmihailenco/msgpack/v5"
 	"go.uber.org/zap"
 )
 
@@ -141,10 +140,15 @@ func StoreData(ctx context.Context, opts DBOptions, evipath string, syncIndex bo
 		logging.GetLogger().Info("StoreData STORE_FOLDER_EXECUTE", zap.String("evidence_path", evipath))
 		console.Println("Storing Entire Folder")
 		err = StoreFolderWithContext(ctx, chonkSize, evipath, key, syncIndex, noIndex, enableFTS, enableEnrichment, db)
+		// Files that did store are kept, so the value log is compacted
+		// whether or not some of the folder failed.
+		compactValueLog(h, "StoreData")
 		if err != nil {
 			logging.GetLogger().Error("StoreData STORE_FOLDER_ERROR", zap.Error(err), zap.String("evidence_path", evipath))
 			return err
 		}
+		logging.GetLogger().Info("StoreData COMPLETE", zap.Int64("duration_ms", time.Since(start).Milliseconds()))
+		return nil
 	}
 	if err := ctx.Err(); err != nil {
 		return err
@@ -179,38 +183,78 @@ func StoreFolderWithContext(ctx context.Context, chonkSize int, evidir string, k
 		zap.Bool("enable_enrichment", enableEnrichment),
 	)
 
-	err := filepath.Walk(evidir, func(path string, info fs.FileInfo, err error) error {
+	// One file that fails, or a directory that cannot be read, no longer
+	// stops the folder (ING-11): every file is attempted and the failures
+	// are reported together. Only regular files are stored; a symlink,
+	// FIFO or device is skipped, as opening a FIFO blocks.
+	var stored, skipped int
+	var failures []string
+	var firstErr error
+	fail := func(path string, err error) {
+		failures = append(failures, fmt.Sprintf("%s: %v", path, err))
+		if firstErr == nil {
+			firstErr = err
+		}
+	}
+	err := filepath.WalkDir(evidir, func(path string, d fs.DirEntry, err error) error {
 		if cerr := ctx.Err(); cerr != nil {
 			return cerr
 		}
 		if err != nil {
 			logging.GetLogger().Error("StoreFolder WALK_ERROR", zap.Error(err), zap.String("file_path", path))
-			return err
-		}
-
-		if info.IsDir() {
+			fail(path, err)
+			if d != nil && d.IsDir() {
+				return fs.SkipDir
+			}
 			return nil
 		}
-
-		return StoreFileWithContext(ctx, chonkSize, path, key, syncIndex, noIndex, enableFTS, enableEnrichment, db)
+		if d.IsDir() {
+			return nil
+		}
+		if !d.Type().IsRegular() {
+			logging.GetLogger().Warn("StoreFolder SKIP_NOT_REGULAR", zap.String("file_path", path), zap.String("type", d.Type().String()))
+			console.Printf("Skipping %s: not a regular file\n", path)
+			skipped++
+			return nil
+		}
+		if err := storeOneFile(ctx, chonkSize, path, key, syncIndex, noIndex, enableFTS, enableEnrichment, db); err != nil {
+			if cerr := ctx.Err(); cerr != nil {
+				return cerr
+			}
+			logging.GetLogger().Error("StoreFolder STORE_FILE_ERROR", zap.Error(err), zap.String("file_path", path))
+			fail(path, err)
+			return nil
+		}
+		stored++
+		return nil
 	})
-
 	if err != nil {
 		logging.GetLogger().Error("StoreFolder STORE_ERROR", zap.Error(err), zap.String("evidence_dir", evidir))
 		return err
 	}
 
 	console.Println()
-	console.Println("Folder Store Time: ", time.Since(start))
-	logging.GetLogger().Info("StoreFolder COMPLETE", zap.Int64("duration_ms", time.Since(start).Milliseconds()))
+	console.Printf("Folder store: %d stored, %d failed, %d skipped (not regular files) in %v\n", stored, len(failures), skipped, time.Since(start))
+	for _, f := range failures {
+		console.Println("  failed:", f)
+	}
+	logging.GetLogger().Info("StoreFolder COMPLETE",
+		zap.Int64("duration_ms", time.Since(start).Milliseconds()),
+		zap.Int("stored", stored), zap.Int("failed", len(failures)), zap.Int("skipped", skipped))
+	if len(failures) > 0 {
+		return fmt.Errorf("%d file(s) in %s failed to store, first %s: %w", len(failures), evidir, failures[0], firstErr)
+	}
 	return nil
 }
+
+// storeOneFile stores one file of a folder; tests replace it.
+var storeOneFile = StoreFileWithContext
 
 func StoreFile(chonkSize int, evipath string, key []byte, syncIndex bool, noIndex bool, enableFTS bool, enableEnrichment bool, db *badger.DB) error {
 	return StoreFileWithContext(context.Background(), chonkSize, evipath, key, syncIndex, noIndex, enableFTS, enableEnrichment, db)
 }
 
-func StoreFileWithContext(ctx context.Context, chonkSize int, evipath string, key []byte, syncIndex bool, noIndex bool, enableFTS bool, enableEnrichment bool, db *badger.DB) error {
+func StoreFileWithContext(ctx context.Context, chonkSize int, evipath string, key []byte, syncIndex bool, noIndex bool, enableFTS bool, enableEnrichment bool, db *badger.DB) (err error) {
 	if ctx == nil {
 		ctx = context.Background()
 	}
@@ -243,6 +287,16 @@ func StoreFileWithContext(ctx context.Context, chonkSize int, evipath string, ke
 	if err != nil {
 		logging.GetLogger().Error("StoreFile INIT_EVIDENCE_FILE_ERROR", zap.Error(err), zap.String("file_path", evipath))
 		return err
+	}
+	// Every return below has waited for the indexer, so the mapping can go.
+	defer func() {
+		if rerr := releaseEvidenceFile(eviFile); err == nil {
+			err = rerr
+		}
+	}()
+	if eviFile.GetSize() == 0 {
+		// An empty file holds no filesystem to index.
+		noIndex = true
 	}
 	err = store.EvidenceFilePreStoreCheck(eviFile)
 	if err != nil && err != badger.ErrKeyNotFound && err != cnst.ErrIncompleteFile {
@@ -292,12 +346,12 @@ func StoreFileWithContext(ctx context.Context, chonkSize int, evipath string, ke
 	eviname := filepath.Base(evipath)
 	console.Printf("\nSaving Evidence File: %s\n", eviname)
 
-	echan := make(chan error)
-	go store.StoreWithContext(ctx, eviFile, echan)
-	select {
-	case err = <-echan:
-	case <-ctx.Done():
-		return ctx.Err()
+	// Wait for the store even when ctx is cancelled: returning early left it
+	// writing while the caller closed the database (ING-5).
+	err = store.StoreInputFile(ctx, eviFile)
+	if ctxErr := ctx.Err(); ctxErr != nil {
+		drainIndexError(idxErrCh)
+		return ctxErr
 	}
 	if err != nil {
 		drainIndexError(idxErrCh)
@@ -334,11 +388,6 @@ func StoreFileWithContext(ctx context.Context, chonkSize int, evipath string, ke
 		}
 	}
 
-	err = closeInputFileResources(eviFile)
-	if err != nil {
-		return err
-	}
-
 	console.Printf("\nStored in: %v\n\n", time.Since(start))
 	logging.GetLogger().Info("StoreFile COMPLETE",
 		zap.Int64("duration_ms", time.Since(start).Milliseconds()),
@@ -371,70 +420,47 @@ func startIndexing(eviFile structs.InputFile, db *badger.DB, noIndex bool, syncI
 }
 
 func transitionEvidenceFileToCompleted(eviFile structs.InputFile, eviname string, db *badger.DB, idxErrCh chan error, hashOutcome evidenceHashOutcome) error {
-	// Verify that all chunk data has been flushed to persistent storage.
-	eviNode, err := dbio.GetEvidenceFile(eviFile.GetID(), eviFile.GetDB())
-	if err != nil {
-		markEvidenceFileFailed(eviFile.GetID(), db)
-		logging.GetLogger().Error("StoreFile GET_EVIDENCE_NODE_ERROR", zap.Error(err))
-		return err
-	}
-
-	if eviNode.IngestState != structs.IngestStateFlushed {
-		markEvidenceFileFailed(eviFile.GetID(), db)
-		stateErr := fmt.Errorf("ingest state transition violation: expected %s, got %s", structs.IngestStateFlushed, eviNode.IngestState)
-		logging.GetLogger().Error("StoreFile INGEST_STATE_VIOLATION", zap.Error(stateErr))
-		return stateErr
-	}
-
 	encodedHash := hashOutcome.encodedHash
-	if encodedHash == "" {
-		if cnst.StoreHashStrategy == cnst.HochoHashStrategy {
-			encodedHash = eviNode.FileHash
-			if encodedHash == "" {
-				drainIndexError(idxErrCh)
-				markEvidenceFileFailed(eviFile.GetID(), db)
-				err = fmt.Errorf("ingest-reused hocho hash missing on flushed evidence record")
-				logging.GetLogger().Error("StoreFile HOCHO_HASH_MISSING", zap.Error(err))
-				return err
-			}
-		} else {
-			encodedHash, err = awaitAsyncFileHash(hashOutcome.resultCh)
-			if err != nil {
-				drainIndexError(idxErrCh)
-				markEvidenceFileFailed(eviFile.GetID(), db)
-				logging.GetLogger().Error("StoreFile HASH_AWAIT_ERROR", zap.Error(err))
-				return err
-			}
+	if encodedHash == "" && cnst.StoreHashStrategy != cnst.HochoHashStrategy {
+		var err error
+		encodedHash, err = awaitAsyncFileHash(hashOutcome.resultCh)
+		if err != nil {
+			drainIndexError(idxErrCh)
+			markEvidenceFileFailed(eviFile.GetID(), db)
+			logging.GetLogger().Error("StoreFile HASH_AWAIT_ERROR", zap.Error(err))
+			return err
 		}
 	}
-	eviNode.FileHash = encodedHash
 
-	// Atomically transition to COMPLETED state so recovery can detect incomplete ingest.
-	eviNode.Completed = true
-	eviNode.Failed = false
-	eviNode.IngestState = structs.IngestStateCompleted
-	payload, err := msgpack.Marshal(eviNode)
-	if err != nil {
-		drainIndexError(idxErrCh)
-		markEvidenceFileFailed(eviFile.GetID(), db)
-		logging.GetLogger().Error("StoreFile MARSHAL_EVIDENCE_NODE_ERROR", zap.Error(err))
-		return err
-	}
-	err = eviFile.GetDB().Update(func(txn *badger.Txn) error {
-		evidenceKey := dbio.CanonicalEvidenceKey(eviFile.GetID())
-		if setErr := txn.Set(evidenceKey, payload); setErr != nil {
-			return setErr
+	// One read-modify-write of the current record (ING-8): the indexer may
+	// have written the partition map while the hash was computed, and a copy
+	// read before the wait would erase it.
+	err := dbio.UpdateEvidence(db, eviFile.GetID(), func(txn *badger.Txn, eviNode *structs.EvidenceFile) error {
+		// Every chunk must already be on disk.
+		if eviNode.IngestState != structs.IngestStateFlushed {
+			return fmt.Errorf("ingest state transition violation: expected %s, got %s", structs.IngestStateFlushed, eviNode.IngestState)
 		}
-		if encodedHash == "" {
+		hash := encodedHash
+		if hash == "" && cnst.StoreHashStrategy == cnst.HochoHashStrategy {
+			hash = eviNode.FileHash
+			if hash == "" {
+				return fmt.Errorf("ingest-reused hocho hash missing on flushed evidence record")
+			}
+		}
+		eviNode.FileHash = hash
+		eviNode.Completed = true
+		eviNode.Failed = false
+		eviNode.IngestState = structs.IngestStateCompleted
+		if hash == "" {
 			return nil
 		}
-		lookupKey := util.AppendToBytesSlice(cnst.EviFileHashLookupNamespace, encodedHash)
-		return dbio.AppendHashLookupUUIDByKeyTxn(txn, lookupKey, evidenceKey)
+		lookupKey := util.AppendToBytesSlice(cnst.EviFileHashLookupNamespace, hash)
+		return dbio.AppendHashLookupUUIDByKeyTxn(txn, lookupKey, dbio.CanonicalEvidenceKey(eviFile.GetID()))
 	})
 	if err != nil {
 		drainIndexError(idxErrCh)
 		markEvidenceFileFailed(eviFile.GetID(), db)
-		logging.GetLogger().Error("StoreFile SET_EVIDENCE_NODE_ERROR", zap.Error(err))
+		logging.GetLogger().Error("StoreFile COMPLETE_EVIDENCE_ERROR", zap.Error(err))
 		return err
 	}
 
@@ -471,15 +497,18 @@ func markEvidenceFileFailed(fileID []byte, db *badger.DB) {
 	}
 }
 
+// releaseEvidenceFile unmaps and closes an evidence file; tests replace it.
+var releaseEvidenceFile = closeInputFileResources
+
 func closeInputFileResources(eviFile structs.InputFile) error {
-	mappedFile := eviFile.GetMappedFile()
-	err := mappedFile.Unmap()
-	if err != nil {
-		logging.GetLogger().Error("StoreFile UNMAP_ERROR", zap.Error(err))
-		return err
+	if mappedFile := eviFile.GetMappedFile(); len(mappedFile) > 0 {
+		if err := mappedFile.Unmap(); err != nil {
+			logging.GetLogger().Error("StoreFile UNMAP_ERROR", zap.Error(err))
+			return err
+		}
 	}
 
-	err = eviFile.GetHandle().Close()
+	err := eviFile.GetHandle().Close()
 	if err != nil {
 		logging.GetLogger().Error("StoreFile HANDLE_CLOSE_ERROR", zap.Error(err))
 		return err
@@ -640,36 +669,12 @@ func indexEvidenceFile(eviFile structs.InputFile, db *badger.DB, enableFTS bool,
 }
 
 func persistEvidenceInternalObjects(fileID []byte, internalObjects map[string]structs.InternalOffset, db *badger.DB) error {
-	evidenceKey := dbio.CanonicalEvidenceKey(fileID)
-	return db.Update(func(txn *badger.Txn) error {
-		item, err := txn.Get(evidenceKey)
-		if err != nil {
-			return err
-		}
-		payload, err := item.ValueCopy(nil)
-		if err != nil {
-			return err
-		}
-		decoded, decodeErr := cnst.DECODER.DecodeAll(payload, nil)
-		if decodeErr == nil {
-			payload = decoded
-		}
-
-		var evidenceFile structs.EvidenceFile
-		if err := msgpack.Unmarshal(payload, &evidenceFile); err != nil {
-			return err
-		}
-
+	return dbio.UpdateEvidence(db, fileID, func(_ *badger.Txn, evidenceFile *structs.EvidenceFile) error {
 		evidenceFile.InternalObjects = make(map[string]structs.InternalOffset, len(internalObjects))
 		for key, offset := range internalObjects {
 			evidenceFile.InternalObjects[key] = offset
 		}
-
-		updatedPayload, err := msgpack.Marshal(evidenceFile)
-		if err != nil {
-			return err
-		}
-		return txn.Set(evidenceKey, updatedPayload)
+		return nil
 	})
 }
 
@@ -699,6 +704,10 @@ func initEvidenceFile(evifilepath string, db *badger.DB) (structs.InputFile, err
 	if err != nil {
 		return eviFile, err
 	}
+	if !eviInfo.Mode().IsRegular() {
+		// Opening a FIFO blocks, and a device has no fixed content to store.
+		return eviFile, fmt.Errorf("%s is not a regular file (%s)", evifilepath, eviInfo.Mode().Type())
+	}
 	eviSize := eviInfo.Size()
 	eviHandle, err := os.Open(evifilepath)
 	if err != nil {
@@ -706,9 +715,14 @@ func initEvidenceFile(evifilepath string, db *badger.DB) (structs.InputFile, err
 	}
 	eviFileName := filepath.Base(evifilepath)
 
-	mappedFile, err := mmap.Map(eviHandle, mmap.RDONLY, 0)
-	if err != nil {
-		return eviFile, err
+	// An empty file cannot be mapped, and needs no mapping (ING-11).
+	var mappedFile mmap.MMap
+	if eviSize > 0 {
+		mappedFile, err = mmap.Map(eviHandle, mmap.RDONLY, 0)
+		if err != nil {
+			eviHandle.Close()
+			return eviFile, err
+		}
 	}
 
 	eviFile = structs.NewInputFile(

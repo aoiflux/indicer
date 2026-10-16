@@ -140,7 +140,7 @@ func getChonkMapSequential(meta structs.FileMeta, db *badger.DB) (map[string]int
 		}
 
 		ckey := util.AppendToBytesSlice(cnst.ChonkNamespace, chash)
-		csize, err := dbio.GetChonkSize(restoreIndex, meta.Start, meta.Size, dbstart, end, ckey, db)
+		csize, err := dbio.GetChonkSize(restoreIndex, meta.Start, end, ckey, db)
 		if err != nil {
 			return nil, err
 		}

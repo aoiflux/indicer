@@ -9,6 +9,7 @@ import (
 	"crypto/sha3"
 	"encoding/base32"
 	"encoding/base64"
+	"fmt"
 	"hash"
 	"hash/fnv"
 	"indicer/internal/console"
@@ -289,13 +290,29 @@ func GetDBEndOffset(endIndex int64) int64 {
 	return (endIndex-1)/cnst.ChonkSize*cnst.ChonkSize + cnst.ChonkSize
 }
 
+// rawEvidenceIDLen is the length of an evidence ID, a UUIDv7.
+const rawEvidenceIDLen = 16
+
+// GetEvidenceFileHash returns the evidence ID a partition or indexed file
+// name starts with. Partition names carry it base64-encoded; the parser names
+// indexed files by the raw 16 bytes (ING-19), which may contain the separator
+// itself. The raw form is recognised by the separator right after 16 bytes,
+// where a base64 prefix cannot have one, so it is checked first: a raw ID of
+// base64-alphabet bytes would otherwise decode to the wrong ID.
 func GetEvidenceFileHash(fname string) ([]byte, error) {
-	eviFileHashString := strings.Split(fname, cnst.DataSeperator)[0]
-	eviFileHash, err := base64.StdEncoding.DecodeString(eviFileHashString)
+	sep := cnst.DataSeperator
+	if len(fname) >= rawEvidenceIDLen+len(sep) && fname[rawEvidenceIDLen:rawEvidenceIDLen+len(sep)] == sep {
+		return []byte(fname[:rawEvidenceIDLen]), nil
+	}
+	prefix, _, _ := strings.Cut(fname, sep)
+	eviFileHash, err := base64.StdEncoding.DecodeString(prefix)
 	if err != nil {
 		return nil, err
 	}
-	return eviFileHash, err
+	if len(eviFileHash) == 0 {
+		return nil, fmt.Errorf("name %q does not start with an evidence ID", fname)
+	}
+	return eviFileHash, nil
 }
 func GetEvidenceFileID(eviFileHash []byte) []byte {
 	return append([]byte(nil), eviFileHash...)

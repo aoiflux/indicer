@@ -119,13 +119,13 @@ func TestLegacyRestore(t *testing.T) {
 					}
 					wasCorrect := r.Status == "ok" && r.SHA256 != nil && *r.SHA256 == want.SHA256
 					detail := "run: " + errString(runErr) + "; output: " + lastLine(cmdOut) + "; sha256 " + got
-					if !wasCorrect {
-						t.Skipf("known defect %s: %s", knownDefect(f, r), detail)
-					}
 					if strings.Contains(cmdOut, "dues-legacyfx") {
 						// The writing release recorded absolute blob paths, so a
 						// relocated database points back at the generation directory.
 						t.Skipf("known defect STO-10 (absolute blob paths break relocation): %s", detail)
+					}
+					if !wasCorrect {
+						t.Skipf("known defect %s: %s", knownDefect(f, r), detail)
 					}
 					t.Fatalf("regression: restored correctly when generated, now: %s", detail)
 				})
@@ -138,8 +138,6 @@ func TestLegacyRestore(t *testing.T) {
 // release got wrong.
 func knownDefect(f Fixture, r Restore) string {
 	switch {
-	case r.Kind == "indexed":
-		return "ING-19 (indexed name prefix is raw, restore base64-decodes it)"
 	case strings.HasPrefix(f.Mode, "container") && r.Kind == "evidence":
 		return "STO-1 (second session reuses container names with offsets from 0)"
 	case f.Mode == "e01":

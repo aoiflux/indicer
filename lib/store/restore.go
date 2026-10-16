@@ -3,6 +3,7 @@ package store
 import (
 	"bufio"
 	"bytes"
+	"context"
 	"fmt"
 	"indicer/internal/console"
 	"indicer/lib/cnst"
@@ -39,7 +40,12 @@ type restoreProducerResult struct {
 	err   error
 }
 
-func Restore(fhash string, dst *os.File, db *badger.DB) error {
+// Restore writes the content of the object whose hash is fhash to dst. A
+// cancelled ctx stops it with ctx's error; dst then holds a partial write.
+func Restore(ctx context.Context, fhash string, dst *os.File, db *badger.DB) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
 	fid, err := dbio.GuessFileType(fhash, db)
 	if err != nil {
 		return err
@@ -48,7 +54,7 @@ func Restore(fhash string, dst *os.File, db *badger.DB) error {
 	if err != nil {
 		return err
 	}
-	return restoreData(meta, dst, db)
+	return restoreData(ctx, meta, dst, db)
 }
 
 func GetFileMeta(fid []byte, db *badger.DB) (structs.FileMeta, error) {
@@ -137,7 +143,7 @@ func getEvidenceFileMeta(fid []byte, db *badger.DB) (structs.FileMeta, error) {
 	return meta, nil
 }
 
-func restoreData(meta structs.FileMeta, dst *os.File, db *badger.DB) error {
+func restoreData(ctx context.Context, meta structs.FileMeta, dst *os.File, db *badger.DB) error {
 	configureRestoreCache()
 
 	fio.EnableContainerReadCache()
@@ -171,6 +177,8 @@ func restoreData(meta structs.FileMeta, dst *os.File, db *badger.DB) error {
 	)
 
 	workerCount, jobQueueDepth := cnst.GetRestorePipelineTuning()
+	fetchBatchSize, window := restoreWindow()
+	slots := make(chan struct{}, window)
 	jobs := make(chan restoreChunkJob, jobQueueDepth)
 	results := make(chan restoreChunkResult, jobQueueDepth)
 	producerDone := make(chan restoreProducerResult, 1)
@@ -182,6 +190,9 @@ func restoreData(meta structs.FileMeta, dst *os.File, db *badger.DB) error {
 			close(done)
 		})
 	}
+	// Cancelling ctx stops the producer and the workers like an error does.
+	stopOnCancel := context.AfterFunc(ctx, stop)
+	defer stopOnCancel()
 
 	var workers sync.WaitGroup
 	workers.Add(workerCount)
@@ -197,7 +208,7 @@ func restoreData(meta structs.FileMeta, dst *os.File, db *badger.DB) error {
 						return
 					}
 
-					data, err := getRestoredChunkData(meta, job.restoreIndex, dbstart, end, db, job.chunkKey, job.metadata)
+					data, err := readRestoreChunk(meta, job.restoreIndex, end, db, job.chunkKey, job.metadata)
 					result := restoreChunkResult{seq: job.seq, data: data, err: err}
 
 					select {
@@ -216,31 +227,34 @@ func restoreData(meta structs.FileMeta, dst *os.File, db *badger.DB) error {
 
 	go func() {
 		defer close(jobs)
-		const fetchBatchSize = 128
 		var totalSeq int64
+		var err error
 
-		err := db.View(func(txn *badger.Txn) error {
-			for batchStart := dbstart; batchStart < end; {
-				restoreIndexes := make([]int64, 0, fetchBatchSize)
-				relationKeys := make([][]byte, 0, fetchBatchSize)
+		for batchStart := dbstart; batchStart < end && err == nil; {
+			restoreIndexes := make([]int64, 0, fetchBatchSize)
+			relationKeys := make([][]byte, 0, fetchBatchSize)
 
-				for i := 0; i < fetchBatchSize && batchStart < end; i++ {
-					restoreIndex := batchStart
-					batchStart += cnst.ChonkSize
+			for i := 0; i < fetchBatchSize && batchStart < end; i++ {
+				restoreIndex := batchStart
+				batchStart += cnst.ChonkSize
 
-					restoreIndexes = append(restoreIndexes, restoreIndex)
-					relationKey := make([]byte, len(relPrefix), len(relPrefix)+20)
-					copy(relationKey, relPrefix)
-					relationKey = strconv.AppendInt(relationKey, restoreIndex, 10)
-					relationKeys = append(relationKeys, relationKey)
-				}
+				restoreIndexes = append(restoreIndexes, restoreIndex)
+				relationKey := make([]byte, len(relPrefix), len(relPrefix)+20)
+				copy(relationKey, relPrefix)
+				relationKey = strconv.AppendInt(relationKey, restoreIndex, 10)
+				relationKeys = append(relationKeys, relationKey)
+			}
 
+			// One short read transaction per batch, not one for the whole
+			// restore, which pinned old versions for as long as it ran.
+			var chunkKeys, metadataBatch [][]byte
+			err = db.View(func(txn *badger.Txn) error {
 				chashes, err := getTxnNodesBatch(relationKeys, txn)
 				if err != nil {
 					return err
 				}
 
-				chunkKeys := make([][]byte, 0, len(chashes))
+				chunkKeys = make([][]byte, 0, len(chashes))
 				for _, chash := range chashes {
 					chunkKey := make([]byte, 0, len(cnst.ChonkNamespace)+len(chash))
 					chunkKey = append(chunkKey, cnst.ChonkNamespace...)
@@ -248,34 +262,44 @@ func restoreData(meta structs.FileMeta, dst *os.File, db *badger.DB) error {
 					chunkKeys = append(chunkKeys, chunkKey)
 				}
 
-				metadataBatch, err := getTxnNodesBatchAllowMissing(chunkKeys, txn)
-				if err != nil {
-					return err
-				}
+				metadataBatch, err = getTxnNodesBatchAllowMissing(chunkKeys, txn)
+				return err
+			})
+			if err != nil {
+				break
+			}
 
-				batchSeqStart := totalSeq
-				totalSeq += int64(len(restoreIndexes))
+			batchSeqStart := totalSeq
+			totalSeq += int64(len(restoreIndexes))
 
-				emissionOrder := buildContainerLocalityOrder(metadataBatch)
-				if len(emissionOrder) == 0 {
-					emissionOrder = make([]int, len(restoreIndexes))
-					for i := range restoreIndexes {
-						emissionOrder[i] = i
-					}
-				}
-
-				for _, i := range emissionOrder {
-					restoreIndex := restoreIndexes[i]
-					job := restoreChunkJob{seq: batchSeqStart + int64(i), restoreIndex: restoreIndex, chunkKey: chunkKeys[i], metadata: metadataBatch[i]}
-					select {
-					case jobs <- job:
-					case <-done:
-						return nil
-					}
+			emissionOrder := buildContainerLocalityOrder(metadataBatch)
+			if len(emissionOrder) == 0 {
+				emissionOrder = make([]int, len(restoreIndexes))
+				for i := range restoreIndexes {
+					emissionOrder[i] = i
 				}
 			}
-			return nil
-		})
+
+			for _, i := range emissionOrder {
+				restoreIndex := restoreIndexes[i]
+				job := restoreChunkJob{seq: batchSeqStart + int64(i), restoreIndex: restoreIndex, chunkKey: chunkKeys[i], metadata: metadataBatch[i]}
+				// Take a window slot first: the writer frees it once this
+				// chunk is written, so reads never run more than the window
+				// ahead of the write position.
+				select {
+				case slots <- struct{}{}:
+				case <-done:
+					producerDone <- restoreProducerResult{total: totalSeq}
+					return
+				}
+				select {
+				case jobs <- job:
+				case <-done:
+					producerDone <- restoreProducerResult{total: totalSeq}
+					return
+				}
+			}
+		}
 
 		producerDone <- restoreProducerResult{total: totalSeq, err: err}
 	}()
@@ -287,7 +311,7 @@ func restoreData(meta structs.FileMeta, dst *os.File, db *badger.DB) error {
 
 	progressInterval := cnst.GetRestoreProgressInterval()
 	lastProgress := time.Now()
-	var pendingProgress int64
+	var pendingProgress, restored int64
 	nextSeq := int64(0)
 	pending := make(map[int64][]byte)
 	var workerErr error
@@ -308,7 +332,9 @@ func restoreData(meta structs.FileMeta, dst *os.File, db *badger.DB) error {
 				stop()
 				continue
 			}
+			<-slots
 			pendingProgress += written
+			restored += written
 			nextSeq++
 
 			for {
@@ -323,11 +349,14 @@ func restoreData(meta structs.FileMeta, dst *os.File, db *badger.DB) error {
 					stop()
 					break
 				}
+				<-slots
 				pendingProgress += written
+				restored += written
 				nextSeq++
 			}
 		} else if result.seq > nextSeq {
 			pending[result.seq] = result.data
+			notePendingChunks(len(pending))
 		}
 
 		if pendingProgress >= 4*cnst.MB || time.Since(lastProgress) >= progressInterval {
@@ -338,6 +367,9 @@ func restoreData(meta structs.FileMeta, dst *os.File, db *badger.DB) error {
 	}
 
 	producerResult := <-producerDone
+	if err := ctx.Err(); err != nil {
+		return err
+	}
 	if workerErr != nil {
 		return workerErr
 	}
@@ -346,6 +378,9 @@ func restoreData(meta structs.FileMeta, dst *os.File, db *badger.DB) error {
 	}
 	if nextSeq != producerResult.total {
 		return fmt.Errorf("restore pipeline incomplete: wrote %d/%d chunks", nextSeq, producerResult.total)
+	}
+	if restored != meta.Size {
+		return fmt.Errorf("restore wrote %d bytes, the record's size is %d", restored, meta.Size)
 	}
 
 	if pendingProgress > 0 {
@@ -358,7 +393,30 @@ func restoreData(meta structs.FileMeta, dst *os.File, db *badger.DB) error {
 	bar.Finish()
 	fmt.Fprintln(console.Err())
 	console.Println("Restored file with size: ", humanize.Bytes(uint64(meta.Size)))
-	return bar.Close()
+	// A progress bar error (an empty input has nothing to show) is not the
+	// operation's error.
+	_ = bar.Close()
+	return nil
+}
+
+// Test seams.
+var (
+	readRestoreChunk  = getRestoredChunkData
+	notePendingChunks = func(int) {}
+)
+
+// restoreWindowBytes is the decoded chunk data a restore aims to hold at
+// once: chunks being read, queued, or parked until their turn (RST-5).
+const restoreWindowBytes = 256 * cnst.MB
+
+// restoreWindow returns how many chunks the producer looks up per read
+// transaction, and how many may be between lookup and write at once. The
+// window is twice the batch: the producer emits a batch in storage order, so
+// the next chunk to write may be the last one emitted, and a window smaller
+// than a batch could stall with that chunk never sent.
+func restoreWindow() (batch, window int) {
+	batch = int(min(128, max(4, int64(restoreWindowBytes)/cnst.ChonkSize)))
+	return batch, 2 * batch
 }
 
 func configureRestoreCache() {
@@ -374,16 +432,16 @@ func configureRestoreCache() {
 	fio.SetContainerReadCacheSize(cacheSize)
 }
 
-func getRestoredChunkData(meta structs.FileMeta, restoreIndex, dbstart, end int64, db *badger.DB, chunkKey []byte, metadata []byte) ([]byte, error) {
+func getRestoredChunkData(meta structs.FileMeta, restoreIndex, end int64, db *badger.DB, chunkKey []byte, metadata []byte) ([]byte, error) {
 	if len(metadata) == 0 {
-		data, err := dbio.GetChonkData(restoreIndex, meta.Start, meta.Size, dbstart, end, chunkKey, db)
+		data, err := dbio.GetChonkData(restoreIndex, meta.Start, end, chunkKey, db)
 		if err != nil {
 			return nil, err
 		}
 		return data, nil
 	}
 
-	data, err := dbio.GetChonkDataWithMetadata(restoreIndex, meta.Start, meta.Size, dbstart, end, chunkKey, metadata, db)
+	data, err := dbio.GetChonkDataWithMetadata(restoreIndex, meta.Start, end, chunkKey, metadata, db)
 	if err != nil {
 		return nil, err
 	}

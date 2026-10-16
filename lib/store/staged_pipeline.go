@@ -17,7 +17,6 @@ import (
 	"github.com/dgraph-io/badger/v4"
 	"github.com/google/uuid"
 	"github.com/schollz/progressbar/v3"
-	"github.com/zeebo/blake3"
 )
 
 const stagedDiskBatchSize = 128
@@ -29,9 +28,10 @@ type Chunk struct {
 }
 
 // HashedChunk is emitted by hashing workers and consumed by dedup stage.
+// Sum is the chunk hash in the database's chunk-hash algorithm.
 type HashedChunk struct {
 	ID   uint64
-	Sum  [32]byte
+	Sum  []byte
 	Data []byte
 }
 
@@ -45,10 +45,14 @@ type hashedChunkEnvelope struct {
 	offset int64
 }
 
+// stagedWriteChunk is one chunk for the writer. dup marks a chunk already
+// sent earlier in this session: its bytes are stored once, but every
+// occurrence still needs its relation, reverse relation and hocho entry.
 type stagedWriteChunk struct {
 	offset int64
-	hash   [32]byte
+	hash   []byte
 	data   []byte
+	dup    bool
 }
 
 type stagedWriterResult struct {
@@ -187,7 +191,9 @@ func storeEvidenceDataStaged(parentCtx context.Context, infile structs.InputFile
 
 	bar.Finish()
 	fmt.Fprintln(console.Err())
-	barErr := bar.Close()
+	// A progress bar error (an empty input has nothing to show) is not the
+	// operation's error.
+	_ = bar.Close()
 
 	select {
 	case serr := <-stageErrCh:
@@ -203,10 +209,6 @@ func storeEvidenceDataStaged(parentCtx context.Context, infile structs.InputFile
 	if writerRes.err != nil {
 		return "", writerRes.err
 	}
-	if barErr != nil {
-		return "", barErr
-	}
-
 	return writerRes.hochoHash, nil
 }
 
@@ -255,20 +257,18 @@ func hashStageWorkerLoop(
 	dedupCh chan<- hashedChunkEnvelope,
 	simhashWriter *simhashAsyncWriter,
 ) error {
-	digest := blake3.New()
+	// The chunk hash is the database's, as in the batch pipeline (CFG-6).
+	digest := cnst.GetHashAlgo()
 
 	for ingestChunk := range hashCh {
 		digest.Reset()
 		if _, err := digest.Write(ingestChunk.chunk.Data); err != nil {
 			return err
 		}
-
-		sumBytes := digest.Sum(nil)
-		var sum [32]byte
-		copy(sum[:], sumBytes)
+		sum := digest.Sum(nil)
 
 		if simhashWriter != nil {
-			simhashWriter.enqueue(ingestChunk.chunk.Data, sum[:])
+			simhashWriter.enqueue(ingestChunk.chunk.Data, sum)
 		}
 
 		payload := hashedChunkEnvelope{
@@ -297,14 +297,13 @@ func dedupStageLoop(
 	writeCh chan<- stagedWriteChunk,
 ) error {
 	for hashed := range dedupCh {
-		if seenChunks.loadOrStore(hashed.hashed.Sum[:]) {
-			continue
-		}
-
+		// A repeated chunk still goes to the writer (STO-9): dropping it
+		// here lost its relation, and the evidence could not be restored.
 		payload := stagedWriteChunk{
 			offset: hashed.offset,
 			hash:   hashed.hashed.Sum,
 			data:   hashed.hashed.Data,
+			dup:    seenChunks.loadOrStore(hashed.hashed.Sum),
 		}
 
 		select {
@@ -336,21 +335,22 @@ func stagedDiskWriterLoop(
 
 	flushPending := func() error {
 		for _, item := range pending {
-			chash := item.hash[:]
-			ckey := util.AppendToBytesSlice(cnst.ChonkNamespace, chash)
+			chash := item.hash
 
 			if err := hocho.add(item.offset, chash); err != nil {
 				return err
 			}
 
-			cmeta, err := materializeChunkMeta(ckey, item.data, db, containerMgr, blockMgr)
-			if err != nil {
-				return err
-			}
-
-			if len(cmeta) > 0 {
-				if err := dbio.SetBatchNode(ckey, cmeta, batch); err != nil {
+			if !item.dup {
+				ckey := util.AppendToBytesSlice(cnst.ChonkNamespace, chash)
+				cmeta, err := materializeChunkMeta(ckey, item.data, db, containerMgr, blockMgr)
+				if err != nil {
 					return err
+				}
+				if len(cmeta) > 0 {
+					if err := dbio.SetBatchNode(ckey, cmeta, batch); err != nil {
+						return err
+					}
 				}
 			}
 

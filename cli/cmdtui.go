@@ -4,11 +4,9 @@ import (
 	"context"
 	"fmt"
 	"indicer/internal/console"
-	"indicer/lib/cnst"
 	"indicer/lib/dbopen"
 	"indicer/lib/near"
 	"indicer/lib/search"
-	"indicer/lib/store"
 	"indicer/lib/util"
 	"indicer/tui"
 	"os"
@@ -37,7 +35,6 @@ func TUICmd(ctx context.Context, opts DBOptions) (err error) {
 	chonkSize := h.Manifest.Layout.ChunkKiB
 	var key []byte // the store path takes its keys from the database
 
-	resetRequested := false
 	actions := tui.Actions{
 		Store: func(filePath string, syncIndex bool, noIndex bool, hashAlgo string) error {
 			return runQuiet(func() error {
@@ -72,13 +69,10 @@ func TUICmd(ctx context.Context, opts DBOptions) (err error) {
 			})
 		},
 		Restore: func(hash string, restorePath string) error {
+			// The TUI replaces an existing file, as it always has, but only
+			// once the restore has succeeded (TUI-2).
 			return runQuiet(func() error {
-				fhandle, err := os.OpenFile(restorePath, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, cnst.FilePerm)
-				if err != nil {
-					return err
-				}
-				defer fhandle.Close()
-				return store.Restore(hash, fhandle, db)
+				return restoreToPath(ctx, db, hash, restorePath, true)
 			})
 		},
 		NearIn: func(hash string, deep bool) error {
@@ -92,27 +86,13 @@ func TUICmd(ctx context.Context, opts DBOptions) (err error) {
 			})
 		},
 		Reset: func() error {
-			return runQuiet(func() error {
-				if err := db.DropAll(); err != nil {
-					return err
-				}
-
-				blobDir := util.BlobPath(db.Opts().Dir)
-				if err := os.RemoveAll(blobDir); err != nil {
-					return err
-				}
-				if err := util.EnsureBlobPath(db.Opts().Dir); err != nil {
-					return err
-				}
-				return nil
-			})
+			// The same entries the reset command deletes, with the database
+			// kept open: the graph and full-text index go too (ING-16).
+			return runQuiet(h.Reset)
 		},
 	}
 
 	err = tui.RunTUI(db, actions)
-	if !resetRequested {
-		closeDB(h, &err)
-	}
-
+	closeDB(h, &err)
 	return err
 }

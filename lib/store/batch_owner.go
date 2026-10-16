@@ -266,7 +266,9 @@ doneScheduling:
 	writerRes := <-writerResCh
 	bar.Finish()
 	fmt.Fprintln(console.Err())
-	barErr := bar.Close()
+	// A progress bar error (an empty input has nothing to show) is not the
+	// operation's error.
+	_ = bar.Close()
 
 	if firstWorkerErr != nil {
 		return "", firstWorkerErr
@@ -274,10 +276,6 @@ doneScheduling:
 	if writerRes.err != nil {
 		return "", writerRes.err
 	}
-	if barErr != nil {
-		return "", barErr
-	}
-
 	return writerRes.hochoHash, nil
 }
 

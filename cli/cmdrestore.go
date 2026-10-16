@@ -2,25 +2,37 @@ package cli
 
 import (
 	"context"
-	"fmt"
+	"errors"
 	"indicer/internal/console"
+	"indicer/internal/lifecycle"
+	"indicer/lib/cnst"
 	"indicer/lib/dbopen"
+	"indicer/lib/fsx"
 	"indicer/lib/logging"
 	"indicer/lib/store"
+	"io/fs"
 	"os"
-	"path/filepath"
 	"time"
 
+	"github.com/dgraph-io/badger/v4"
 	"go.uber.org/zap"
 )
 
-func RestoreData(ctx context.Context, opts DBOptions, rhash, rpath string) (err error) {
+// RestoreData restores the object whose hash is rhash to rpath. An existing
+// rpath is replaced only with force, and a directory never is.
+func RestoreData(ctx context.Context, opts DBOptions, rhash, rpath string, force bool) (err error) {
 	start := time.Now()
 	logging.GetLogger().Info("RestoreData START",
 		zap.String("db_path", opts.Path),
 		zap.String("restore_hash", rhash),
 		zap.String("restore_path", rpath),
+		zap.Bool("force", force),
 	)
+
+	// Check the target first, so a refusal costs no restore.
+	if err := checkRestoreTarget(rpath, force); err != nil {
+		return err
+	}
 
 	h, err := Common(ctx, opts, dbopen.ReadOnly, false)
 	if err != nil {
@@ -28,65 +40,12 @@ func RestoreData(ctx context.Context, opts DBOptions, rhash, rpath string) (err 
 		return err
 	}
 	defer closeDB(h, &err)
-	db := h.DB
 
-	tempDir := filepath.Dir(rpath)
-	tempPattern := filepath.Base(rpath) + ".tmp-*"
-	logging.GetLogger().Debug("RestoreData OPEN_TEMP_OUTPUT_FILE",
-		zap.String("file_path", rpath),
-		zap.String("temp_dir", tempDir),
-	)
-	fhandle, err := os.CreateTemp(tempDir, tempPattern)
-	if err != nil {
-		logging.GetLogger().Error("RestoreData OPEN_TEMP_OUTPUT_FILE_ERROR", zap.Error(err), zap.String("file_path", rpath))
-		return err
-	}
-	tempPath := fhandle.Name()
-	keepTemp := false
-	defer func() {
-		if fhandle != nil {
-			if closeErr := fhandle.Close(); closeErr != nil && err == nil {
-				logging.GetLogger().Error("RestoreData TEMP_FILE_CLOSE_ERROR", zap.Error(closeErr), zap.String("temp_path", tempPath))
-				err = closeErr
-			}
-		}
-		if !keepTemp {
-			if removeErr := os.Remove(tempPath); removeErr != nil && !os.IsNotExist(removeErr) {
-				logging.GetLogger().Warn("RestoreData TEMP_FILE_REMOVE_ERROR", zap.Error(removeErr), zap.String("temp_path", tempPath))
-			}
-		}
-	}()
-
-	logging.GetLogger().Info("RestoreData RESTORE_EXECUTE")
 	console.Println("Restoring file ...")
-	err = store.Restore(rhash, fhandle, db)
-	if err != nil {
+	if err := restoreToPath(ctx, h.DB, rhash, rpath, force); err != nil {
 		logging.GetLogger().Error("RestoreData RESTORE_ERROR", zap.Error(err), zap.String("restore_hash", rhash))
 		return err
 	}
-
-	err = fhandle.Sync()
-	if err != nil {
-		logging.GetLogger().Error("RestoreData TEMP_FILE_SYNC_ERROR", zap.Error(err), zap.String("temp_path", tempPath))
-		return err
-	}
-	err = fhandle.Close()
-	if err != nil {
-		logging.GetLogger().Error("RestoreData TEMP_FILE_CLOSE_ERROR", zap.Error(err), zap.String("temp_path", tempPath))
-		return err
-	}
-	fhandle = nil
-
-	err = replaceRestoreTarget(tempPath, rpath)
-	if err != nil {
-		logging.GetLogger().Error("RestoreData RENAME_ERROR",
-			zap.Error(err),
-			zap.String("temp_path", tempPath),
-			zap.String("restore_path", rpath),
-		)
-		return err
-	}
-	keepTemp = true
 
 	console.Println("Restored in: ", time.Since(start))
 	logging.GetLogger().Info("RestoreData COMPLETE",
@@ -96,29 +55,38 @@ func RestoreData(ctx context.Context, opts DBOptions, rhash, rpath string) (err 
 	return nil
 }
 
-func replaceRestoreTarget(tempPath, targetPath string) error {
-	if _, err := os.Stat(targetPath); err != nil {
-		if os.IsNotExist(err) {
-			return os.Rename(tempPath, targetPath)
-		}
+// restoreToPath restores into a temporary file beside rpath, syncs it and
+// renames it into place (RST-4). A failed or cancelled restore removes the
+// temporary file and leaves rpath as it was; nothing else, such as a
+// <rpath>.bak, is touched.
+func restoreToPath(ctx context.Context, db *badger.DB, rhash, rpath string, force bool) error {
+	if err := checkRestoreTarget(rpath, force); err != nil {
 		return err
 	}
+	err := fsx.WriteAtomic(rpath, cnst.FilePerm, fsx.Options{NoOverwrite: !force}, func(f *os.File) error {
+		return store.Restore(ctx, rhash, f, db)
+	})
+	if ctxErr := ctx.Err(); ctxErr != nil {
+		return ctxErr
+	}
+	if errors.Is(err, fs.ErrExist) {
+		return lifecycle.Usagef("%s was created while restoring; pass --force to replace it", rpath)
+	}
+	return err
+}
 
-	backupPath := targetPath + ".bak"
-	if err := os.Remove(backupPath); err != nil && !os.IsNotExist(err) {
+// checkRestoreTarget refuses a directory, and an existing file unless force.
+func checkRestoreTarget(rpath string, force bool) error {
+	fi, err := os.Lstat(rpath)
+	switch {
+	case errors.Is(err, fs.ErrNotExist):
+		return nil
+	case err != nil:
 		return err
-	}
-	if err := os.Rename(targetPath, backupPath); err != nil {
-		return err
-	}
-	if err := os.Rename(tempPath, targetPath); err != nil {
-		if rollbackErr := os.Rename(backupPath, targetPath); rollbackErr != nil {
-			return fmt.Errorf("move temp into place: %w; rollback failed: %v", err, rollbackErr)
-		}
-		return err
-	}
-	if err := os.Remove(backupPath); err != nil {
-		return err
+	case fi.IsDir():
+		return lifecycle.Usagef("%s is a directory; restore needs a file path", rpath)
+	case !force:
+		return lifecycle.Usagef("%s already exists; pass --force to replace it", rpath)
 	}
 	return nil
 }

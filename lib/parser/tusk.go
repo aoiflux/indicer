@@ -108,24 +108,29 @@ func (r *tuskResult) flatLayout() []structs.PartitionFile {
 // in indexing unless separately filtered by upstream data.
 // It mirrors IndexEXFAT but works from the tusk JSON instead of reading the
 // filesystem directly.
+//
+// It sends exactly one result on idxChan, which the caller reads once (ING-2).
 func IndexFilesystem(jsonOutput string, pfile structs.InputFile, eviID []byte, idxChan chan error, enableFTS bool, enableEnrichment bool) {
+	idxChan <- indexFilesystem(jsonOutput, pfile, eviID, enableFTS, enableEnrichment)
+}
+
+func indexFilesystem(jsonOutput string, pfile structs.InputFile, eviID []byte, enableFTS bool, enableEnrichment bool) error {
 	var result tuskResult
 	if err := json.Unmarshal([]byte(jsonOutput), &result); err != nil {
-		idxChan <- err
-		return
+		return err
 	}
 
 	encodedPfileHash, err := pfile.GetEncodedHash()
 	if err != nil {
-		idxChan <- err
-		return
+		return err
 	}
 
 	batch, err := util.InitBatch(pfile.GetDB())
 	if err != nil {
-		idxChan <- err
-		return
+		return err
 	}
+	// A partition that fails commits nothing; after a flush this is a no-op.
+	defer batch.Cancel()
 
 	idxmap := make(map[string]structs.IndexedFile)
 	var report indexReport
@@ -146,12 +151,13 @@ func IndexFilesystem(jsonOutput string, pfile structs.InputFile, eviID []byte, i
 			if n := countDeleted(p.Files); n > 0 {
 				report.info(fmt.Sprintf("partition %d", i+1), fmt.Sprintf("%d deleted file(s) currently indexed", n))
 			}
-			buildIdxMap(p.Files, idxmap, pfile, encodedPfileHash, eviID, idxChan)
+			if err := buildIdxMap(p.Files, idxmap, pfile, encodedPfileHash, eviID); err != nil {
+				return err
+			}
 			break
 		}
 		if !matched {
-			idxChan <- cnst.ErrIncompatibleFile
-			return
+			return cnst.ErrIncompatibleFile
 		}
 	}
 
@@ -167,15 +173,12 @@ func IndexFilesystem(jsonOutput string, pfile structs.InputFile, eviID []byte, i
 		if n := countDeleted(result.Files); n > 0 {
 			report.info("filesystem", fmt.Sprintf("%d deleted file(s) currently indexed", n))
 		}
-		buildIdxMap(result.Files, idxmap, pfile, encodedPfileHash, eviID, idxChan)
+		if err := buildIdxMap(result.Files, idxmap, pfile, encodedPfileHash, eviID); err != nil {
+			return err
+		}
 	}
 
 	report.print()
 
-	err = finalizeIndexedFiles(idxmap, pfile, batch, idxChan, eviID, enableFTS, enableEnrichment)
-	if err != nil {
-		idxChan <- err
-		return
-	}
-	idxChan <- nil
+	return finalizeIndexedFiles(idxmap, pfile, batch, eviID, enableFTS, enableEnrichment)
 }

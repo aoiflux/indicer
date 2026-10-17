@@ -1,6 +1,7 @@
 package parser
 
 import (
+	"math"
 	"testing"
 	"time"
 
@@ -65,5 +66,19 @@ func TestIndexFilesystemReportsOnce(t *testing.T) {
 	})
 	if err != nil {
 		t.Fatal(err)
+	}
+}
+
+// TestRegisterIndexedRangeOverflow is the PAR-8 regression: a fragment whose
+// start plus length overflows int64 wrapped negative, passed the bounds
+// check, and panicked slicing the mapped evidence.
+func TestRegisterIndexedRangeOverflow(t *testing.T) {
+	db := testdb.Open(t, testdb.Default)
+	mapped := mmap.MMap(make([]byte, 4096))
+	pfile := structs.NewInputFile(db.DB, nil, mapped, "evidence|||p0", cnst.PartiFileNamespace, []byte("partition-hash-0123456789abcdef!"), 4096, 0)
+	idxmap := map[string]structs.IndexedFile{}
+	err := registerIndexedRange(idxmap, pfile, []byte("0123456789abcdef"), "/huge", 10, math.MaxInt64, false, nil)
+	if err == nil {
+		t.Fatal("a range that overflows int64 was accepted")
 	}
 }

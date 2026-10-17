@@ -15,9 +15,13 @@ type ewfImage struct {
 	closer io.Closer // underlying source(s); libewf.Reader.Close does not close them
 }
 
-func (im *ewfImage) ReadAt(p []byte, off int64) (int, error) { return im.r.ReadAt(p, off) }
-func (im *ewfImage) Size() int64                             { return im.r.Size() }
-func (im *ewfImage) Format() core.ImageFormat                { return core.FormatEWF }
+// ReadAt decodes evidence chunks: a panic in libewf on a corrupt chunk is a
+// read error at that offset, not a crash (PAR-1).
+func (im *ewfImage) ReadAt(p []byte, off int64) (int, error) {
+	return guardedReadAt(im.r, "ewf", p, off)
+}
+func (im *ewfImage) Size() int64              { return im.r.Size() }
+func (im *ewfImage) Format() core.ImageFormat { return core.FormatEWF }
 
 func (im *ewfImage) Close() error {
 	err := im.r.Close()

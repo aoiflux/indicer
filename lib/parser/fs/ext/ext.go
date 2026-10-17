@@ -5,6 +5,7 @@ package ext
 
 import (
 	"bytes"
+	"context"
 	"fmt"
 	"io"
 
@@ -14,111 +15,142 @@ import (
 	"indicer/lib/parser/fs/fsutil"
 )
 
+// direntSymlink is the ext directory-entry file type of a symbolic link.
+const direntSymlink = 7
+
 type extFS struct {
-	fs   *libext.FS
-	base int64
+	fs       *libext.FS
+	p        core.OpenParams
+	bs       int64
+	reported int // library warnings already passed to the sink
 }
 
 var _ core.Filesystem = (*extFS)(nil)
 
-// Open mounts an ext filesystem from r. base is the partition's absolute byte
-// offset within the image, added to data-run disk offsets so DataRuns returns
-// image-absolute ranges.
-func Open(r io.ReaderAt, base, size int64) (core.Filesystem, error) {
-	var (
-		efs *libext.FS
-		err error
-	)
-	if size > 0 {
-		efs, err = libext.OpenWithSize(r, uint64(size))
-	} else {
-		efs, err = libext.Open(r)
-	}
+// deletedRef is the Ref of an inode found by the deleted scan, carrying the
+// block map that survived with it.
+type deletedRef struct{ d libext.DeletedEntry }
+
+// Open mounts an ext filesystem from p.Reader. libext reports offsets
+// relative to the partition, and the adapter adds p.Base once. Permissive
+// mode makes unknown feature flags and damaged directory blocks warnings, not
+// failures: evidence is read for what it holds.
+func Open(p core.OpenParams) (core.Filesystem, error) {
+	lim := p.Limits.WithDefaults()
+	efs, err := libext.OpenWithOptions(p.Reader, libext.Options{
+		ImageSize:  uint64(p.Size),
+		Permissive: true,
+		MaxExtents: lim.MaxExtents,
+	})
 	if err != nil {
 		return nil, err
 	}
-	return &extFS{fs: efs, base: base}, nil
+	return &extFS{fs: efs, p: p, bs: int64(efs.Superblock().BlockSize)}, nil
 }
 
 func (a *extFS) Type() core.FSType { return core.FSExt }
 
 func (a *extFS) Capabilities() core.Capabilities {
-	// ext exposes no crtime, so MACB.Born is always nil.
 	return core.Capabilities{MACB: true, Deleted: true, Fragments: true, Streams: true}
 }
 
-func (a *extFS) Close() error { return nil }
-
-func (a *extFS) Root() (core.Node, error) {
-	root, err := a.fs.GetRootDirectory()
-	if err != nil {
-		return core.Node{}, err
-	}
-	return core.Node{ID: uint64(root.InodeNumber()), Name: "/", Path: "/", Kind: core.KindDir}, nil
+func (a *extFS) Close() error {
+	a.drainWarnings()
+	return a.fs.Close()
 }
 
-// Walk visits the live tree from the root, then appends deleted/orphan inodes
-// recovered by libext (under a synthetic /$deleted path when the original path
-// is unknown).
-func (a *extFS) Walk(fn func(core.Node) error) error {
+// drainWarnings passes on the warnings libext accumulated since the last call.
+func (a *extFS) drainWarnings() {
+	ws := a.fs.Warnings()
+	for _, w := range ws[min(a.reported, len(ws)):] {
+		a.p.Report(core.Issue{Code: core.IssueLibrary, Detail: w.String()})
+	}
+	a.reported = len(ws)
+}
+
+// Walk visits the live tree from the root, one directory at a time (libext's
+// own WalkDir abandons the whole walk at the first bad directory), then the
+// inodes the deleted scan recovers.
+func (a *extFS) Walk(ctx context.Context, fn func(core.Node) error) error {
 	root, err := a.fs.GetRootDirectory()
 	if err != nil {
 		return err
 	}
-	rootIno := root.InodeNumber()
-	if err := a.walk(rootIno, "", map[uint32]bool{rootIno: true}, fn); err != nil {
+	w := &fsutil.TreeWalker{List: a.list, Sink: a.p.Sink, Limits: a.p.Limits}
+	err = w.Walk(ctx, core.Node{ID: uint64(root.InodeNumber()), Kind: core.KindDir}, fn)
+	a.drainWarnings()
+	if err != nil {
 		return err
 	}
-	return a.emitDeleted(fn)
+	err = a.walkDeleted(ctx, fn)
+	a.drainWarnings()
+	return err
 }
 
-func (a *extFS) walk(inode uint32, prefix string, visited map[uint32]bool, fn func(core.Node) error) error {
-	entries, err := a.fs.ListDir(inode)
-	if err != nil {
-		return nil // skip an unreadable directory, keep walking
-	}
+func (a *extFS) list(dir core.Node) ([]core.Node, error) {
+	entries, err := a.fs.ListDir(uint32(dir.ID))
+	out := make([]core.Node, 0, len(entries))
 	for _, e := range entries {
-		if e.Name == "" || e.Name == "." || e.Name == ".." {
+		if e.Name == "." || e.Name == ".." || e.Inode == 0 {
 			continue
 		}
-		path := prefix + "/" + e.Name
-		node := core.Node{ID: uint64(e.Inode), Name: e.Name, Path: path, Kind: boolKind(e.IsDirectory)}
-		if err := fn(node); err != nil {
-			return err
+		n := core.Node{ID: uint64(e.Inode), Name: e.Name, Kind: core.KindFile}
+		switch {
+		case e.IsDirectory:
+			n.Kind = core.KindDir
+		case e.FileType == direntSymlink:
+			n.Kind = core.KindSymlink
 		}
-		if e.IsDirectory && e.Inode != 0 && !visited[e.Inode] {
-			visited[e.Inode] = true
-			if err := a.walk(e.Inode, path, visited, fn); err != nil {
-				return err
-			}
-		}
+		out = append(out, n)
 	}
-	return nil
+	return out, err
 }
 
-func (a *extFS) emitDeleted(fn func(core.Node) error) error {
-	deleted, err := a.fs.DeletedEntries()
-	if err != nil {
-		return nil // best-effort
-	}
-	for _, d := range deleted {
+func (a *extFS) walkDeleted(ctx context.Context, fn func(core.Node) error) error {
+	lim := a.p.Limits.WithDefaults()
+	err := a.fs.ScanDeletedContext(ctx, libext.DeletedScanOptions{}, func(d libext.DeletedEntry) error {
+		prov := core.ProvDeleted | core.ProvRecovered
+		if d.Source == libext.DeletedSourceDirSlack && d.Allocated {
+			// A name left in a directory's slack for an inode that is in use
+			// again: a rename's old name, or a reused inode. Metadata only.
+			prov |= core.ProvStaleEntry
+		}
 		name := d.Name
 		if name == "" {
 			name = fmt.Sprintf("inode-%d", d.Inode)
+			prov |= core.ProvSynthName
 		}
-		path := d.Path
-		if path == "" {
-			path = "/$deleted/" + name
+		var path string
+		var san bool
+		if d.Path != "" {
+			path = fsutil.EscapePath(d.Path)
+		} else {
+			path, san = fsutil.Join("/$deleted", name, lim.MaxName)
+			prov |= core.ProvOrphan
 		}
-		node := core.Node{ID: uint64(d.Inode), Name: name, Path: path, Kind: modeKind(d.Mode), IsDeleted: true}
-		if err := fn(node); err != nil {
-			return err
+		if san {
+			prov |= core.ProvNameSanitized
 		}
+		return fn(core.Node{
+			ID: uint64(d.Inode), Parent: uint64(d.ParentInode), Name: name, Path: path,
+			Kind: modeKind(d.Mode), IsDeleted: true, Prov: prov, Ref: deletedRef{d: d},
+		})
+	})
+	if err != nil && ctx.Err() == nil {
+		// Recovery supplements the live tree; its failure is an issue.
+		a.p.Report(core.Issue{Code: core.IssueLibrary, Detail: "deleted scan: " + err.Error()})
+		return nil
 	}
-	return nil
+	return err
 }
 
 func (a *extFS) Stat(n core.Node) (core.FileInfo, error) {
+	if d, ok := n.Ref.(deletedRef); ok {
+		return core.FileInfo{
+			Size: int64(d.d.Size), Kind: n.Kind, IsDeleted: true, Inode: n.ID,
+			MACB: macb(d.d.Times),
+		}, nil
+	}
 	ino, err := a.fs.ReadInode(uint32(n.ID))
 	if err != nil {
 		return core.FileInfo{}, err
@@ -128,50 +160,182 @@ func (a *extFS) Stat(n core.Node) (core.FileInfo, error) {
 		Kind:      n.Kind,
 		IsDeleted: n.IsDeleted || !ino.Dtime.IsZero(),
 		Inode:     n.ID,
-		MACB: core.MACB{
-			Modified: fsutil.TimePtr(ino.Mtime),
-			Accessed: fsutil.TimePtr(ino.Atime),
-			Changed:  fsutil.TimePtr(ino.Ctime),
-		},
+		MACB:      macb(ino.Timestamps()),
+		Links:     int(ino.LinksCount),
 	}
-	if ex, err := a.fs.Extents(uint32(n.ID)); err == nil {
-		info.IsFragmented = len(ex) > 1
+	switch {
+	case ino.IsSymlink:
+		info.Kind = core.KindSymlink
+		if f, err := a.fs.Open(uint32(n.ID)); err == nil {
+			if target, err := f.ReadLink(); err == nil {
+				info.Target = target
+			}
+		}
+	case ino.IsDirectory:
+		info.Kind = core.KindDir
+	}
+	if runs, err := a.fs.DataRuns(uint32(n.ID)); err == nil {
+		data := 0
+		for _, r := range runs {
+			if !r.Sparse && !r.Unwritten {
+				data++
+			}
+		}
+		info.IsFragmented = data > 1
 	}
 	return info, nil
 }
 
-// DataRuns returns the inode's data as image-absolute byte ranges. libext's
-// ByteRange is already clamped to the file size; DiskOffset is partition-relative
-// here (BaseOffset unset), so base is added to make it image-absolute.
-func (a *extFS) DataRuns(n core.Node) ([]core.AbsRange, error) {
-	runs, err := a.fs.DataRuns(uint32(n.ID))
-	if err != nil {
-		return nil, err
+func macb(t libext.Timestamps) core.MACB {
+	return core.MACB{
+		Modified: fsutil.TimePtr(t.Mtime),
+		Accessed: fsutil.TimePtr(t.Atime),
+		Changed:  fsutil.TimePtr(t.Ctime),
+		Born:     fsutil.TimePtr(t.Crtime),
 	}
-	out := make([]core.AbsRange, 0, len(runs))
-	for _, r := range runs {
-		if r.Length <= 0 {
-			continue
-		}
-		if r.Sparse {
-			out = append(out, core.AbsRange{Start: 0, End: r.Length - 1, Sparse: true})
-			continue
-		}
-		start := a.base + r.DiskOffset
-		out = append(out, core.AbsRange{Start: start, End: start + r.Length - 1})
-	}
-	return out, nil
 }
 
+// Content locates an inode's data: inline data (ext4 inline_data) is carried
+// in the record; otherwise its runs, with holes as sparse extents and
+// preallocated, never-written extents as unwritten (they read as zeros,
+// whatever the blocks hold, PAR-5). A deleted inode's content is the block
+// map that survived with it, flagged reallocated when some of those blocks
+// now belong to another file.
+func (a *extFS) Content(n core.Node) (core.Content, error) {
+	if d, ok := n.Ref.(deletedRef); ok {
+		return a.deletedContent(d.d)
+	}
+	ino, err := a.fs.ReadInode(uint32(n.ID))
+	if err != nil {
+		return core.Content{}, err
+	}
+	size := int64(ino.Size)
+	var c core.Content
+	if ino.HasInline {
+		data, _, err := a.fs.InlineData(uint32(n.ID))
+		if err != nil && len(data) == 0 {
+			return core.Content{}, err
+		}
+		c = core.InlineContent(size, data)
+	} else {
+		runs, err := a.fs.DataRuns(uint32(n.ID))
+		if err != nil {
+			return core.Content{}, err
+		}
+		ext := make([]core.Extent, 0, len(runs))
+		for _, r := range runs {
+			e := core.Extent{FileOffset: r.FileOffset, Length: r.Length}
+			switch {
+			case r.Sparse:
+				e.Kind = core.ExtentSparse
+			case r.Unwritten:
+				e.Kind = core.ExtentUnwritten
+			default:
+				img, ok := addOffset(a.p.Base, r.DiskOffset)
+				if !ok {
+					return core.Content{}, fmt.Errorf("%w: disk offset %d", core.ErrBadExtent, r.DiskOffset)
+				}
+				e.Kind, e.ImageOffset = core.ExtentData, img
+			}
+			ext = append(ext, e)
+		}
+		if c, err = core.ExtentContent(size, ext); err != nil {
+			return core.Content{}, err
+		}
+	}
+	if ino.LinksCount > 1 && !ino.IsDirectory {
+		c.Prov |= core.ProvHardLink
+	}
+	return c, nil
+}
+
+func (a *extFS) deletedContent(d libext.DeletedEntry) (core.Content, error) {
+	size := int64(d.Size)
+	if d.Recoverable == libext.RecoveryNone {
+		c := core.Content{Kind: core.ContentUnavailable, Size: size, Confidence: core.ConfUnknown}
+		if size > 0 {
+			c.Prov |= core.ProvTruncated
+		}
+		return c, nil
+	}
+	var ext []core.Extent
+	for _, x := range d.Extents {
+		if x.Inline() {
+			if data, ok, err := a.fs.InlineData(d.Inode); ok && err == nil {
+				c := core.InlineContent(size, data)
+				c.Confidence = core.ConfDeclared
+				return c, nil
+			}
+			continue
+		}
+		if x.Sparse() {
+			continue // gaps become holes when normalised
+		}
+		if x.LogicalBlock > uint64(1<<62)/uint64(a.bs) || x.PhysicalBlock > uint64(1<<62)/uint64(a.bs) || x.Blocks > uint64(1<<62)/uint64(a.bs) {
+			return core.Content{}, fmt.Errorf("%w: extent %+v", core.ErrBadExtent, x)
+		}
+		e := core.Extent{FileOffset: int64(x.LogicalBlock) * a.bs, Length: int64(x.Blocks) * a.bs, Kind: core.ExtentUnwritten}
+		if !x.Unwritten() {
+			img, ok := addOffset(a.p.Base, int64(x.PhysicalBlock)*a.bs)
+			if !ok {
+				return core.Content{}, fmt.Errorf("%w: extent %+v", core.ErrBadExtent, x)
+			}
+			e.Kind, e.ImageOffset = core.ExtentData, img
+		}
+		ext = append(ext, e)
+	}
+	c, err := core.ExtentContent(size, ext)
+	if err != nil {
+		return core.Content{}, err
+	}
+	c.Confidence = core.ConfDeclared
+	if d.Recoverable == libext.RecoveryPartial {
+		c.Prov |= core.ProvReallocated
+	}
+	return c, nil
+}
+
+func addOffset(base, off int64) (int64, bool) {
+	if off < 0 || off > (1<<63-1)-base {
+		return 0, false
+	}
+	return base + off, true
+}
+
+// Open streams a regular file through libext's reader, an independent path
+// from Content, except where that reader is wrong: libext reads inline data
+// as zeros, so inline content is served from InlineData. A deleted inode is
+// served from its located content.
 func (a *extFS) Open(n core.Node) (io.ReadCloser, error) {
-	data, err := a.fs.ReadFile(uint32(n.ID))
+	if _, ok := n.Ref.(deletedRef); ok {
+		c, err := a.Content(n)
+		if err != nil {
+			return nil, err
+		}
+		return fsutil.OpenContent(a.p.Reader, a.p.Base, c)
+	}
+	ino, err := a.fs.ReadInode(uint32(n.ID))
 	if err != nil {
 		return nil, err
 	}
-	return io.NopCloser(bytes.NewReader(data)), nil
+	if ino.HasInline {
+		data, _, err := a.fs.InlineData(uint32(n.ID))
+		if err != nil {
+			return nil, err
+		}
+		return io.NopCloser(bytes.NewReader(data)), nil
+	}
+	f, err := a.fs.Open(uint32(n.ID))
+	if err != nil {
+		return nil, err
+	}
+	return io.NopCloser(io.NewSectionReader(f, 0, f.Size())), nil
 }
 
 func (a *extFS) Streams(n core.Node) ([]core.Stream, error) {
+	if _, ok := n.Ref.(deletedRef); ok {
+		return nil, nil
+	}
 	xl, err := a.fs.GetXAttrs(uint32(n.ID))
 	if err != nil {
 		return nil, err
@@ -184,16 +348,14 @@ func (a *extFS) Streams(n core.Node) ([]core.Stream, error) {
 	return out, nil
 }
 
-func boolKind(isDir bool) core.NodeKind {
-	if isDir {
-		return core.KindDir
-	}
-	return core.KindFile
-}
-
 func modeKind(mode uint16) core.NodeKind {
-	if mode&0xF000 == 0x4000 { // S_IFDIR
+	switch mode & 0xF000 {
+	case 0x4000: // S_IFDIR
 		return core.KindDir
+	case 0xA000: // S_IFLNK
+		return core.KindSymlink
+	case 0x8000, 0: // S_IFREG, or unknown
+		return core.KindFile
 	}
-	return core.KindFile
+	return core.KindOther
 }

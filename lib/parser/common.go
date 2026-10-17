@@ -86,9 +86,14 @@ func registerIndexedRange(idxmap map[string]structs.IndexedFile, pfile structs.I
 		return fmt.Errorf("invalid indexed file size %d for %s", isize, iname)
 	}
 
-	end := istart + isize
 	mapped := pfile.GetMappedFile()
-	if istart < 0 || end > int64(len(mapped)) {
+	// Compare without adding: a huge size would wrap start+size negative and
+	// slip past the check (PAR-8).
+	if istart < 0 || istart > int64(len(mapped)) || isize > int64(len(mapped))-istart {
+		return fmt.Errorf("indexed file range out of bounds for %s: start=%d size=%d mapped=%d", iname, istart, isize, len(mapped))
+	}
+	end := istart + isize
+	if end > int64(len(mapped)) {
 		return fmt.Errorf("indexed file range out of bounds for %s: start=%d end=%d mapped=%d", iname, istart, end, len(mapped))
 	}
 

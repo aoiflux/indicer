@@ -1,100 +1,22 @@
 package image
 
 import (
+	"context"
 	"io"
-	"os"
-	"path/filepath"
-	"sort"
-	"strings"
 
 	"indicer/lib/parser/core"
 )
 
 // Open opens a disk image by path, auto-detecting the container format
-// (raw/dd, EWF, VHD/VHDX) and returning it as a core.Image. The returned Image
-// owns whatever handles it opened and releases them on Close.
-//
-// For multi-segment sets (EWF .E01/.E02…, split raw .001/.002…) pass the segment
-// paths to OpenEWFSegments / OpenRawSegments directly; Open handles the first (or
-// only) segment given.
+// (raw/dd and split raw, EWF segment sets, VHD/VHDX) and returning it as a
+// core.Image. The returned Image owns whatever handles it opened and releases
+// them on Close. OpenSource returns the same image with its provenance.
 func Open(path string) (core.Image, error) {
-	f, err := os.Open(path)
+	src, err := OpenSource(context.Background(), path, Options{})
 	if err != nil {
 		return nil, err
 	}
-	info, err := f.Stat()
-	if err != nil {
-		_ = f.Close()
-		return nil, err
-	}
-
-	switch DetectFormat(f, info.Size()) {
-	case core.FormatEWF:
-		// EWF images are commonly split across .E01/.E02/… segments; the closing
-		// "done" section lives in the last segment, so opening only the first
-		// yields "incomplete segment set". Discover the sibling segments and open
-		// the whole set.
-		_ = f.Close()
-		segs := ewfSegmentPaths(path)
-		if len(segs) <= 1 {
-			return OpenEWFFile(path)
-		}
-		return OpenEWFSegments(segs)
-
-	case core.FormatVHD:
-		// libvhdi.OpenFile reopens by path so it can resolve differencing parents
-		// from the image's directory.
-		_ = f.Close()
-		return OpenVHDFile(path)
-
-	default:
-		return &rawImage{ra: f, size: info.Size(), closer: f}, nil
-	}
-}
-
-// ewfSegmentPaths, given the path of one EWF segment, returns all segments of
-// the set in order (.E01, .E02, …). It matches sibling files with the same stem
-// and a same-length extension in the same EWF family letter (e/l), then sorts
-// case-insensitively — which orders the fixed-width EWF extension sequence
-// (E01<…<E99<EAA<…) correctly. If nothing else matches it returns just first.
-func ewfSegmentPaths(first string) []string {
-	base := filepath.Base(first)
-	ext := filepath.Ext(base) // ".e01" / ".Ex01" / ".L01"
-	if len(ext) < 3 {
-		return []string{first}
-	}
-	stem := strings.TrimSuffix(base, ext)
-	dir := filepath.Dir(first)
-
-	entries, err := os.ReadDir(dir)
-	if err != nil {
-		return []string{first}
-	}
-	var segs []string
-	for _, de := range entries {
-		if de.IsDir() {
-			continue
-		}
-		name := de.Name()
-		e := filepath.Ext(name)
-		if len(e) != len(ext) {
-			continue
-		}
-		if !strings.EqualFold(strings.TrimSuffix(name, e), stem) {
-			continue
-		}
-		if !strings.EqualFold(e[:2], ext[:2]) { // same "." + family letter (e/l)
-			continue
-		}
-		segs = append(segs, filepath.Join(dir, name))
-	}
-	if len(segs) == 0 {
-		return []string{first}
-	}
-	sort.Slice(segs, func(i, j int) bool {
-		return strings.ToLower(filepath.Base(segs[i])) < strings.ToLower(filepath.Base(segs[j]))
-	})
-	return segs
+	return src.Image, nil
 }
 
 // DetectFormat sniffs the container format of an image from its header and,

@@ -5,3 +5,12 @@
 ./internal/termsafe FuzzString
 ./lib/logging FuzzRedactJSON
 ./lib/logging FuzzRedactArgs
+./lib/parser/fs/ntfs FuzzLZNT1
+./lib/parser/scan FuzzScanFAT
+./lib/parser/scan FuzzScanExFAT
+./lib/parser/scan FuzzScanNTFS
+./lib/parser/scan FuzzScanExt
+./lib/parser/scan FuzzScanHFS
+./lib/parser/core FuzzNormalizeExtents
+./lib/parser/fs/fsutil FuzzEscapeName
+./lib/parser/fs FuzzDetect

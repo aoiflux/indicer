@@ -6,6 +6,7 @@ import (
 	"sort"
 	"strconv"
 
+	"indicer/internal/safe"
 	detectionpkg "indicer/lib/microartefact/detection"
 	detectorpkg "indicer/lib/microartefact/detectors"
 	parsingpkg "indicer/lib/microartefact/parsing"
@@ -68,7 +69,20 @@ func (s *Service) ExtractWithRelations(file FileRecord, content []byte) ([]Artef
 func (s *Service) extractWithParsed(file FileRecord, content []byte) ([]Artefact, []Relation, parsingpkg.Result, error) {
 	content = s.scanWindow(content)
 
-	parsed, ok := s.parser.Parse(file, content)
+	// The PE, ELF, PDF and EVTX parsers read evidence content: a panic fails
+	// this file, not the process (PAR-1).
+	type parseResult struct {
+		r  parsingpkg.Result
+		ok bool
+	}
+	pr, err := safe.Value(safe.Site{Component: "microartefact/parse", Op: "parse", Path: file.Path}, func() (parseResult, error) {
+		r, ok := s.parser.Parse(file, content)
+		return parseResult{r, ok}, nil
+	})
+	if err != nil {
+		return nil, nil, parsingpkg.Result{}, err
+	}
+	parsed, ok := pr.r, pr.ok
 	if !ok {
 		return nil, nil, parsingpkg.Result{}, nil
 	}

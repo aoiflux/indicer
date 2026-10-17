@@ -2,6 +2,8 @@ package ntfs
 
 import (
 	"bytes"
+	"context"
+	"io"
 	"os"
 	"testing"
 
@@ -16,11 +18,11 @@ func TestMain(m *testing.M) {
 }
 
 // TestOpenRejectsNonNTFS verifies the adapter fails cleanly (no panic) on data
-// that is not an NTFS volume. Full functional coverage runs against real NTFS
-// images in the differential corpus (P4).
+// that is not an NTFS volume. Content is checked against ground truth by the
+// fixture invariant tests in lib/parser/scan.
 func TestOpenRejectsNonNTFS(t *testing.T) {
 	buf := make([]byte, 64*1024)
-	if _, err := Open(bytes.NewReader(buf), 0, int64(len(buf))); err == nil {
+	if _, err := Open(core.OpenParams{Reader: bytes.NewReader(buf), Size: int64(len(buf))}); err == nil {
 		t.Fatal("Open on non-NTFS data: expected error, got nil")
 	}
 }
@@ -54,7 +56,7 @@ func TestOpenIsReadOnly(t *testing.T) {
 		t.Fatal(err)
 	}
 	trap := &writeTrap{Reader: bytes.NewReader(raw)}
-	fsys, err := Open(trap, 0, int64(len(raw)))
+	fsys, err := Open(core.OpenParams{Reader: trap, Size: int64(len(raw))})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -67,9 +69,13 @@ func TestOpenIsReadOnly(t *testing.T) {
 		t.Fatalf("library base offset %d; the adapter adds the partition base itself", off)
 	}
 	files := 0
-	if err := fsys.Walk(func(n core.Node) error {
+	if err := fsys.Walk(context.Background(), func(n core.Node) error {
 		if n.Kind == core.KindFile {
 			files++
+			if rc, err := fsys.Open(n); err == nil {
+				_, _ = io.Copy(io.Discard, rc)
+				rc.Close()
+			}
 		}
 		return nil
 	}); err != nil {

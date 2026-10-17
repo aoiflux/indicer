@@ -1,6 +1,7 @@
 package detection
 
 import (
+	"indicer/internal/safe"
 	"indicer/lib/microartefact/model"
 	parsingpkg "indicer/lib/microartefact/parsing"
 	"sort"
@@ -59,7 +60,11 @@ func (e *Engine) Detect(file model.FileRecord, parsed parsingpkg.Result) ([]mode
 		if !ok {
 			continue
 		}
-		detected, err := detector.Detect(file, parsed.Content)
+		// Detectors read evidence content: a panic fails this file, not the
+		// process (PAR-1).
+		detected, err := safe.Value(safe.Site{Component: "microartefact/detect", Op: detectorName, Path: file.Path}, func() ([]model.Artefact, error) {
+			return detector.Detect(file, parsed.Content)
+		})
 		if err != nil {
 			return nil, err
 		}

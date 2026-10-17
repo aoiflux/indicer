@@ -17,10 +17,13 @@ import (
 // vhdImage adapts a libvhdi virtual disk (VHD/VHDX) to core.Image.
 type vhdImage struct {
 	d *libvhdi.Disk
-	r io.ReaderAt // d, or d behind sectorAlignedReader for differencing VHDX
+	// r is d, or for a differencing VHDX d behind sectorAlignedReader (PAR-31)
+	// and, when a layer ends partway through a chunk, tailResolver (PAR-33).
+	r     io.ReaderAt
+	files []io.Closer // layer files tailResolver reads
 }
 
-func newVHDImage(d *libvhdi.Disk) *vhdImage {
+func newVHDImage(d *libvhdi.Disk) (*vhdImage, error) {
 	im := &vhdImage{d: d, r: d}
 	if d.IsDifferencing() && d.Format() == types.FileFormatVHDX {
 		sector := int64(d.SectorSize())
@@ -29,13 +32,34 @@ func newVHDImage(d *libvhdi.Disk) *vhdImage {
 		}
 		im.r = sectorAlignedReader{r: d, sector: sector}
 	}
-	return im
+	if d.IsDifferencing() {
+		r, files, err := newTailFix(d)
+		if err != nil {
+			d.Close()
+			return nil, err
+		}
+		if r != nil {
+			im.r, im.files = r, files
+		}
+	}
+	return im, nil
 }
 
-func (im *vhdImage) ReadAt(p []byte, off int64) (int, error) { return im.r.ReadAt(p, off) }
-func (im *vhdImage) Size() int64                             { return int64(im.d.Size()) }
-func (im *vhdImage) Format() core.ImageFormat                { return core.FormatVHD }
-func (im *vhdImage) Close() error                            { return im.d.Close() }
+func (im *vhdImage) ReadAt(p []byte, off int64) (int, error) {
+	return guardedReadAt(im.r, "vhd", p, off)
+}
+func (im *vhdImage) Size() int64              { return int64(im.d.Size()) }
+func (im *vhdImage) Format() core.ImageFormat { return core.FormatVHD }
+
+func (im *vhdImage) Close() error {
+	err := im.d.Close()
+	for _, f := range im.files {
+		if cerr := f.Close(); err == nil {
+			err = cerr
+		}
+	}
+	return err
+}
 
 // sectorAlignedReader makes every read start on a sector boundary.
 //
@@ -97,7 +121,11 @@ func OpenVHDFile(path string) (core.Image, error) {
 	if err != nil {
 		return nil, err
 	}
-	return newVHDImage(d), nil
+	im, err := newVHDImage(d)
+	if err != nil {
+		return nil, err // never a typed nil
+	}
+	return im, nil
 }
 
 // OpenVHD wraps an already-open io.ReaderAt VHD/VHDX source (size derived from
@@ -115,7 +143,11 @@ func OpenVHD(r io.ReaderAt) (core.Image, error) {
 		return nil, fmt.Errorf("%w: differencing disk %q opened without its path; open it by path to resolve the parent chain",
 			libvhdi.ErrParentRequired, d.ParentFilename())
 	}
-	return newVHDImage(d), nil
+	im, err := newVHDImage(d)
+	if err != nil {
+		return nil, err // never a typed nil
+	}
+	return im, nil
 }
 
 // siblingResolver finds a differencing disk's parent in the child's own

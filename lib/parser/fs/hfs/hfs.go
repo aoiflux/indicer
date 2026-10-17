@@ -1,8 +1,11 @@
-// Package hfs adapts libhfs (HFS+/HFSX) to core.Filesystem. HFS is CNID-based,
-// so core.Node.ID is the catalog node id (CNID), resolved directly.
+// Package hfs adapts libhfs (classic HFS, HFS+ and HFSX, including an HFS
+// wrapper around an embedded HFS+ volume) to core.Filesystem. HFS is
+// CNID-based, so core.Node.ID is the catalog node id.
 package hfs
 
 import (
+	"context"
+	"errors"
 	"fmt"
 	"io"
 
@@ -13,22 +16,26 @@ import (
 )
 
 type hfsFS struct {
-	vol  *libhfs.Volume
-	base int64
-	bs   int64 // allocation block size
+	vol *libhfs.Volume
+	p   core.OpenParams
 }
 
 var _ core.Filesystem = (*hfsFS)(nil)
 
-// Open mounts an HFS+/HFSX filesystem from r. base is the partition's absolute
-// byte offset within the image, added to fork-extent offsets so DataRuns returns
-// image-absolute ranges.
-func Open(r io.ReaderAt, base, size int64) (core.Filesystem, error) {
-	vol, err := libhfs.Open(r)
+// deletedRef is the Ref of a node recovered by the deleted-record sweep: its
+// catalog record no longer resolves through the live tree.
+type deletedRef struct{ rec libhfs.DeletedRecord }
+
+// Open mounts the volume on p.Reader. Byte ranges come from libhfs relative
+// to the partition (allocation-block start and any embedded-volume offset
+// included) and are made image-absolute by adding p.Base.
+func Open(p core.OpenParams) (core.Filesystem, error) {
+	// The zero Config caps on-disk-sized buffers at libhfs's 1 GiB default.
+	vol, err := libhfs.OpenWithConfig(p.Reader, libhfs.Config{})
 	if err != nil {
 		return nil, err
 	}
-	return &hfsFS{vol: vol, base: base, bs: int64(vol.Header().BlockSize)}, nil
+	return &hfsFS{vol: vol, p: p}, nil
 }
 
 func (a *hfsFS) Type() core.FSType { return core.FSHFS }
@@ -37,112 +44,206 @@ func (a *hfsFS) Capabilities() core.Capabilities {
 	return core.Capabilities{MACB: true, Deleted: true, Fragments: true, Streams: true}
 }
 
-func (a *hfsFS) Close() error { return nil }
-
-func (a *hfsFS) Root() (core.Node, error) {
-	root, err := a.vol.GetRootDirectory()
-	if err != nil {
-		return core.Node{}, err
-	}
-	return core.Node{ID: uint64(root.CNID), Name: "/", Path: "/", Kind: core.KindDir}, nil
+func (a *hfsFS) Close() error {
+	a.drainAnomalies()
+	return a.vol.Close()
 }
 
-// Walk visits the live catalog from the root, then appends deleted records
-// recovered by libhfs (under a synthetic /$deleted path).
-func (a *hfsFS) Walk(fn func(core.Node) error) error {
+// drainAnomalies reports what libhfs tolerated while reading the volume.
+func (a *hfsFS) drainAnomalies() {
+	for _, an := range a.vol.Anomalies() {
+		a.p.Report(core.Issue{Code: core.IssueLibrary, Detail: fmt.Sprintf("%s at %d: %s", an.Op, an.Offset, an.Detail)})
+	}
+}
+
+// Walk visits the live catalog from the root, then the deleted records the
+// sweep recovers. A deleted record keeps its folder or file kind, and sits
+// under its original parent when that parent is still live.
+func (a *hfsFS) Walk(ctx context.Context, fn func(core.Node) error) error {
 	root, err := a.vol.GetRootDirectory()
 	if err != nil {
 		return err
 	}
-	if err := a.walk(root.CNID, "", map[uint32]bool{root.CNID: true}, fn); err != nil {
+	w := &fsutil.TreeWalker{List: a.list, Sink: a.p.Sink, Limits: a.p.Limits}
+	if err := w.Walk(ctx, core.Node{ID: uint64(root.CNID), Kind: core.KindDir}, fn); err != nil {
 		return err
 	}
-	// Deleted recovery is best-effort and supplementary; ignore its walk errors.
-	_ = a.vol.WalkDeleted(libhfs.DefaultRecoveryOptions(), func(d libhfs.DeletedRecord) error {
+	return a.walkDeleted(ctx, fn)
+}
+
+func (a *hfsFS) list(dir core.Node) ([]core.Node, error) {
+	entries, err := a.vol.ReadDirCNID(uint32(dir.ID))
+	out := make([]core.Node, 0, len(entries))
+	for _, e := range entries {
+		kind := core.KindFile
+		if e.IsDirectory {
+			kind = core.KindDir
+		}
+		out = append(out, core.Node{ID: uint64(e.CNID), Name: e.Name, Kind: kind})
+	}
+	return out, err
+}
+
+func (a *hfsFS) walkDeleted(ctx context.Context, fn func(core.Node) error) error {
+	lim := a.p.Limits.WithDefaults()
+	err := a.vol.WalkDeletedContext(ctx, libhfs.DefaultRecoveryOptions(), func(d libhfs.DeletedRecord) error {
 		name := d.Record.Name
+		prov := core.ProvDeleted | core.ProvRecovered
 		if name == "" {
 			name = fmt.Sprintf("cnid-%d", d.Record.CNID)
+			prov |= core.ProvSynthName
+		}
+		parent := "/$deleted"
+		if pp, err := a.vol.PathForCNID(d.Record.ParentCNID); err == nil {
+			parent = pp
+		}
+		path, san := fsutil.Join(parent, name, lim.MaxName)
+		if san {
+			prov |= core.ProvNameSanitized
+		}
+		if d.Overwritten {
+			prov |= core.ProvReallocated
+		}
+		kind := core.KindFile
+		if d.Record.Type == libhfs.CatalogRecordFolder {
+			kind = core.KindDir
 		}
 		return fn(core.Node{
 			ID:        uint64(d.Record.CNID),
+			Parent:    uint64(d.Record.ParentCNID),
 			Name:      name,
-			Path:      "/$deleted/" + name,
-			Kind:      core.KindFile,
+			Path:      path,
+			Kind:      kind,
 			IsDeleted: true,
+			Prov:      prov,
+			Ref:       deletedRef{rec: d},
 		})
 	})
-	return nil
-}
-
-func (a *hfsFS) walk(cnid uint32, prefix string, visited map[uint32]bool, fn func(core.Node) error) error {
-	entries, err := a.vol.ReadDirCNID(cnid)
-	if err != nil {
-		return nil // skip an unreadable directory, keep walking
+	if errors.Is(err, ctx.Err()) && ctx.Err() != nil {
+		return err
 	}
-	for _, e := range entries {
-		if e.Name == "" {
-			continue
-		}
-		path := prefix + "/" + e.Name
-		node := core.Node{ID: uint64(e.CNID), Name: e.Name, Path: path, Kind: boolKind(e.IsDirectory)}
-		if err := fn(node); err != nil {
-			return err
-		}
-		if e.IsDirectory && e.CNID != 0 && !visited[e.CNID] {
-			visited[e.CNID] = true
-			if err := a.walk(e.CNID, path, visited, fn); err != nil {
-				return err
-			}
-		}
+	if err != nil {
+		// Recovery is a supplement to the live tree: its failure is an issue.
+		a.p.Report(core.Issue{Code: core.IssueLibrary, Detail: "deleted-record sweep: " + err.Error()})
 	}
 	return nil
 }
 
 func (a *hfsFS) Stat(n core.Node) (core.FileInfo, error) {
-	info := core.FileInfo{Kind: n.Kind, IsDeleted: n.IsDeleted, Inode: n.ID}
-	if t, err := a.vol.GetTimes(uint32(n.ID)); err == nil {
-		info.MACB = core.MACB{
-			Modified: fsutil.TimePtr(t.ContentModified),
-			Accessed: fsutil.TimePtr(t.Accessed),
-			Changed:  fsutil.TimePtr(t.AttrModified),
-			Born:     fsutil.TimePtr(t.Created),
-		}
+	if d, ok := n.Ref.(deletedRef); ok {
+		return statRecord(n, d.rec.Record), nil
 	}
-	if n.Kind == core.KindFile {
-		if f, err := a.vol.OpenFileByCNID(uint32(n.ID)); err == nil {
-			info.Size = f.Size()
-		}
-		if exts, err := a.vol.ResolveDataForkExtents(uint32(n.ID)); err == nil {
-			info.IsFragmented = len(exts) > 1
+	rec, err := a.vol.OpenCNID(uint32(n.ID))
+	if err != nil {
+		return core.FileInfo{}, err
+	}
+	info := statRecord(n, rec)
+	if t, err := a.vol.GetTimes(uint32(n.ID)); err == nil {
+		info.MACB = macb(t)
+	}
+	if rec.IsSymlink() {
+		info.Kind = core.KindSymlink
+		if target, err := a.vol.ReadLink(uint32(n.ID)); err == nil {
+			info.Target = target
 		}
 	}
 	return info, nil
 }
 
-// DataRuns returns the data fork's allocation-block extents as image-absolute
-// byte ranges, trimmed to the file's logical size.
-func (a *hfsFS) DataRuns(n core.Node) ([]core.AbsRange, error) {
-	exts, err := a.vol.ResolveDataForkExtents(uint32(n.ID))
-	if err != nil {
-		return nil, err
+func statRecord(n core.Node, rec libhfs.CatalogRecord) core.FileInfo {
+	info := core.FileInfo{Kind: n.Kind, IsDeleted: n.IsDeleted, Inode: n.ID, MACB: macb(rec.Times)}
+	if n.Kind == core.KindFile {
+		info.Size = int64(rec.DataFork.LogicalSize)
 	}
-	out := make([]core.AbsRange, 0, len(exts))
-	for _, e := range exts {
-		if e.BlockCount == 0 {
+	if rec.IsHardLink() {
+		info.Links = int(rec.LinkCount)
+	}
+	return info
+}
+
+func macb(t libhfs.CatalogTimes) core.MACB {
+	return core.MACB{
+		Modified: fsutil.TimePtr(t.ContentModified),
+		Accessed: fsutil.TimePtr(t.Accessed),
+		Changed:  fsutil.TimePtr(t.AttrModified),
+		Born:     fsutil.TimePtr(t.Created),
+	}
+}
+
+// Content returns the data fork's byte ranges. A decmpfs-compressed file has
+// no ranges to read; its content is decoded through Open. A deleted record
+// carries only the extents in its own catalog record (the overflow tree
+// belongs to live files), so its content is declared, not certain.
+func (a *hfsFS) Content(n core.Node) (core.Content, error) {
+	if d, ok := n.Ref.(deletedRef); ok {
+		rec := d.rec.Record
+		size := int64(rec.DataFork.LogicalSize)
+		ranges, err := a.vol.ExtentRanges(rec.DataFork.Extents[:], size)
+		if err != nil {
+			return core.Content{}, err
+		}
+		c, err := a.rangesContent(size, ranges)
+		if err != nil {
+			return core.Content{}, err
+		}
+		c.Confidence = core.ConfDeclared
+		if d.rec.Overwritten {
+			c.Prov |= core.ProvReallocated
+		}
+		return c, nil
+	}
+
+	rec, err := a.vol.OpenCNID(uint32(n.ID))
+	if err != nil {
+		return core.Content{}, err
+	}
+	size := int64(rec.DataFork.LogicalSize)
+	var prov core.Prov
+	if rec.IsHardLink() {
+		prov |= core.ProvHardLink
+	}
+	if rec.Compressed {
+		return core.Content{Kind: core.ContentDecoded, Size: size, Prov: prov | core.ProvCompressed}, nil
+	}
+	ranges, err := a.vol.DataForkRanges(uint32(n.ID))
+	if err != nil {
+		return core.Content{}, err
+	}
+	c, err := a.rangesContent(size, ranges)
+	c.Prov |= prov
+	return c, err
+}
+
+func (a *hfsFS) rangesContent(size int64, ranges []libhfs.ByteRange) (core.Content, error) {
+	ext := make([]core.Extent, 0, len(ranges))
+	for _, r := range ranges {
+		if r.Length <= 0 {
 			continue
 		}
-		start := a.base + int64(e.StartBlock)*a.bs
-		length := int64(e.BlockCount) * a.bs
-		out = append(out, core.AbsRange{Start: start, End: start + length - 1})
+		img, ok := addOffset(a.p.Base, r.DiskOffset)
+		if !ok {
+			return core.Content{}, fmt.Errorf("%w: disk offset %d", core.ErrBadExtent, r.DiskOffset)
+		}
+		ext = append(ext, core.Extent{FileOffset: r.ForkOffset, Length: r.Length, ImageOffset: img, Kind: core.ExtentData})
 	}
-	var size int64
-	if f, err := a.vol.OpenFileByCNID(uint32(n.ID)); err == nil {
-		size = f.Size()
+	return core.ExtentContent(size, ext)
+}
+
+func addOffset(base, off int64) (int64, bool) {
+	if off < 0 || off > (1<<63-1)-base {
+		return 0, false
 	}
-	return fsutil.TrimToSize(out, size), nil
+	return base + off, true
 }
 
 func (a *hfsFS) Open(n core.Node) (io.ReadCloser, error) {
+	if d, ok := n.Ref.(deletedRef); ok {
+		f, err := a.vol.OpenDeleted(d.rec)
+		if err != nil {
+			return nil, err
+		}
+		return io.NopCloser(f), nil
+	}
 	f, err := a.vol.OpenFileByCNID(uint32(n.ID))
 	if err != nil {
 		return nil, err
@@ -152,6 +253,9 @@ func (a *hfsFS) Open(n core.Node) (io.ReadCloser, error) {
 
 // Streams returns the resource fork (when present) and extended attributes.
 func (a *hfsFS) Streams(n core.Node) ([]core.Stream, error) {
+	if _, ok := n.Ref.(deletedRef); ok {
+		return nil, nil
+	}
 	var out []core.Stream
 	if rf, err := a.vol.OpenResourceForkByCNID(uint32(n.ID)); err == nil && rf.Size() > 0 {
 		out = append(out, core.Stream{Name: "rsrc", Kind: "resource_fork", Size: rf.Size()})
@@ -162,11 +266,4 @@ func (a *hfsFS) Streams(n core.Node) ([]core.Stream, error) {
 		}
 	}
 	return out, nil
-}
-
-func boolKind(isDir bool) core.NodeKind {
-	if isDir {
-		return core.KindDir
-	}
-	return core.KindFile
 }

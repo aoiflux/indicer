@@ -63,3 +63,61 @@ func TestParseWholeDeviceFallback(t *testing.T) {
 		t.Fatalf("expected single whole-device partition of 4096 bytes, got %+v", tbl.Partitions)
 	}
 }
+
+func mbrImage(total int64, entries ...[2]uint32) []byte {
+	buf := make([]byte, total)
+	for i, e := range entries {
+		ent := buf[446+16*i : 446+16*(i+1)]
+		ent[4] = 0x83
+		binary.LittleEndian.PutUint32(ent[8:12], e[0])
+		binary.LittleEndian.PutUint32(ent[12:16], e[1])
+	}
+	buf[510], buf[511] = 0x55, 0xAA
+	return buf
+}
+
+func hasIssue(is []core.Issue, c core.IssueCode) bool {
+	for _, i := range is {
+		if i.Code == c {
+			return true
+		}
+	}
+	return false
+}
+
+// TestParseClampsToImage: a partition running past the end of the image is
+// cut to the image and reported (PAR-17). (libtable refuses an MBR whose
+// entry starts past the image, so that case never reaches the clamp.)
+func TestParseClampsToImage(t *testing.T) {
+	const total = 1 << 20 // 2048 sectors
+	buf := mbrImage(total, [2]uint32{2048 - 100, 1000}, [2]uint32{100, 10})
+	img := image.NewRaw(bytes.NewReader(buf), total)
+	tbl, issues, err := ParseReport(img)
+	if err != nil {
+		t.Fatal(err)
+	}
+	alloc := tbl.Allocated()
+	if len(alloc) != 2 {
+		t.Fatalf("partitions %+v", alloc)
+	}
+	// Sorted by start: the straddling partition is second.
+	if alloc[1].Offset != (2048-100)*512 || alloc[1].Size != 100*512 {
+		t.Fatalf("partition not clamped to the image: %+v", alloc[1])
+	}
+	if !hasIssue(issues, core.IssueClamped) {
+		t.Fatalf("issues %v", issues)
+	}
+}
+
+// TestParseReportsTableWarnings: overlapping entries reach the report.
+func TestParseReportsTableWarnings(t *testing.T) {
+	const total = 1 << 20
+	buf := mbrImage(total, [2]uint32{100, 400}, [2]uint32{300, 400})
+	tbl, issues, err := ParseReport(image.NewRaw(bytes.NewReader(buf), total))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(tbl.Allocated()) != 2 || !hasIssue(issues, core.IssueOverlap) {
+		t.Fatalf("partitions %+v, issues %v", tbl.Allocated(), issues)
+	}
+}

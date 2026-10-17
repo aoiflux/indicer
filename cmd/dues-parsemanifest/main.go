@@ -26,6 +26,7 @@ package main
 
 import (
 	"bufio"
+	"context"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
@@ -109,6 +110,12 @@ type fileLine struct {
 	// no runs digest is recorded for it.
 	RunsShort bool `json:"runs_short,omitempty"`
 	Streams   int  `json:"streams,omitempty"`
+
+	// The W5 content contract: how the content is reached, its provenance
+	// flags, and how many bytes of it were located.
+	ContentKind string `json:"content_kind,omitempty"`
+	Prov        string `json:"prov,omitempty"`
+	Located     int64  `json:"located,omitempty"`
 
 	// DuesIndexed reports whether the ingest indexer as of this baseline would
 	// register the file (non-fragmented, with at least one located run), and
@@ -299,7 +306,7 @@ func (m *manifest) walkPartition(img core.Image, p core.Partition) {
 	var fsys core.Filesystem
 	openErr := guard(func() error {
 		var e error
-		fsys, e = fs.OpenAuto(section, p.Offset, p.Size)
+		fsys, e = fs.OpenAuto(core.OpenParams{Reader: section, Base: p.Offset, Size: p.Size, ImageSize: img.Size()})
 		return e
 	})
 	if openErr != nil {
@@ -322,7 +329,7 @@ func (m *manifest) walkPartition(img core.Image, p core.Partition) {
 	// The partition line goes out after the walk so it can carry the walk
 	// outcome; file lines reference the partition by index and offset.
 	walkErr := guard(func() error {
-		return fsys.Walk(func(n core.Node) error {
+		return fsys.Walk(context.Background(), func(n core.Node) error {
 			m.emit(m.describe(img, fsys, p, n))
 			return m.writeErr
 		})
@@ -375,8 +382,11 @@ func (m *manifest) describe(img core.Image, fsys core.Filesystem, p core.Partiti
 
 	var runs []core.AbsRange
 	if err := guard(func() error {
-		var e error
-		runs, e = fsys.DataRuns(n)
+		c, e := fsys.Content(n)
+		fl.ContentKind = c.Kind.String()
+		fl.Prov = c.Prov.String()
+		fl.Located = c.Located
+		runs = c.Ranges()
 		return e
 	}); err != nil {
 		fl.RunsError = err.Error()
@@ -472,7 +482,9 @@ func (m *manifest) hash(img core.Image, fsys core.Filesystem, n core.Node, runs,
 		}
 	}
 
-	if m.opts.hash == "open" || m.opts.hash == "both" {
+	// Unavailable content (a stale entry, a deleted inode with no surviving
+	// block map) has nothing to open; the adapter says so in content_kind.
+	if (m.opts.hash == "open" || m.opts.hash == "both") && fl.ContentKind != "unavailable" {
 		if err := guard(func() error {
 			rc, e := fsys.Open(n)
 			if e != nil {

@@ -42,7 +42,8 @@ fuzz_run() {
 	local rc=0
 	while read -r pkg fn; do
 		case "$pkg" in "" | \#*) continue ;; esac
-		go test "$pkg" -run '^$' -fuzz "^$fn\$" -fuzztime "${FUZZTIME:-60s}" || rc=1
+		# Strict: a panic internal/safe would contain is still a finding.
+		DUES_SAFE_STRICT=1 go test "$pkg" -run '^$' -fuzz "^$fn\$" -fuzztime "${FUZZTIME:-60s}" || rc=1
 	done <scripts/fuzz-targets.txt
 	return $rc
 }

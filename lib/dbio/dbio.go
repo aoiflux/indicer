@@ -199,77 +199,6 @@ func GetIndexedFile(key []byte, db *badger.DB) (structs.IndexedFile, error) {
 	return indexedFile, err
 }
 
-func GetHashLookupUUIDsByKey(lookupKey []byte, db *badger.DB) ([][]byte, error) {
-	var ids [][]byte
-	err := db.View(func(txn *badger.Txn) error {
-		resolved, getErr := getHashLookupUUIDsByKeyTxn(txn, lookupKey)
-		if getErr != nil {
-			return getErr
-		}
-		ids = resolved
-		return nil
-	})
-	if err != nil {
-		return nil, err
-	}
-	return ids, nil
-}
-
-func AppendHashLookupUUIDByKey(db *badger.DB, lookupKey []byte, uuid []byte) error {
-	return db.Update(func(txn *badger.Txn) error {
-		return AppendHashLookupUUIDByKeyTxn(txn, lookupKey, uuid)
-	})
-}
-
-func AppendHashLookupUUIDByKeyTxn(txn *badger.Txn, lookupKey []byte, uuid []byte) error {
-	ids, err := getHashLookupUUIDsByKeyTxn(txn, lookupKey)
-	if err != nil && err != badger.ErrKeyNotFound {
-		return err
-	}
-
-	for _, id := range ids {
-		if bytes.Equal(id, uuid) {
-			return nil
-		}
-	}
-
-	if containsSlice(ids, uuid[:]) {
-		return nil
-	}
-	ids = append(ids, uuid[:])
-	encoded, err := msgpack.Marshal(ids)
-	if err != nil {
-		return err
-	}
-	return txn.Set(lookupKey, encoded)
-}
-
-func containsSlice(data [][]byte, target []byte) bool {
-	for _, b := range data {
-		if bytes.Equal(b, target) {
-			return true
-		}
-	}
-	return false
-}
-
-func getHashLookupUUIDsByKeyTxn(txn *badger.Txn, lookupKey []byte) ([][]byte, error) {
-	item, err := txn.Get(lookupKey)
-	if err != nil {
-		return nil, err
-	}
-
-	var ids [][]byte
-	err = item.Value(func(val []byte) error {
-		return msgpack.Unmarshal(val, &ids)
-	})
-	if err != nil {
-		return nil, err
-	}
-
-	return ids, nil
-}
-
 type ReverseRelationAppendMember struct {
 	Chash []byte
 	Index int64
@@ -574,32 +503,20 @@ func GetFileSimhash(fid []byte, db *badger.DB) (uint64, error) {
 	return binary.BigEndian.Uint64(data), nil
 }
 
-func SetBatchChonkNode(key, data []byte, db *badger.DB, batch *badger.WriteBatch, containerMgr *fio.ContainerManager, blockMgr *fio.BlockManager) error {
-	encodedMetadata, err := MaterializeChonkNode(key, data, db, containerMgr, blockMgr)
-	if err != nil {
-		return err
-	}
-	if len(encodedMetadata) == 0 {
-		return nil
-	}
-	return SetBatchNode(key, encodedMetadata, batch)
-}
-
 // MaterializeChonkNode performs the expensive chunk materialization work
-// (compression/encryption/container write or file write). It returns encoded
-// metadata for DB persistence when metadata is DB-backed, or nil when metadata
-// is written to hierarchical block index files.
-func MaterializeChonkNode(key, data []byte, db *badger.DB, containerMgr *fio.ContainerManager, blockMgr *fio.BlockManager) ([]byte, error) {
+// (compression/encryption/container write or file write). It returns the
+// encoded C||| metadata to persist for the chunk.
+func MaterializeChonkNode(key, data []byte, db *badger.DB, containerMgr *fio.ContainerManager) ([]byte, error) {
 	originalSize := int64(len(data))
 
 	if containerMgr != nil {
-		return materializeContainerChonkNode(key, data, originalSize, db, containerMgr, blockMgr)
+		return materializeContainerChonkNode(key, data, originalSize, db, containerMgr)
 	}
 
 	return materializeFileChonkNode(key, data, originalSize, db)
 }
 
-func materializeContainerChonkNode(key, data []byte, originalSize int64, db *badger.DB, containerMgr *fio.ContainerManager, blockMgr *fio.BlockManager) ([]byte, error) {
+func materializeContainerChonkNode(key, data []byte, originalSize int64, db *badger.DB, containerMgr *fio.ContainerManager) ([]byte, error) {
 	containerPath, offset, size, err := containerMgr.WriteChunkToContainer(key, func() ([]byte, error) {
 		return blobcodec.For(db).Encode(key, data)
 	})
@@ -607,12 +524,8 @@ func materializeContainerChonkNode(key, data []byte, originalSize int64, db *bad
 		return nil, err
 	}
 
-	if blockMgr != nil {
-		return nil, blockMgr.AddChunkMetadata(key, containerPath, offset, size)
-	}
-
 	metadata := structs.ChonkMetadata{
-		Path:         containerPath,
+		Path:         StoredBlobPath(db.Opts().Dir, containerPath),
 		Offset:       offset,
 		OriginalSize: originalSize,
 		StoredSize:   size,
@@ -639,7 +552,7 @@ func materializeFileChonkNode(key, data []byte, originalSize int64, db *badger.D
 	dataLen := int64(len(data))
 
 	metadata := structs.ChonkMetadata{
-		Path:         string(cfpath),
+		Path:         StoredBlobPath(db.Opts().Dir, string(cfpath)),
 		Offset:       0,
 		OriginalSize: originalSize,
 		StoredSize:   dataLen,
@@ -748,24 +661,11 @@ func getSealedChunkSize(key, data []byte, db *badger.DB) (int64, error) {
 
 // GetChonkNode returns the decoded content of the chunk whose key is key.
 func GetChonkNode(key []byte, db *badger.DB) ([]byte, error) {
-	// Try to get from database first (backward compatibility or non-hierarchical mode)
-	metadata, err := GetNode(key, db)
-	if err == nil {
-		return readChonkFromMetadata(key, metadata, db)
-	}
-
-	// Not found in DB, try hierarchical block index
-	blockMgr := fio.NewBlockManager(db.Opts().Dir, nil)
-	containerPath, offset, size, err := blockMgr.GetChunkMetadata(key)
-	if err != nil {
-		return nil, fmt.Errorf("chunk not found in DB or block index: %w", err)
-	}
-
-	stored, err := fio.ReadChunkFromContainer(containerPath, offset, size)
+	loc, err := LocateChunk(key, db)
 	if err != nil {
 		return nil, err
 	}
-	return blobcodec.For(db).Decode(key, stored)
+	return readChonk(key, loc, db)
 }
 
 func readChonkFromMetadata(key, metadata []byte, db *badger.DB) ([]byte, error) {
@@ -773,12 +673,17 @@ func readChonkFromMetadata(key, metadata []byte, db *badger.DB) ([]byte, error) 
 	if err != nil {
 		return nil, err
 	}
+	return readChonk(key, parsed, db)
+}
 
+// readChonk reads and decodes the chunk key stored at parsed.
+func readChonk(key []byte, parsed structs.ChonkMetadata, db *badger.DB) ([]byte, error) {
+	var err error
 	var stored []byte
 	if parsed.Container {
-		stored, err = fio.ReadChunkFromContainer(parsed.Path, parsed.Offset, parsed.EncodedSize)
+		stored, err = fio.ReadChunkFromContainer(ResolveBlobPath(db.Opts().Dir, parsed.Path), parsed.Offset, parsed.EncodedSize)
 	} else {
-		stored, err = fio.ReadChonk(parsed.Path)
+		stored, err = fio.ReadChonk(ResolveBlobPath(db.Opts().Dir, parsed.Path))
 	}
 	if err != nil {
 		return nil, err
@@ -789,16 +694,16 @@ func readChonkFromMetadata(key, metadata []byte, db *badger.DB) ([]byte, error) 
 func parseChonkMetadata(metadata []byte) (structs.ChonkMetadata, error) {
 	var parsed structs.ChonkMetadata
 	if err := msgpack.Unmarshal(metadata, &parsed); err != nil {
-		return parsed, fmt.Errorf("failed to decode chunk metadata: %w", err)
+		return parsed, fmt.Errorf("%w: %v", ErrChunkMetaInvalid, err)
 	}
 	if parsed.Path == "" {
-		return parsed, fmt.Errorf("invalid chunk metadata: empty path")
+		return parsed, fmt.Errorf("%w: empty path", ErrChunkMetaInvalid)
 	}
 	if parsed.Container && parsed.EncodedSize <= 0 {
-		return parsed, fmt.Errorf("invalid chunk metadata: encoded size must be > 0 for container mode")
+		return parsed, fmt.Errorf("%w: encoded size must be > 0 for container mode", ErrChunkMetaInvalid)
 	}
 	if parsed.StoredSize < 0 || parsed.OriginalSize < 0 {
-		return parsed, fmt.Errorf("invalid chunk metadata: negative sizes")
+		return parsed, fmt.Errorf("%w: negative sizes", ErrChunkMetaInvalid)
 	}
 	return parsed, nil
 }

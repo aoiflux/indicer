@@ -22,15 +22,18 @@ func buildPartitionData(phash string, txn *badger.Txn) (map[string]interface{}, 
 		return nil, err
 	}
 
+	pid, err := base64.StdEncoding.DecodeString(phash)
+	if err != nil {
+		return nil, err
+	}
 	var indexedFiles []map[string]interface{}
-	for ihash := range pdata.InternalObjects {
-		offset := pdata.InternalObjects[ihash]
+	err = dbio.ForEachPartitionMemberTxn(txn, pid, pdata, func(ihash string, offset structs.InternalOffset) error {
 		ifileDataEntries, err := buildIndexedFileData(ihash, txn)
 		if err != nil {
 			if errors.Is(err, badger.ErrKeyNotFound) {
-				continue
+				return nil
 			}
-			return nil, err
+			return err
 		}
 		for _, ifileData := range ifileDataEntries {
 			ifileData["offset"] = map[string]interface{}{
@@ -39,6 +42,10 @@ func buildPartitionData(phash string, txn *badger.Txn) (map[string]interface{}, 
 			}
 			indexedFiles = append(indexedFiles, ifileData)
 		}
+		return nil
+	})
+	if err != nil {
+		return nil, err
 	}
 
 	partData := map[string]interface{}{
@@ -358,26 +365,16 @@ func getEvidenceByHash(txn *badger.Txn, evidenceHash string) (structs.EvidenceFi
 
 	// evidenceHash may be a content hash; resolve to UUID key via EH reverse index.
 	lookupKey := util.AppendToBytesSlice(cnst.EviFileHashLookupNamespace, evidenceHash)
-	item, err := txn.Get(lookupKey)
+	resolvedIDs, err := dbio.HashLookupMembersTxn(txn, lookupKey)
 	if err == badger.ErrKeyNotFound {
 		return evidata, "", false, nil
 	}
 	if err != nil {
 		return evidata, "", false, err
 	}
-	var resolvedIDs [][]byte
-	err = item.Value(func(val []byte) error {
-		return msgpack.Unmarshal(val, &resolvedIDs)
-	})
-	if err != nil {
-		return evidata, "", false, err
-	}
-	if len(resolvedIDs) == 0 {
-		return evidata, "", false, nil
-	}
 	resolvedID := resolvedIDs[len(resolvedIDs)-1]
 
-	item, err = txn.Get(resolvedID)
+	item, err := txn.Get(resolvedID)
 	if err == badger.ErrKeyNotFound {
 		return evidata, "", false, nil
 	}

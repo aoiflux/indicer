@@ -12,7 +12,6 @@ package store
 //  - reverse-relation append buffer
 //
 // Why this is simpler and faster than the old shared-batch variant:
-//  - No revRelAppendBuffer lock contention: one writer updates and flushes it.
 //  - No WriteBatch multi-writer pressure: one goroutine performs all batch
 //    mutations.
 //
@@ -27,12 +26,10 @@ import (
 	"context"
 	"encoding/base64"
 	"encoding/binary"
-	"errors"
 	"fmt"
 	"hash"
 	"indicer/internal/console"
 	"indicer/lib/cnst"
-	"indicer/lib/dbio"
 	"indicer/lib/fio"
 	"indicer/lib/structs"
 	"indicer/lib/util"
@@ -43,13 +40,13 @@ import (
 
 // chunkTask carries per-chunk outputs from hash/materialize workers to the
 // single batch-owner goroutine. cmeta holds pre-materialized encoded chunk
-// metadata for batch DB persistence; cdata is only used by benchmark/helper
-// paths.
+// metadata for batch DB persistence, which the writer holds back until the
+// chunk bytes are durable.
 type chunkTask struct {
 	index int64
 	chash []byte
-	cdata []byte
 	cmeta []byte
+	size  int64 // bytes of evidence content in the chunk
 }
 
 type workerRes struct {
@@ -149,23 +146,9 @@ func storeEvidenceDataBatchOwner(parentCtx context.Context, infile structs.Input
 	}
 
 	var containerMgr *fio.ContainerManager
-	var blockMgr *fio.BlockManager
-
 	if cnst.CONTAINERMODE {
 		containerMgr = fio.NewContainerManager(infile.GetDB().Opts().Dir)
 		defer closeContainerManager(&err, containerMgr)
-
-		if cnst.HIERARCHICALINDEX {
-			blockMgr = fio.NewBlockManager(infile.GetDB().Opts().Dir, containerMgr)
-			defer closeBlockManager(&err, blockMgr)
-		}
-	}
-
-	if !cnst.CONTAINERMODE && cnst.StoreAsyncFileWrites {
-		fio.StartAsyncFileWriter(0)
-		defer func() {
-			mergeDeferredErr(&err, fio.CloseAsyncFileWriter())
-		}()
 	}
 
 	// ctx is cancelled when parent context is canceled or writer exits with an error so that
@@ -175,7 +158,7 @@ func storeEvidenceDataBatchOwner(parentCtx context.Context, infile structs.Input
 
 	// Tune worker/queue shape by storage mode; container/hierarchical paths
 	// include serialized components and benefit from steadier queue pressure.
-	workerCount, taskQueueDepth := cnst.GetStorePipelineTuning(cnst.CONTAINERMODE, cnst.HIERARCHICALINDEX)
+	workerCount, taskQueueDepth := cnst.GetStorePipelineTuning(cnst.CONTAINERMODE)
 	taskCh := make(chan chunkTask, taskQueueDepth)
 	writerResCh := make(chan writerResult, 1)
 
@@ -183,6 +166,7 @@ func storeEvidenceDataBatchOwner(parentCtx context.Context, infile structs.Input
 		infile.GetHash(),
 		infile.GetStartIndex(),
 		infile.GetDB(),
+		containerMgr,
 		taskCh,
 		cancel,
 		writerResCh,
@@ -195,7 +179,7 @@ func storeEvidenceDataBatchOwner(parentCtx context.Context, infile structs.Input
 	var firstWorkerErr error
 
 	for i := 0; i < workerCount; i++ {
-		go batchOwnerHashWorkerLoop(ctx, mappedFile, infile.GetDB(), containerMgr, blockMgr, seenChunks, jobCh, taskCh, workerResCh, simhashWriter)
+		go batchOwnerHashWorkerLoop(ctx, mappedFile, infile.GetDB(), containerMgr, seenChunks, jobCh, taskCh, workerResCh, simhashWriter)
 	}
 
 	totalJobs := 0
@@ -293,22 +277,16 @@ func closeContainerManager(target *error, containerMgr *fio.ContainerManager) {
 	mergeDeferredErr(target, containerMgr.Close())
 }
 
-func closeBlockManager(target *error, blockMgr *fio.BlockManager) {
-	if blockMgr == nil {
-		return
-	}
-	mergeDeferredErr(target, blockMgr.Close())
-}
-
 func runBatchOwnerWriter(
 	fhash []byte,
 	startIndex int64,
 	db *badger.DB,
+	containerMgr *fio.ContainerManager,
 	taskCh <-chan chunkTask,
 	cancel context.CancelFunc,
 	writerResCh chan<- writerResult,
 ) {
-	hochoHash, werr := batchOwnerWriteLoop(fhash, startIndex, db, taskCh)
+	hochoHash, werr := batchOwnerWriteLoop(fhash, startIndex, db, containerMgr, taskCh)
 	if werr != nil {
 		cancel()
 	}
@@ -320,7 +298,6 @@ func batchOwnerHashWorkerLoop(
 	mappedFile []byte,
 	db *badger.DB,
 	containerMgr *fio.ContainerManager,
-	blockMgr *fio.BlockManager,
 	seenChunks *shardedChunkSet,
 	jobCh <-chan chunkJob,
 	taskCh chan<- chunkTask,
@@ -335,7 +312,6 @@ func batchOwnerHashWorkerLoop(
 			job.chonkEnd,
 			db,
 			containerMgr,
-			blockMgr,
 			seenChunks,
 			taskCh,
 			simhashWriter,
@@ -350,7 +326,6 @@ func batchOwnerHashWorker(
 	idx, chonkEnd int64,
 	db *badger.DB,
 	containerMgr *fio.ContainerManager,
-	blockMgr *fio.BlockManager,
 	seenChunks *shardedChunkSet,
 	taskCh chan<- chunkTask,
 	simhashWriter *simhashAsyncWriter,
@@ -368,31 +343,14 @@ func batchOwnerHashWorker(
 	var cmeta []byte
 	if !seenChunks.loadOrStore(chash) {
 		ckey := util.AppendToBytesSlice(cnst.ChonkNamespace, chash)
-		if containerMgr != nil {
-			// Container mode: WriteChunkToContainer cannot detect chunks from
-			// previous sessions, so we must probe the DB first.
-			err := dbio.PingNode(ckey, db)
-			if errors.Is(err, badger.ErrKeyNotFound) {
-				cmeta, err = dbio.MaterializeChonkNode(ckey, chunkBytes, db, containerMgr, blockMgr)
-				if err != nil {
-					return err
-				}
-			} else if err != nil {
-				return err
-			}
-		} else {
-			// File mode: WriteChonk is idempotent (os.Stat check); call
-			// MaterializeChonkNode directly without a prior DB probe.
-			var merr error
-			cmeta, merr = dbio.MaterializeChonkNode(ckey, chunkBytes, db, nil, blockMgr)
-			if merr != nil {
-				return merr
-			}
+		var err error
+		if cmeta, err = materializeChunkMeta(ckey, chunkBytes, db, containerMgr); err != nil {
+			return err
 		}
 	}
 
 	select {
-	case taskCh <- chunkTask{index: idx, chash: chash, cmeta: cmeta}:
+	case taskCh <- chunkTask{index: idx, chash: chash, cmeta: cmeta, size: chonkEnd - idx}:
 		return nil
 	case <-ctx.Done():
 		return context.Canceled
@@ -406,13 +364,14 @@ func captureFirstWorkerErr(err error, firstWorkerErr *error) {
 	*firstWorkerErr = err
 }
 
-// batchOwnerWriteLoop is the single writer goroutine. It owns the WriteBatch
-// and revRelAppendBuffer exclusively — no synchronisation primitives are
-// needed for those structures here.
+// batchOwnerWriteLoop is the single writer goroutine. It owns the WriteBatch,
+// and the chunk-metadata barrier exclusively — no synchronisation primitives
+// are needed for those structures here.
 func batchOwnerWriteLoop(
 	fhash []byte,
 	startIndex int64,
 	db *badger.DB,
+	containerMgr *fio.ContainerManager,
 	taskCh <-chan chunkTask,
 ) (string, error) {
 	batch, err := util.InitBatch(db)
@@ -420,7 +379,7 @@ func batchOwnerWriteLoop(
 		return "", err
 	}
 
-	revRelBuffer := newRevRelAppendBuffer(256)
+	barrier := newChunkMetaBarrier(db.Opts().Dir, containerMgr, batch)
 	hocho := newHochoAccumulator(cnst.StoreHashStrategy == cnst.HochoHashStrategy, startIndex)
 
 	for task := range taskCh {
@@ -428,28 +387,24 @@ func batchOwnerWriteLoop(
 			batch.Cancel()
 			return "", err
 		}
-		if len(task.cmeta) > 0 {
-			ckey := util.AppendToBytesSlice(cnst.ChonkNamespace, task.chash)
-			if err := dbio.SetBatchNode(ckey, task.cmeta, batch); err != nil {
-				batch.Cancel()
-				return "", err
-			}
+		ckey := util.AppendToBytesSlice(cnst.ChonkNamespace, task.chash)
+		if err := barrier.record(ckey, task.cmeta, task.size); err != nil {
+			batch.Cancel()
+			return "", err
 		}
 		if err := processRel(task.index, fhash, task.chash, db, batch); err != nil {
 			batch.Cancel()
 			return "", err
 		}
-		if err := processRevRel(task.index, fhash, task.chash, batch, revRelBuffer); err != nil {
+		if err := processRevRel(task.index, fhash, task.chash, batch); err != nil {
 			batch.Cancel()
 			return "", err
 		}
 	}
 
-	if revRelBuffer != nil {
-		if err := revRelBuffer.flush(fhash, db, batch); err != nil {
-			batch.Cancel()
-			return "", err
-		}
+	if err := barrier.fire(); err != nil {
+		batch.Cancel()
+		return "", err
 	}
 
 	hochoHash, err := hocho.finalize()
@@ -463,48 +418,4 @@ func batchOwnerWriteLoop(
 	}
 
 	return hochoHash, nil
-}
-
-// batchOwnerProcessChonk mirrors processChonk but uses a plain map for
-// seenChunks since only the single writer goroutine calls it.
-// When cdata is nil or empty the function skips the existence probe and store;
-// this is used by benchmark helpers that only exercise the rel/revrel write path.
-func batchOwnerProcessChonk(
-	cdata, chash []byte,
-	db *badger.DB,
-	batch *badger.WriteBatch,
-	containerMgr *fio.ContainerManager,
-	blockMgr *fio.BlockManager,
-	seenChunks map[string]struct{},
-) error {
-	if len(cdata) == 0 {
-		return nil
-	}
-	hashKey := string(chash)
-	if _, alreadySeen := seenChunks[hashKey]; alreadySeen {
-		return nil
-	}
-
-	ckey := util.AppendToBytesSlice(cnst.ChonkNamespace, chash)
-	if containerMgr != nil {
-		// Container mode: requires DB probe to avoid re-appending on resume.
-		err := dbio.PingNode(ckey, db)
-		if errors.Is(err, badger.ErrKeyNotFound) {
-			if setErr := dbio.SetBatchChonkNode(ckey, cdata, db, batch, containerMgr, blockMgr); setErr != nil {
-				return setErr
-			}
-			seenChunks[hashKey] = struct{}{}
-			return nil
-		}
-		if err == nil {
-			seenChunks[hashKey] = struct{}{}
-		}
-		return err
-	}
-	// File mode: WriteChonk is idempotent, call unconditionally.
-	if setErr := dbio.SetBatchChonkNode(ckey, cdata, db, batch, nil, blockMgr); setErr != nil {
-		return setErr
-	}
-	seenChunks[hashKey] = struct{}{}
-	return nil
 }

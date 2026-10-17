@@ -27,7 +27,6 @@ func optsFor(dbPath string, chunkKB int, password []byte) DBOptions {
 func optsForMode(dbPath string, chunkKB int, m testdb.Mode) DBOptions {
 	o := optsFor(dbPath, chunkKB, []byte(m.Password))
 	o.Layout.Container = m.Container
-	o.Layout.Hierarchical = m.Hierarchical
 	o.Layout.Quick = m.Quick
 	return o
 }

@@ -56,6 +56,9 @@ type cliFlags struct {
 
 	listStatus *string
 	repairFix  *bool
+	repairUpg  *bool
+	repairYes  *bool
+	repairVfy  *bool
 	resetYes   *bool
 
 	deep            *bool
@@ -124,7 +127,7 @@ func newCLIDefinition() cliDefinition {
 	flags.memopt = app.Flag(cnst.FlagLowResource, "Low resource use mode, foregoes performance in favour of utilising less memory, cpu, and energy").Short(cnst.FlagLowResourceShort).Default("false").Bool()
 	flags.quickOpt = app.Flag(cnst.FlagFastMode, "Quick mode, forgoes encryption, intra-chunk & overall db compression in favour of higher throughput").Short(cnst.FlagFastModeShort).Default("false").Bool()
 	flags.containerMode = app.Flag(cnst.FlagContainerMode, "Use container-based storage (packs multiple chunks into 1GB containers)").Short(cnst.FlagContainerModeShort).Default("false").Bool()
-	flags.hierarchicalIndex = app.Flag(cnst.FlagHierarchicalIndex, "Use hierarchical block index (groups 1000 chunks per block, requires container mode)").Short(cnst.FlagHierarchicalShort).Default("false").Bool()
+	flags.hierarchicalIndex = app.Flag(cnst.FlagHierarchicalIndex, "RETIRED: has no effect; chunk locations are always kept in the database").Short(cnst.FlagHierarchicalShort).Hidden().Default("false").Bool()
 	flags.compressLevel = app.Flag(cnst.FlagCompressLevel, "Per-chunk zstd compression level [fast|default|best] (default: best)").Short(cnst.FlagCompressLevelShort).Default("best").String()
 
 	commands := cliCommands{}
@@ -140,7 +143,7 @@ func newCLIDefinition() cliDefinition {
 	flags.storeHashAlgo = commands.store.Flag(cnst.FlagHashAlgo, "Hashing algorithm to use [sha3|blake3] (default: BLAKE3)").Short(cnst.FlagHashAlgoShort).Default(cnst.BLAKE3).String()
 	flags.storeHashStrategy = commands.store.Flag(cnst.FlagHashStrategy, "Store hash strategy for evidence [sync|async|hocho] (default: sync)").Short(cnst.FlagHashStrategyShort).Default(cnst.SyncHashStrategy).String()
 	flags.storePipeline = commands.store.Flag(cnst.FlagStorePipeline, "Store ingest pipeline mode [batch-owner|staged] (default: batch-owner)").Short(cnst.FlagStorePipelineShort).Default(cnst.StorePipelineBatch).String()
-	flags.storeAsyncFileWrite = commands.store.Flag(cnst.FlagStoreAsyncFileWrite, "EXPERIMENTAL: queue file-mode chunk writes to an async writer and drain before completion").Short(cnst.FlagStoreAsyncFileWriteShort).Default("false").Bool()
+	flags.storeAsyncFileWrite = commands.store.Flag(cnst.FlagStoreAsyncFileWrite, "DEPRECATED: has no effect; chunk blobs are always written durably").Short(cnst.FlagStoreAsyncFileWriteShort).Hidden().Default("false").Bool()
 	flags.storeIOEngine = commands.store.Flag(cnst.FlagStoreIOEngine, "Store write engine [auto|stdlib|io-uring] (default: auto)").Short(cnst.FlagStoreIOEngineShort).Default(cnst.StoreIOEngineAuto).String()
 	flags.storeIOUringQueue = commands.store.Flag(cnst.FlagStoreIOUringQueueDepth, "io-uring SQ/CQ depth (0 = auto-tuned)").Short(cnst.FlagStoreIOUringQueueDepthShort).Default("0").Int()
 	flags.hochoMode = commands.store.Flag(cnst.FlagHochoMode, "Hocho logical hashing mode [baseline|reuse|postdedup] (default: baseline)").Short(cnst.FlagHochoModeShort).Default(cnst.HochoModeBaseline).String()
@@ -163,6 +166,9 @@ func newCLIDefinition() cliDefinition {
 	commands.stats = app.Command(cnst.CmdStats, "Show database statistics")
 	commands.repair = app.Command(cnst.CmdRepair, "Inspect and optionally mark partial evidence ingests as failed")
 	flags.repairFix = commands.repair.Flag(cnst.FlagRepairFix, "Mark pending evidence ingests as failed so they are visible and retryable").Short(cnst.FlagRepairFixShort).Default("false").Bool()
+	flags.repairUpg = commands.repair.Flag(cnst.FlagRepairUpgrade, "Move a legacy hierarchical block index into the database").Default("false").Bool()
+	flags.repairYes = commands.repair.Flag("yes", "With --upgrade, delete the moved block index files without asking").Default("false").Bool()
+	flags.repairVfy = commands.repair.Flag(cnst.FlagRepairVerify, "Read back every stored chunk and check it against its hash").Default("false").Bool()
 
 	commands.near = app.Command(cnst.CmdNear, "Get NeAR file objects")
 	commands.nearIn = commands.near.Command(cnst.SubCmdIn, "Finds NeAR objects & generates GReAt graph for file INside of the database")

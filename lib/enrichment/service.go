@@ -212,7 +212,7 @@ func (service *Service) enrichPartitionByHash(txn *badger.Txn, evidence evidence
 		Size:             pdata.Size,
 		FilesystemType:   pdata.IndexedType,
 		Hash:             pdata.FileHash,
-		IndexedFileCount: len(pdata.InternalObjects),
+		IndexedFileCount: dbio.PartitionMemberCount(pdata),
 	}); err != nil {
 		return err
 	}
@@ -235,7 +235,11 @@ func (service *Service) enrichPartitionByHash(txn *badger.Txn, evidence evidence
 	pending := make([]FileRecord, 0, fileBatchSize)
 	pending = append(pending, buildNameLevelRecord(sharedPartitionRecord, pdata.Name, false))
 
-	for indexedHashB64 := range pdata.InternalObjects {
+	pid, err := base64.StdEncoding.DecodeString(partitionHashB64)
+	if err != nil {
+		return err
+	}
+	err = dbio.ForEachPartitionMemberTxn(txn, pid, pdata, func(indexedHashB64 string, _ structs.InternalOffset) error {
 		record, err := service.buildIndexedFileRecord(context, indexedHashB64, entropyCache)
 		if err != nil {
 			return err
@@ -247,6 +251,10 @@ func (service *Service) enrichPartitionByHash(txn *badger.Txn, evidence evidence
 		if onProcessed != nil {
 			onProcessed()
 		}
+		return nil
+	})
+	if err != nil {
+		return err
 	}
 	return service.upsertFiles(pending)
 }
@@ -281,7 +289,7 @@ func (service *Service) countIndexedObjectsForEnrichment() (int64, error) {
 				if err != nil {
 					continue
 				}
-				total += int64(len(pdata.InternalObjects))
+				total += int64(dbio.PartitionMemberCount(pdata))
 			}
 		}
 

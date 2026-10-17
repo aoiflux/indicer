@@ -11,10 +11,11 @@ import (
 	"sync/atomic"
 )
 
+// writeBackend writes container frames. Writes are positioned, so a retried
+// or repeated write of the same bytes at the same offset changes nothing.
 type writeBackend interface {
 	Name() string
-	WriteBlob(path string, data []byte) error
-	WriteToFile(file *os.File, data []byte) (int, error)
+	WriteAt(file *os.File, data []byte, off int64) (int, error)
 }
 
 type stdlibWriteBackend struct{}
@@ -23,36 +24,10 @@ func (stdlibWriteBackend) Name() string {
 	return cnst.StoreIOEngineStdlib
 }
 
-func (stdlibWriteBackend) WriteBlob(path string, data []byte) error {
-	f, err := os.OpenFile(path, os.O_CREATE|os.O_EXCL|os.O_WRONLY, cnst.FilePerm)
-	if err != nil {
-		if errors.Is(err, os.ErrExist) {
-			return nil
-		}
-		return err
-	}
-
-	if _, err := writeAll(f, data); err != nil {
-		_ = f.Close()
-		_ = os.Remove(path)
-		return err
-	}
-	if err := f.Close(); err != nil {
-		_ = os.Remove(path)
-		return err
-	}
-
-	return nil
-}
-
-func (stdlibWriteBackend) WriteToFile(file *os.File, data []byte) (int, error) {
-	return writeAll(file, data)
-}
-
-func writeAll(file *os.File, data []byte) (int, error) {
+func (stdlibWriteBackend) WriteAt(file *os.File, data []byte, off int64) (int, error) {
 	total := 0
 	for total < len(data) {
-		n, err := file.Write(data[total:])
+		n, err := file.WriteAt(data[total:], off+int64(total))
 		total += n
 		if err != nil {
 			return total, err
@@ -74,7 +49,10 @@ type ioUringWriteBackend struct {
 
 type ioUringHandle interface {
 	Close() error
-	SubmitWrite(fd int, data []byte) (int, error)
+	// SubmitWriteAt writes data at off and returns the bytes written. An
+	// error wrapping errNotSubmitted means the kernel never saw the write;
+	// after any other error a write may still be in flight.
+	SubmitWriteAt(fd int, data []byte, off int64) (int, error)
 }
 
 func (*ioUringWriteBackend) Name() string {

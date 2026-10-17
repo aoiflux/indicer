@@ -275,7 +275,7 @@ func ingestBatchOwnerWorkerOnce(db *badger.DB, fhash, mappedFile []byte, enableS
 		}()
 	}
 
-	go runBatchOwnerWriter(fhash, 0, db, taskCh, cancel, writerResCh)
+	go runBatchOwnerWriter(fhash, 0, db, nil, taskCh, cancel, writerResCh)
 	seenChunks := newShardedChunkSet()
 
 	active := 0
@@ -286,7 +286,7 @@ func ingestBatchOwnerWorkerOnce(db *badger.DB, fhash, mappedFile []byte, enableS
 		}
 
 		go func(start, end int64) {
-			err := batchOwnerHashWorker(ctx, mappedFile, start, end, db, nil, nil, seenChunks, taskCh, simhashWriter)
+			err := batchOwnerHashWorker(ctx, mappedFile, start, end, db, nil, seenChunks, taskCh, simhashWriter)
 			workerResCh <- workerRes{err: err, bytes: end - start}
 		}(idx, chonkEnd)
 		active++
@@ -328,23 +328,16 @@ func ingestMetadataWorkloadWithOffset(db *badger.DB, fileCount int, chunkHashes 
 		if err != nil {
 			return err
 		}
-		revRelBuffer := newRevRelAppendBuffer(len(chunkHashes))
-
 		for chunkIdx, chash := range chunkHashes {
 			index := int64(chunkIdx) * cnst.ChonkSize
 			if err := processRel(index, fhash, chash, db, batch); err != nil {
 				batch.Cancel()
 				return err
 			}
-			if err := processRevRel(index, fhash, chash, batch, revRelBuffer); err != nil {
+			if err := processRevRel(index, fhash, chash, batch); err != nil {
 				batch.Cancel()
 				return err
 			}
-		}
-
-		if err := revRelBuffer.flush(fhash, db, batch); err != nil {
-			batch.Cancel()
-			return err
 		}
 
 		if err := batch.Flush(); err != nil {
@@ -377,28 +370,16 @@ func ingestProcessRelOnlyWorkload(db *badger.DB, fileCount int, chunkHashes [][]
 }
 
 func ingestProcessRevRelWorkload(db *badger.DB, fileCount int, chunkHashes [][]byte, fileOffset int) error {
-	return ingestProcessRevRelWorkloadMode(db, fileCount, chunkHashes, fileOffset, false)
+	return ingestProcessRevRelWorkloadMode(db, fileCount, chunkHashes, fileOffset)
 }
 
-func ingestProcessRevRelWorkloadMode(db *badger.DB, fileCount int, chunkHashes [][]byte, fileOffset int, buffered bool) error {
+func ingestProcessRevRelWorkloadMode(db *badger.DB, fileCount int, chunkHashes [][]byte, fileOffset int) error {
 	for fileIdx := 0; fileIdx < fileCount; fileIdx++ {
 		fhash := []byte(fmt.Sprintf("ingest-rev-file-%06d", fileOffset+fileIdx))
 		batch := db.NewWriteBatch()
-		var revRelBuffer *revRelAppendBuffer
-		if buffered {
-			revRelBuffer = newRevRelAppendBuffer(len(chunkHashes))
-		}
-
 		for chunkIdx, chash := range chunkHashes {
 			index := int64(chunkIdx) * cnst.ChonkSize
-			if err := processRevRel(index, fhash, chash, batch, revRelBuffer); err != nil {
-				batch.Cancel()
-				return err
-			}
-		}
-
-		if revRelBuffer != nil {
-			if err := revRelBuffer.flush(fhash, db, batch); err != nil {
+			if err := processRevRel(index, fhash, chash, batch); err != nil {
 				batch.Cancel()
 				return err
 			}
@@ -708,9 +689,8 @@ func BenchmarkIngestBatchOwnershipSimhashToggle(b *testing.B) {
 // ingestBatchOwnerMetadataWorkload drives batchOwnerWriteLoop directly,
 // feeding pre-computed chunk hashes through the task channel so we measure
 // the writer's DB throughput in isolation from hashing work.
-// cdata is set to nil so batchOwnerProcessChonk skips the chunk existence
-// probe and store, making this directly comparable to ingestMetadataWorkload
-// which only exercises processRel + processRevRel.
+// No chunk is stored, making this directly comparable to
+// ingestMetadataWorkload which only exercises processRel + processRevRel.
 func ingestBatchOwnerMetadataWorkload(db *badger.DB, fileCount int, chunkHashes [][]byte) error {
 	return ingestBatchOwnerMetadataWorkloadWithOffset(db, fileCount, chunkHashes, 0)
 }
@@ -719,7 +699,7 @@ func ingestBatchOwnerMetadataWorkloadWithOffset(db *badger.DB, fileCount int, ch
 	baseTasks := make([]chunkTask, len(chunkHashes))
 	for chunkIdx, chash := range chunkHashes {
 		index := int64(chunkIdx) * cnst.ChonkSize
-		baseTasks[chunkIdx] = chunkTask{index: index, chash: chash, cdata: nil}
+		baseTasks[chunkIdx] = chunkTask{index: index, chash: chash}
 	}
 
 	for fileIdx := 0; fileIdx < fileCount; fileIdx++ {
@@ -741,31 +721,12 @@ func batchOwnerWriteLoopBenchmarkDirect(fhash []byte, db *badger.DB, tasks []chu
 		return err
 	}
 
-	var seenChunks map[string]struct{}
-	revRelBuffer := newRevRelAppendBuffer(len(tasks))
-
 	for _, task := range tasks {
-		if len(task.cdata) != 0 {
-			if seenChunks == nil {
-				seenChunks = make(map[string]struct{}, len(tasks))
-			}
-			if err := batchOwnerProcessChonk(task.cdata, task.chash, db, batch, nil, nil, seenChunks); err != nil {
-				batch.Cancel()
-				return err
-			}
-		}
 		if err := processRel(task.index, fhash, task.chash, db, batch); err != nil {
 			batch.Cancel()
 			return err
 		}
-		if err := processRevRel(task.index, fhash, task.chash, batch, revRelBuffer); err != nil {
-			batch.Cancel()
-			return err
-		}
-	}
-
-	if revRelBuffer != nil {
-		if err := revRelBuffer.flush(fhash, db, batch); err != nil {
+		if err := processRevRel(task.index, fhash, task.chash, batch); err != nil {
 			batch.Cancel()
 			return err
 		}

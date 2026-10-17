@@ -116,10 +116,11 @@ func storePartitionFile(infile structs.InputFile) error {
 		infile.GetName(),
 		infile.GetStartIndex(),
 		infile.GetSize(),
-		infile.GetInternalObjects(),
+		nil,
 		partitionHash,
 	)
-	err := dbio.SetFile(partitionKey, partitionFile, infile.GetDB())
+	// Indexed files go to one key each, not into the record (ING-21).
+	err := dbio.SetPartitionWithMembers(infile.GetDB(), infile.GetID(), partitionFile, infile.GetInternalObjects())
 	if err != nil {
 		logging.GetLogger().Error("storePartitionFile SET_FILE_ERROR", zap.Error(err))
 		return err
@@ -278,14 +279,14 @@ func processRel(index int64, fhash, chash []byte, db *badger.DB, batch *badger.W
 	// safe and avoids an extra DB read on the hot ingest path.
 	return dbio.SetBatchNode(relKey, chash, batch)
 }
-func processRevRel(index int64, fhash, chash []byte, batch *badger.WriteBatch, revRelBuffer *revRelAppendBuffer) error {
+
+// processRevRel records that chunk chash occurs at index in fhash, as one key
+// of its own. Nothing is buffered or merged, so memory does not grow with the
+// evidence and concurrent ingests never overwrite each other's relations
+// (STO-14).
+func processRevRel(index int64, fhash, chash []byte, batch *badger.WriteBatch) error {
 	if !cnst.ENABLEREVREL {
 		return nil
 	}
-	if revRelBuffer != nil {
-		revRelBuffer.add(chash, index)
-	} else if err := dbio.SetReverseRelationAppendMember(chash, index, fhash, batch); err != nil {
-		return err
-	}
-	return nil
+	return dbio.SetReverseRelationAppendMember(chash, index, fhash, batch)
 }

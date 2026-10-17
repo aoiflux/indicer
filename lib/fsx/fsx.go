@@ -84,6 +84,46 @@ func WriteAtomic(path string, perm fs.FileMode, opts Options, write func(f *os.F
 	return nil
 }
 
+// WriteNewFile creates path, which must not exist, writes data to it and
+// syncs it. It fails with an error wrapping fs.ErrExist when path exists.
+func WriteNewFile(path string, data []byte, perm fs.FileMode) error {
+	return WriteNew(path, perm, func(f *os.File) error {
+		_, err := f.Write(data)
+		return err
+	})
+}
+
+// WriteNew creates path exclusively, lets write fill it, then syncs and
+// closes it. If any step fails the file is removed.
+//
+// Unlike WriteAtomic there is no rename, so a crash can leave a partial file
+// under path. Use it only where nothing trusts the file until a later record
+// says it is complete, and that record is written after WriteNew returns: a
+// chunk blob is trusted only through its badger metadata. The directory is
+// not synced either; on Unix the caller syncs it before relying on the name.
+func WriteNew(path string, perm fs.FileMode, write func(f *os.File) error) (err error) {
+	f, err := os.OpenFile(path, os.O_CREATE|os.O_EXCL|os.O_WRONLY, perm)
+	if err != nil {
+		return fmt.Errorf("fsx: create %s: %w", path, err)
+	}
+	defer func() {
+		if err != nil {
+			_ = f.Close()
+			_ = Remove(path)
+		}
+	}()
+	if err = write(f); err != nil {
+		return fmt.Errorf("fsx: write %s: %w", path, err)
+	}
+	if err = f.Sync(); err != nil {
+		return fmt.Errorf("fsx: sync %s: %w", path, err)
+	}
+	if err = f.Close(); err != nil {
+		return fmt.Errorf("fsx: close %s: %w", path, err)
+	}
+	return nil
+}
+
 // ReplaceFile atomically renames src to dst, which must be in the same
 // directory or at least on the same volume. With overwrite false it fails with
 // an error wrapping fs.ErrExist when dst exists. The destination directory is

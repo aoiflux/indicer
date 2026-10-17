@@ -170,7 +170,7 @@ func TestStoreTuningFitsMemoryBudget(t *testing.T) {
 	if err != nil || len(issues) != 0 {
 		t.Fatalf("defaults on a normal machine: %v %v", err, issues)
 	}
-	if w, q := cnst.DefaultStoreTuning(machine.CPUs, false, false, false); eff.StoreWorkers != w || eff.StoreQueue != q {
+	if w, q := cnst.DefaultStoreTuning(machine.CPUs, false, false); eff.StoreWorkers != w || eff.StoreQueue != q {
 		t.Fatalf("tuning %d/%d, want the defaults %d/%d", eff.StoreWorkers, eff.StoreQueue, w, q)
 	}
 }
@@ -201,13 +201,22 @@ func TestMachineReportsCPUs(t *testing.T) {
 	}
 }
 
-func TestHierarchicalEnablesContainer(t *testing.T) {
-	eff, issues, err := Resolve(with(base(cnst.CmdStore), func(r *Raw) { r.Hierarchical = true }), machine)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if !eff.Container || len(issues) != 1 || issues[0].Flag != FlagHierarchical {
-		t.Fatalf("hierarchical without container: eff %+v issues %v", eff, issues)
+// TestHierarchicalRetired: D9 retires --hierarchical. It still parses, so
+// scripts keep working, but it changes nothing and says so.
+func TestHierarchicalRetired(t *testing.T) {
+	for _, container := range []bool{false, true} {
+		eff, issues, err := Resolve(with(base(cnst.CmdStore), func(r *Raw) {
+			r.Hierarchical, r.Container = true, container
+		}), machine)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if eff.Container != container {
+			t.Fatalf("--container=%v with --hierarchical: container %v", container, eff.Container)
+		}
+		if len(issues) != 1 || issues[0].Flag != FlagHierarchical || !strings.Contains(issues[0].Message, "no effect") {
+			t.Fatalf("--hierarchical gave issues %v, want one notice that it has no effect", issues)
+		}
 	}
 }
 

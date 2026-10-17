@@ -166,7 +166,7 @@ func TestGetReverseRelationNodeReadsSegmentMembers(t *testing.T) {
 	revKey := util.AppendToBytesSlice(cnst.ReverseRelationNamespace, chash, cnst.DataSeperator, idx)
 
 	batchA := db.NewWriteBatch()
-	if err := SetReverseRelationSegmentMembers([]byte("segment-a"), []ReverseRelationAppendMember{{Chash: chash, Index: idx}}, db, batchA); err != nil {
+	if err := seedLegacySegmentMembers([]byte("segment-a"), []ReverseRelationAppendMember{{Chash: chash, Index: idx}}, db, batchA); err != nil {
 		batchA.Cancel()
 		t.Fatalf("SetReverseRelationSegmentMembers segment-a: %v", err)
 	}
@@ -175,7 +175,7 @@ func TestGetReverseRelationNodeReadsSegmentMembers(t *testing.T) {
 	}
 
 	batchB := db.NewWriteBatch()
-	if err := SetReverseRelationSegmentMembers([]byte("segment-b"), []ReverseRelationAppendMember{{Chash: chash, Index: idx}}, db, batchB); err != nil {
+	if err := seedLegacySegmentMembers([]byte("segment-b"), []ReverseRelationAppendMember{{Chash: chash, Index: idx}}, db, batchB); err != nil {
 		batchB.Cancel()
 		t.Fatalf("SetReverseRelationSegmentMembers segment-b: %v", err)
 	}
@@ -248,7 +248,7 @@ func TestGetReverseRelationAppendPrefixMembersIncludesSegments(t *testing.T) {
 	}
 
 	batch := db.NewWriteBatch()
-	if err := SetReverseRelationSegmentMembers([]byte("segment-prefix"), seedMembers, db, batch); err != nil {
+	if err := seedLegacySegmentMembers([]byte("segment-prefix"), seedMembers, db, batch); err != nil {
 		batch.Cancel()
 		t.Fatalf("SetReverseRelationSegmentMembers seed: %v", err)
 	}

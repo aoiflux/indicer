@@ -106,9 +106,9 @@ func Machine() Sys {
 type Effective struct {
 	Preset string
 
-	ChunkKiB                            int
-	Low, Quick, Container, Hierarchical bool
-	CompressLevel                       string
+	ChunkKiB              int
+	Low, Quick, Container bool
+	CompressLevel         string
 
 	StoreWorkers, StoreQueue     int
 	RestoreWorkers, RestoreQueue int
@@ -190,10 +190,10 @@ func (r *resolver) resolve() {
 	r.resolveCompressLevel()
 
 	r.eff.Container = raw.Container
-	r.eff.Hierarchical = raw.Hierarchical
-	if raw.Hierarchical && !raw.Container {
-		r.eff.Container = true
-		r.warn(FlagHierarchical, "requires container mode; enabling --%s", FlagContainer)
+	if raw.Hierarchical {
+		// D9: chunk locations always go to the database now; databases
+		// written in hierarchical mode stay readable.
+		r.warn(FlagHierarchical, "is retired and has no effect; use --%s for container storage", FlagContainer)
 	}
 
 	switch raw.Command {
@@ -359,7 +359,7 @@ func (r *resolver) resolveStoreTuning() {
 	if !r.checkCounts(FlagStoreWorkers, raw.StoreWorkers, FlagStoreQueue, raw.StoreQueue) {
 		return
 	}
-	defW, defQ := cnst.DefaultStoreTuning(r.sys.CPUs, r.eff.Low, r.eff.Container, r.eff.Hierarchical)
+	defW, defQ := cnst.DefaultStoreTuning(r.sys.CPUs, r.eff.Low, r.eff.Container)
 	r.eff.StoreWorkers, r.eff.StoreQueue = r.fitBudget(defW, defQ, raw.StoreWorkers, raw.StoreQueue, FlagStoreWorkers, FlagStoreQueue)
 }
 

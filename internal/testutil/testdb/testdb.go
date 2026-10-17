@@ -24,25 +24,23 @@ import (
 
 // Mode is one storage configuration a database can be written in.
 type Mode struct {
-	Name         string
-	Quick        bool
-	Container    bool
-	Hierarchical bool
-	Password     string
+	Name      string
+	Quick     bool
+	Container bool
+	Password  string
 }
 
 // The storage modes the matrix covers. Default is what `dues store` uses with
 // no flags; the others are the non-default paths that shipped untested.
 var (
-	Default      = Mode{Name: "default"}
-	Encrypted    = Mode{Name: "encrypted", Password: "test-password"}
-	Quick        = Mode{Name: "quick", Quick: true}
-	Container    = Mode{Name: "container", Container: true}
-	Hierarchical = Mode{Name: "hierarchical", Container: true, Hierarchical: true}
+	Default   = Mode{Name: "default"}
+	Encrypted = Mode{Name: "encrypted", Password: "test-password"}
+	Quick     = Mode{Name: "quick", Quick: true}
+	Container = Mode{Name: "container", Container: true}
 )
 
 // Modes is the mode matrix ForEachMode runs.
-var Modes = []Mode{Default, Encrypted, Quick, Container, Hierarchical}
+var Modes = []Mode{Default, Encrypted, Quick, Container}
 
 // Key returns the database key for the mode's password, derived the way the
 // CLI derives it.
@@ -60,8 +58,8 @@ type Globals struct {
 	HashAlgo, CompressLevel, StoreHashStrategy, HochoMode string
 	StorePipelineMode, StoreIOEngine                      string
 	ChonkSize                                             int64
-	MemOpt, QuickOpt, ContainerMode, HierarchicalIndex    bool
-	EnableSimhash, EnableRevrel, StoreAsyncFileWrites     bool
+	MemOpt, QuickOpt, ContainerMode, LegacyBlockIndex     bool
+	EnableSimhash, EnableRevrel                           bool
 	StoreIOUringQueueDepth, StoreWorkerCount              int
 	StoreTaskQueueDepth, RestoreWorkerCount               int
 	RestoreTaskQueueDepth, RestoreProgressIntervalMs      int
@@ -82,10 +80,9 @@ func Snapshot() Globals {
 		MemOpt:                    cnst.MEMOPT,
 		QuickOpt:                  cnst.QUICKOPT,
 		ContainerMode:             cnst.CONTAINERMODE,
-		HierarchicalIndex:         cnst.HIERARCHICALINDEX,
+		LegacyBlockIndex:          cnst.LegacyBlockIndex,
 		EnableSimhash:             cnst.ENABLESIMHASH,
 		EnableRevrel:              cnst.ENABLEREVREL,
-		StoreAsyncFileWrites:      cnst.StoreAsyncFileWrites,
 		StoreIOUringQueueDepth:    cnst.StoreIOUringQueueDepth,
 		StoreWorkerCount:          cnst.StoreWorkerCount,
 		StoreTaskQueueDepth:       cnst.StoreTaskQueueDepth,
@@ -109,10 +106,9 @@ func (g Globals) Restore() {
 	cnst.MEMOPT = g.MemOpt
 	cnst.QUICKOPT = g.QuickOpt
 	cnst.CONTAINERMODE = g.ContainerMode
-	cnst.HIERARCHICALINDEX = g.HierarchicalIndex
+	cnst.LegacyBlockIndex = g.LegacyBlockIndex
 	cnst.ENABLESIMHASH = g.EnableSimhash
 	cnst.ENABLEREVREL = g.EnableRevrel
-	cnst.StoreAsyncFileWrites = g.StoreAsyncFileWrites
 	cnst.StoreIOUringQueueDepth = g.StoreIOUringQueueDepth
 	cnst.StoreWorkerCount = g.StoreWorkerCount
 	cnst.StoreTaskQueueDepth = g.StoreTaskQueueDepth
@@ -157,7 +153,7 @@ func Apply(tb testing.TB, m Mode) {
 	EnsureCodecs(tb)
 	cnst.QUICKOPT = m.Quick
 	cnst.CONTAINERMODE = m.Container
-	cnst.HIERARCHICALINDEX = m.Hierarchical
+	cnst.LegacyBlockIndex = false
 }
 
 // NewDataRoot returns a fresh, empty data root inside the test's temp dir.

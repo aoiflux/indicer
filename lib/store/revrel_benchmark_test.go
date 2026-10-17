@@ -43,7 +43,7 @@ func BenchmarkProcessRevRel(b *testing.B) {
 		b.ResetTimer()
 		for i := 0; i < b.N; i++ {
 			batch := db.NewWriteBatch()
-			err := processRevRel(index, fhash, chash, batch, nil)
+			err := processRevRel(index, fhash, chash, batch)
 			if err != nil {
 				batch.Cancel()
 				b.Fatalf("processRevRel noop path failed: %v", err)
@@ -73,7 +73,7 @@ func BenchmarkProcessRevRel(b *testing.B) {
 		for i := 0; i < b.N; i++ {
 			batch := db.NewWriteBatch()
 			fhash := []byte(fmt.Sprintf("bench-file-%d", i))
-			err := processRevRel(index, fhash, chash, batch, nil)
+			err := processRevRel(index, fhash, chash, batch)
 			if err != nil {
 				batch.Cancel()
 				b.Fatalf("processRevRel write path failed: %v", err)

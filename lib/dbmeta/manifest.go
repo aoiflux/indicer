@@ -171,7 +171,10 @@ func (m Manifest) Validate() error {
 
 // SameLayout reports whether a and b describe the same data: equal layout
 // and encryption. Creation time, writer and inference notes may differ.
+// Container and container-bidx storage count as the same: they store chunks
+// alike, and `repair --upgrade` turns one into the other.
 func SameLayout(a, b Manifest) bool {
+	a.Layout.Storage, b.Layout.Storage = sameStorage(a.Layout.Storage), sameStorage(b.Layout.Storage)
 	ja, _ := json.Marshal(struct {
 		L Layout
 		E Encryption
@@ -251,4 +254,12 @@ func Save(root string, m Manifest) error {
 		return err
 	}
 	return fsx.WriteFileAtomic(MirrorPath(root), b, cnst.FilePerm)
+}
+
+// sameStorage maps container-bidx to container for SameLayout.
+func sameStorage(s string) string {
+	if s == StorageContainerBIDX {
+		return StorageContainer
+	}
+	return s
 }

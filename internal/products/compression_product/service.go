@@ -32,7 +32,6 @@ import (
 	"github.com/dgraph-io/badger/v4"
 	"github.com/klauspost/compress/zstd"
 	"github.com/ulikunitz/xz"
-	"github.com/vmihailenco/msgpack/v5"
 )
 
 const (
@@ -2960,10 +2959,8 @@ func restoreArchiveFilesWithProgressCtx(ctx context.Context, stagingDir, outputR
 	defer h.Close()
 	db := h.DB
 
-	if err := remapArchiveChunkPathsCtx(ctx, db, util.BlobPath(dbPath)); err != nil {
-		return 0, err
-	}
-
+	// Chunk paths resolve inside the archive's own data root (STO-10), so the
+	// embedded database needs no path rewriting (CMP-4).
 	evidenceKeys, err := listEvidenceKeysCtx(ctx, db)
 	if err != nil {
 		return 0, err
@@ -3224,57 +3221,6 @@ func listKeysByPrefixCtx(ctx context.Context, db *badger.DB, prefix []byte) ([][
 		return nil, err
 	}
 	return keys, nil
-}
-
-func remapArchiveChunkPaths(db *badger.DB, blobRoot string) error {
-	return remapArchiveChunkPathsCtx(context.Background(), db, blobRoot)
-}
-
-func remapArchiveChunkPathsCtx(ctx context.Context, db *badger.DB, blobRoot string) error {
-	if ctx == nil {
-		ctx = context.Background()
-	}
-	chunkKeys, err := listKeysByPrefixCtx(ctx, db, []byte(cnst.ChonkNamespace))
-	if err != nil {
-		return err
-	}
-
-	for _, key := range chunkKeys {
-		if err := ctx.Err(); err != nil {
-			return err
-		}
-		metadata, err := dbio.GetNode(key, db)
-		if err != nil {
-			return err
-		}
-
-		var chunkMeta structs.ChonkMetadata
-		if err := msgpack.Unmarshal(metadata, &chunkMeta); err != nil {
-			return err
-		}
-		if chunkMeta.Path == "" {
-			continue
-		}
-		if _, err := os.Stat(chunkMeta.Path); err == nil {
-			continue
-		}
-
-		candidatePath := filepath.Join(blobRoot, filepath.Base(chunkMeta.Path))
-		if _, err := os.Stat(candidatePath); err != nil {
-			continue
-		}
-
-		chunkMeta.Path = candidatePath
-		updated, err := msgpack.Marshal(chunkMeta)
-		if err != nil {
-			return err
-		}
-		if err := dbio.SetNode(key, updated, db); err != nil {
-			return err
-		}
-	}
-
-	return nil
 }
 
 func resolveRestoredFilePath(outputRoot string, manifest archiveManifest, originalName, fallbackName string) (string, error) {

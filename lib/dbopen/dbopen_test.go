@@ -6,7 +6,6 @@ import (
 	"encoding/json"
 	"errors"
 	"os"
-	"path"
 	"path/filepath"
 	"slices"
 	"strings"
@@ -19,11 +18,8 @@ import (
 	"indicer/lib/cnst"
 	"indicer/lib/dbio"
 	"indicer/lib/dbmeta"
-	"indicer/lib/fio"
-	"indicer/lib/structs"
 
 	"github.com/dgraph-io/badger/v4"
-	"github.com/vmihailenco/msgpack/v5"
 	"github.com/zeebo/blake3"
 )
 
@@ -67,7 +63,7 @@ func storeChunk(t *testing.T, db *badger.DB, data []byte) []byte {
 	t.Helper()
 	h := blake3.Sum256(data)
 	ckey := append([]byte(cnst.ChonkNamespace), h[:]...)
-	meta, err := dbio.MaterializeChonkNode(ckey, data, db, nil, nil)
+	meta, err := dbio.MaterializeChonkNode(ckey, data, db, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -282,45 +278,6 @@ func TestNewerFormatRefused(t *testing.T) {
 	}
 }
 
-// readLegacyChunk reads and decodes one chunk of a legacy fixture. The
-// fixtures record absolute blob paths from the machine that generated them
-// (STO-10), so the path is rebased onto root here until dbio resolves blob
-// paths itself (W3).
-func readLegacyChunk(t *testing.T, db *badger.DB, root string, ckey []byte) ([]byte, error) {
-	t.Helper()
-	rebase := func(p string) string {
-		return filepath.Join(root, cnst.BLOBSDIR, path.Base(strings.ReplaceAll(p, `\`, "/")))
-	}
-	var stored []byte
-	raw, err := dbio.GetNode(ckey, db)
-	switch {
-	case err == nil:
-		var meta structs.ChonkMetadata
-		if err := msgpack.Unmarshal(raw, &meta); err != nil {
-			t.Fatal(err)
-		}
-		if meta.Container {
-			stored, err = fio.ReadChunkFromContainer(rebase(meta.Path), meta.Offset, meta.EncodedSize)
-		} else {
-			stored, err = fio.ReadChonk(rebase(meta.Path))
-		}
-		if err != nil {
-			t.Fatal(err)
-		}
-	case errors.Is(err, badger.ErrKeyNotFound):
-		ctr, off, size, err := fio.NewBlockManager(db.Opts().Dir, nil).GetChunkMetadata(ckey)
-		if err != nil {
-			t.Fatal(err)
-		}
-		if stored, err = fio.ReadChunkFromContainer(rebase(ctr), off, size); err != nil {
-			t.Fatal(err)
-		}
-	default:
-		t.Fatal(err)
-	}
-	return blobcodec.For(db).Decode(ckey, stored)
-}
-
 // readSomeChunks decodes the chunks behind every relation (the fixtures are
 // small), which proves the codec and keys chosen for a legacy database are
 // right. Container fixtures hold a second session's chunks at offsets that
@@ -346,7 +303,7 @@ func readSomeChunks(t *testing.T, db *badger.DB, root string, container bool) in
 	ok := 0
 	for _, c := range chashes {
 		ckey := append([]byte(cnst.ChonkNamespace), c...)
-		data, err := readLegacyChunk(t, db, root, ckey)
+		data, err := dbio.GetChonkNode(ckey, db)
 		if err == nil {
 			err = blobcodec.Verify(ckey, data)
 		}

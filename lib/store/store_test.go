@@ -130,7 +130,7 @@ func TestProcessRevRelSkippedWhenDisabled(t *testing.T) {
 	chash := []byte("chunk-disabled")
 
 	batch := db.NewWriteBatch()
-	if err := processRevRel(index, fhash, chash, batch, nil); err != nil {
+	if err := processRevRel(index, fhash, chash, batch); err != nil {
 		batch.Cancel()
 		t.Fatalf("processRevRel disabled: %v", err)
 	}
@@ -159,7 +159,7 @@ func TestProcessRevRelWritesWhenEnabled(t *testing.T) {
 	chash := []byte("chunk-enabled")
 
 	batch := db.NewWriteBatch()
-	if err := processRevRel(index, fhash, chash, batch, nil); err != nil {
+	if err := processRevRel(index, fhash, chash, batch); err != nil {
 		batch.Cancel()
 		t.Fatalf("processRevRel enabled: %v", err)
 	}

@@ -103,6 +103,43 @@ func TestWriteAtomicNoOverwrite(t *testing.T) {
 	assertNoTemps(t, dir)
 }
 
+func TestWriteNewFile(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "chunk.blob")
+
+	if err := WriteNewFile(path, []byte("first"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if got := readFile(t, path); got != "first" {
+		t.Fatalf("content %q, want %q", got, "first")
+	}
+	err := WriteNewFile(path, []byte("second"), 0o600)
+	if !errors.Is(err, fs.ErrExist) {
+		t.Fatalf("second write returned %v, want fs.ErrExist", err)
+	}
+	if got := readFile(t, path); got != "first" {
+		t.Fatalf("existing file overwritten: %q", got)
+	}
+	assertNoTemps(t, dir)
+}
+
+func TestWriteNewFailureRemovesFile(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "chunk.blob")
+
+	err := WriteNew(path, 0o600, func(f *os.File) error {
+		w := testutil.NewENOSPCWriter(f, 3)
+		_, err := w.Write([]byte("partial content"))
+		return err
+	})
+	if !errors.Is(err, testutil.ErrNoSpace()) {
+		t.Fatalf("WriteNew error %v, want the writer's disk-full error", err)
+	}
+	if _, err := os.Lstat(path); !errors.Is(err, fs.ErrNotExist) {
+		t.Fatalf("partial file left after a failed write: %v", err)
+	}
+}
+
 func TestReplaceFile(t *testing.T) {
 	dir := t.TempDir()
 	src := filepath.Join(dir, "src")

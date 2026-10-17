@@ -52,10 +52,9 @@ const LockName = ".dues.lock"
 // is the layout; for an existing one, a field the user set explicitly must
 // match the manifest, and the rest are ignored.
 type Requested struct {
-	ChunkKiB     int
-	ChunkHash    string
-	Container    bool
-	Hierarchical bool
+	ChunkKiB  int
+	ChunkHash string
+	Container bool
 	// Quick creates a database without badger table compression.
 	Quick bool
 	// Set holds the flag names the user set explicitly (cnst.Flag*).
@@ -186,7 +185,9 @@ func (h *Handle) open(ctx context.Context, req Request) error {
 		return err
 	}
 	blobcodec.Register(h.DB, codec)
+	dbmeta.RegisterLayout(h.DB, m.Layout)
 	ApplyToGlobals(m)
+	h.keepBlockIndexLookup()
 
 	if !h.ReadOnly {
 		if n, err := fsx.SweepTemps(filepath.Join(h.Root, cnst.BLOBSDIR), time.Hour); err != nil {
@@ -271,7 +272,7 @@ func (h *Handle) create(req Request) (dbmeta.Manifest, dbmeta.Keys, error) {
 	l := dbmeta.Layout{
 		ChunkKiB:          r.ChunkKiB,
 		ChunkHash:         r.ChunkHash,
-		Storage:           storageOf(r.Container, r.Hierarchical),
+		Storage:           storageOf(r.Container),
 		BlobEncoding:      blobcodec.V2,
 		ValueEncoding:     dbmeta.EncodingZstd,
 		BadgerCompression: dbmeta.EncodingZstd,
@@ -302,11 +303,10 @@ func (h *Handle) create(req Request) (dbmeta.Manifest, dbmeta.Keys, error) {
 	return m, keys, nil
 }
 
-func storageOf(container, hierarchical bool) string {
-	switch {
-	case hierarchical:
-		return dbmeta.StorageContainerBIDX
-	case container:
+// storageOf is the storage of a new database. Hierarchical storage is retired
+// (D9); databases that have it keep it.
+func storageOf(container bool) string {
+	if container {
 		return dbmeta.StorageContainer
 	}
 	return dbmeta.StorageFile
@@ -406,10 +406,9 @@ func checkRequested(root string, m dbmeta.Manifest, r Requested) error {
 		errs = append(errs, fmt.Errorf("--%s %s: database %s uses %s; omit --%s",
 			cnst.FlagHashAlgo, r.ChunkHash, root, l.ChunkHash, cnst.FlagHashAlgo))
 	}
-	want := storageOf(r.Container, r.Hierarchical)
-	if (r.Set[cnst.FlagContainerMode] || r.Set[cnst.FlagHierarchicalIndex]) && want != l.Storage {
-		errs = append(errs, fmt.Errorf("--%s/--%s: database %s uses %s storage; omit them",
-			cnst.FlagContainerMode, cnst.FlagHierarchicalIndex, root, l.Storage))
+	if r.Set[cnst.FlagContainerMode] && r.Container != (l.Storage != dbmeta.StorageFile) {
+		errs = append(errs, fmt.Errorf("--%s: database %s uses %s storage; omit --%s",
+			cnst.FlagContainerMode, root, l.Storage, cnst.FlagContainerMode))
 	}
 	if len(errs) > 0 {
 		return &lifecycle.UsageError{Err: errors.Join(errs...)}
@@ -547,12 +546,13 @@ func ApplyToGlobals(m dbmeta.Manifest) {
 	cnst.HASHALGO = l.ChunkHash
 	cnst.QUICKOPT = l.ValueEncoding == dbmeta.EncodingRaw
 	cnst.CONTAINERMODE = l.Storage != dbmeta.StorageFile
-	cnst.HIERARCHICALINDEX = l.Storage == dbmeta.StorageContainerBIDX
+	cnst.LegacyBlockIndex = l.Storage == dbmeta.StorageContainerBIDX
 }
 
 func (h *Handle) release() {
 	if h.DB != nil {
 		blobcodec.Unregister(h.DB)
+		dbmeta.UnregisterLayout(h.DB)
 		h.DB.Close()
 		h.DB = nil
 	}

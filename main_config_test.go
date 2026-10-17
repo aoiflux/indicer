@@ -92,12 +92,50 @@ func TestConfigRejectsBadFlags(t *testing.T) {
 	}
 }
 
-func TestConfigHierarchicalEnablesContainer(t *testing.T) {
-	if _, err := configure(t, "-i", "list"); err != nil {
+// TestConfigHierarchicalRetired: -i no longer selects a storage mode (D9).
+func TestConfigHierarchicalRetired(t *testing.T) {
+	tuning, err := configure(t, "-i", "list")
+	if err != nil {
 		t.Fatal(err)
 	}
-	if !cnst.HIERARCHICALINDEX || !cnst.CONTAINERMODE {
-		t.Fatalf("hierarchical %v container %v; want both", cnst.HIERARCHICALINDEX, cnst.CONTAINERMODE)
+	if cnst.CONTAINERMODE {
+		t.Fatal("-i enabled container mode")
+	}
+	for _, issue := range tuning.issues {
+		if issue.Flag == cnst.FlagHierarchicalIndex {
+			return
+		}
+	}
+	t.Fatal("-i gave no notice")
+}
+
+// TestConfigAsyncFIODeprecated covers the retired --async-fio (STO-4). It
+// still parses, so existing scripts keep working, but it changes nothing and
+// says so.
+func TestConfigAsyncFIODeprecated(t *testing.T) {
+	warned := func(tuning pipelineTuning) bool {
+		for _, issue := range tuning.issues {
+			if issue.Flag == cnst.FlagStoreAsyncFileWrite {
+				return true
+			}
+		}
+		return false
+	}
+	for _, flag := range []string{"--async-fio", "-A"} {
+		tuning, err := configure(t, "store", flag, "x")
+		if err != nil {
+			t.Fatalf("%s: %v", flag, err)
+		}
+		if !warned(tuning) {
+			t.Fatalf("%s gave no deprecation warning", flag)
+		}
+	}
+	tuning, err := configure(t, "store", "x")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if warned(tuning) {
+		t.Fatal("deprecation warning without --async-fio")
 	}
 }
 
@@ -109,7 +147,7 @@ func TestConfigStoreTuningOverrides(t *testing.T) {
 	if tuning.storeWorkers != 3 || tuning.storeQueue != 9 {
 		t.Fatalf("tuning %d/%d, want 3/9", tuning.storeWorkers, tuning.storeQueue)
 	}
-	if w, q := cnst.GetStorePipelineTuning(cnst.CONTAINERMODE, cnst.HIERARCHICALINDEX); w != 3 || q != 9 {
+	if w, q := cnst.GetStorePipelineTuning(cnst.CONTAINERMODE); w != 3 || q != 9 {
 		t.Fatalf("pipeline sees %d/%d, want 3/9", w, q)
 	}
 }

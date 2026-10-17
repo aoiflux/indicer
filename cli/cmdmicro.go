@@ -205,14 +205,14 @@ func processPartition(txn *badger.Txn, db *badger.DB, service *microartefact.Ser
 		partitionName:        pdata.Name,
 	}
 
-	for ihashB64 := range pdata.InternalObjects {
+	return dbio.ForEachPartitionMemberTxn(txn, pid, pdata, func(ihashB64 string, _ structs.InternalOffset) error {
 		if err := processIndexedFile(db, service, repo, force, status, partitionCtx, ihashB64); err != nil {
 			// Non-fatal: log and continue so one bad file does not abort the run.
 			logging.GetLogger().Error("processPartition PROCESS_INDEXED_FILE_ERROR", zap.Error(err), zap.String("indexed_file_id", ihashB64))
 			console.Printf("warning: skipping indexed file %s: %v\n", ihashB64, err)
 		}
-	}
-	return nil
+		return nil
+	})
 }
 
 // processIndexedFile reads one indexed file from the store and runs micro-artefact

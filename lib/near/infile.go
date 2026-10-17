@@ -505,7 +505,7 @@ func buildNearReportMatch(id []byte, confidence float64, db *badger.DB) (nearRep
 		match.Start = pfile.Start
 		match.Size = pfile.Size
 		match.End = pfile.Start + pfile.Size
-		match.InternalObjectSize = len(pfile.InternalObjects)
+		match.InternalObjectSize = dbio.PartitionMemberCount(pfile)
 	case bytes.HasPrefix(id, []byte(cnst.EviFileNamespace)):
 		efile, err := dbio.GetEvidenceFile(id, db)
 		if err != nil {

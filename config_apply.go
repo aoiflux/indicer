@@ -135,7 +135,6 @@ func applyRuntimeConfig(parsed string, args []string, cliDef cliDefinition) (pip
 	cnst.MEMOPT = eff.Low
 	cnst.QUICKOPT = eff.Quick
 	cnst.CONTAINERMODE = eff.Container
-	cnst.HIERARCHICALINDEX = eff.Hierarchical
 	cnst.CompressLevel = eff.CompressLevel
 
 	selectedHashAlgo := cnst.BLAKE3
@@ -149,11 +148,10 @@ func applyRuntimeConfig(parsed string, args []string, cliDef cliDefinition) (pip
 		return tuning, lifecycle.Usagef("--%s: %v", cnst.FlagHashAlgo, err)
 	}
 	tuning.layout = dbopen.Requested{
-		ChunkKiB:     eff.ChunkKiB,
-		Container:    eff.Container,
-		Hierarchical: eff.Hierarchical,
-		Quick:        eff.Quick,
-		Set:          set,
+		ChunkKiB:  eff.ChunkKiB,
+		Container: eff.Container,
+		Quick:     eff.Quick,
+		Set:       set,
 	}
 	if set[cnst.FlagHashAlgo] {
 		tuning.layout.ChunkHash = cnst.HASHALGO
@@ -175,7 +173,14 @@ func applyRuntimeConfig(parsed string, args []string, cliDef cliDefinition) (pip
 
 		cnst.ENABLESIMHASH = *f.enableSimhash
 		cnst.ENABLEREVREL = *f.enableRevRel
-		cnst.StoreAsyncFileWrites = *f.storeAsyncFileWrite
+		if set[cnst.FlagStoreAsyncFileWrite] {
+			// Retired with STO-4: every chunk blob is now synced before its
+			// metadata is written.
+			tuning.issues = append(tuning.issues, appconfig.Issue{
+				Flag:    cnst.FlagStoreAsyncFileWrite,
+				Message: "is deprecated and has no effect; chunk blobs are always written durably",
+			})
+		}
 		if err := cnst.SetStoreIOEngine(*f.storeIOEngine); err != nil {
 			return tuning, lifecycle.Usagef("--%s: %v", cnst.FlagStoreIOEngine, err)
 		}
@@ -189,7 +194,7 @@ func applyRuntimeConfig(parsed string, args []string, cliDef cliDefinition) (pip
 	if eff.StoreWorkers > 0 {
 		cnst.StoreWorkerCount = eff.StoreWorkers
 		cnst.StoreTaskQueueDepth = eff.StoreQueue
-		tuning.storeWorkers, tuning.storeQueue = cnst.GetStorePipelineTuning(cnst.CONTAINERMODE, cnst.HIERARCHICALINDEX)
+		tuning.storeWorkers, tuning.storeQueue = cnst.GetStorePipelineTuning(cnst.CONTAINERMODE)
 	}
 	if eff.RestoreWorkers > 0 {
 		cnst.RestoreWorkerCount = eff.RestoreWorkers
@@ -258,9 +263,6 @@ func printRuntimeBanner(parsed string, cliDef cliDefinition, tuning pipelineTuni
 	if cnst.CONTAINERMODE {
 		color.Yellow("📦 container mode enabled 📦")
 	}
-	if cnst.HIERARCHICALINDEX {
-		color.Magenta("🏛 hierarchical index enabled (2-level lookup) 🏛")
-	}
 	if cnst.CompressLevel != "default" {
 		color.Yellow("🗜  chunk compression level: %s", cnst.CompressLevel)
 	}
@@ -275,9 +277,6 @@ func printRuntimeBanner(parsed string, cliDef cliDefinition, tuning pipelineTuni
 		color.Cyan("⚙ store pipeline: workers=%d queue=%d", tuning.storeWorkers, tuning.storeQueue)
 		color.Cyan("⚙ store pipeline mode: %s", cnst.StorePipelineMode)
 		color.Cyan("⚙ store io engine: %s", cnst.StoreIOEngine)
-		if cnst.StoreAsyncFileWrites {
-			color.Yellow("⚗ async file writes: enabled (experimental)")
-		}
 		if cnst.StoreHashStrategy == cnst.HochoHashStrategy {
 			color.Cyan("⚙ hocho mode: %s", cnst.HochoMode)
 		}

@@ -208,7 +208,6 @@ func buildCommandHandlers(cliDef cliDefinition, dbOpts cli.DBOptions, tuning pip
 				zap.Int("chonksize_kb", *cliDef.flags.chonkSize),
 				zap.String("store_pipeline_mode", cnst.StorePipelineMode),
 				zap.String("store_io_engine", cnst.StoreIOEngine),
-				zap.Bool("store_async_file_write", cnst.StoreAsyncFileWrites),
 				zap.String("hash_strategy", cnst.StoreHashStrategy),
 				zap.Bool("sync_index", *cliDef.flags.syncIndex),
 				zap.Bool("no_index", *cliDef.flags.noIndex),
@@ -250,8 +249,14 @@ func buildCommandHandlers(cliDef cliDefinition, dbOpts cli.DBOptions, tuning pip
 			logging.GetLogger().Info("Command: repair",
 				zap.String("dbpath", *cliDef.flags.dbpath),
 				zap.Int("chonksize_kb", *cliDef.flags.chonkSize),
-				zap.Bool("fix", *cliDef.flags.repairFix))
-			return cli.RepairData(ctx, dbOpts, *cliDef.flags.repairFix)
+				zap.Bool("fix", *cliDef.flags.repairFix),
+				zap.Bool("upgrade", *cliDef.flags.repairUpg))
+			return cli.RepairData(ctx, dbOpts, cli.RepairOptions{
+				Fix:     *cliDef.flags.repairFix,
+				Upgrade: *cliDef.flags.repairUpg,
+				Yes:     *cliDef.flags.repairYes,
+				Verify:  *cliDef.flags.repairVfy,
+			})
 		},
 		cliDef.commands.nearIn.FullCommand(): func(ctx context.Context) error {
 			logging.GetLogger().Info("Command: near in",

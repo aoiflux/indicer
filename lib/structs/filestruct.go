@@ -66,7 +66,11 @@ type InternalOffset struct {
 }
 type PartitionFile struct {
 	IndexedFile
+	// InternalObjects is the members map of records written before ING-21,
+	// and of evidence records, whose members are partitions.
 	InternalObjects map[string]InternalOffset `msgpack:"internal_objects"`
+	// MemberCount is how many members a partition keeps as PX||| keys.
+	MemberCount int `msgpack:"member_count,omitempty"`
 }
 
 // NewPartitionFile creates a new PartitionFile with optional FileHash

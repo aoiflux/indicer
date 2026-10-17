@@ -4,15 +4,21 @@ package fio
 
 import (
 	"errors"
+	"fmt"
 	"indicer/lib/cnst"
 	"io"
 	"os"
 	"sync"
 	"sync/atomic"
+	"time"
 	"unsafe"
 
 	"golang.org/x/sys/unix"
 )
+
+// errNotSubmitted reports an io-uring write that failed before the kernel
+// accepted it, so falling back to a plain write cannot race it.
+var errNotSubmitted = errors.New("io-uring write not submitted")
 
 func openIoUringHandle() (ioUringHandle, error) {
 	depth := cnst.GetStoreIOUringQueueDepth()
@@ -22,74 +28,34 @@ func openIoUringHandle() (ioUringHandle, error) {
 	return newNativeIoUringHandle(uint32(depth))
 }
 
-func (b *ioUringWriteBackend) WriteBlob(path string, data []byte) error {
-	f, err := os.OpenFile(path, os.O_CREATE|os.O_EXCL|os.O_WRONLY, cnst.FilePerm)
-	if err != nil {
-		if os.IsExist(err) {
-			return nil
-		}
-		return err
-	}
-
-	h, hErr := b.ensureHandle()
-	if hErr != nil {
-		warnBackendFallback(cnst.StoreIOEngineUring, hErr.Error())
-		n, wErr := b.delegate.WriteToFile(f, data)
-		if wErr != nil {
-			_ = f.Close()
-			_ = os.Remove(path)
-			return wErr
-		}
-		if n != len(data) {
-			_ = f.Close()
-			_ = os.Remove(path)
-			return io.ErrShortWrite
-		}
-	} else {
-		n, wErr := h.SubmitWrite(int(f.Fd()), data)
-		if wErr != nil {
-			warnBackendFallback(cnst.StoreIOEngineUring, wErr.Error())
-			n, fallbackErr := b.delegate.WriteToFile(f, data)
-			if fallbackErr != nil {
-				_ = f.Close()
-				_ = os.Remove(path)
-				return fallbackErr
-			}
-			if n != len(data) {
-				_ = f.Close()
-				_ = os.Remove(path)
-				return io.ErrShortWrite
-			}
-		} else if n != len(data) {
-			_ = f.Close()
-			_ = os.Remove(path)
-			return io.ErrShortWrite
-		}
-	}
-
-	if err := f.Close(); err != nil {
-		_ = os.Remove(path)
-		return err
-	}
-	return nil
-}
-
-func (b *ioUringWriteBackend) WriteToFile(file *os.File, data []byte) (int, error) {
+// WriteAt writes data at off through io-uring, continuing after short
+// writes. It falls back to a plain positioned write only when the kernel
+// never saw the request; once a write may be in flight, an error is returned
+// rather than writing the bytes a second time (STO-15).
+func (b *ioUringWriteBackend) WriteAt(file *os.File, data []byte, off int64) (int, error) {
 	h, err := b.ensureHandle()
 	if err != nil {
 		warnBackendFallback(cnst.StoreIOEngineUring, err.Error())
-		return b.delegate.WriteToFile(file, data)
+		return b.delegate.WriteAt(file, data, off)
 	}
 
-	n, submitErr := h.SubmitWrite(int(file.Fd()), data)
-	if submitErr != nil {
-		warnBackendFallback(cnst.StoreIOEngineUring, submitErr.Error())
-		return b.delegate.WriteToFile(file, data)
+	total := 0
+	for total < len(data) {
+		n, err := h.SubmitWriteAt(int(file.Fd()), data[total:], off+int64(total))
+		if errors.Is(err, errNotSubmitted) {
+			warnBackendFallback(cnst.StoreIOEngineUring, err.Error())
+			m, err := b.delegate.WriteAt(file, data[total:], off+int64(total))
+			return total + m, err
+		}
+		if err != nil {
+			return total, err
+		}
+		if n == 0 {
+			return total, io.ErrShortWrite
+		}
+		total += n
 	}
-	if n != len(data) {
-		return n, io.ErrShortWrite
-	}
-	return n, nil
+	return total, nil
 }
 
 const (
@@ -103,6 +69,7 @@ const (
 	ioUringFeatSingleMmap   = 1
 	ioUringMaxSubmitRetries = 3
 	ioUringDrainBatchSize   = 8
+	ioUringMaxBusyRetries   = 100
 )
 
 type ioSqringOffsets struct {
@@ -260,6 +227,10 @@ func (h *nativeIoUringHandle) mapRings(params *ioUringParams) error {
 func (h *nativeIoUringHandle) Close() error {
 	h.mu.Lock()
 	defer h.mu.Unlock()
+	return h.closeLocked()
+}
+
+func (h *nativeIoUringHandle) closeLocked() error {
 	if h.closed {
 		return nil
 	}
@@ -277,16 +248,38 @@ func (h *nativeIoUringHandle) Close() error {
 	return unix.Close(h.fd)
 }
 
-func (h *nativeIoUringHandle) SubmitWrite(fd int, data []byte) (int, error) {
+// ioUringEnter calls io_uring_enter, repeating it while it is interrupted,
+// and for a while when the kernel is briefly out of resources. Repeating is
+// safe: a request the kernel has already consumed is not submitted again.
+func (h *nativeIoUringHandle) ioUringEnter(toSubmit, minComplete uintptr) error {
+	for busy := 0; ; {
+		_, _, errno := unix.Syscall6(unix.SYS_IO_URING_ENTER, uintptr(h.fd), toSubmit, minComplete, ioUringEnterGetEvents, 0, 0)
+		switch {
+		case errno == 0:
+			return nil
+		case errno == unix.EINTR:
+		case (errno == unix.EAGAIN || errno == unix.EBUSY) && busy < ioUringMaxBusyRetries:
+			busy++
+			time.Sleep(time.Millisecond)
+		default:
+			return errno
+		}
+	}
+}
+
+func (h *nativeIoUringHandle) SubmitWriteAt(fd int, data []byte, off int64) (int, error) {
 	h.mu.Lock()
 	defer h.mu.Unlock()
 	recordIoUringSubmitAttempt()
 
 	if h.closed {
-		return 0, errors.New("io-uring handle is closed")
+		return 0, fmt.Errorf("%w: io-uring handle is closed", errNotSubmitted)
 	}
 	if len(data) == 0 {
 		return 0, nil
+	}
+	if off < 0 {
+		return 0, fmt.Errorf("%w: negative offset %d", errNotSubmitted, off)
 	}
 
 	var sqHead uint32
@@ -304,7 +297,7 @@ func (h *nativeIoUringHandle) SubmitWrite(fd int, data []byte) (int, error) {
 		_, _, _, drainErr := h.drainCompletions(0, ioUringDrainBatchSize)
 		if drainErr != nil {
 			recordIoUringSubmitError()
-			return 0, drainErr
+			return 0, fmt.Errorf("%w: %v", errNotSubmitted, drainErr)
 		}
 		sqHead = atomic.LoadUint32(h.sqHead)
 		sqTail = atomic.LoadUint32(h.sqTail)
@@ -313,14 +306,14 @@ func (h *nativeIoUringHandle) SubmitWrite(fd int, data []byte) (int, error) {
 		}
 
 		recordIoUringSubmitWait()
-		if _, _, errno := unix.Syscall6(unix.SYS_IO_URING_ENTER, uintptr(h.fd), 0, 1, ioUringEnterGetEvents, 0, 0); errno != 0 {
+		if err := h.ioUringEnter(0, 1); err != nil {
 			recordIoUringSubmitError()
-			return 0, errno
+			return 0, fmt.Errorf("%w: %v", errNotSubmitted, err)
 		}
 	}
 	if sqTail-sqHead >= capacity {
 		recordIoUringQueueFull()
-		return 0, errors.New("io-uring submission queue is full")
+		return 0, fmt.Errorf("%w: io-uring submission queue is full", errNotSubmitted)
 	}
 
 	mask := *h.sqMask
@@ -330,8 +323,8 @@ func (h *nativeIoUringHandle) SubmitWrite(fd int, data []byte) (int, error) {
 	sqe.Opcode = ioUringOpWrite
 	sqe.Fd = int32(fd)
 	sqe.Addr = uint64(uintptr(unsafe.Pointer(&data[0])))
-	sqe.Len = uint32(len(data))
-	sqe.Off = ^uint64(0) // use current file offset (like write())
+	sqe.Len = uint32(min(len(data), 1<<30))
+	sqe.Off = uint64(off)
 
 	h.nextUserData++
 	userData := h.nextUserData
@@ -341,16 +334,23 @@ func (h *nativeIoUringHandle) SubmitWrite(fd int, data []byte) (int, error) {
 	*arrayEntry = index
 	atomic.StoreUint32(h.sqTail, sqTail+1)
 
-	if _, _, errno := unix.Syscall6(unix.SYS_IO_URING_ENTER, uintptr(h.fd), 1, 1, ioUringEnterGetEvents, 0, 0); errno != 0 {
+	// From here the kernel may hold a pointer into data. If waiting for the
+	// completion fails, the request may still be pending, so the ring is
+	// closed, which makes the kernel cancel it, and the handle is never used
+	// again; later writes fall back to plain positioned writes.
+	broken := func(err error) (int, error) {
 		recordIoUringSubmitError()
-		return 0, errno
+		_ = h.closeLocked()
+		return 0, err
+	}
+	if err := h.ioUringEnter(1, 1); err != nil {
+		return broken(err)
 	}
 
 	for {
 		found, res, drained, drainErr := h.drainCompletions(userData, ioUringDrainBatchSize)
 		if drainErr != nil {
-			recordIoUringSubmitError()
-			return 0, drainErr
+			return broken(drainErr)
 		}
 		if found {
 			if res < 0 {
@@ -365,9 +365,8 @@ func (h *nativeIoUringHandle) SubmitWrite(fd int, data []byte) (int, error) {
 		}
 
 		recordIoUringSubmitWait()
-		if _, _, errno := unix.Syscall6(unix.SYS_IO_URING_ENTER, uintptr(h.fd), 0, 1, ioUringEnterGetEvents, 0, 0); errno != 0 {
-			recordIoUringSubmitError()
-			return 0, errno
+		if err := h.ioUringEnter(0, 1); err != nil {
+			return broken(err)
 		}
 	}
 }

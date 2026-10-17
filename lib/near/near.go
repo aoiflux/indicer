@@ -61,12 +61,17 @@ func countPartiFile(confidence float64, ridx int64, method string, inputHash, ei
 			return err
 		}
 
-		if len(pfile.InternalObjects) == 0 {
+		if dbio.PartitionMemberCount(pfile) == 0 {
 			idmap.Set(string(pid), confidence)
 			addNearChunkContribution(string(pid), nearChunkContribution{Index: ridx, Confidence: confidence, Method: method})
 			continue
 		}
-		err = countIdxFile(confidence, ridx, method, inputHash, pid, pfile.InternalObjects, idmap)
+		// W7 streams the members instead of collecting them (SRC-5).
+		members, err := dbio.PartitionMembers(db, pid, pfile)
+		if err != nil {
+			return err
+		}
+		err = countIdxFile(confidence, ridx, method, inputHash, pid, members, idmap)
 		if err != nil {
 			return err
 		}

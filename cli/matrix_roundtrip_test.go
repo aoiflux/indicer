@@ -41,11 +41,8 @@ func TestMatrixStoreRestoreRoundTrip(t *testing.T) {
 			objs = append(objs, stored{path: p, hash: plainHashB64(t, p), size: n})
 		}
 
-		for i, o := range objs {
+		for _, o := range objs {
 			t.Run(filepath.Base(o.path), func(t *testing.T) {
-				if m.Container && i > 0 {
-					knownDefect(t, "STO-1", "a later session reuses container names with offsets from 0")
-				}
 				out := filepath.Join(dir, "out", filepath.Base(o.path))
 				if err := os.MkdirAll(filepath.Dir(out), 0o755); err != nil {
 					t.Fatal(err)
@@ -73,12 +70,4 @@ func plainHashB64(t *testing.T, path string) string {
 		t.Fatal(err)
 	}
 	return base64.StdEncoding.EncodeToString(h)
-}
-
-// knownDefect skips a characterisation subtest that fails because of a bug in
-// the inventory. The commit that fixes the bug deletes the call, so the
-// subtest then has to pass.
-func knownDefect(t *testing.T, id, why string) {
-	t.Helper()
-	t.Skipf("known defect %s: %s", id, why)
 }

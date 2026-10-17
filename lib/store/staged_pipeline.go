@@ -4,7 +4,6 @@ import (
 	"context"
 	"encoding/base64"
 	"encoding/binary"
-	"errors"
 	"fmt"
 	"indicer/internal/console"
 	"indicer/lib/cnst"
@@ -89,26 +88,12 @@ func storeEvidenceDataStaged(parentCtx context.Context, infile structs.InputFile
 	}
 
 	var containerMgr *fio.ContainerManager
-	var blockMgr *fio.BlockManager
-
 	if cnst.CONTAINERMODE {
 		containerMgr = fio.NewContainerManager(infile.GetDB().Opts().Dir)
 		defer closeContainerManager(&err, containerMgr)
-
-		if cnst.HIERARCHICALINDEX {
-			blockMgr = fio.NewBlockManager(infile.GetDB().Opts().Dir, containerMgr)
-			defer closeBlockManager(&err, blockMgr)
-		}
 	}
 
-	if !cnst.CONTAINERMODE && cnst.StoreAsyncFileWrites {
-		fio.StartAsyncFileWriter(0)
-		defer func() {
-			mergeDeferredErr(&err, fio.CloseAsyncFileWriter())
-		}()
-	}
-
-	workerCount, queueDepth := cnst.GetStorePipelineTuning(cnst.CONTAINERMODE, cnst.HIERARCHICALINDEX)
+	workerCount, queueDepth := cnst.GetStorePipelineTuning(cnst.CONTAINERMODE)
 	ctx, cancel := context.WithCancel(parentCtx)
 	defer cancel()
 
@@ -138,7 +123,7 @@ func storeEvidenceDataStaged(parentCtx context.Context, infile structs.InputFile
 	writerWG.Add(1)
 	go func() {
 		defer writerWG.Done()
-		hochoHash, werr := stagedDiskWriterLoop(infile.GetHash(), infile.GetStartIndex(), infile.GetDB(), containerMgr, blockMgr, writeCh)
+		hochoHash, werr := stagedDiskWriterLoop(infile.GetHash(), infile.GetStartIndex(), infile.GetDB(), containerMgr, writeCh)
 		writerResCh <- stagedWriterResult{hochoHash: hochoHash, err: werr}
 		if werr != nil {
 			reportErr(werr)
@@ -321,7 +306,6 @@ func stagedDiskWriterLoop(
 	startIndex int64,
 	db *badger.DB,
 	containerMgr *fio.ContainerManager,
-	blockMgr *fio.BlockManager,
 	writeCh <-chan stagedWriteChunk,
 ) (string, error) {
 	batch, err := util.InitBatch(db)
@@ -329,7 +313,7 @@ func stagedDiskWriterLoop(
 		return "", err
 	}
 
-	revRelBuffer := newRevRelAppendBuffer(256)
+	barrier := newChunkMetaBarrier(db.Opts().Dir, containerMgr, batch)
 	hocho := newHochoAccumulator(cnst.StoreHashStrategy == cnst.HochoHashStrategy, startIndex)
 	pending := make([]stagedWriteChunk, 0, stagedDiskBatchSize)
 
@@ -341,23 +325,22 @@ func stagedDiskWriterLoop(
 				return err
 			}
 
+			var cmeta []byte
+			ckey := util.AppendToBytesSlice(cnst.ChonkNamespace, chash)
 			if !item.dup {
-				ckey := util.AppendToBytesSlice(cnst.ChonkNamespace, chash)
-				cmeta, err := materializeChunkMeta(ckey, item.data, db, containerMgr, blockMgr)
-				if err != nil {
+				var err error
+				if cmeta, err = materializeChunkMeta(ckey, item.data, db, containerMgr); err != nil {
 					return err
 				}
-				if len(cmeta) > 0 {
-					if err := dbio.SetBatchNode(ckey, cmeta, batch); err != nil {
-						return err
-					}
-				}
+			}
+			if err := barrier.record(ckey, cmeta, int64(len(item.data))); err != nil {
+				return err
 			}
 
 			if err := processRel(item.offset, fhash, chash, db, batch); err != nil {
 				return err
 			}
-			if err := processRevRel(item.offset, fhash, chash, batch, revRelBuffer); err != nil {
+			if err := processRevRel(item.offset, fhash, chash, batch); err != nil {
 				return err
 			}
 		}
@@ -382,12 +365,9 @@ func stagedDiskWriterLoop(
 			return "", err
 		}
 	}
-
-	if revRelBuffer != nil {
-		if err := revRelBuffer.flush(fhash, db, batch); err != nil {
-			batch.Cancel()
-			return "", err
-		}
+	if err := barrier.fire(); err != nil {
+		batch.Cancel()
+		return "", err
 	}
 
 	hochoHash, err := hocho.finalize()
@@ -403,28 +383,25 @@ func stagedDiskWriterLoop(
 	return hochoHash, nil
 }
 
+// materializeChunkMeta stores the chunk under ckey unless the database
+// already holds it intact, and returns the metadata to record for it. It
+// returns nil when the chunk was already stored.
 func materializeChunkMeta(
 	ckey []byte,
 	cdata []byte,
 	db *badger.DB,
 	containerMgr *fio.ContainerManager,
-	blockMgr *fio.BlockManager,
 ) ([]byte, error) {
-	if containerMgr != nil {
-		// Container mode requires a DB probe to avoid re-appending chunks from
-		// previous sessions.
-		err := dbio.PingNode(ckey, db)
-		if errors.Is(err, badger.ErrKeyNotFound) {
-			return dbio.MaterializeChonkNode(ckey, cdata, db, containerMgr, blockMgr)
-		}
-		if err != nil {
-			return nil, err
-		}
-		return nil, nil
+	stored, err := dbio.ChunkStored(ckey, db)
+	if err != nil || stored {
+		return nil, err
 	}
-
-	return dbio.MaterializeChonkNode(ckey, cdata, db, nil, blockMgr)
+	return materializeChunk(ckey, cdata, db, containerMgr)
 }
+
+// materializeChunk encodes one chunk and writes its blob or container record;
+// tests replace it to count the chunks an ingest materialises.
+var materializeChunk = dbio.MaterializeChonkNode
 
 func nextChunkIDV7() (uint64, error) {
 	id, err := uuid.NewV7()

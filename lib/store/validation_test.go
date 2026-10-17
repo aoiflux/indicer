@@ -1,0 +1,144 @@
+package store
+
+import (
+	"errors"
+	"os"
+	"testing"
+
+	"indicer/internal/testutil"
+	"indicer/internal/testutil/testdb"
+	"indicer/lib/cnst"
+	"indicer/lib/dbio"
+	"indicer/lib/structs"
+	"indicer/lib/util"
+
+	"github.com/dgraph-io/badger/v4"
+	"github.com/vmihailenco/msgpack/v5"
+)
+
+// validationCase stores evidence and returns what ValidateEvidence needs,
+// plus the key of its second chunk to damage.
+func validationCase(t *testing.T, m testdb.Mode) (*testdb.DB, []byte, structs.EvidenceFile, []byte) {
+	t.Helper()
+	db := testdb.Open(t, m)
+	util.SetChonkSize(4)
+	cs := int(cnst.ChonkSize)
+	content := testutil.RandomBytes(31, 4*cs+9)
+	id := runChunkPass(t, storeEvidenceDataBatchOwner, db.DB, "evidence", content)
+	chash, err := util.GetChonkHash(content[cs:2*cs], cnst.GetHashAlgo())
+	if err != nil {
+		t.Fatal(err)
+	}
+	var ev structs.EvidenceFile
+	ev.Start, ev.Size = 0, int64(len(content))
+	return db, id, ev, util.AppendToBytesSlice(cnst.ChonkNamespace, chash)
+}
+
+// chunkFile returns the blob or container holding ckey, and the chunk's
+// offset and size in it.
+func chunkFile(t *testing.T, db *badger.DB, ckey []byte) (string, structs.ChonkMetadata) {
+	t.Helper()
+	loc, err := dbio.LocateChunk(ckey, db)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return dbio.ResolveBlobPath(db.Opts().Dir, loc.Path), loc
+}
+
+func flipByte(t *testing.T, path string, off int64) {
+	t.Helper()
+	f, err := os.OpenFile(path, os.O_RDWR, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer f.Close()
+	b := []byte{0}
+	if _, err := f.ReadAt(b, off); err != nil {
+		t.Fatal(err)
+	}
+	b[0] ^= 0x40
+	if _, err := f.WriteAt(b, off); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// TestValidateEvidenceLevels checks what each validation level detects
+// (invariant 7): a missing relation or chunk location at every level, a
+// short blob or container from the material level, and damaged or
+// misplaced bytes only from the content level.
+func TestValidateEvidenceLevels(t *testing.T) {
+	type outcome struct{ locations, material, content error }
+	cases := []struct {
+		name   string
+		modes  []testdb.Mode
+		damage func(t *testing.T, db *badger.DB, fileID, ckey []byte)
+		want   outcome
+	}{
+		{"intact", []testdb.Mode{testdb.Default, testdb.Quick, testdb.Container}, func(*testing.T, *badger.DB, []byte, []byte) {}, outcome{}},
+		{"relation missing", []testdb.Mode{testdb.Default, testdb.Container}, func(t *testing.T, db *badger.DB, fileID, _ []byte) {
+			key := util.AppendToBytesSlice(cnst.RelationNamespace, fileID, cnst.DataSeperator, cnst.ChonkSize)
+			if err := db.Update(func(txn *badger.Txn) error { return txn.Delete(key) }); err != nil {
+				t.Fatal(err)
+			}
+		}, outcome{ErrMaterialMissing, ErrMaterialMissing, ErrMaterialMissing}},
+		{"chunk location missing", []testdb.Mode{testdb.Default, testdb.Container}, func(t *testing.T, db *badger.DB, _, ckey []byte) {
+			if err := db.Update(func(txn *badger.Txn) error { return txn.Delete(ckey) }); err != nil {
+				t.Fatal(err)
+			}
+		}, outcome{ErrMaterialMissing, ErrMaterialMissing, ErrMaterialMissing}},
+		{"blob truncated", []testdb.Mode{testdb.Default, testdb.Quick}, func(t *testing.T, db *badger.DB, _, ckey []byte) {
+			path, loc := chunkFile(t, db, ckey)
+			if err := os.Truncate(path, loc.StoredSize-1); err != nil {
+				t.Fatal(err)
+			}
+		}, outcome{nil, ErrMaterialMissing, ErrMaterialMissing}},
+		{"blob deleted", []testdb.Mode{testdb.Default}, func(t *testing.T, db *badger.DB, _, ckey []byte) {
+			path, _ := chunkFile(t, db, ckey)
+			if err := os.Remove(path); err != nil {
+				t.Fatal(err)
+			}
+		}, outcome{nil, ErrMaterialMissing, ErrMaterialMissing}},
+		{"container truncated", []testdb.Mode{testdb.Container}, func(t *testing.T, db *badger.DB, _, ckey []byte) {
+			path, loc := chunkFile(t, db, ckey)
+			if err := os.Truncate(path, loc.Offset+loc.EncodedSize-1); err != nil {
+				t.Fatal(err)
+			}
+		}, outcome{nil, ErrMaterialMissing, ErrMaterialMissing}},
+		{"bit flipped", []testdb.Mode{testdb.Default, testdb.Quick, testdb.Container}, func(t *testing.T, db *badger.DB, _, ckey []byte) {
+			path, loc := chunkFile(t, db, ckey)
+			flipByte(t, path, loc.Offset+loc.EncodedSize/2)
+		}, outcome{nil, nil, ErrMaterialCorrupt}},
+		{"wrong container offset", []testdb.Mode{testdb.Container}, func(t *testing.T, db *badger.DB, _, ckey []byte) {
+			_, loc := chunkFile(t, db, ckey)
+			loc.Offset--
+			raw, err := msgpack.Marshal(loc)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if err := dbio.SetNode(ckey, raw, db); err != nil {
+				t.Fatal(err)
+			}
+		}, outcome{nil, nil, ErrMaterialCorrupt}},
+	}
+	for _, c := range cases {
+		for _, m := range c.modes {
+			t.Run(c.name+"/"+m.Name, func(t *testing.T) {
+				db, fileID, ev, ckey := validationCase(t, m)
+				c.damage(t, db.DB, fileID, ckey)
+				for level, want := range map[ValidationLevel]error{
+					ValidateLocations: c.want.locations,
+					ValidateMaterial:  c.want.material,
+					ValidateContent:   c.want.content,
+				} {
+					err := ValidateEvidence(t.Context(), db.DB, fileID, ev, level)
+					if want == nil && err != nil {
+						t.Errorf("level %d: %v, want valid", level, err)
+					}
+					if want != nil && !errors.Is(err, want) {
+						t.Errorf("level %d: %v, want %v", level, err, want)
+					}
+				}
+			})
+		}
+	}
+}

@@ -61,14 +61,17 @@ var ChonkSize = DefaultChonkSize
 var MEMOPT bool
 var QUICKOPT bool
 var CONTAINERMODE bool
-var HIERARCHICALINDEX bool
+
+// LegacyBlockIndex is set for a database written in the retired hierarchical
+// mode (D9): chunk locations not in C||| are looked up in its block index.
+// Only the manifest sets it.
+var LegacyBlockIndex bool
 var ENABLESIMHASH = false  // compute and persist per-chunk simhash signatures during ingest (opt-in via --simhash)
 var ENABLEREVREL = false   // persist reverse-relation writes during ingest (opt-in via --enable-revrel)
 var CompressLevel = "best" // per-chunk zstd ingest level: fast | default | best
 var StoreHashStrategy = SyncHashStrategy
 var HochoMode = HochoModeBaseline
 var StorePipelineMode = StorePipelineBatch
-var StoreAsyncFileWrites = false
 var StoreIOEngine = StoreIOEngineAuto
 var StoreIOUringQueueDepth = 0 // io-uring SQ/CQ depth (0 = auto)
 var StoreWorkerCount = 0
@@ -86,6 +89,8 @@ const (
 	PartiFileHashLookupNamespace    = "PH|||:"
 	IdxFileNamespace                = "I|||:"
 	IdxFileHashLookupNamespace      = "IH|||:"
+	HashLookupMemberNamespace       = "HM|||:" // one key per hash lookup member (STO-22)
+	PartitionMemberNamespace        = "PX|||:" // one key per partition member (ING-21)
 	RelationNamespace               = "R|||:"
 	ReverseRelationNamespace        = "Я|||:"
 	ReverseRelationAppendNamespace  = "RA|||:"
@@ -196,6 +201,8 @@ const (
 	FlagAdvancedDeepShort           = 'a'
 	FlagRepairFix                   = "fix"
 	FlagRepairFixShort              = 'J'
+	FlagRepairUpgrade               = "upgrade"
+	FlagRepairVerify                = "verify"
 	FlagRepairMigrateRevRel         = "migrate-revrel"
 	FlagTopK                        = "top-k"
 	FlagTopKShort                   = 'k'
@@ -405,9 +412,9 @@ func GetMaxThreadCount() int {
 // DefaultStoreTuning returns the batch-owner ingest pipeline's worker count
 // and task queue depth for a machine with cpus CPUs, before any override.
 // Non-container mode benefits from higher worker parallelism for chunk
-// materialization, while container/hierarchical modes involve additional
-// serialized components and are tuned for steadier flow.
-func DefaultStoreTuning(cpus int, memOpt, containerMode, hierarchicalMode bool) (int, int) {
+// materialization, while container mode involves an additional serialized
+// writer and is tuned for steadier flow.
+func DefaultStoreTuning(cpus int, memOpt, containerMode bool) (int, int) {
 	workers := cpus * 2
 	if memOpt {
 		workers = 1
@@ -420,9 +427,6 @@ func DefaultStoreTuning(cpus int, memOpt, containerMode, hierarchicalMode bool) 
 			workers = 2
 		}
 		queueDepth = workers * 4
-		if hierarchicalMode {
-			queueDepth = workers * 6
-		}
 	}
 	return workers, queueDepth
 }
@@ -430,8 +434,8 @@ func DefaultStoreTuning(cpus int, memOpt, containerMode, hierarchicalMode bool) 
 // GetStorePipelineTuning returns worker count and task queue depth for the
 // batch-owner ingest pipeline: the defaults for this machine, replaced by
 // StoreWorkerCount and StoreTaskQueueDepth when those are set.
-func GetStorePipelineTuning(containerMode bool, hierarchicalMode bool) (int, int) {
-	workers, queueDepth := DefaultStoreTuning(runtime.NumCPU(), MEMOPT, containerMode, hierarchicalMode)
+func GetStorePipelineTuning(containerMode bool) (int, int) {
+	workers, queueDepth := DefaultStoreTuning(runtime.NumCPU(), MEMOPT, containerMode)
 
 	if StoreWorkerCount > 0 {
 		workers = StoreWorkerCount

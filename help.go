@@ -177,7 +177,6 @@ func printRootHelp() {
 	fmt.Printf("  %s, %s   Low resource mode\n", cmd("--low"), cmd("-l"))
 	fmt.Printf("  %s, %s   Quick mode (less protection, more throughput)\n", cmd("--quick"), cmd("-q"))
 	fmt.Printf("  %s, %s   Container mode\n", cmd("--container"), cmd("-x"))
-	fmt.Printf("  %s, %s   Hierarchical index (requires container mode)\n", cmd("--hierarchical"), cmd("-i"))
 	fmt.Printf("  %s, %s   Chunk compression level [fast|default|best]\n", cmd("--compress-level"), cmd("-z"))
 	fmt.Printf("  %s, %s   Mode preset [quick|performance|low-resource]\n", cmd("--preset"), cmd("-P"))
 	fmt.Printf("  %s, %s   Quick preset convenience alias\n", cmd("--quick-mode"), cmd("-Q"))

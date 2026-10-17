@@ -28,7 +28,12 @@ func (g *GrpcService) GetIdxFiles(ctx context.Context, req *pb.GetIdxFilesReq) (
 		return nil, err
 	}
 
-	baseFiles, err := getIdxFiles(partiFile.InternalObjects, cnst.DB)
+	// W9 pages through the members instead of collecting them (SRV-6).
+	members, err := dbio.PartitionMembers(cnst.DB, partiFileId, partiFile)
+	if err != nil {
+		return nil, err
+	}
+	baseFiles, err := getIdxFiles(members, cnst.DB)
 	if err != nil {
 		return nil, err
 	}

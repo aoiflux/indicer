@@ -14,8 +14,8 @@ import (
 	"time"
 
 	"github.com/fatih/color"
-	"golang.org/x/term"
 	"go.uber.org/zap"
+	"golang.org/x/term"
 )
 
 // ResetData deletes the DUES database at dbpath, and only that: the data

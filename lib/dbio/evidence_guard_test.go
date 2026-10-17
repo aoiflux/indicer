@@ -15,7 +15,8 @@ import (
 // through UpdateEvidence or CreateEvidence instead (I5, ING-8), so a new
 // caller has to be added here deliberately.
 var setFileAllowed = map[string]bool{
-	"lib/store/store.go:storePartitionFile": true,
+	// Writes a new partition record after its member keys (ING-21).
+	"lib/dbio/members.go:SetPartitionWithMembers": true,
 }
 
 // TestEvidenceWritesUseUpdateEvidence fails on a SetFile call outside the

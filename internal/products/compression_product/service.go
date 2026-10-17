@@ -27,7 +27,6 @@ import (
 	"indicer/lib/dbopen"
 	"indicer/lib/store"
 	"indicer/lib/structs"
-	"indicer/lib/util"
 
 	"github.com/dgraph-io/badger/v4"
 	"github.com/klauspost/compress/zstd"
@@ -3102,46 +3101,25 @@ func computeLogicalFileCompressedSize(ctx context.Context, eviKey []byte, eviden
 	if err := ctx.Err(); err != nil {
 		return 0, err
 	}
-
-	rawID := dbio.EvidenceRawID(eviKey)
-	start := evidenceFile.Start
-	size := evidenceFile.Size
-	if size <= 0 {
+	if evidenceFile.Size <= 0 {
 		return 0, nil
 	}
 
-	var dbstart int64
-	if start > 0 {
-		dbstart = util.GetDBStartOffset(start)
+	ev, err := dbio.OpenEvidenceChunks(db, eviKey, dbio.ReadOptions{})
+	if err != nil {
+		return 0, err
 	}
-	end := start + size
-
 	var totalStored int64
-	for restoreIndex := dbstart; restoreIndex < end; restoreIndex += cnst.ChonkSize {
-		if err := ctx.Err(); err != nil {
-			return 0, err
+	start := evidenceFile.Start
+	err = ev.Spans(ctx, start, start+evidenceFile.Size, dbio.SpanBatch(ev.ChunkSize()), func(spans []dbio.ChunkSpan) error {
+		for _, s := range spans {
+			totalStored += s.Loc.StoredSize
 		}
-		relKey := util.AppendToBytesSlice(cnst.RelationNamespace, rawID, cnst.DataSeperator, restoreIndex)
-		chash, err := dbio.GetNode(relKey, db)
-		if err != nil {
-			return 0, err
-		}
-		chunkKey := util.AppendToBytesSlice(cnst.ChonkNamespace, chash)
-		metadata, err := dbio.GetNode(chunkKey, db)
-		if err != nil {
-			return 0, err
-		}
-		if stored, ok := dbio.GetStoredChonkSealedSize(metadata); ok {
-			totalStored += stored
-			continue
-		}
-		chunkStored, err := dbio.GetChonkSize(restoreIndex, start, end, chunkKey, db)
-		if err != nil {
-			return 0, err
-		}
-		totalStored += chunkStored
+		return nil
+	})
+	if err != nil {
+		return 0, err
 	}
-
 	return totalStored, nil
 }
 
@@ -3313,7 +3291,7 @@ func restoreEvidenceToPathCtx(ctx context.Context, hashB64, targetPath string, d
 	if err := ctx.Err(); err != nil {
 		return err
 	}
-	if err := store.Restore(ctx, hashB64, tempFile, db); err != nil {
+	if _, err := store.Restore(ctx, db, hashB64, tempFile, store.RestoreOptions{}); err != nil {
 		return err
 	}
 	if err := ctx.Err(); err != nil {

@@ -72,7 +72,8 @@ func TUICmd(ctx context.Context, opts DBOptions) (err error) {
 			// The TUI replaces an existing file, as it always has, but only
 			// once the restore has succeeded (TUI-2).
 			return runQuiet(func() error {
-				return restoreToPath(ctx, db, hash, restorePath, true)
+				_, err := restoreToPath(ctx, db, hash, restorePath, RestoreOptions{Force: true})
+				return err
 			})
 		},
 		NearIn: func(hash string, deep bool) error {

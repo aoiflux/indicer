@@ -1,17 +1,15 @@
 package store
 
 import (
+	"bytes"
 	"context"
-	"os"
 	"sync/atomic"
 	"testing"
 	"time"
 
 	"indicer/internal/testutil/testdb"
-	"indicer/lib/structs"
+	"indicer/lib/dbio"
 	"indicer/lib/util"
-
-	"github.com/dgraph-io/badger/v4"
 )
 
 // TestRestoreReorderWindowIsBounded is the RST-5 regression. Restore writes
@@ -22,15 +20,15 @@ func TestRestoreReorderWindowIsBounded(t *testing.T) {
 	testdb.Isolate(t)
 	util.SetChonkSize(4)
 	const chunks = 1500
-	meta, db := setupRestoreBenchmarkDataset(t, chunks, 0)
+	l := setupRestoreBenchmarkDataset(t, chunks, 0)
 
-	prevRead, prevNote := readRestoreChunk, notePendingChunks
-	t.Cleanup(func() { readRestoreChunk, notePendingChunks = prevRead, prevNote })
-	readRestoreChunk = func(m structs.FileMeta, off, end int64, db *badger.DB, key, md []byte) ([]byte, error) {
-		if off == 0 {
+	prevRead, prevNote := readRestoreSpan, notePendingChunks
+	t.Cleanup(func() { readRestoreSpan, notePendingChunks = prevRead, prevNote })
+	readRestoreSpan = func(l *dbio.Logical, s dbio.ChunkSpan) ([]byte, error) {
+		if s.Chunk == 0 {
 			time.Sleep(300 * time.Millisecond)
 		}
-		return prevRead(m, off, end, db, key, md)
+		return prevRead(l, s)
 	}
 	var peak atomic.Int64
 	notePendingChunks = func(n int) {
@@ -42,19 +40,16 @@ func TestRestoreReorderWindowIsBounded(t *testing.T) {
 		}
 	}
 
-	dst, err := os.CreateTemp(t.TempDir(), "restore-*.bin")
+	var out bytes.Buffer
+	report, err := restoreLogical(context.Background(), l, &out, RestoreOptions{})
 	if err != nil {
-		t.Fatal(err)
-	}
-	defer dst.Close()
-	if err := restoreData(context.Background(), meta, dst, db); err != nil {
 		t.Fatalf("restore: %v", err)
 	}
-	_, window := restoreWindow()
+	_, window := restoreWindow(l.Evidence().ChunkSize())
 	if p := peak.Load(); p > int64(window) {
 		t.Fatalf("%d chunks parked waiting for a slow one; the window is %d", p, window)
 	}
-	if fi, err := dst.Stat(); err != nil || fi.Size() != meta.Size {
-		t.Fatalf("restored %v bytes, want %d (%v)", fi.Size(), meta.Size, err)
+	if int64(out.Len()) != l.Size() || report.Chunks != chunks {
+		t.Fatalf("restored %d bytes in %d chunks, want %d in %d", out.Len(), report.Chunks, l.Size(), chunks)
 	}
 }

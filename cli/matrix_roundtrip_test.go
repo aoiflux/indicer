@@ -47,7 +47,7 @@ func TestMatrixStoreRestoreRoundTrip(t *testing.T) {
 				if err := os.MkdirAll(filepath.Dir(out), 0o755); err != nil {
 					t.Fatal(err)
 				}
-				if err := RestoreData(t.Context(), optsForMode(dbPath, matrixChunkKB, m), o.hash, out, false); err != nil {
+				if err := RestoreData(t.Context(), optsForMode(dbPath, matrixChunkKB, m), o.hash, out, RestoreOptions{}); err != nil {
 					t.Fatalf("restore %d-byte object: %v", o.size, err)
 				}
 				if testutil.FileSHA256(t, out) != testutil.FileSHA256(t, o.path) {

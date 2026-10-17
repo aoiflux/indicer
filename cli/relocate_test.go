@@ -28,7 +28,7 @@ func TestStoreRestoreAfterRelocation(t *testing.T) {
 		newRoot := filepath.Join(dir, "case-b", "db")
 		opts := optsFor(newRoot, 0, []byte(m.Password))
 		out := filepath.Join(dir, "out.bin")
-		if err := RestoreData(t.Context(), opts, plainHashB64(t, src), out, false); err != nil {
+		if err := RestoreData(t.Context(), opts, plainHashB64(t, src), out, RestoreOptions{}); err != nil {
 			t.Fatalf("restore after moving the data root: %v", err)
 		}
 		if testutil.FileSHA256(t, out) != testutil.FileSHA256(t, src) {

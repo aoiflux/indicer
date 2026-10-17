@@ -60,7 +60,7 @@ func TestRestoreTargetSafety(t *testing.T) {
 	write(target, "existing evidence copy")
 	write(target+".bak", "a user's own backup")
 
-	err := RestoreData(t.Context(), opts, hash, target, false)
+	err := RestoreData(t.Context(), opts, hash, target, RestoreOptions{})
 	var usage *lifecycle.UsageError
 	if !errors.As(err, &usage) {
 		t.Fatalf("restore over an existing file without --force = %v, want a usage error", err)
@@ -69,7 +69,7 @@ func TestRestoreTargetSafety(t *testing.T) {
 		t.Fatal("refused restore changed the target")
 	}
 
-	if err := RestoreData(t.Context(), opts, "bm90LWEtcmVhbC1oYXNo", target, true); err == nil {
+	if err := RestoreData(t.Context(), opts, "bm90LWEtcmVhbC1oYXNo", target, RestoreOptions{Force: true}); err == nil {
 		t.Fatal("restore of an unknown hash succeeded")
 	}
 	if read(target) != "existing evidence copy" {
@@ -77,7 +77,7 @@ func TestRestoreTargetSafety(t *testing.T) {
 	}
 	noTemps()
 
-	if err := RestoreData(t.Context(), opts, hash, target, true); err != nil {
+	if err := RestoreData(t.Context(), opts, hash, target, RestoreOptions{Force: true}); err != nil {
 		t.Fatalf("restore --force: %v", err)
 	}
 	if testutil.FileSHA256(t, target) != want {
@@ -93,7 +93,7 @@ func TestRestoreTargetSafety(t *testing.T) {
 		t.Fatal(err)
 	}
 	write(filepath.Join(sub, "inside.txt"), "x")
-	if err := RestoreData(t.Context(), opts, hash, sub, true); err == nil {
+	if err := RestoreData(t.Context(), opts, hash, sub, RestoreOptions{Force: true}); err == nil {
 		t.Fatal("restore onto a directory succeeded")
 	}
 	if read(filepath.Join(sub, "inside.txt")) != "x" {
@@ -112,7 +112,7 @@ func TestRestoreTargetSafety(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	rerr := store.Restore(ctx, hash, f, h.DB)
+	_, rerr := store.Restore(ctx, h.DB, hash, f, store.RestoreOptions{})
 	f.Close()
 	h.Close()
 	if !errors.Is(rerr, context.Canceled) {
@@ -123,7 +123,7 @@ func TestRestoreTargetSafety(t *testing.T) {
 	}
 
 	fresh := filepath.Join(out, "cancelled.bin")
-	if err := RestoreData(ctx, opts, hash, fresh, false); !errors.Is(err, context.Canceled) {
+	if err := RestoreData(ctx, opts, hash, fresh, RestoreOptions{}); !errors.Is(err, context.Canceled) {
 		t.Fatalf("cancelled restore = %v, want context.Canceled", err)
 	}
 	if _, err := os.Stat(fresh); !os.IsNotExist(err) {

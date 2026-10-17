@@ -11,6 +11,7 @@ import (
 	"indicer/internal/safe"
 	"indicer/lib/cnst"
 	"indicer/lib/logging"
+	"indicer/lib/store"
 	"os"
 	"path/filepath"
 	"runtime/debug"
@@ -232,7 +233,11 @@ func buildCommandHandlers(cliDef cliDefinition, dbOpts cli.DBOptions, tuning pip
 				zap.Int("restore_buffer_mb", *cliDef.flags.restoreBufferMB),
 				zap.Int("restore_workers_effective", tuning.restoreWorkers),
 				zap.Int("restore_queue_effective", tuning.restoreQueue))
-			return cli.RestoreData(ctx, dbOpts, *cliDef.flags.rhash, *cliDef.flags.rpath, *cliDef.flags.restoreForce)
+			verify, err := store.ParseVerifyLevel(*cliDef.flags.restoreVerify)
+			if err != nil {
+				return lifecycle.Usagef("%v", err)
+			}
+			return cli.RestoreData(ctx, dbOpts, *cliDef.flags.rhash, *cliDef.flags.rpath, cli.RestoreOptions{Force: *cliDef.flags.restoreForce, Verify: verify})
 		},
 		cliDef.commands.list.FullCommand(): func(ctx context.Context) error {
 			logging.GetLogger().Info("Command: list",

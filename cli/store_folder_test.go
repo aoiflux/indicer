@@ -32,7 +32,7 @@ func TestStoreZeroByteFile(t *testing.T) {
 		t.Fatalf("store of an empty file: %v", err)
 	}
 	out := filepath.Join(dir, "restored.bin")
-	if err := RestoreData(t.Context(), opts, plainHashB64(t, empty), out, false); err != nil {
+	if err := RestoreData(t.Context(), opts, plainHashB64(t, empty), out, RestoreOptions{}); err != nil {
 		t.Fatalf("restore of an empty file: %v", err)
 	}
 	if fi, err := os.Stat(out); err != nil || fi.Size() != 0 {
@@ -96,7 +96,7 @@ func TestStoreFolderContinuesPastErrors(t *testing.T) {
 	}
 	for _, p := range []string{a, c} {
 		out := filepath.Join(dir, "out-"+filepath.Base(p))
-		if err := RestoreData(t.Context(), opts, plainHashB64(t, p), out, false); err != nil {
+		if err := RestoreData(t.Context(), opts, plainHashB64(t, p), out, RestoreOptions{}); err != nil {
 			t.Errorf("%s was not stored after an earlier file failed: %v", filepath.Base(p), err)
 		}
 	}

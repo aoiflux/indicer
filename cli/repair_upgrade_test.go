@@ -52,7 +52,7 @@ func assertRestores(t *testing.T, dbPath string, files []string) {
 	t.Helper()
 	for _, f := range files {
 		out := filepath.Join(t.TempDir(), filepath.Base(f))
-		if err := RestoreData(t.Context(), optsFor(dbPath, 0, nil), plainHashB64(t, f), out, false); err != nil {
+		if err := RestoreData(t.Context(), optsFor(dbPath, 0, nil), plainHashB64(t, f), out, RestoreOptions{}); err != nil {
 			t.Fatalf("restore %s: %v", filepath.Base(f), err)
 		}
 		if testutil.FileSHA256(t, out) != testutil.FileSHA256(t, f) {

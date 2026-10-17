@@ -48,6 +48,7 @@ type cliFlags struct {
 
 	rpath             *string
 	restoreForce      *bool
+	restoreVerify     *string
 	restoreWorkers    *int
 	restoreQueue      *int
 	restoreProgressMs *int
@@ -155,6 +156,7 @@ func newCLIDefinition() cliDefinition {
 	commands.restore = app.Command(cnst.CmdRestore, "Restore file from database")
 	flags.rpath = commands.restore.Flag(cnst.FlagRestoreFilePath, "Path for restoring the file").Short(cnst.FlagRestoreFilePathShort).Default("restored").String()
 	flags.restoreForce = commands.restore.Flag("force", "Replace the restore path if it already exists").Default("false").Bool()
+	flags.restoreVerify = commands.restore.Flag("verify", "What to check while restoring: full (every chunk and the whole content's recorded hash), chunks (every chunk), or off").Default("full").Enum("full", "chunks", "off")
 	flags.restoreWorkers = commands.restore.Flag(cnst.FlagRestoreWorkers, "Override restore worker count (0 = adaptive default)").Short(cnst.FlagRestoreWorkersShort).Default("0").Int()
 	flags.restoreQueue = commands.restore.Flag(cnst.FlagRestoreQueue, "Override restore pipeline queue depth (0 = adaptive default)").Short(cnst.FlagRestoreQueueShort).Default("0").Int()
 	flags.restoreProgressMs = commands.restore.Flag(cnst.FlagRestoreProgressMs, "Restore progress update interval in milliseconds (default: 120)").Short(cnst.FlagRestoreProgressMsShort).Default("120").Int()

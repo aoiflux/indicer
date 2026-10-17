@@ -185,7 +185,7 @@ func (h *Handle) open(ctx context.Context, req Request) error {
 		return err
 	}
 	blobcodec.Register(h.DB, codec)
-	dbmeta.RegisterLayout(h.DB, m.Layout)
+	dbmeta.RegisterManifest(h.DB, m)
 	ApplyToGlobals(m)
 	h.keepBlockIndexLookup()
 

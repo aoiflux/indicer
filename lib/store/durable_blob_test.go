@@ -29,7 +29,7 @@ var chunkPasses = map[string]func(context.Context, structs.InputFile) (string, e
 
 // runChunkPass stores content as the evidence named by fhash through pass,
 // and returns the evidence ID its relations are keyed by.
-func runChunkPass(t *testing.T, pass func(context.Context, structs.InputFile) (string, error), db *badger.DB, fhash string, content []byte) []byte {
+func runChunkPass(t testing.TB, pass func(context.Context, structs.InputFile) (string, error), db *badger.DB, fhash string, content []byte) []byte {
 	t.Helper()
 	if err := util.EnsureBlobPath(db.Opts().Dir); err != nil {
 		t.Fatal(err)

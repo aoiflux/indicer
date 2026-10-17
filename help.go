@@ -303,10 +303,13 @@ func printEnrichHelp() {
 
 func printRestoreHelp() {
 	printHelpHeader("restore")
-	fmt.Println("Usage: dues restore HASH [--filepath|-f restored] [--restore-workers|-y N] [--restore-queue|-U N] [--restore-progress-ms|-m N] [--restore-buffer-mb|-b N] [global options]")
+	fmt.Println("Usage: dues restore HASH [--filepath|-f restored] [--force] [--verify full|chunks|off] [--restore-workers|-y N] [--restore-queue|-U N] [--restore-progress-ms|-m N] [--restore-buffer-mb|-b N] [global options]")
 	fmt.Println("Restores a stored file by its hash.")
 	printHelpSection("Most-Used Flags")
 	fmt.Println("  -f, --filepath            Output path")
+	fmt.Println("      --force               Replace the output path if it exists")
+	fmt.Println("      --verify              full (default): every chunk and the content's recorded hash;")
+	fmt.Println("                            chunks: every chunk only; off: no checks")
 	fmt.Println("  -y, --restore-workers     Worker count")
 	fmt.Println("  -U, --restore-queue       Queue depth")
 	fmt.Println("  -m, --restore-progress-ms Progress update interval")
@@ -319,6 +322,7 @@ func printRestoreHelp() {
 	printExamples(
 		"dues restore <hash>",
 		"dues restore <hash> --filepath restored.img",
+		"dues restore <hash> --filepath restored.img --force --verify chunks",
 		"dues restore <hash> -y 8 -U 32 -m 100 -b 128",
 		"dues restore <hash> --dbpath ./caseA",
 	)

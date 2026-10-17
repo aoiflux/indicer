@@ -42,7 +42,7 @@ func (h *Handle) SetStorage(storage string) error {
 		return fmt.Errorf("dbopen: record storage %s: %w", storage, err)
 	}
 	h.Manifest = m
-	dbmeta.RegisterLayout(h.DB, m.Layout)
+	dbmeta.RegisterManifest(h.DB, m)
 	ApplyToGlobals(m)
 	h.keepBlockIndexLookup()
 	return nil

@@ -4,33 +4,96 @@ import (
 	"bufio"
 	"bytes"
 	"context"
+	"crypto/sha3"
+	"encoding/base64"
+	"encoding/binary"
+	"errors"
 	"fmt"
+	"hash"
 	"indicer/internal/console"
 	"indicer/lib/cnst"
 	"indicer/lib/dbio"
 	"indicer/lib/fio"
 	"indicer/lib/structs"
 	"indicer/lib/util"
-	"os"
-	"strconv"
+	"io"
 	"sync"
 	"time"
 
 	"github.com/dgraph-io/badger/v4"
 	"github.com/dustin/go-humanize"
 	"github.com/schollz/progressbar/v3"
-	"github.com/vmihailenco/msgpack/v5"
+	"github.com/zeebo/blake3"
 )
 
+// VerifyLevel is how much a restore checks what it writes.
+type VerifyLevel int
+
+const (
+	// VerifyFull checks every chunk against its hash, and the whole object
+	// against the hash its record carries.
+	VerifyFull VerifyLevel = iota
+	// VerifyChunks checks every chunk against its hash.
+	VerifyChunks
+	// VerifyOff checks nothing.
+	VerifyOff
+)
+
+var verifyLevelNames = map[VerifyLevel]string{VerifyFull: "full", VerifyChunks: "chunks", VerifyOff: "off"}
+
+func (v VerifyLevel) String() string { return verifyLevelNames[v] }
+
+// ParseVerifyLevel parses "full", "chunks" or "off".
+func ParseVerifyLevel(s string) (VerifyLevel, error) {
+	for v, name := range verifyLevelNames {
+		if s == name {
+			return v, nil
+		}
+	}
+	return 0, fmt.Errorf("unknown verification level %q: must be full, chunks or off", s)
+}
+
+// RestoreOptions control a restore.
+type RestoreOptions struct {
+	Verify VerifyLevel
+}
+
+// DigestStatus says what a restore found out about the whole object.
+type DigestStatus string
+
+const (
+	// DigestVerified: the restored content has the hash its record carries.
+	DigestVerified DigestStatus = "verified"
+	// DigestUnavailable: the record carries no hash restore can compute.
+	DigestUnavailable DigestStatus = "unavailable"
+	// DigestSkipped: the restore was not asked to check the whole object.
+	DigestSkipped DigestStatus = "skipped"
+)
+
+// ErrDigestMismatch reports restored content that does not have the hash its
+// record carries, although every chunk matched its own hash: the object's
+// relations or its recorded range are wrong.
+var ErrDigestMismatch = errors.New("restored content does not match the hash its record carries")
+
+// RestoreReport describes a finished restore.
+type RestoreReport struct {
+	Key    []byte // the restored object's record key
+	Size   int64
+	Chunks int64
+	Digest DigestStatus
+	// DigestForm names the hash that matched, such as "blake3" or
+	// "hocho-sha3-256".
+	DigestForm string
+}
+
 type restoreChunkJob struct {
-	seq          int64
-	restoreIndex int64
-	chunkKey     []byte
-	metadata     []byte
+	seq  int64
+	span dbio.ChunkSpan
 }
 
 type restoreChunkResult struct {
 	seq  int64
+	span dbio.ChunkSpan
 	data []byte
 	err  error
 }
@@ -40,21 +103,29 @@ type restoreProducerResult struct {
 	err   error
 }
 
-// Restore writes the content of the object whose hash is fhash to dst. A
-// cancelled ctx stops it with ctx's error; dst then holds a partial write.
-func Restore(ctx context.Context, fhash string, dst *os.File, db *badger.DB) error {
+// errRestoreStopped ends the producer when the restore stops early.
+var errRestoreStopped = errors.New("restore stopped")
+
+// Restore writes the content of the object whose hash is rhash to dst,
+// checking it as opts asks. The object's evidence must have finished
+// ingesting. A cancelled ctx stops it with ctx's error; dst then holds a
+// partial write, as it does after any error.
+func Restore(ctx context.Context, db *badger.DB, rhash string, dst io.Writer, opts RestoreOptions) (RestoreReport, error) {
 	if err := ctx.Err(); err != nil {
-		return err
+		return RestoreReport{}, err
 	}
-	fid, err := dbio.GuessFileType(fhash, db)
+	fid, err := dbio.GuessFileType(rhash, db)
 	if err != nil {
-		return err
+		return RestoreReport{}, err
 	}
-	meta, err := GetFileMeta(fid, db)
+	l, err := dbio.OpenLogical(db, fid, dbio.ReadOptions{SkipVerify: opts.Verify == VerifyOff})
 	if err != nil {
-		return err
+		return RestoreReport{}, err
 	}
-	return restoreData(ctx, meta, dst, db)
+	if !l.Completed() {
+		return RestoreReport{}, cnst.ErrIncompleteFile
+	}
+	return restoreLogical(ctx, l, dst, opts)
 }
 
 func GetFileMeta(fid []byte, db *badger.DB) (structs.FileMeta, error) {
@@ -143,41 +214,31 @@ func getEvidenceFileMeta(fid []byte, db *badger.DB) (structs.FileMeta, error) {
 	return meta, nil
 }
 
-func restoreData(ctx context.Context, meta structs.FileMeta, dst *os.File, db *badger.DB) error {
+// restoreLogical writes the content of l to dst. Chunks are read and checked
+// in parallel and written in order; at most the window is between being read
+// and being written (RST-5).
+func restoreLogical(ctx context.Context, l *dbio.Logical, dst io.Writer, opts RestoreOptions) (RestoreReport, error) {
+	report := RestoreReport{Key: l.Key(), Size: l.Size(), Digest: DigestSkipped}
 	configureRestoreCache()
 
 	fio.EnableContainerReadCache()
 	defer fio.DisableContainerReadCache()
 
-	var dbstart int64
-	if meta.Start > 0 {
-		dbstart = util.GetDBStartOffset(meta.Start)
-	}
-	end := meta.Start + meta.Size
-
-	if err := dst.Truncate(meta.Size); err != nil {
-		return err
-	}
-	if _, err := dst.Seek(0, 0); err != nil {
-		return err
-	}
-
 	writer := bufio.NewWriterSize(dst, cnst.GetRestoreWriteBufferSize())
-
-	relPrefix := make([]byte, 0, len(cnst.RelationNamespace)+len(meta.EviHash)+len(cnst.DataSeperator))
-	relPrefix = append(relPrefix, cnst.RelationNamespace...)
-	relPrefix = append(relPrefix, meta.EviHash...)
-	relPrefix = append(relPrefix, cnst.DataSeperator...)
+	var digest *digester
+	if opts.Verify == VerifyFull {
+		digest = newDigester(l)
+	}
 
 	bar := progressbar.NewOptions64(
-		meta.Size,
+		l.Size(),
 		progressbar.OptionShowBytes(true),
 		progressbar.OptionSetWriter(console.Progress()),
 		progressbar.OptionSetTheme(cnst.CommonProgressBarTheme),
 	)
 
 	workerCount, jobQueueDepth := cnst.GetRestorePipelineTuning()
-	fetchBatchSize, window := restoreWindow()
+	fetchBatchSize, window := restoreWindow(l.Evidence().ChunkSize())
 	slots := make(chan struct{}, window)
 	jobs := make(chan restoreChunkJob, jobQueueDepth)
 	results := make(chan restoreChunkResult, jobQueueDepth)
@@ -208,8 +269,8 @@ func restoreData(ctx context.Context, meta structs.FileMeta, dst *os.File, db *b
 						return
 					}
 
-					data, err := readRestoreChunk(meta, job.restoreIndex, end, db, job.chunkKey, job.metadata)
-					result := restoreChunkResult{seq: job.seq, data: data, err: err}
+					data, err := readRestoreSpan(l, job.span)
+					result := restoreChunkResult{seq: job.seq, span: job.span, data: data, err: err}
 
 					select {
 					case results <- result:
@@ -228,79 +289,30 @@ func restoreData(ctx context.Context, meta structs.FileMeta, dst *os.File, db *b
 	go func() {
 		defer close(jobs)
 		var totalSeq int64
-		var err error
-
-		for batchStart := dbstart; batchStart < end && err == nil; {
-			restoreIndexes := make([]int64, 0, fetchBatchSize)
-			relationKeys := make([][]byte, 0, fetchBatchSize)
-
-			for i := 0; i < fetchBatchSize && batchStart < end; i++ {
-				restoreIndex := batchStart
-				batchStart += cnst.ChonkSize
-
-				restoreIndexes = append(restoreIndexes, restoreIndex)
-				relationKey := make([]byte, len(relPrefix), len(relPrefix)+20)
-				copy(relationKey, relPrefix)
-				relationKey = strconv.AppendInt(relationKey, restoreIndex, 10)
-				relationKeys = append(relationKeys, relationKey)
-			}
-
-			// One short read transaction per batch, not one for the whole
-			// restore, which pinned old versions for as long as it ran.
-			var chunkKeys, metadataBatch [][]byte
-			err = db.View(func(txn *badger.Txn) error {
-				chashes, err := getTxnNodesBatch(relationKeys, txn)
-				if err != nil {
-					return err
-				}
-
-				chunkKeys = make([][]byte, 0, len(chashes))
-				for _, chash := range chashes {
-					chunkKey := make([]byte, 0, len(cnst.ChonkNamespace)+len(chash))
-					chunkKey = append(chunkKey, cnst.ChonkNamespace...)
-					chunkKey = append(chunkKey, chash...)
-					chunkKeys = append(chunkKeys, chunkKey)
-				}
-
-				metadataBatch, err = getTxnNodesBatchAllowMissing(chunkKeys, txn)
-				return err
-			})
-			if err != nil {
-				break
-			}
-
+		err := l.Spans(ctx, fetchBatchSize, func(spans []dbio.ChunkSpan) error {
 			batchSeqStart := totalSeq
-			totalSeq += int64(len(restoreIndexes))
-
-			emissionOrder := buildContainerLocalityOrder(metadataBatch)
-			if len(emissionOrder) == 0 {
-				emissionOrder = make([]int, len(restoreIndexes))
-				for i := range restoreIndexes {
-					emissionOrder[i] = i
-				}
-			}
-
-			for _, i := range emissionOrder {
-				restoreIndex := restoreIndexes[i]
-				job := restoreChunkJob{seq: batchSeqStart + int64(i), restoreIndex: restoreIndex, chunkKey: chunkKeys[i], metadata: metadataBatch[i]}
+			totalSeq += int64(len(spans))
+			for _, i := range containerLocalityOrder(spans) {
+				job := restoreChunkJob{seq: batchSeqStart + int64(i), span: spans[i]}
 				// Take a window slot first: the writer frees it once this
 				// chunk is written, so reads never run more than the window
 				// ahead of the write position.
 				select {
 				case slots <- struct{}{}:
 				case <-done:
-					producerDone <- restoreProducerResult{total: totalSeq}
-					return
+					return errRestoreStopped
 				}
 				select {
 				case jobs <- job:
 				case <-done:
-					producerDone <- restoreProducerResult{total: totalSeq}
-					return
+					return errRestoreStopped
 				}
 			}
+			return nil
+		})
+		if errors.Is(err, errRestoreStopped) {
+			err = nil
 		}
-
 		producerDone <- restoreProducerResult{total: totalSeq, err: err}
 	}()
 
@@ -313,8 +325,22 @@ func restoreData(ctx context.Context, meta structs.FileMeta, dst *os.File, db *b
 	lastProgress := time.Now()
 	var pendingProgress, restored int64
 	nextSeq := int64(0)
-	pending := make(map[int64][]byte)
+	pending := make(map[int64]restoreChunkResult)
 	var workerErr error
+
+	write := func(r restoreChunkResult) error {
+		if _, err := writer.Write(r.data); err != nil {
+			return err
+		}
+		if digest != nil {
+			digest.add(r.span, r.data)
+		}
+		<-slots
+		pendingProgress += int64(len(r.data))
+		restored += int64(len(r.data))
+		nextSeq++
+		return nil
+	}
 
 	for result := range results {
 		if result.err != nil {
@@ -324,38 +350,27 @@ func restoreData(ctx context.Context, meta structs.FileMeta, dst *os.File, db *b
 			}
 			continue
 		}
+		if workerErr != nil {
+			continue
+		}
 
 		if result.seq == nextSeq {
-			written, err := writeRestoredChunkData(writer, result.data)
+			err := write(result)
+			for err == nil {
+				next, ok := pending[nextSeq]
+				if !ok {
+					break
+				}
+				delete(pending, nextSeq)
+				err = write(next)
+			}
 			if err != nil {
 				workerErr = err
 				stop()
 				continue
 			}
-			<-slots
-			pendingProgress += written
-			restored += written
-			nextSeq++
-
-			for {
-				data, ok := pending[nextSeq]
-				if !ok {
-					break
-				}
-				delete(pending, nextSeq)
-				written, err = writeRestoredChunkData(writer, data)
-				if err != nil {
-					workerErr = err
-					stop()
-					break
-				}
-				<-slots
-				pendingProgress += written
-				restored += written
-				nextSeq++
-			}
 		} else if result.seq > nextSeq {
-			pending[result.seq] = result.data
+			pending[result.seq] = result
 			notePendingChunks(len(pending))
 		}
 
@@ -368,40 +383,47 @@ func restoreData(ctx context.Context, meta structs.FileMeta, dst *os.File, db *b
 
 	producerResult := <-producerDone
 	if err := ctx.Err(); err != nil {
-		return err
+		return report, err
 	}
 	if workerErr != nil {
-		return workerErr
+		return report, workerErr
 	}
 	if producerResult.err != nil {
-		return producerResult.err
+		return report, producerResult.err
 	}
 	if nextSeq != producerResult.total {
-		return fmt.Errorf("restore pipeline incomplete: wrote %d/%d chunks", nextSeq, producerResult.total)
+		return report, fmt.Errorf("restore pipeline incomplete: wrote %d/%d chunks", nextSeq, producerResult.total)
 	}
-	if restored != meta.Size {
-		return fmt.Errorf("restore wrote %d bytes, the record's size is %d", restored, meta.Size)
+	if restored != l.Size() {
+		return report, fmt.Errorf("restore wrote %d bytes, the record's size is %d", restored, l.Size())
 	}
+	report.Chunks = nextSeq
 
 	if pendingProgress > 0 {
 		bar.Add64(pendingProgress)
 	}
 	if err := writer.Flush(); err != nil {
-		return err
+		return report, err
+	}
+	if digest != nil {
+		report.Digest, report.DigestForm = digest.result()
+		if report.Digest == "" {
+			return report, fmt.Errorf("%w: %x records %s", ErrDigestMismatch, l.Key(), l.FileHash())
+		}
 	}
 
 	bar.Finish()
 	fmt.Fprintln(console.Err())
-	console.Println("Restored file with size: ", humanize.Bytes(uint64(meta.Size)))
+	console.Println("Restored file with size: ", humanize.Bytes(uint64(l.Size())))
 	// A progress bar error (an empty input has nothing to show) is not the
 	// operation's error.
 	_ = bar.Close()
-	return nil
+	return report, nil
 }
 
 // Test seams.
 var (
-	readRestoreChunk  = getRestoredChunkData
+	readRestoreSpan   = (*dbio.Logical).ReadSpan
 	notePendingChunks = func(int) {}
 )
 
@@ -409,13 +431,13 @@ var (
 // once: chunks being read, queued, or parked until their turn (RST-5).
 const restoreWindowBytes = 256 * cnst.MB
 
-// restoreWindow returns how many chunks the producer looks up per read
-// transaction, and how many may be between lookup and write at once. The
-// window is twice the batch: the producer emits a batch in storage order, so
-// the next chunk to write may be the last one emitted, and a window smaller
-// than a batch could stall with that chunk never sent.
-func restoreWindow() (batch, window int) {
-	batch = int(min(128, max(4, int64(restoreWindowBytes)/cnst.ChonkSize)))
+// restoreWindow returns how many chunks of chunkSize the producer looks up
+// per read transaction, and how many may be between lookup and write at
+// once. The window is twice the batch: the producer emits a batch in storage
+// order, so the next chunk to write may be the last one emitted, and a
+// window smaller than a batch could stall with that chunk never sent.
+func restoreWindow(chunkSize int64) (batch, window int) {
+	batch = int(min(128, max(4, int64(restoreWindowBytes)/chunkSize)))
 	return batch, 2 * batch
 }
 
@@ -432,136 +454,138 @@ func configureRestoreCache() {
 	fio.SetContainerReadCacheSize(cacheSize)
 }
 
-func getRestoredChunkData(meta structs.FileMeta, restoreIndex, end int64, db *badger.DB, chunkKey []byte, metadata []byte) ([]byte, error) {
-	if len(metadata) == 0 {
-		data, err := dbio.GetChonkData(restoreIndex, meta.Start, end, chunkKey, db)
-		if err != nil {
-			return nil, err
-		}
-		return data, nil
-	}
-
-	data, err := dbio.GetChonkDataWithMetadata(restoreIndex, meta.Start, end, chunkKey, metadata, db)
-	if err != nil {
-		return nil, err
-	}
-	return data, nil
-}
-
-func writeRestoredChunkData(dst *bufio.Writer, data []byte) (int64, error) {
-	if _, err := dst.Write(data); err != nil {
-		return 0, err
-	}
-
-	return int64(len(data)), nil
-}
-
-func getTxnNodesBatch(keys [][]byte, txn *badger.Txn) ([][]byte, error) {
-	values := make([][]byte, 0, len(keys))
-
-	for _, key := range keys {
-		item, err := txn.Get(key)
-		if err != nil {
-			return nil, err
-		}
-
-		data, err := item.ValueCopy(nil)
-		if err != nil {
-			return nil, err
-		}
-
-		decoded, err := cnst.DECODER.DecodeAll(data, nil)
-		if err == nil {
-			values = append(values, decoded)
-			continue
-		}
-
-		values = append(values, data)
-	}
-
-	return values, nil
-}
-
-func getTxnNodesBatchAllowMissing(keys [][]byte, txn *badger.Txn) ([][]byte, error) {
-	values := make([][]byte, len(keys))
-
-	for i, key := range keys {
-		item, err := txn.Get(key)
-		if err != nil {
-			if err == badger.ErrKeyNotFound {
-				continue
-			}
-			return nil, err
-		}
-
-		data, err := item.ValueCopy(nil)
-		if err != nil {
-			return nil, err
-		}
-
-		decoded, err := cnst.DECODER.DecodeAll(data, nil)
-		if err == nil {
-			values[i] = decoded
-			continue
-		}
-
-		values[i] = data
-	}
-
-	return values, nil
-}
-
-// buildContainerLocalityOrder returns an index emission order that clusters
-// container-backed chunks together per batch to improve cache and read locality.
-// It preserves deterministic output by keeping original logical seq IDs and
-// only changing worker dispatch order.
-func buildContainerLocalityOrder(metadataBatch [][]byte) []int {
-	if len(metadataBatch) < 2 {
-		return nil
-	}
-
+// containerLocalityOrder returns the order to read a batch's spans in:
+// chunks of one container together, for cache and read locality. The
+// sequence numbers, and so the write order, are unchanged.
+func containerLocalityOrder(spans []dbio.ChunkSpan) []int {
 	containerGroups := make(map[string][]int)
 	groupOrder := make([]string, 0, 8)
-	nonContainer := make([]int, 0, len(metadataBatch))
+	order := make([]int, 0, len(spans))
+	var nonContainer []int
 
-	for i, metadata := range metadataBatch {
-		containerPath, ok := extractContainerPath(metadata)
-		if !ok {
+	for i, s := range spans {
+		if !s.Loc.Container || s.Loc.Path == "" {
 			nonContainer = append(nonContainer, i)
 			continue
 		}
-
-		if _, exists := containerGroups[containerPath]; !exists {
-			groupOrder = append(groupOrder, containerPath)
+		if _, exists := containerGroups[s.Loc.Path]; !exists {
+			groupOrder = append(groupOrder, s.Loc.Path)
 		}
-		containerGroups[containerPath] = append(containerGroups[containerPath], i)
+		containerGroups[s.Loc.Path] = append(containerGroups[s.Loc.Path], i)
 	}
-
 	if len(groupOrder) <= 1 {
-		return nil
+		for i := range spans {
+			order = append(order, i)
+		}
+		return order
 	}
-
-	order := make([]int, 0, len(metadataBatch))
-	for _, containerPath := range groupOrder {
-		order = append(order, containerGroups[containerPath]...)
+	for _, path := range groupOrder {
+		order = append(order, containerGroups[path]...)
 	}
-	order = append(order, nonContainer...)
-
-	return order
+	return append(order, nonContainer...)
 }
 
-func extractContainerPath(metadata []byte) (string, bool) {
-	if len(metadata) == 0 {
-		return "", false
-	}
+// digester computes, while a restore writes, the hash forms an object's
+// recorded hash can take, so the whole object can be checked against it:
+//
+//   - plain: the file hash of the content (sync and async strategies, and
+//     partitions and indexed files hashed directly);
+//   - hocho: the file hash over each chunk's hash, length first, the way the
+//     hocho strategy hashes evidence;
+//   - hocho with edges: the same, but a chunk the object covers only partly,
+//     or a short last chunk, contributes the file hash of the covered piece,
+//     the way partitions and indexed files are hashed from relations.
+//
+// The file hash is BLAKE3 in a BLAKE3 database and SHA3-256 in a SHA3 one;
+// the chunk hash's length says which (64 bytes is SHA3-512).
+type digester struct {
+	want   []byte
+	stride int64
+	chunks *dbio.EvidenceChunks
+	algos  []fileHashAlgo
+}
 
-	var parsed structs.ChonkMetadata
-	if err := msgpack.Unmarshal(metadata, &parsed); err != nil {
-		return "", false
-	}
-	if !parsed.Container || parsed.Path == "" {
-		return "", false
-	}
+type fileHashAlgo struct {
+	name                string
+	plain, hocho, edges hash.Hash
+	newHash             func() hash.Hash
+}
 
-	return parsed.Path, true
+func newFileHashAlgo(name string, newHash func() hash.Hash) fileHashAlgo {
+	return fileHashAlgo{name: name, plain: newHash(), hocho: newHash(), edges: newHash(), newHash: newHash}
+}
+
+func newBLAKE3() hash.Hash  { return blake3.New() }
+func newSHA3256() hash.Hash { return sha3.New256() }
+
+func newDigester(l *dbio.Logical) *digester {
+	want, err := base64.StdEncoding.DecodeString(l.FileHash())
+	if err != nil || len(want) != 32 {
+		// No hash, or none in a form restore computes.
+		want = nil
+	}
+	return &digester{want: want, stride: l.Evidence().ChunkSize(), chunks: l.Evidence()}
+}
+
+func (d *digester) add(s dbio.ChunkSpan, data []byte) {
+	if d.want == nil {
+		return
+	}
+	if d.algos == nil {
+		switch len(s.Hash) {
+		case 64:
+			d.algos = []fileHashAlgo{newFileHashAlgo("sha3-256", newSHA3256)}
+		case 32:
+			d.algos = []fileHashAlgo{newFileHashAlgo("blake3", newBLAKE3)}
+		default:
+			d.algos = []fileHashAlgo{newFileHashAlgo("blake3", newBLAKE3), newFileHashAlgo("sha3-256", newSHA3256)}
+		}
+	}
+	whole := s.Lo == 0 && s.Hi == d.chunks.ChunkLen(s.Chunk)
+	full := s.Lo == 0 && s.Hi == d.stride
+	for _, a := range d.algos {
+		a.plain.Write(data)
+		var piece []byte
+		if !whole || !full {
+			h := a.newHash()
+			h.Write(data)
+			piece = h.Sum(nil)
+		}
+		writeHochoEntry(a.hocho, s.Hash, piece, whole)
+		writeHochoEntry(a.edges, s.Hash, piece, full)
+	}
+}
+
+func writeHochoEntry(h hash.Hash, chunkHash, piece []byte, useChunkHash bool) {
+	entry := piece
+	if useChunkHash {
+		entry = chunkHash
+	}
+	var n [4]byte
+	binary.BigEndian.PutUint32(n[:], uint32(len(entry)))
+	h.Write(n[:])
+	h.Write(entry)
+}
+
+// result returns DigestVerified and the form that matched, DigestUnavailable
+// when there is no hash to check, or "" when the content does not match it.
+func (d *digester) result() (DigestStatus, string) {
+	if d.want == nil {
+		return DigestUnavailable, ""
+	}
+	if d.algos == nil {
+		// An empty object: only the plain hash of nothing is defined.
+		d.algos = []fileHashAlgo{newFileHashAlgo("blake3", newBLAKE3), newFileHashAlgo("sha3-256", newSHA3256)}
+	}
+	for _, a := range d.algos {
+		switch {
+		case bytes.Equal(a.plain.Sum(nil), d.want):
+			return DigestVerified, a.name
+		case bytes.Equal(a.hocho.Sum(nil), d.want):
+			return DigestVerified, "hocho-" + a.name
+		case bytes.Equal(a.edges.Sum(nil), d.want):
+			return DigestVerified, "hocho-edges-" + a.name
+		}
+	}
+	return "", ""
 }

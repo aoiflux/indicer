@@ -44,7 +44,7 @@ func TestStagedPipelineRoundTrip(t *testing.T) {
 				}
 
 				out := filepath.Join(dir, "restored.bin")
-				if err := RestoreData(t.Context(), opts, plainHashB64(t, src), out, false); err != nil {
+				if err := RestoreData(t.Context(), opts, plainHashB64(t, src), out, RestoreOptions{}); err != nil {
 					t.Fatalf("restore: %v", err)
 				}
 				got, err := os.ReadFile(out)

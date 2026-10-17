@@ -1,7 +1,7 @@
 package service
 
 import (
-	"encoding/base64"
+	"context"
 	"encoding/binary"
 	"indicer/lib/blobcodec"
 	"indicer/lib/cnst"
@@ -115,40 +115,18 @@ func setupBenchmarkChunkMapDataset(tb testing.TB, chunks int) (structs.FileMeta,
 		}
 	}
 
+	ef := structs.NewEvidenceFile("benchmark", 0, int64(chunks)*cnst.ChonkSize, nil, "dd", "")
+	ef.Completed = true
+	if err := dbio.SetFile(util.AppendToBytesSlice(cnst.EviFileNamespace, eviHash), ef, db); err != nil {
+		tb.Fatalf("set evidence failed: %v", err)
+	}
+
 	meta := structs.FileMeta{
 		EviHash: eviHash,
 		Start:   0,
 		Size:    int64(chunks) * cnst.ChonkSize,
 	}
 	return meta, db
-}
-
-func getChonkMapSequential(meta structs.FileMeta, db *badger.DB) (map[string]int64, error) {
-	var dbstart int64
-	if meta.Start > 0 {
-		dbstart = util.GetDBStartOffset(meta.Start)
-	}
-	end := meta.Start + meta.Size
-
-	numChunks := int((end - dbstart + cnst.ChonkSize - 1) / cnst.ChonkSize)
-	chunkMap := make(map[string]int64, numChunks)
-	for restoreIndex := dbstart; restoreIndex < end; restoreIndex += cnst.ChonkSize {
-		relKey := util.AppendToBytesSlice(cnst.RelationNamespace, meta.EviHash, cnst.DataSeperator, restoreIndex)
-		chash, err := dbio.GetNode(relKey, db)
-		if err != nil {
-			return nil, err
-		}
-
-		ckey := util.AppendToBytesSlice(cnst.ChonkNamespace, chash)
-		csize, err := dbio.GetChonkSize(restoreIndex, meta.Start, end, ckey, db)
-		if err != nil {
-			return nil, err
-		}
-
-		chunkMap[base64.StdEncoding.EncodeToString(chash)] = csize
-	}
-
-	return chunkMap, nil
 }
 
 func BenchmarkGetChonkMap(b *testing.B) {
@@ -171,34 +149,17 @@ func BenchmarkGetChonkMap(b *testing.B) {
 
 func benchChonkMapCase(b *testing.B, meta structs.FileMeta, db *badger.DB, expectedChunks int) {
 	b.Helper()
-
-	b.Run("sequential", func(b *testing.B) {
-		b.ReportAllocs()
-		b.ResetTimer()
-		for i := 0; i < b.N; i++ {
-			res, err := getChonkMapSequential(meta, db)
-			if err != nil {
-				b.Fatalf("sequential benchmark failed: %v", err)
-			}
-			if len(res) != expectedChunks {
-				b.Fatalf("expected %d chunks, got %d", expectedChunks, len(res))
-			}
+	b.ReportAllocs()
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		res, err := chunkMap(context.Background(), db, meta.EviHash, meta.Start, meta.Start+meta.Size)
+		if err != nil {
+			b.Fatalf("chunk map: %v", err)
 		}
-	})
-
-	b.Run("batched_parallel", func(b *testing.B) {
-		b.ReportAllocs()
-		b.ResetTimer()
-		for i := 0; i < b.N; i++ {
-			res, err := getChonkMap(meta, db)
-			if err != nil {
-				b.Fatalf("batched+parallel benchmark failed: %v", err)
-			}
-			if len(res) != expectedChunks {
-				b.Fatalf("expected %d chunks, got %d", expectedChunks, len(res))
-			}
+		if len(res) != expectedChunks {
+			b.Fatalf("expected %d chunks, got %d", expectedChunks, len(res))
 		}
-	})
+	}
 }
 
 func itoa(v int) string {

@@ -28,8 +28,27 @@ var ErrChunkMetaInvalid = errors.New("invalid chunk metadata")
 // other error, a database or block index read error or damaged metadata, is
 // returned as such, never taken for a missing chunk.
 func LocateChunk(ckey []byte, db *badger.DB) (structs.ChonkMetadata, error) {
-	raw, err := GetNode(ckey, db)
+	var loc structs.ChonkMetadata
+	err := db.View(func(txn *badger.Txn) error {
+		var err error
+		loc, err = locateChunkTxn(txn, ckey, db.Opts().Dir)
+		return err
+	})
+	return loc, err
+}
+
+// locateChunkTxn is LocateChunk inside txn, for the database whose
+// directory is dir.
+func locateChunkTxn(txn *badger.Txn, ckey []byte, dir string) (structs.ChonkMetadata, error) {
+	item, err := txn.Get(ckey)
 	if err == nil {
+		raw, err := item.ValueCopy(nil)
+		if err != nil {
+			return structs.ChonkMetadata{}, err
+		}
+		if decoded, err := cnst.DECODER.DecodeAll(raw, nil); err == nil {
+			raw = decoded
+		}
 		return parseChonkMetadata(raw)
 	}
 	if !errors.Is(err, badger.ErrKeyNotFound) {
@@ -39,7 +58,7 @@ func LocateChunk(ckey []byte, db *badger.DB) (structs.ChonkMetadata, error) {
 	if !cnst.LegacyBlockIndex {
 		return structs.ChonkMetadata{}, notFound
 	}
-	path, offset, size, err := fio.LookupBlockIndex(db.Opts().Dir, ckey)
+	path, offset, size, err := fio.LookupBlockIndex(dir, ckey)
 	if errors.Is(err, fio.ErrChunkNotIndexed) {
 		return structs.ChonkMetadata{}, notFound
 	}

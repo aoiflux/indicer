@@ -17,6 +17,7 @@ var layoutGuarded = []string{
 	"lib/dbio/blobpath.go",
 	"lib/dbio/chunk_stored.go",
 	"lib/dbio/locator.go",
+	"lib/dbio/logical.go",
 	"lib/dbio/members.go",
 	"lib/fio/blockindex.go",
 	"lib/fio/container.go",
@@ -25,7 +26,9 @@ var layoutGuarded = []string{
 	"lib/fsx/fsx.go",
 	"lib/fsx/tempfile.go",
 	"lib/store/durability.go",
+	"lib/service/service.go",
 	"lib/store/ingest_validation.go",
+	"lib/store/restore.go",
 	"lib/store/upgrade.go",
 	"lib/store/verify.go",
 }

@@ -2,6 +2,7 @@ package dbio
 
 import (
 	"bytes"
+	"context"
 	"encoding/base64"
 	"encoding/binary"
 	"errors"
@@ -605,58 +606,15 @@ func PingNode(key []byte, db *badger.DB) error {
 }
 
 // GetChonkData reads the chunk stored at evidence offset chunkOff and returns
-// the part of it inside the logical range [start, end).
+// the part of it inside the logical range [start, end), striding by the
+// process's chunk size. Only search still uses it; W7 moves search onto the
+// logical reader (logical.go) and deletes it.
 func GetChonkData(chunkOff, start, end int64, key []byte, db *badger.DB) ([]byte, error) {
 	data, err := GetChonkNode(key, db)
 	if err != nil {
 		return nil, err
 	}
 	return trimChunk(data, chunkOff, cnst.ChonkSize, start, end)
-}
-
-// GetChonkDataWithMetadata is GetChonkData for a caller that already holds
-// the chunk's metadata; key is still needed to check what is read.
-func GetChonkDataWithMetadata(chunkOff, start, end int64, key, metadata []byte, db *badger.DB) ([]byte, error) {
-	data, err := readChonkFromMetadata(key, metadata, db)
-	if err != nil {
-		return nil, err
-	}
-	return trimChunk(data, chunkOff, cnst.ChonkSize, start, end)
-}
-
-// GetStoredChonkSealedSize extracts the full-chunk sealed size persisted in
-// metadata. It returns (size, true) when available, otherwise (0, false).
-func GetStoredChonkSealedSize(metadata []byte) (int64, bool) {
-	parsed, err := parseChonkMetadata(metadata)
-	if err != nil || parsed.StoredSize < 0 {
-		return 0, false
-	}
-	return parsed.StoredSize, true
-}
-
-func GetChonkSizeWithMetadata(chunkOff, start, end int64, key, metadata []byte, db *badger.DB) (int64, error) {
-	data, err := GetChonkDataWithMetadata(chunkOff, start, end, key, metadata, db)
-	if err != nil {
-		return -1, err
-	}
-	return getSealedChunkSize(key, data, db)
-}
-
-func GetChonkSize(chunkOff, start, end int64, key []byte, db *badger.DB) (int64, error) {
-	data, err := GetChonkData(chunkOff, start, end, key, db)
-	if err != nil {
-		return -1, err
-	}
-	return getSealedChunkSize(key, data, db)
-}
-
-// getSealedChunkSize reports how large data is once encoded for storage.
-func getSealedChunkSize(key, data []byte, db *badger.DB) (int64, error) {
-	encoded, err := blobcodec.For(db).Encode(key, data)
-	if err != nil {
-		return -1, err
-	}
-	return int64(len(encoded)), nil
 }
 
 // GetChonkNode returns the decoded content of the chunk whose key is key.
@@ -666,14 +624,6 @@ func GetChonkNode(key []byte, db *badger.DB) ([]byte, error) {
 		return nil, err
 	}
 	return readChonk(key, loc, db)
-}
-
-func readChonkFromMetadata(key, metadata []byte, db *badger.DB) ([]byte, error) {
-	parsed, err := parseChonkMetadata(metadata)
-	if err != nil {
-		return nil, err
-	}
-	return readChonk(key, parsed, db)
 }
 
 // readChonk reads and decodes the chunk key stored at parsed.
@@ -708,75 +658,15 @@ func parseChonkMetadata(metadata []byte) (structs.ChonkMetadata, error) {
 	return parsed, nil
 }
 
-// StreamLogicalFileBytes iterates over all chunks belonging to the logical file
-// identified by fid (IndexedFile, PartitionFile, or EvidenceFile), trims each chunk
-// to the file's actual byte range, and calls fn with the trimmed data in order.
-// This mirrors the restore loop but without writing to disk, enabling streaming
-// computation (e.g. full-file SimHash) without buffering the entire file in memory.
+// StreamLogicalFileBytes calls fn with the content of the object fid (an
+// evidence, partition or indexed file), in order, a chunk's part at a time,
+// each chunk checked against its hash. The bytes must not be modified.
 func StreamLogicalFileBytes(fid []byte, db *badger.DB, fn func([]byte) error) error {
-	start, size, ehash, err := getLogicalFileMeta(fid, db)
+	l, err := OpenLogical(db, fid, ReadOptions{})
 	if err != nil {
 		return err
 	}
-
-	var dbstart int64
-	if start > 0 {
-		dbstart = util.GetDBStartOffset(start)
-	}
-	end := start + size
-
-	for restoreIndex := dbstart; restoreIndex < end; restoreIndex += cnst.ChonkSize {
-		relKey := util.AppendToBytesSlice(cnst.RelationNamespace, ehash, cnst.DataSeperator, restoreIndex)
-		chash, err := GetNode(relKey, db)
-		if err != nil {
-			return err
-		}
-		ckey := util.AppendToBytesSlice(cnst.ChonkNamespace, chash)
-		data, err := GetChonkData(restoreIndex, start, end, ckey, db)
-		if err != nil {
-			return err
-		}
-		if err := fn(data); err != nil {
-			return err
-		}
-	}
-	return nil
-}
-
-func getLogicalFileMeta(fid []byte, db *badger.DB) (start, size int64, ehash []byte, err error) {
-	switch {
-	case bytes.HasPrefix(fid, []byte(cnst.EviFileNamespace)):
-		efile, e := GetEvidenceFile(fid, db)
-		if e != nil {
-			return 0, 0, nil, e
-		}
-		ehash = fid[len(cnst.EviFileNamespace):]
-		return efile.Start, efile.Size, ehash, nil
-	case bytes.HasPrefix(fid, []byte(cnst.PartiFileNamespace)):
-		pfile, e := GetPartitionFile(fid, db)
-		if e != nil {
-			return 0, 0, nil, e
-		}
-		name := pfile.Name
-		ehash, e = util.GetEvidenceFileHash(name)
-		if e != nil {
-			return 0, 0, nil, e
-		}
-		return pfile.Start, pfile.Size, ehash, nil
-	case bytes.HasPrefix(fid, []byte(cnst.IdxFileNamespace)):
-		ifile, e := GetIndexedFile(fid, db)
-		if e != nil {
-			return 0, 0, nil, e
-		}
-		name := ifile.Name
-		ehash, e = util.GetEvidenceFileHash(name)
-		if e != nil {
-			return 0, 0, nil, e
-		}
-		return ifile.Start, ifile.Size, ehash, nil
-	default:
-		return 0, 0, nil, cnst.ErrUnknownFileType
-	}
+	return l.Stream(context.Background(), fn)
 }
 
 func GetNode(key []byte, db *badger.DB) ([]byte, error) {
@@ -804,54 +694,6 @@ func GetNode(key []byte, db *badger.DB) ([]byte, error) {
 		data = decoded
 	}
 	return data, nil
-}
-
-func GetNodesBatch(keys [][]byte, db *badger.DB) ([][]byte, []error) {
-	logging.GetLogger().Debug("GetNodesBatch START", zap.Int("batch_key_count", len(keys)))
-	values := make([][]byte, len(keys))
-	errs := make([]error, len(keys))
-
-	err := db.View(func(txn *badger.Txn) error {
-		for i, key := range keys {
-			item, e := txn.Get(key)
-			if e != nil {
-				errs[i] = e
-				continue
-			}
-
-			e = item.Value(func(val []byte) error {
-				copied, copyErr := item.ValueCopy(val)
-				if copyErr != nil {
-					return copyErr
-				}
-
-				decoded, decodeErr := cnst.DECODER.DecodeAll(copied, nil)
-				if decodeErr == nil {
-					values[i] = decoded
-				} else {
-					values[i] = copied
-				}
-				return nil
-			})
-			if e != nil {
-				errs[i] = e
-			}
-		}
-		return nil
-	})
-
-	if err != nil {
-		for i := range errs {
-			if errs[i] == nil {
-				errs[i] = err
-			}
-		}
-		logging.GetLogger().Error("GetNodesBatch DB_VIEW_ERROR", zap.Error(err), zap.Int("batch_key_count", len(keys)))
-		return values, errs
-	}
-
-	logging.GetLogger().Debug("GetNodesBatch COMPLETE", zap.Int("batch_key_count", len(keys)))
-	return values, errs
 }
 
 func GuessFileType(encodedHash string, db *badger.DB) ([]byte, error) {

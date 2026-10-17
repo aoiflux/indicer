@@ -87,7 +87,7 @@ func TestRestoreLogicalRangeAcrossChunkBoundaries(t *testing.T) {
 				if err := os.MkdirAll(filepath.Dir(out), 0o755); err != nil {
 					t.Fatal(err)
 				}
-				if err := RestoreData(t.Context(), opts, hashes[r.name], out, false); err != nil {
+				if err := RestoreData(t.Context(), opts, hashes[r.name], out, RestoreOptions{}); err != nil {
 					t.Fatalf("restore [%d,+%d): %v", r.start, r.size, err)
 				}
 				got, err := os.ReadFile(out)
@@ -109,7 +109,7 @@ func TestRestoreLogicalRangeAcrossChunkBoundaries(t *testing.T) {
 			if err := os.MkdirAll(filepath.Dir(out), 0o755); err != nil {
 				t.Fatal(err)
 			}
-			if err := RestoreData(t.Context(), opts, hashes["past_evidence_end"], out, false); err == nil {
+			if err := RestoreData(t.Context(), opts, hashes["past_evidence_end"], out, RestoreOptions{}); err == nil {
 				t.Fatal("restore of a range past the end of its evidence succeeded")
 			}
 			if _, err := os.Stat(out); !os.IsNotExist(err) {

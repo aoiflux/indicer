@@ -1,7 +1,6 @@
 package dbio
 
 import (
-	"bytes"
 	"errors"
 	"math"
 	"testing"
@@ -49,46 +48,4 @@ func TestIntersect(t *testing.T) {
 			}
 		})
 	}
-}
-
-func TestTrimChunk(t *testing.T) {
-	const cs = 4096
-	chunk := make([]byte, cs)
-	for i := range chunk {
-		chunk[i] = byte(i % 251)
-	}
-
-	t.Run("straddle", func(t *testing.T) {
-		first, err := trimChunk(chunk, 0, cs, cs-100, cs+100)
-		if err != nil || !bytes.Equal(first, chunk[cs-100:]) {
-			t.Fatalf("first chunk: %d bytes, %v", len(first), err)
-		}
-		second, err := trimChunk(chunk, cs, cs, cs-100, cs+100)
-		if err != nil || !bytes.Equal(second, chunk[:100]) {
-			t.Fatalf("second chunk: %d bytes, %v", len(second), err)
-		}
-	})
-
-	t.Run("short last chunk", func(t *testing.T) {
-		got, err := trimChunk(chunk[:17], 3*cs, cs, 2*cs, 3*cs+17)
-		if err != nil || !bytes.Equal(got, chunk[:17]) {
-			t.Fatalf("got %d bytes, %v", len(got), err)
-		}
-	})
-
-	// A chunk shorter than the stride that the range continues past means
-	// the chunk is truncated or the range is wrong; reading it would return
-	// fewer bytes than the range claims, or bytes from beyond the chunk.
-	t.Run("truncated chunk", func(t *testing.T) {
-		got, err := trimChunk(chunk[:17], cs, cs, 0, 3*cs)
-		if !errors.Is(err, ErrChunkRange) {
-			t.Fatalf("got %d bytes, %v; want ErrChunkRange", len(got), err)
-		}
-	})
-	t.Run("range past evidence end", func(t *testing.T) {
-		got, err := trimChunk(chunk[:17], 3*cs, cs, 3*cs, 3*cs+100)
-		if !errors.Is(err, ErrChunkRange) {
-			t.Fatalf("got %d bytes, %v; want ErrChunkRange", len(got), err)
-		}
-	})
 }

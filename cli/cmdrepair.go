@@ -32,6 +32,17 @@ type RepairOptions struct {
 	// ReindexFailed rebuilds the index of every evidence whose index pass
 	// failed or was interrupted (--reindex-failed, with --fix).
 	ReindexFailed bool
+	// AddRevrel adds reverse relations, which near needs, to every stored
+	// evidence stored without them (--revrel, with --fix).
+	AddRevrel bool
+}
+
+// addReverseRelations gives every stored evidence without reverse relations
+// what near needs to find its chunks (SRC-12).
+func addReverseRelations(ctx context.Context, h *dbopen.Handle) error {
+	evidence, added, err := store.AddMissingReverseRelations(ctx, h.DB)
+	console.Printf("Reverse relations: %d evidence lacked them; %d added.\n", evidence, added)
+	return err
 }
 
 // quarantineContainerIndexes hides the indexes ingests before W6 built over
@@ -80,6 +91,9 @@ func repairData(ctx context.Context, opts DBOptions, ro RepairOptions, in io.Rea
 	if ro.ReindexFailed && !ro.Fix {
 		return lifecycle.Usagef("--reindex-failed needs --fix")
 	}
+	if ro.AddRevrel && !ro.Fix {
+		return lifecycle.Usagef("--revrel needs --fix")
+	}
 	if ro.Fix || ro.Upgrade {
 		mode = dbopen.ReadWrite
 	}
@@ -103,6 +117,12 @@ func repairData(ctx context.Context, opts DBOptions, ro RepairOptions, in io.Rea
 		}
 		if err = quarantineContainerIndexes(ctx, h); err != nil {
 			logging.GetLogger().Error("RepairData QUARANTINE_ERROR", zap.Error(err))
+			return err
+		}
+	}
+	if ro.AddRevrel {
+		if err = addReverseRelations(ctx, h); err != nil {
+			logging.GetLogger().Error("RepairData REVREL_ERROR", zap.Error(err))
 			return err
 		}
 	}

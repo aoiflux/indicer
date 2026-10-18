@@ -7,363 +7,211 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"indicer/internal/console"
-	"indicer/lib/cnst"
-	"indicer/lib/dbio"
-	"indicer/lib/fts"
-	"indicer/lib/logging"
-	"indicer/lib/near"
-	"indicer/lib/store"
-	"indicer/lib/structs"
-	"indicer/lib/util"
+	"io/fs"
 	"os"
 	"sort"
 	"strings"
 	"sync"
-	"time"
+
+	"indicer/internal/console"
+	"indicer/lib/cnst"
+	"indicer/lib/dbio"
+	"indicer/lib/fsx"
+	"indicer/lib/fts"
+	"indicer/lib/structs"
 
 	"github.com/dgraph-io/badger/v4"
-	"github.com/fatih/color"
 	"github.com/schollz/progressbar/v3"
-	"go.uber.org/zap"
 )
 
-var searchNamespaces = []string{
-	cnst.IdxFileNamespace,
-	cnst.PartiFileNamespace,
-	cnst.EviFileNamespace,
-}
+// DefaultReportPath is where a search writes its report when no path is
+// given.
+const DefaultReportPath = "report.json"
 
-const defaultReportPath = "report.json"
+// ftsCandidateLimit is the most indexed files the full-text index offers to
+// one search.
+const ftsCandidateLimit = 5000
 
-type searchSettings struct {
-	query      string
-	queryBytes []byte
-	queryLen   int
-}
+// ErrReportExists is a report path that already exists, without Force.
+var ErrReportExists = errors.New("report file already exists")
 
-func Search(query string, db *badger.DB) error {
-	return SearchWithContext(context.Background(), query, db)
-}
-
-func newSearchSettings(query string) searchSettings {
-	return searchSettings{
-		query:      query,
-		queryBytes: bytes.ToLower([]byte(query)),
-		queryLen:   len(query),
-	}
-}
-
-func workerLimit() int {
-	maxWorkers := cnst.GetMaxThreadCount()
-	if maxWorkers <= 0 {
-		return 1
-	}
-	return maxWorkers
-}
-
+// SearchSummaryWithContext counts query, taken as one literal term, in every
+// stored object of db. It returns each object's count, keyed by base64 of
+// its record key, and the occurrences in the evidence: the stored bytes
+// counted once, not once per level (SRC-9).
 func SearchSummaryWithContext(ctx context.Context, query string, db *badger.DB) (map[string]int64, int64, error) {
-	start := time.Now()
-	logging.GetLogger().Info("SearchSummaryWithContext START", zap.Int("query_length", len(query)))
-
-	if len(query) < 2 {
-		err := cnst.ErrSmallQuery
-		logging.GetLogger().Error("SearchSummaryWithContext VALIDATION_ERROR", zap.Error(err))
-		return nil, 0, cnst.ErrSmallQuery
-	}
-	if err := ctx.Err(); err != nil {
-		logging.GetLogger().Error("SearchSummaryWithContext CONTEXT_ERROR", zap.Error(err))
+	res, err := Run(ctx, db, []string{query}, Options{})
+	if err != nil {
 		return nil, 0, err
 	}
+	out := make(map[string]int64, len(res.Hits))
+	for _, h := range res.Hits {
+		out[base64.StdEncoding.EncodeToString(h.Key)] = h.Counts[0]
+	}
+	return out, res.LevelTotal(LevelEvidence, 0), nil
+}
 
-	settings := newSearchSettings(query)
-	idmap, err := executeSearchPipeline(ctx, settings, db, nil, nil)
+// ValidateQuery checks query as a search would, without reading anything.
+func ValidateQuery(query string) error { return validateTerms(parseQuery(query).terms) }
+
+// Request is a search whose ranked results go to a report file.
+type Request struct {
+	// Query is split into terms: words are ANDed, "a | b" ORs them, and a
+	// double-quoted phrase is one term.
+	Query string
+	// FullText searches only the indexed files the full-text index offers
+	// as candidates, and falls back to a full search when it offers none.
+	FullText bool
+	// RankAlpha weighs raw occurrence counts against BM25 in the ranking.
+	RankAlpha float64
+	// Out is the report path (DefaultReportPath when empty); an existing
+	// file is replaced only with Force.
+	Out   string
+	Force bool
+	// Progress shows a progress bar.
+	Progress bool
+}
+
+// Outcome is what a search found and where its report went.
+type Outcome struct {
+	ReportPath string
+	// Mode is "full-text" when the full-text candidates were searched, or
+	// "scan" when every stored object was.
+	Mode   string
+	Result *Result
+	Ranked int
+	// Notes are what the user should know about how the search ran.
+	Notes []string
+}
+
+// Modes of a search.
+const (
+	ModeScan     = "scan"
+	ModeFullText = "full-text"
+)
+
+// SearchReport runs req and writes its report. Nothing is searched when the
+// report path exists and req.Force is not set (ErrReportExists).
+func SearchReport(ctx context.Context, db *badger.DB, req Request) (Outcome, error) {
+	out := Outcome{ReportPath: req.Out, Mode: ModeScan}
+	if out.ReportPath == "" {
+		out.ReportPath = DefaultReportPath
+	}
+	pq := parseQuery(req.Query)
+	if err := validateTerms(pq.terms); err != nil {
+		return out, err
+	}
+	if err := checkReportPath(out.ReportPath, req.Force); err != nil {
+		return out, err
+	}
+
+	var scores map[string]float64
+	opts := Options{}
+	bar := newProgress(req.Progress)
+	opts.Progress = bar.update
+	if req.FullText {
+		var notes []string
+		var cands map[string]struct{}
+		cands, scores, notes = fullTextCandidates(ctx, db, pq)
+		out.Notes = append(out.Notes, notes...)
+		if cands != nil {
+			opts.Candidates, out.Mode = cands, ModeFullText
+		}
+	}
+	res, err := Run(ctx, db, pq.terms, opts)
+	if err == nil && out.Mode == ModeFullText && len(res.Hits) == 0 {
+		out.Notes = append(out.Notes, "the full-text candidates hold no match; searched every stored object instead")
+		out.Mode, opts.Candidates, scores = ModeScan, nil, nil
+		bar = newProgress(req.Progress)
+		opts.Progress = bar.update
+		res, err = Run(ctx, db, pq.terms, opts)
+	}
+	bar.finish()
 	if err != nil {
-		logging.GetLogger().Error("SearchSummaryWithContext PIPELINE_ERROR", zap.Error(err))
-		return nil, 0, err
+		return out, err
 	}
+	out.Result = res
 
-	results := idmap.GetData()
-	logging.GetLogger().Info("SearchSummaryWithContext COMPLETE",
-		zap.Int64("duration_ms", time.Since(start).Milliseconds()),
-		zap.Int("result_count", len(results)),
-	)
-	return buildKeywordCountMap(results), countTotalOccurrences(results), nil
-}
-
-func SearchWithContext(ctx context.Context, query string, db *badger.DB) error {
-	return SearchToPathWithContext(ctx, query, defaultReportPath, db)
-}
-
-// SearchWithContextFullTextFallback tries FTS-assisted search first and falls back
-// to the scan-only path when the sidecar index is unavailable or not useful.
-func SearchWithContextFullTextFallback(ctx context.Context, query string, db *badger.DB) error {
-	return SearchToPathWithContextFullTextFallback(ctx, query, defaultReportPath, db)
-}
-
-func SearchToPathWithContextFullTextFallback(ctx context.Context, query, reportPath string, db *badger.DB) error {
-	start := time.Now()
-	logging.GetLogger().Info("SearchToPathWithContextFullTextFallback START",
-		zap.Int("query_length", len(query)),
-		zap.String("report_path", reportPath),
-	)
-
-	if reportPath == "" {
-		reportPath = defaultReportPath
+	ranked := rankHits(res, pq.op, req.RankAlpha)
+	if len(scores) > 0 {
+		ranked = applyFTSBoost(ranked, scores)
 	}
-
-	pq := parseQuery(query)
-	if err := validateParsedQuery(pq); err != nil {
-		logging.GetLogger().Error("SearchToPathWithContextFullTextFallback VALIDATION_ERROR", zap.Error(err))
-		return err
-	}
-
-	if err := ctx.Err(); err != nil {
-		logging.GetLogger().Error("SearchToPathWithContextFullTextFallback CONTEXT_ERROR", zap.Error(err))
-		return err
-	}
-
-	totalFiles, err := countSearchFiles(ctx, db)
+	out.Ranked = len(ranked)
+	report, err := buildReport(db, req.Query, pq, out.Mode, res, ranked)
 	if err != nil {
-		logging.GetLogger().Error("SearchToPathWithContextFullTextFallback COUNT_FILES_ERROR", zap.Error(err))
-		return fmt.Errorf("countSearchFiles: %w", err)
+		return out, err
 	}
+	body, err := json.MarshalIndent(report, "", "\t")
+	if err != nil {
+		return out, err
+	}
+	err = fsx.WriteAtomic(out.ReportPath, cnst.FilePerm, fsx.Options{NoOverwrite: !req.Force}, func(f *os.File) error {
+		_, err := f.Write(body)
+		return err
+	})
+	if errors.Is(err, fs.ErrExist) {
+		return out, fmt.Errorf("%w: %s was created while searching; pass --force to replace it", ErrReportExists, out.ReportPath)
+	}
+	return out, err
+}
 
+func checkReportPath(path string, force bool) error {
+	info, err := os.Stat(path)
+	switch {
+	case errors.Is(err, fs.ErrNotExist):
+		return nil
+	case err != nil:
+		return err
+	case info.IsDir():
+		return fmt.Errorf("%w: %s is a directory", ErrReportExists, path)
+	case !force:
+		return fmt.Errorf("%w: %s; pass --force to replace it, or --out to write elsewhere", ErrReportExists, path)
+	}
+	return nil
+}
+
+// fullTextCandidates asks the full-text index for the indexed files that may
+// hold the query. It returns nil candidates, with a note saying why, when
+// the search must read every object instead.
+func fullTextCandidates(ctx context.Context, db *badger.DB, pq parsedQuery) (map[string]struct{}, map[string]float64, []string) {
 	mode := fts.QueryModeAnd
 	if pq.op == queryOpOr {
 		mode = fts.QueryModeOr
 	}
-	ftsActivePrinted := false
-	ftScores, err := fts.SearchFileScoresParsed(ctx, db, pq.terms, mode, 5000)
-	if errors.Is(err, fts.ErrIndexNotReady) {
-		if backfillErr := fts.BuildFromIndexedFiles(ctx, db); backfillErr == nil {
-			ftScores, err = fts.SearchFileScoresParsed(ctx, db, pq.terms, mode, 5000)
-		}
+	c, err := fts.SearchCandidates(ctx, db, pq.terms, mode, ftsCandidateLimit)
+	switch {
+	case errors.Is(err, fts.ErrIndexNotReady):
+		return nil, nil, []string{"this database has no full-text index (store or reindex with --fts to build one); searched every stored object instead"}
+	case err != nil:
+		return nil, nil, []string{fmt.Sprintf("the full-text index could not be searched (%v); searched every stored object instead", err)}
+	case len(c.Scores) == 0:
+		return nil, nil, []string{"the full-text index offers no candidate for this query; searched every stored object instead"}
 	}
-	if err != nil {
-		logging.GetLogger().Debug("SearchToPathWithContextFullTextFallback FTS_FALLBACK", zap.Error(err))
-		color.New(color.FgHiYellow, color.Bold).Fprintf(console.Err(), "[search] Full-text index unavailable, falling back to scan search\n")
-		return SearchToPathWithContext(ctx, query, reportPath, db)
+	cands := c.IDs()
+	notes := []string{fmt.Sprintf("full-text mode: searched only the %d indexed files the full-text index offers; evidence and partitions, and files whose names and first %d KiB of text do not hold the query's words, were not searched", len(cands), fts.MaxTextBytes/1024)}
+	if c.Capped() {
+		notes = append(notes, fmt.Sprintf("the full-text index matched %d documents and offers at most %d: more files may hold the query", c.Total, ftsCandidateLimit))
 	}
-	if len(ftScores) == 0 {
-		rawScores, rawErr := fts.SearchFileScores(ctx, db, query, 5000)
-		if rawErr == nil && len(rawScores) > 0 {
-			ftScores = rawScores
-			color.New(color.FgHiCyan, color.Bold).Fprintf(console.Err(), "[search] Full-text search active (raw-query candidate filtering enabled)\n")
-			ftsActivePrinted = true
-		} else {
-			docCount, countErr := fts.IndexDocumentCount(db)
-			if countErr == nil {
-				color.New(color.FgHiYellow, color.Bold).Fprintf(console.Err(), "[search] Full-text index available (%d docs) but query returned no candidates, falling back to scan search\n", docCount)
-			} else {
-				color.New(color.FgHiYellow, color.Bold).Fprintf(console.Err(), "[search] Full-text index returned no candidates for query, falling back to scan search\n")
+	return cands, c.FileScores(), notes
+}
+
+// rankHits ranks the hits with BM25 over the objects the search read.
+func rankHits(res *Result, op queryOp, alpha float64) []RankedResult {
+	hitMaps := make([]map[string]int, len(res.Terms))
+	sizes := make(map[string]int64, len(res.Hits))
+	for i := range hitMaps {
+		hitMaps[i] = map[string]int{}
+	}
+	for _, h := range res.Hits {
+		for i, n := range h.Counts {
+			if n > 0 {
+				hitMaps[i][string(h.Key)] = int(n)
 			}
-			return SearchToPathWithContext(ctx, query, reportPath, db)
 		}
+		sizes[string(h.Key)] = h.Size
 	}
-	if len(ftScores) > 0 && !ftsActivePrinted {
-		color.New(color.FgHiCyan, color.Bold).Fprintf(console.Err(), "[search] Full-text search active (candidate filtering enabled)\n")
-	}
-
-	candidates := fts.TopCandidateIDs(ftScores)
-	totalWork := int64(len(candidates))*int64(len(pq.terms)) + 1
-	if totalWork <= 0 {
-		totalWork = 1
-	}
-	bar := progressbar.NewOptions64(
-		totalWork,
-		progressbar.OptionSetDescription("Searching...."),
-		progressbar.OptionSetWriter(console.Progress()),
-		progressbar.OptionSetTheme(cnst.CommonProgressBarTheme),
-	)
-	var progressMu sync.Mutex
-	onProcessed := func() {
-		progressMu.Lock()
-		defer progressMu.Unlock()
-		_ = bar.Add(1)
-	}
-
-	hitMaps, err := runMultiTermSearch(ctx, pq, db, onProcessed, candidates)
-	if err != nil {
-		logging.GetLogger().Error("SearchToPathWithContextFullTextFallback RUN_SEARCH_ERROR", zap.Error(err))
-		return err
-	}
-	if err := ctx.Err(); err != nil {
-		logging.GetLogger().Error("SearchToPathWithContextFullTextFallback CONTEXT_ERROR", zap.Error(err))
-		return err
-	}
-
-	hasHits := false
-	for _, hm := range hitMaps {
-		if len(hm) > 0 {
-			hasHits = true
-			break
-		}
-	}
-	if !hasHits {
-		color.New(color.FgHiYellow, color.Bold).Fprintf(console.Err(), "[search] Full-text path produced no hits, falling back to scan search\n")
-		return SearchToPathWithContext(ctx, query, reportPath, db)
-	}
-
-	docSizes, err := fetchDocSizesForHits(ctx, hitMaps, db)
-	if err != nil {
-		logging.GetLogger().Error("SearchToPathWithContextFullTextFallback FETCH_DOC_SIZES_ERROR", zap.Error(err))
-		return err
-	}
-
-	ranked := rankBM25(hitMaps, docSizes, totalFiles, pq.op)
-	ranked = applyFTSBoost(ranked, ftScores)
-
-	err = searchReport(reportPath, query, ranked, db)
-	if err != nil {
-		logging.GetLogger().Error("SearchToPathWithContextFullTextFallback REPORT_ERROR", zap.Error(err), zap.String("report_path", reportPath))
-		return err
-	}
-	onProcessed()
-
-	bar.Finish()
-	fmt.Fprintln(console.Err())
-	console.Println("Done....", time.Since(start))
-	logging.GetLogger().Info("SearchToPathWithContextFullTextFallback COMPLETE",
-		zap.Int64("duration_ms", time.Since(start).Milliseconds()),
-		zap.Int64("total_files", totalFiles),
-		zap.Int("result_count", len(ranked)),
-	)
-	// A progress bar error (an empty input has nothing to show) is not the
-	// operation's error.
-	_ = bar.Close()
-	return nil
-}
-
-func SearchToPathWithContext(ctx context.Context, query, reportPath string, db *badger.DB) error {
-	start := time.Now()
-	logging.GetLogger().Info("SearchToPathWithContext START",
-		zap.Int("query_length", len(query)),
-		zap.String("report_path", reportPath),
-	)
-
-	if reportPath == "" {
-		reportPath = defaultReportPath
-	}
-
-	pq := parseQuery(query)
-	if err := validateParsedQuery(pq); err != nil {
-		logging.GetLogger().Error("SearchToPathWithContext VALIDATION_ERROR", zap.Error(err))
-		return err
-	}
-
-	if err := ctx.Err(); err != nil {
-		logging.GetLogger().Error("SearchToPathWithContext CONTEXT_ERROR", zap.Error(err))
-		return err
-	}
-
-	totalFiles, err := countSearchFiles(ctx, db)
-	if err != nil {
-		logging.GetLogger().Error("SearchToPathWithContext COUNT_FILES_ERROR", zap.Error(err))
-		return fmt.Errorf("countSearchFiles: %w", err)
-	}
-
-	totalWork := totalFiles*int64(len(pq.terms)) + 1
-	if totalWork <= 0 {
-		totalWork = 1
-	}
-	bar := progressbar.NewOptions64(
-		totalWork,
-		progressbar.OptionSetDescription("Searching...."),
-		progressbar.OptionSetWriter(console.Progress()),
-		progressbar.OptionSetTheme(cnst.CommonProgressBarTheme),
-	)
-	var progressMu sync.Mutex
-	onProcessed := func() {
-		progressMu.Lock()
-		defer progressMu.Unlock()
-		_ = bar.Add(1)
-	}
-
-	hitMaps, err := runMultiTermSearch(ctx, pq, db, onProcessed, nil)
-	if err != nil {
-		logging.GetLogger().Error("SearchToPathWithContext RUN_SEARCH_ERROR", zap.Error(err))
-		return err
-	}
-	if err := ctx.Err(); err != nil {
-		logging.GetLogger().Error("SearchToPathWithContext CONTEXT_ERROR", zap.Error(err))
-		return err
-	}
-
-	docSizes, err := fetchDocSizesForHits(ctx, hitMaps, db)
-	if err != nil {
-		logging.GetLogger().Error("SearchToPathWithContext FETCH_DOC_SIZES_ERROR", zap.Error(err))
-		return err
-	}
-
-	ranked := rankBM25(hitMaps, docSizes, totalFiles, pq.op)
-
-	err = searchReport(reportPath, query, ranked, db)
-	if err != nil {
-		logging.GetLogger().Error("SearchToPathWithContext REPORT_ERROR", zap.Error(err), zap.String("report_path", reportPath))
-		return err
-	}
-	onProcessed()
-
-	bar.Finish()
-	fmt.Fprintln(console.Err())
-	console.Println("Done....", time.Since(start))
-	logging.GetLogger().Info("SearchToPathWithContext COMPLETE",
-		zap.Int64("duration_ms", time.Since(start).Milliseconds()),
-		zap.Int64("total_files", totalFiles),
-		zap.Int("result_count", len(ranked)),
-	)
-	// A progress bar error (an empty input has nothing to show) is not the
-	// operation's error.
-	_ = bar.Close()
-	return nil
-}
-
-func validateParsedQuery(pq parsedQuery) error {
-	if len(pq.terms) == 0 {
-		return cnst.ErrSmallQuery
-	}
-	for _, t := range pq.terms {
-		if len(t) < 2 {
-			return cnst.ErrSmallQuery
-		}
-	}
-	return nil
-}
-
-func runMultiTermSearch(ctx context.Context, pq parsedQuery, db *badger.DB, onProcessed func(), candidates map[string]struct{}) ([]map[string]int, error) {
-	hitMaps := make([]map[string]int, 0, len(pq.terms))
-	for _, term := range pq.terms {
-		settings := newSearchSettings(term)
-		idmap, err := executeSearchPipeline(ctx, settings, db, onProcessed, candidates)
-		if err != nil {
-			return nil, err
-		}
-		hitMaps = append(hitMaps, idmap.GetData())
-	}
-	return hitMaps, nil
-}
-
-func fetchDocSizesForHits(ctx context.Context, hitMaps []map[string]int, db *badger.DB) (map[string]int64, error) {
-	seen := make(map[string]struct{})
-	for _, hits := range hitMaps {
-		for id := range hits {
-			seen[id] = struct{}{}
-		}
-	}
-	sizes := make(map[string]int64, len(seen))
-	for id := range seen {
-		if err := ctx.Err(); err != nil {
-			return nil, err
-		}
-		meta, err := store.GetFileMeta([]byte(id), db)
-		if err != nil {
-			sizes[id] = 0
-			continue
-		}
-		sizes[id] = meta.Size
-	}
-	return sizes, nil
+	c := res.Coverage
+	return rankBM25(hitMaps, sizes, c.Evidence+c.Partitions+c.Files, op, alpha)
 }
 
 func applyFTSBoost(ranked []RankedResult, ftScores map[string]float64) []RankedResult {
@@ -387,507 +235,213 @@ func applyFTSBoost(ranked []RankedResult, ftScores map[string]float64) []RankedR
 	return ranked
 }
 
-func executeSearchPipeline(ctx context.Context, settings searchSettings, db *badger.DB, onProcessed func(), candidates map[string]struct{}) (*structs.SearchIDMap, error) {
-	logging.GetLogger().Debug("executeSearchPipeline START",
-		zap.String("query", settings.query),
-		zap.Int("query_length", settings.queryLen),
-		zap.Bool("has_candidates", candidates != nil),
-	)
-	if err := ctx.Err(); err != nil {
-		logging.GetLogger().Error("executeSearchPipeline CONTEXT_ERROR", zap.Error(err))
-		return nil, err
-	}
-	ctx, cancel := context.WithCancel(ctx)
-	defer cancel()
-
-	cmap := structs.NewSeenChonkMap()
-	idmap := structs.NewSearchIDMap()
-
-	for _, namespace := range searchNamespaces {
-		err := searchFiles(ctx, cancel, settings, namespace, cmap, idmap, db, onProcessed, candidates)
-		if err != nil {
-			logging.GetLogger().Error("executeSearchPipeline SEARCH_NAMESPACE_ERROR", zap.Error(err), zap.String("namespace", namespace))
-			return nil, err
-		}
-	}
-
-	logging.GetLogger().Debug("executeSearchPipeline COMPLETE", zap.Int("result_count", len(idmap.GetData())))
-	return idmap, nil
+// reportBuilder names the objects of a report from their records, through
+// the record helpers rather than by splitting names on the separator, which
+// a path may contain (SRC-8).
+type reportBuilder struct {
+	db       *badger.DB
+	evidence map[string][]string // raw evidence ID -> its name and its aliases' paths
+	parts    map[string]string   // raw partition ID -> its name
 }
 
-func countSearchFiles(ctx context.Context, db *badger.DB) (int64, error) {
-	var total int64
-	for _, namespace := range searchNamespaces {
-		count, err := countNamespaceFiles(ctx, namespace, db)
-		if err != nil {
-			return 0, err
-		}
-		total += count
+func buildReport(db *badger.DB, query string, pq parsedQuery, mode string, res *Result, ranked []RankedResult) (structs.SearchReport, error) {
+	b := &reportBuilder{db: db, evidence: map[string][]string{}, parts: map[string]string{}}
+	report := structs.SearchReport{
+		SchemaVersion: structs.SearchReportSchemaVersion,
+		Query:         query,
+		Terms:         pq.terms,
+		Operator:      "and",
+		Mode:          mode,
+		Occurrences:   []structs.OccurrenceData{},
 	}
-	return total, nil
-}
-
-func countNamespaceFiles(ctx context.Context, namespace string, db *badger.DB) (int64, error) {
-	if err := ctx.Err(); err != nil {
-		return 0, err
+	if pq.op == queryOpOr {
+		report.Operator = "or"
 	}
-
-	var count int64
-	err := db.View(func(txn *badger.Txn) error {
-		opts := badger.DefaultIteratorOptions
-		opts.PrefetchValues = false
-		opts.PrefetchSize = 1000
-		it := txn.NewIterator(opts)
-		defer it.Close()
-
-		prefix := []byte(namespace)
-		for it.Seek(prefix); it.ValidForPrefix(prefix); it.Next() {
-			if err := ctx.Err(); err != nil {
-				return err
-			}
-			count++
-		}
-		return nil
-	})
-	if err != nil {
-		return 0, err
+	hits := make(map[string]Hit, len(res.Hits))
+	for _, h := range res.Hits {
+		hits[string(h.Key)] = h
 	}
-	return count, nil
-}
-
-func searchFiles(ctx context.Context, cancel context.CancelFunc, settings searchSettings, namespace string, cmap *structs.SeenChonkMap, idmap *structs.SearchIDMap, db *badger.DB, onProcessed func(), candidates map[string]struct{}) error {
-	sem := make(chan struct{}, workerLimit())
-	var wg sync.WaitGroup
-	var once sync.Once
-	var firstErr error
-
-	err := db.View(func(txn *badger.Txn) error {
-		opts := badger.DefaultIteratorOptions
-		opts.PrefetchValues = false
-		opts.PrefetchSize = 1000
-		it := txn.NewIterator(opts)
-		defer it.Close()
-
-		prefix := []byte(namespace)
-		for it.Seek(prefix); it.ValidForPrefix(prefix); it.Next() {
-			if err := ctx.Err(); err != nil {
-				return err
-			}
-
-			fid := it.Item().KeyCopy(nil)
-			if candidates != nil {
-				if _, ok := candidates[string(fid)]; !ok {
-					continue
-				}
-			}
-			sem <- struct{}{}
-			wg.Add(1)
-			go func(fid []byte) {
-				defer wg.Done()
-				defer func() { <-sem }()
-
-				workerErr := ctx.Err()
-				if workerErr == nil {
-					workerErr = searchAllFiles(ctx, cancel, settings, fid, cmap, idmap, db)
-				}
-
-				if onProcessed != nil {
-					onProcessed()
-				}
-				if workerErr != nil {
-					once.Do(func() {
-						firstErr = workerErr
-						cancel()
-					})
-				}
-			}(fid)
-		}
-
-		return nil
-	})
-
-	wg.Wait()
-	if err != nil {
-		if firstErr != nil {
-			return firstErr
-		}
-		return err
-	}
-	if firstErr != nil {
-		return firstErr
-	}
-	if err := ctx.Err(); err != nil {
-		return err
-	}
-
-	return nil
-}
-
-func searchAllFiles(ctx context.Context, cancel context.CancelFunc, settings searchSettings, fid []byte, cmap *structs.SeenChonkMap, idmap *structs.SearchIDMap, db *badger.DB) error {
-	if err := ctx.Err(); err != nil {
-		return err
-	}
-	meta, err := store.GetFileMeta(fid, db)
-	if err != nil {
-		if errors.Is(err, badger.ErrKeyNotFound) {
-			return nil
-		}
-		return fmt.Errorf("GetFileMeta for key %q: %w", string(fid), err)
-	}
-	return searchChonks(ctx, settings, string(fid), cmap, idmap, meta, db, cancel)
-}
-
-func searchChonks(ctx context.Context, settings searchSettings, fidStr string, cmap *structs.SeenChonkMap, idmap *structs.SearchIDMap, meta structs.FileMeta, db *badger.DB, cancel context.CancelFunc) error {
-	var dbstart int64
-	if meta.Start > 0 {
-		dbstart = util.GetDBStartOffset(meta.Start)
-	}
-	end := meta.Start + meta.Size
-
-	sem := make(chan struct{}, workerLimit())
-	var wg sync.WaitGroup
-	var once sync.Once
-	var firstErr error
-
-	for sindex := dbstart; sindex < end; sindex += cnst.ChonkSize {
-		if err := ctx.Err(); err != nil {
-			return err
-		}
-		sem <- struct{}{}
-		wg.Add(1)
-		go func(sindex int64) {
-			defer wg.Done()
-			defer func() { <-sem }()
-			if err := ctx.Err(); err != nil {
-				once.Do(func() {
-					firstErr = err
-					cancel()
-				})
-				return
-			}
-
-			if err := searchChonk(sindex, dbstart, end, fidStr, settings, cmap, idmap, meta, db); err != nil {
-				once.Do(func() {
-					firstErr = fmt.Errorf("searchChonk at offset %d for file %q: %w", sindex, fidStr, err)
-					cancel()
-				})
-			}
-		}(sindex)
-	}
-
-	wg.Wait()
-	if firstErr != nil {
-		return firstErr
-	}
-	if err := ctx.Err(); err != nil {
-		return err
-	}
-
-	return nil
-}
-
-func searchChonk(sindex, dbstart, end int64, fid string, settings searchSettings, cmap *structs.SeenChonkMap, idmap *structs.SearchIDMap, meta structs.FileMeta, db *badger.DB) error {
-	s1key, state1, err := getChonkState(sindex, end, meta, db)
-	if err != nil {
-		if errors.Is(err, badger.ErrKeyNotFound) {
-			return nil
-		}
-		return fmt.Errorf("getChonkState at sindex=%d for fid=%q: %w", sindex, fid, err)
-	}
-
-	count := cmap.GetOrCompute(s1key, func() int { return subBytesChonk(settings.queryBytes, state1) })
-	if count > 0 {
-		idmap.Set(fid, count)
-	}
-
-	nxtidx := sindex + cnst.ChonkSize
-	if nxtidx >= end {
-		return nil
-	}
-
-	_, state2, err := getChonkState(nxtidx, end, meta, db)
-	if err != nil {
-		if errors.Is(err, badger.ErrKeyNotFound) {
-			return nil
-		}
-		return fmt.Errorf("getChonkState at nxtidx=%d for fid=%q: %w", nxtidx, fid, err)
-	}
-
-	qoffset := (len(state1) - 1) - (settings.queryLen - 2)
-	qstate1 := state1[qoffset:]
-	state2 = state2[:settings.queryLen-2]
-
-	qstate := make([]byte, len(qstate1)+len(state2))
-	copy(qstate, qstate1)
-	copy(qstate[len(qstate1):], state2)
-
-	count = subBytesChonk(settings.queryBytes, qstate)
-	if count > 0 {
-		idmap.Set(fid, count)
-	}
-	return nil
-}
-
-func getChonkState(searchIndex, end int64, meta structs.FileMeta, db *badger.DB) ([]byte, []byte, error) {
-	relKey := util.AppendToBytesSlice(cnst.RelationNamespace, meta.EviHash, cnst.DataSeperator, searchIndex)
-	chash, err := dbio.GetNode(relKey, db)
-	if err != nil {
-		return nil, nil, err
-	}
-	ckey := util.AppendToBytesSlice(cnst.ChonkNamespace, chash)
-	state, err := dbio.GetChonkData(searchIndex, meta.Start, end, ckey, db)
-	return ckey, state, err
-}
-
-func subBytesChonk(query, chonk []byte) int {
-	if isASCII(query) {
-		return countASCIIFold(query, chonk)
-	}
-	return bytes.Count(bytes.ToLower(chonk), query)
-}
-
-func countASCIIFold(query, chonk []byte) int {
-	if len(query) == 0 || len(query) > len(chonk) {
-		return 0
-	}
-
-	count := 0
-	lastStart := len(chonk) - len(query)
-	for start := 0; start <= lastStart; {
-		if asciiFoldMatchAt(query, chonk, start) {
-			count++
-			start += len(query)
-			continue
-		}
-		start++
-	}
-
-	return count
-}
-
-func asciiFoldMatchAt(query, chonk []byte, start int) bool {
-	for index := 0; index < len(query); index++ {
-		if toLowerASCII(query[index]) != toLowerASCII(chonk[start+index]) {
-			return false
-		}
-	}
-	return true
-}
-
-func isASCII(data []byte) bool {
-	for _, value := range data {
-		if value > 0x7f {
-			return false
-		}
-	}
-	return true
-}
-
-func toLowerASCII(value byte) byte {
-	if value >= 'A' && value <= 'Z' {
-		return value + ('a' - 'A')
-	}
-	return value
-}
-
-func searchReport(reportPath, query string, ranked []RankedResult, db *badger.DB) error {
-	var report structs.SearchReport
-	report.SchemaVersion = structs.SearchReportSchemaVersion
-	report.Query = query
-	seenMap := make(map[string][]string)
-
-	var occurrenceCount, fileCount int
-	artefactCount := len(ranked)
-
 	for _, rr := range ranked {
-		names, err := near.GetNames([]byte(rr.FileID), db)
+		h := hits[rr.FileID]
+		occ, err := b.occurrence(h, rr, res.Terms)
 		if err != nil {
-			if errors.Is(err, badger.ErrKeyNotFound) {
-				names = make(map[string]struct{})
-			} else {
-				return fmt.Errorf("GetNames for %q: %w", rr.FileID, err)
-			}
+			return report, err
 		}
-
-		hashStr, err := artefactHashFromSearchID(rr.FileID)
-		if err != nil {
-			return fmt.Errorf("processing ranked result: %w", err)
-		}
-
-		var occurrence structs.OccurrenceData
-		occurrence.ArtefactHash = hashStr
-		occurrence.Count = rr.TF
-		occurrence.BM25Score = rr.Score
-		occurrence.EvidenceFile = structs.NewEvidenceFilePart()
-		err = setOccurrenceData(occurrence.ArtefactHash, names, seenMap, &occurrence, db)
-		if err != nil {
-			return err
-		}
-
-		if occurrence.EvidenceFile.Partition.Indexed != nil && len(occurrence.EvidenceFile.Partition.Indexed.IndexedFileNames) == 0 {
-			occurrence.EvidenceFile.Partition.Indexed = nil
-		}
-		if occurrence.EvidenceFile.Partition != nil && len(occurrence.EvidenceFile.Partition.PartitionPartNames) == 0 {
-			occurrence.EvidenceFile.Partition = nil
-		}
-		if occurrence.EvidenceFile != nil && len(occurrence.EvidenceFile.EvidenceFileNames) == 0 {
-			occurrence.EvidenceFile = nil
-		}
-
-		fileCount += len(names)
-		occurrenceCount += rr.TF
-		report.Occurrences = append(report.Occurrences, occurrence)
+		report.Occurrences = append(report.Occurrences, occ)
 	}
 
-	report.ExecutiveSummary = fmt.Sprintf(
-		"%d occurrences of the key term '%s' were identified across %d digital artefacts (%d files) during a comprehensive electronic examination. This finding presents avenues for further forensic analysis and legal evaluation.",
-		occurrenceCount, query, artefactCount, fileCount,
-	)
+	levels := map[Level]*structs.LevelSummary{
+		LevelEvidence:  &report.Summary.Evidence,
+		LevelPartition: &report.Summary.Partitions,
+		LevelIndexed:   &report.Summary.IndexedFiles,
+	}
+	for _, h := range res.Hits {
+		s := levels[h.Level]
+		s.Objects++
+		for _, n := range h.Counts {
+			s.Occurrences += n
+		}
+	}
+	c := res.Coverage
+	report.Coverage = structs.SearchCoverage{
+		EvidenceSearched: c.Evidence, PartitionsSearched: c.Partitions, FilesSearched: c.Files, BytesSearched: c.Bytes,
+		NotStored: c.NotStored, Quarantined: c.Quarantined, NotCandidates: c.NotCandidates,
+		Unavailable: c.Unavailable, Unreadable: c.Unreadable, Problems: c.Problems,
+	}
+	report.ExecutiveSummary = executiveSummary(query, mode, report)
+	return report, nil
+}
 
-	reportData, err := json.MarshalIndent(report, "", "\t")
+func executiveSummary(query, mode string, r structs.SearchReport) string {
+	s := r.Summary
+	var text string
+	if mode == ModeFullText {
+		text = fmt.Sprintf("%d occurrences of '%s' were found in %d indexed files, searching only the files the full-text index offered.",
+			s.IndexedFiles.Occurrences, query, s.IndexedFiles.Objects)
+	} else {
+		text = fmt.Sprintf("%d occurrences of '%s' were found in %d of the %d evidence searched (%d bytes); they lie in %d partitions and %d indexed files.",
+			s.Evidence.Occurrences, query, s.Evidence.Objects, r.Coverage.EvidenceSearched, r.Coverage.BytesSearched, s.Partitions.Objects, s.IndexedFiles.Objects)
+	}
+	if n := r.Coverage.Unreadable; n > 0 {
+		text += fmt.Sprintf(" %d objects could not be read and were not searched.", n)
+	}
+	return text
+}
+
+func (b *reportBuilder) occurrence(h Hit, rr RankedResult, terms []string) (structs.OccurrenceData, error) {
+	raw := rawID(h.Key)
+	occ := structs.OccurrenceData{
+		ArtefactHash: base64.StdEncoding.EncodeToString(raw),
+		Level:        string(h.Level),
+		Size:         h.Size,
+		Count:        rr.TF,
+		BM25Score:    rr.Score,
+	}
+	if len(terms) > 1 {
+		occ.TermCounts = make(map[string]int64, len(terms))
+		for i, t := range terms {
+			occ.TermCounts[t] = h.Counts[i]
+		}
+	}
+	evNames, err := b.evidenceNames(h.EvidenceID)
 	if err != nil {
-		return err
+		return occ, err
 	}
-
-	return os.WriteFile(reportPath, reportData, cnst.FilePerm)
-}
-
-func artefactHashFromSearchID(id string) (string, error) {
-	parts := strings.SplitN(id, cnst.NamespaceSeperator, 2)
-	if len(parts) != 2 || parts[1] == "" {
-		return "", fmt.Errorf("malformed search id: %q", id)
-	}
-
-	return base64.StdEncoding.EncodeToString([]byte(parts[1])), nil
-}
-
-func setOccurrenceData(artefactHash string, names map[string]struct{}, smap map[string][]string, occurrence *structs.OccurrenceData, db *badger.DB) error {
-	var hierarchyIdx int
-	for name := range names {
-		split := strings.Split(name, cnst.DataSeperator)
-		splitLen := len(split)
-
-		switch splitLen {
-		case 1:
-			occurrence.FileNames = append(occurrence.FileNames, name)
-			continue
-		case 2:
-			occurrence.EvidenceFile.Partition.Indexed.IndexedFileHash = occurrence.ArtefactHash
-		case 3:
-			occurrence.EvidenceFile.Partition.PartitionHash = occurrence.ArtefactHash
-		default:
-			return fmt.Errorf(cnst.ErrTooManySplits.Error(), name)
-		}
-
-		sameOccurrence := hierarchyIdx > 0
-		err := setEvidenceFileData(sameOccurrence, artefactHash, split, smap, occurrence, db)
+	ev := &structs.EvidenceFilePart{EvidenceFileHash: base64.StdEncoding.EncodeToString(h.EvidenceID), EvidenceFileNames: evNames}
+	switch h.Level {
+	case LevelEvidence:
+		occ.FileNames = evNames[:1]
+	case LevelPartition:
+		name, err := b.partitionName(raw)
 		if err != nil {
-			return err
+			return occ, err
 		}
-
-		hierarchyIdx++
-	}
-
-	return nil
-}
-
-func setEvidenceFileData(same bool, artefactHash string, nameSplit []string, smap map[string][]string, occurrence *structs.OccurrenceData, db *badger.DB) error {
-	var err error
-
-	splitLen := len(nameSplit)
-	name := nameSplit[splitLen-1]
-
-	switch splitLen {
-	case 3:
-		occurrence.EvidenceFile.Partition.Indexed.IndexedFileHash = artefactHash
-		occurrence.EvidenceFile.Partition.Indexed.IndexedFileNames = append(occurrence.EvidenceFile.Partition.Indexed.IndexedFileNames, name)
-
-		partitionHash := nameSplit[1]
-		occurrence.EvidenceFile.Partition.PartitionHash = partitionHash
-		partitionNames, ok := smap[cnst.PartiFileNamespace+partitionHash]
-		if ok {
-			if !same || len(occurrence.EvidenceFile.Partition.PartitionPartNames) == 0 {
-				occurrence.EvidenceFile.Partition.PartitionPartNames = partitionNames
-			}
-		} else {
-			occurrence.EvidenceFile.Partition.PartitionPartNames, err = getFileNames(cnst.PartiFileNamespace, partitionHash, db)
-			if err != nil {
-				return err
-			}
-			smap[cnst.PartiFileNamespace+partitionHash] = occurrence.EvidenceFile.Partition.PartitionPartNames
+		occ.FileNames = []string{name}
+		ev.Partition = &structs.PartitionPart{PartitionHash: occ.ArtefactHash, PartitionPartNames: []string{name}}
+	case LevelIndexed:
+		rec, err := dbio.GetIndexedFile(h.Key, b.db)
+		if err != nil {
+			return occ, fmt.Errorf("indexed record %q: %w", h.Key, err)
 		}
-
-		evidenceHash := nameSplit[0]
-		occurrence.EvidenceFile.EvidenceFileHash = evidenceHash
-		evidenceNames, ok := smap[cnst.EviFileNamespace+evidenceHash]
-		if ok {
-			if !same || len(occurrence.EvidenceFile.EvidenceFileNames) == 0 {
-				occurrence.EvidenceFile.EvidenceFileNames = evidenceNames
-			}
-		} else {
-			occurrence.EvidenceFile.EvidenceFileNames, err = getFileNames(cnst.EviFileNamespace, evidenceHash, db)
-			if err != nil {
-				return err
-			}
-			smap[cnst.EviFileNamespace+evidenceHash] = occurrence.EvidenceFile.EvidenceFileNames
+		path := dbio.RecordPath(rec)
+		occ.Path, occ.FileNames = path, []string{path}
+		pid, err := dbio.RecordPartitionID(rec)
+		if err != nil {
+			return occ, err
 		}
-	case 2:
-		occurrence.EvidenceFile.Partition.PartitionHash = artefactHash
-		occurrence.EvidenceFile.Partition.PartitionPartNames = append(occurrence.EvidenceFile.Partition.PartitionPartNames, name)
-
-		evidenceHash := nameSplit[0]
-		occurrence.EvidenceFile.EvidenceFileHash = evidenceHash
-		evidenceNames, ok := smap[cnst.EviFileNamespace+evidenceHash]
-		if ok {
-			if !same || len(occurrence.EvidenceFile.EvidenceFileNames) == 0 {
-				occurrence.EvidenceFile.EvidenceFileNames = evidenceNames
-			}
-		} else {
-			occurrence.EvidenceFile.EvidenceFileNames, err = getFileNames(cnst.EviFileNamespace, evidenceHash, db)
-			if err != nil {
-				return err
-			}
-			smap[cnst.EviFileNamespace+evidenceHash] = occurrence.EvidenceFile.EvidenceFileNames
+		pname, err := b.partitionName(pid)
+		if err != nil {
+			return occ, err
+		}
+		ev.Partition = &structs.PartitionPart{
+			PartitionHash:      base64.StdEncoding.EncodeToString(pid),
+			PartitionPartNames: []string{pname},
+			Indexed:            &structs.IndexedPart{IndexedFileHash: occ.ArtefactHash, IndexedFileNames: []string{path}},
 		}
 	}
-
-	return err
+	occ.EvidenceFile = ev
+	return occ, nil
 }
 
-func buildKeywordCountMap(results map[string]int) map[string]int64 {
-	keywordCountMap := make(map[string]int64, len(results))
-	for fileID, count := range results {
-		encodedID := base64.StdEncoding.EncodeToString([]byte(fileID))
-		keywordCountMap[encodedID] = int64(count)
+// evidenceNames is an evidence's name, then the paths it was stored again
+// from (its aliases, D1).
+func (b *reportBuilder) evidenceNames(eid []byte) ([]string, error) {
+	if names, ok := b.evidence[string(eid)]; ok {
+		return names, nil
 	}
-	return keywordCountMap
-}
-
-func countTotalOccurrences(results map[string]int) int64 {
-	var totalCount int64
-	for _, count := range results {
-		totalCount += int64(count)
+	e, err := dbio.GetEvidenceFile(eid, b.db)
+	if err != nil {
+		return nil, fmt.Errorf("evidence %x: %w", eid, err)
 	}
-	return totalCount
-}
-
-func getFileNames(namespace, encodedHash string, db *badger.DB) ([]string, error) {
-	hash, err := base64.StdEncoding.DecodeString(encodedHash)
+	names := []string{e.Name}
+	aliases, err := dbio.Aliases(b.db, eid)
 	if err != nil {
 		return nil, err
 	}
-
-	fid := util.AppendToBytesSlice(namespace, hash)
-	nameMap, err := near.GetNames(fid, db)
-	if err != nil {
-		return nil, err
+	for _, a := range aliases {
+		if a.Path != "" && !strings.EqualFold(a.Path, e.Name) {
+			names = append(names, a.Path)
+		}
 	}
-
-	var names []string
-	for name := range nameMap {
-		split := strings.Split(name, cnst.DataSeperator)
-		names = append(names, split[len(split)-1])
-	}
-
+	b.evidence[string(eid)] = names
 	return names, nil
+}
+
+func (b *reportBuilder) partitionName(pid []byte) (string, error) {
+	if name, ok := b.parts[string(pid)]; ok {
+		return name, nil
+	}
+	prec, err := dbio.GetPartitionFile(pid, b.db)
+	if err != nil {
+		return "", fmt.Errorf("partition %x: %w", pid, err)
+	}
+	name := dbio.RecordPath(prec.IndexedFile)
+	b.parts[string(pid)] = name
+	return name, nil
+}
+
+// rawID is a record key without its namespace.
+func rawID(key []byte) []byte {
+	for _, ns := range []string{cnst.EviFileNamespace, cnst.PartiFileNamespace, cnst.IdxFileNamespace} {
+		if bytes.HasPrefix(key, []byte(ns)) {
+			return key[len(ns):]
+		}
+	}
+	return key
+}
+
+// progress is a progress bar a search fills as objects are read.
+type progress struct {
+	mu  sync.Mutex
+	on  bool
+	bar *progressbar.ProgressBar
+}
+
+func newProgress(on bool) *progress { return &progress{on: on} }
+
+func (p *progress) update(done, total int64) {
+	if !p.on {
+		return
+	}
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	if p.bar == nil {
+		p.bar = progressbar.NewOptions64(max(total, 1),
+			progressbar.OptionSetDescription("Searching...."),
+			progressbar.OptionSetWriter(console.Progress()),
+			progressbar.OptionSetTheme(cnst.CommonProgressBarTheme),
+		)
+	}
+	_ = p.bar.Set64(done)
+}
+
+func (p *progress) finish() {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	if p.bar != nil {
+		// A progress bar error (an empty input has nothing to show) is not
+		// the search's error.
+		_ = p.bar.Finish()
+		fmt.Fprintln(console.Err())
+	}
 }

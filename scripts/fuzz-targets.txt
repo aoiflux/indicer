@@ -14,3 +14,4 @@
 ./lib/parser/core FuzzNormalizeExtents
 ./lib/parser/fs/fsutil FuzzEscapeName
 ./lib/parser/fs FuzzDetect
+./lib/search FuzzStreamCount

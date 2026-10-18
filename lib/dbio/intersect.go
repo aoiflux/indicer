@@ -27,19 +27,3 @@ func Intersect(chunkOff, chunkLen, start, end int64) (lo, hi int64, err error) {
 	}
 	return lo - chunkOff, hi - chunkOff, nil
 }
-
-// trimChunk returns the part of data, the chunk stored at evidence offset
-// chunkOff, that belongs to the logical range [start, end). Chunks are stride
-// bytes apart, so only an evidence's last chunk is shorter than stride, and
-// no range reaches past it: a chunk that ends before the range needs it to
-// is an error, not a short read.
-func trimChunk(data []byte, chunkOff, stride, start, end int64) ([]byte, error) {
-	lo, hi, err := Intersect(chunkOff, int64(len(data)), start, end)
-	if err != nil {
-		return nil, err
-	}
-	if need := min(end, chunkOff+stride); chunkOff+hi < need {
-		return nil, fmt.Errorf("%w: chunk at %d holds %d bytes, range [%d, %d) needs it to reach %d", ErrChunkRange, chunkOff, len(data), start, end, need)
-	}
-	return data[lo:hi], nil
-}

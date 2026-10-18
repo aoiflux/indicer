@@ -268,6 +268,7 @@ func buildCommandHandlers(cliDef cliDefinition, dbOpts cli.DBOptions, tuning pip
 				Yes:           *cliDef.flags.repairYes,
 				Verify:        *cliDef.flags.repairVfy,
 				ReindexFailed: *cliDef.flags.repairReindex,
+				AddRevrel:     *cliDef.flags.repairRevrel,
 			})
 		},
 		cliDef.commands.reindex.FullCommand(): func(ctx context.Context) error {
@@ -292,7 +293,10 @@ func buildCommandHandlers(cliDef cliDefinition, dbOpts cli.DBOptions, tuning pip
 				zap.Bool("deep", *cliDef.flags.deep),
 				zap.Int("topk", *cliDef.flags.inTopK),
 				zap.Bool("verify", *cliDef.flags.inVerify))
-			return cli.NearInData(ctx, *cliDef.flags.deep, *cliDef.flags.inVerify, *cliDef.flags.inTopK, dbOpts, *cliDef.flags.inhash)
+			return cli.NearInData(ctx, dbOpts, *cliDef.flags.inhash, cli.NearOptions{
+				Deep: *cliDef.flags.deep, Verify: *cliDef.flags.inVerify, TopK: *cliDef.flags.inTopK,
+				Out: *cliDef.flags.inOut, Force: *cliDef.flags.inForce,
+			})
 		},
 		cliDef.commands.nearOut.FullCommand(): func(ctx context.Context) error {
 			logging.GetLogger().Info("Command: near out",
@@ -302,7 +306,10 @@ func buildCommandHandlers(cliDef cliDefinition, dbOpts cli.DBOptions, tuning pip
 				zap.Int("topk", *cliDef.flags.outTopK),
 				zap.Bool("verify", *cliDef.flags.outVerify),
 				zap.Bool("explain_exact", *cliDef.flags.outExplainExact))
-			return cli.NearOutData(ctx, *cliDef.flags.outDeep, *cliDef.flags.outExplainExact, *cliDef.flags.outVerify, *cliDef.flags.outTopK, dbOpts, *cliDef.flags.outpath)
+			return cli.NearOutData(ctx, dbOpts, *cliDef.flags.outpath, cli.NearOptions{
+				Deep: *cliDef.flags.outDeep, Verify: *cliDef.flags.outVerify, TopK: *cliDef.flags.outTopK,
+				ExplainExact: *cliDef.flags.outExplainExact, Out: *cliDef.flags.outOut, Force: *cliDef.flags.outForce,
+			})
 		},
 		cliDef.commands.search.FullCommand(): func(ctx context.Context) error {
 			logging.GetLogger().Info("Command: search",
@@ -310,7 +317,13 @@ func buildCommandHandlers(cliDef cliDefinition, dbOpts cli.DBOptions, tuning pip
 				zap.String("dbpath", *cliDef.flags.dbpath),
 				zap.Float64("rank_alpha", *cliDef.flags.rankAlpha),
 				zap.Bool("fulltext", *cliDef.flags.fullText))
-			return cli.SearchCmd(ctx, dbOpts, *cliDef.flags.query, *cliDef.flags.rankAlpha, *cliDef.flags.fullText)
+			return cli.SearchCmd(ctx, dbOpts, cli.SearchOptions{
+				Query:     *cliDef.flags.query,
+				RankAlpha: *cliDef.flags.rankAlpha,
+				FullText:  *cliDef.flags.fullText,
+				Out:       *cliDef.flags.searchOut,
+				Force:     *cliDef.flags.searchForce,
+			})
 		},
 		cliDef.commands.microExtract.FullCommand(): func(ctx context.Context) error {
 			logging.GetLogger().Info("Command: micro extract",

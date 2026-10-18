@@ -7,25 +7,12 @@ import (
 
 // BM25 tuning parameters (Okapi BM25).
 const (
-	bm25K1                      float64 = 1.5  // controls term-frequency saturation
-	bm25B                       float64 = 0.75 // controls document-length normalization
-	defaultOccurrenceBoostAlpha float64 = 0.35
+	bm25K1 float64 = 1.5  // controls term-frequency saturation
+	bm25B  float64 = 0.75 // controls document-length normalization
+	// DefaultRankAlpha is how strongly raw occurrence counts nudge the
+	// ranking when BM25 scores are close.
+	DefaultRankAlpha float64 = 0.35
 )
-
-var occurrenceBoostAlpha = defaultOccurrenceBoostAlpha
-
-// SetOccurrenceBoostAlpha configures how strongly raw occurrence frequency
-// nudges ranking when BM25 scores are close.
-func SetOccurrenceBoostAlpha(alpha float64) {
-	if alpha < 0 {
-		alpha = 0
-	}
-	occurrenceBoostAlpha = alpha
-}
-
-func GetOccurrenceBoostAlpha() float64 {
-	return occurrenceBoostAlpha
-}
 
 // RankedResult holds a file ID, its BM25 score, and the aggregate raw
 // term count for a matched document.
@@ -41,8 +28,9 @@ type RankedResult struct {
 // docSizes maps fileID -> document byte size for length normalization.
 // totalDocs is the size of the indexed corpus used for IDF computation.
 // op controls whether AND (intersection) or OR (union) candidate selection
-// is used when combining results from multiple terms.
-func rankBM25(hitMaps []map[string]int, docSizes map[string]int64, totalDocs int64, op queryOp) []RankedResult {
+// is used when combining results from multiple terms. alpha weighs the raw
+// occurrence counts (see rankScore).
+func rankBM25(hitMaps []map[string]int, docSizes map[string]int64, totalDocs int64, op queryOp, alpha float64) []RankedResult {
 	if len(hitMaps) == 0 || totalDocs == 0 {
 		return nil
 	}
@@ -81,7 +69,7 @@ func rankBM25(hitMaps []map[string]int, docSizes map[string]int64, totalDocs int
 	for id, score := range scores {
 		results = append(results, RankedResult{FileID: id, Score: score, TF: tfSum[id]})
 	}
-	sortRankedResults(results)
+	sortRankedResults(results, alpha)
 	return results
 }
 
@@ -89,10 +77,13 @@ func rankBM25(hitMaps []map[string]int, docSizes map[string]int64, totalDocs int
 // 1) Higher BM25 score first
 // 2) Higher occurrence count (TF) first
 // 3) Lexicographically smaller file ID first (deterministic output)
-func sortRankedResults(results []RankedResult) {
+//
+// A negative alpha counts as zero.
+func sortRankedResults(results []RankedResult, alpha float64) {
+	alpha = max(alpha, 0)
 	sort.Slice(results, func(i, j int) bool {
-		ri := rankScore(results[i])
-		rj := rankScore(results[j])
+		ri := rankScore(results[i], alpha)
+		rj := rankScore(results[j], alpha)
 		if ri != rj {
 			return ri > rj
 		}
@@ -106,8 +97,8 @@ func sortRankedResults(results []RankedResult) {
 	})
 }
 
-func rankScore(result RankedResult) float64 {
-	return result.Score + occurrenceBoostAlpha*math.Log1p(float64(result.TF))
+func rankScore(result RankedResult, alpha float64) float64 {
+	return result.Score + alpha*math.Log1p(float64(result.TF))
 }
 
 // buildCandidateSet returns the set of file IDs to score.

@@ -261,68 +261,6 @@ func GetReverseRelationNode(key []byte, db *badger.DB) (map[string]struct{}, err
 	return appendRelations, nil
 }
 
-func GetReverseRelationAppendPrefixMembers(revPrefixKey []byte, db *badger.DB) (map[int64][]string, error) {
-	split := bytes.Split(revPrefixKey, []byte(cnst.DataSeperator))
-	if len(split) < 2 {
-		return nil, fmt.Errorf("invalid reverse relation prefix key: %q", string(revPrefixKey))
-	}
-	chash := bytes.TrimPrefix(split[1], []byte(":"))
-	prefix := util.AppendToBytesSlice(cnst.ReverseRelationAppendNamespace, chash, cnst.DataSeperator)
-	similarMap := make(map[int64][]string)
-
-	err := db.View(func(txn *badger.Txn) error {
-		opts := badger.DefaultIteratorOptions
-		opts.PrefetchSize = 1000
-		it := txn.NewIterator(opts)
-		defer it.Close()
-
-		for it.Seek(prefix); it.ValidForPrefix(prefix); it.Next() {
-			item := it.Item()
-			memberKey := item.KeyCopy(nil)
-
-			value, err := item.ValueCopy(nil)
-			if err != nil {
-				return err
-			}
-
-			decoded, err := cnst.DECODER.DecodeAll(value, nil)
-			if err == nil {
-				value = decoded
-			}
-
-			idx, ok := reverseRelationAppendMemberIndex(chash, memberKey)
-			if !ok {
-				return fmt.Errorf("invalid reverse-relation append key: %q", string(memberKey))
-			}
-
-			revlist := similarMap[idx]
-			revlist = append(revlist, string(value))
-			similarMap[idx] = revlist
-		}
-
-		return nil
-	})
-	if err != nil {
-		return nil, err
-	}
-
-	segmentMap, err := getReverseRelationSegmentPrefixMembers(chash, db)
-	if err != nil {
-		return nil, err
-	}
-	for idx, revlist := range segmentMap {
-		merged := similarMap[idx]
-		for _, revid := range revlist {
-			if util.FindInStringSlice(merged, revid) == int(cnst.IgnoreVar) {
-				merged = append(merged, revid)
-			}
-		}
-		similarMap[idx] = merged
-	}
-
-	return similarMap, err
-}
-
 func getReverseRelationAppendMembers(key []byte, db *badger.DB) (map[string]struct{}, error) {
 	reverseRelations := make(map[string]struct{})
 	binaryPrefix, err := reverseRelationAppendMemberPrefixBinary(key)
@@ -603,18 +541,6 @@ func PingNode(key []byte, db *badger.DB) error {
 		_, err := txn.Get(key)
 		return err
 	})
-}
-
-// GetChonkData reads the chunk stored at evidence offset chunkOff and returns
-// the part of it inside the logical range [start, end), striding by the
-// process's chunk size. Only search still uses it; W7 moves search onto the
-// logical reader (logical.go) and deletes it.
-func GetChonkData(chunkOff, start, end int64, key []byte, db *badger.DB) ([]byte, error) {
-	data, err := GetChonkNode(key, db)
-	if err != nil {
-		return nil, err
-	}
-	return trimChunk(data, chunkOff, cnst.ChonkSize, start, end)
 }
 
 // GetChonkNode returns the decoded content of the chunk whose key is key.

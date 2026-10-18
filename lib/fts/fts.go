@@ -1,35 +1,54 @@
+// Package fts keeps the optional full-text index (--fts): a bleve index
+// beside the database with, for each indexed file, its name and path and the
+// text of its first bytes. Full-text mode uses it to choose the files a
+// search reads; the counts always come from reading the files themselves.
 package fts
 
 import (
 	"context"
 	"errors"
 	"fmt"
-	"indicer/internal/console"
-	"indicer/lib/cnst"
-	"indicer/lib/dbio"
-	"indicer/lib/util"
+	"io/fs"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
+	"sync"
 	"unicode"
 	"unicode/utf8"
 
+	"indicer/lib/cnst"
+	"indicer/lib/dbio"
+	"indicer/lib/util"
+
 	"github.com/blevesearch/bleve/v2"
+	"github.com/blevesearch/bleve/v2/search/query"
 	"github.com/dgraph-io/badger/v4"
-	"github.com/schollz/progressbar/v3"
 )
 
 const (
-	defaultLimit             = 5000
-	defaultMaxIndexBytes     = 128 * 1024
-	defaultMaxExtractedRunes = 80 * 1024
+	// DefaultLimit is the most candidates a search asks for by default.
+	DefaultLimit = 5000
+	// MaxTextBytes is how much of each file's content is read for its text.
+	MaxTextBytes = 128 * 1024
+	// maxTextRunes bounds the text kept for one file.
+	maxTextRunes = 80 * 1024
+	// boltTimeout bounds the wait for an index another process holds.
+	boltTimeout = "2s"
+	// indexBatch is how many documents one bleve batch writes.
+	indexBatch = 256
 )
 
+// ErrIndexNotReady means the database has no full-text index.
 var ErrIndexNotReady = errors.New("full-text index not ready")
 
+// textSuffix ends the ID of a file's text document in indexes written before
+// W7, which kept a file's name and text as two documents.
+const textSuffix = "#text"
+
 type IndexedFileJob struct {
-	FileID string
-	Name   string
+	FileID string // the indexed record's key
+	Name   string // its path
 }
 
 type QueryMode int
@@ -43,83 +62,184 @@ func indexPath(db *badger.DB) string {
 	return util.FTSPath(db.Opts().Dir)
 }
 
-func createOrOpen(db *badger.DB) (bleve.Index, error) {
-	path := indexPath(db)
-	if _, err := os.Stat(path); err == nil {
-		return bleve.Open(path)
-	}
-	if err := os.MkdirAll(filepath.Dir(path), cnst.DirPerm); err != nil {
-		return nil, err
-	}
-	return bleve.New(path, bleve.NewIndexMapping())
+// handle is one open of a database's full-text index, shared by everyone in
+// the process who uses it: bleve's store takes a file lock, so a second open
+// of the same index in one process would wait on the first (SRC-7).
+type handle struct {
+	key  string
+	idx  bleve.Index
+	refs int
 }
 
-func openExisting(db *badger.DB) (bleve.Index, error) {
+var (
+	handlesMu sync.Mutex
+	handles   = map[string]*handle{}
+)
+
+func handleKey(path string) string {
+	key := filepath.Clean(path)
+	if abs, err := filepath.Abs(key); err == nil {
+		key = abs
+	}
+	if runtime.GOOS == "windows" {
+		key = strings.ToLower(key)
+	}
+	return key
+}
+
+// acquire returns the database's full-text index, opened once and shared
+// until the last release. A database opened read-only gets the index
+// read-only. Without an index, a writable database with create gets a new
+// one; otherwise acquire returns ErrIndexNotReady.
+func acquire(db *badger.DB, create bool) (*handle, error) {
 	path := indexPath(db)
-	if _, err := os.Stat(path); err != nil {
-		if os.IsNotExist(err) {
-			return nil, ErrIndexNotReady
+	key := handleKey(path)
+	handlesMu.Lock()
+	defer handlesMu.Unlock()
+	if h := handles[key]; h != nil {
+		h.refs++
+		return h, nil
+	}
+	readOnly := db.Opts().ReadOnly
+	var idx bleve.Index
+	_, err := os.Stat(path)
+	switch {
+	case err == nil:
+		cfg := map[string]interface{}{"bolt_timeout": boltTimeout}
+		if readOnly {
+			cfg["read_only"] = true
 		}
+		if idx, err = bleve.OpenUsing(path, cfg); err != nil {
+			return nil, fmt.Errorf("open full-text index %s (another process may hold it): %w", path, err)
+		}
+	case !errors.Is(err, fs.ErrNotExist):
 		return nil, err
+	case !create || readOnly:
+		return nil, ErrIndexNotReady
+	default:
+		if err := os.MkdirAll(filepath.Dir(path), cnst.DirPerm); err != nil {
+			return nil, err
+		}
+		if idx, err = bleve.New(path, bleve.NewIndexMapping()); err != nil {
+			return nil, fmt.Errorf("create full-text index %s: %w", path, err)
+		}
 	}
-	return bleve.Open(path)
+	h := &handle{key: key, idx: idx, refs: 1}
+	handles[key] = h
+	return h, nil
 }
 
-func IndexNames(db *badger.DB, fileID string, name string, docType string) error {
-	if name == "" {
+func (h *handle) release() error {
+	handlesMu.Lock()
+	defer handlesMu.Unlock()
+	if h.refs--; h.refs > 0 {
 		return nil
 	}
-	index, err := createOrOpen(db)
-	if err != nil {
-		return err
-	}
-	defer index.Close()
-	return indexNamesWithIndex(index, fileID, name, docType)
+	delete(handles, h.key)
+	return h.idx.Close()
 }
 
-// IndexIndexedFile indexes both name/path metadata and a capped textual extract
-// from logical file bytes for richer full-text candidate retrieval.
-func IndexIndexedFile(db *badger.DB, fileID string, name string) error {
-	index, err := createOrOpen(db)
-	if err != nil {
-		return err
-	}
-	defer index.Close()
-	return indexIndexedFileWithIndex(index, db, fileID, name)
+// IndexStats says what indexing wrote.
+type IndexStats struct {
+	Files    int // documents written
+	WithText int // of which hold text from the file's content
+	// TextErrors counts files whose content could not be read; their
+	// documents hold the name only.
+	TextErrors int
 }
 
-// IndexIndexedFileJobs indexes many indexed-file documents in a single index
-// open/close cycle to avoid churn and noisy backend maintenance logs.
-func IndexIndexedFileJobs(db *badger.DB, jobs []IndexedFileJob, onIndexed func()) error {
+// TextError is files whose content could not be read for their text. Their
+// names are indexed; the index covers them less than the others.
+type TextError struct {
+	Failed int
+	First  error
+}
+
+func (e *TextError) Error() string {
+	return fmt.Sprintf("the text of %d indexed files could not be read; first: %v", e.Failed, e.First)
+}
+
+func (e *TextError) Unwrap() error { return e.First }
+
+// IndexFiles writes one document per job: the file's name and path, and the
+// text of its first MaxTextBytes. Indexing goes on past a file whose content
+// cannot be read, and then returns a *TextError counting them.
+func IndexFiles(ctx context.Context, db *badger.DB, jobs []IndexedFileJob) (stats IndexStats, err error) {
 	if len(jobs) == 0 {
-		return nil
+		return stats, nil
 	}
-
-	index, err := createOrOpen(db)
+	h, err := acquire(db, true)
 	if err != nil {
-		return err
+		return stats, err
 	}
-	defer index.Close()
-
+	defer func() {
+		if cerr := h.release(); err == nil {
+			err = cerr
+		}
+	}()
+	var first error
+	b := h.idx.NewBatch()
 	for _, job := range jobs {
-		if err := indexIndexedFileWithIndex(index, db, job.FileID, job.Name); err != nil {
-			return err
+		if err := ctx.Err(); err != nil {
+			return stats, err
 		}
-		if onIndexed != nil {
-			onIndexed()
+		text, terr := extractText(ctx, db, []byte(job.FileID))
+		if terr != nil {
+			if ctxErr := ctx.Err(); ctxErr != nil {
+				return stats, ctxErr
+			}
+			stats.TextErrors++
+			if first == nil {
+				first = fmt.Errorf("%q: %w", job.Name, terr)
+			}
+		}
+		if text != "" {
+			stats.WithText++
+		}
+		// A document from an index written before W7 is replaced whole.
+		b.Delete(job.FileID + textSuffix)
+		if err := b.Index(job.FileID, document(job.Name, text)); err != nil {
+			return stats, err
+		}
+		stats.Files++
+		if b.Size() >= indexBatch {
+			if err := h.idx.Batch(b); err != nil {
+				return stats, err
+			}
+			b.Reset()
 		}
 	}
-	return nil
+	if b.Size() > 0 {
+		if err := h.idx.Batch(b); err != nil {
+			return stats, err
+		}
+	}
+	if stats.TextErrors > 0 {
+		return stats, &TextError{Failed: stats.TextErrors, First: first}
+	}
+	return stats, nil
+}
+
+// document is a file's document: its name and path, split at separators so
+// each part is a word, and the text of its content.
+func document(name, text string) map[string]string {
+	var b strings.Builder
+	b.WriteString(name)
+	for _, sep := range []string{"/", "_", "\\", "."} {
+		b.WriteByte(' ')
+		b.WriteString(strings.ReplaceAll(name, sep, " "))
+	}
+	return map[string]string{"name": b.String(), "content": text, "doc_type": "indexed"}
 }
 
 // DeleteIndexedFiles removes the documents of the indexed files fileIDs
-// (their record keys): the name document and the text extract. A database
-// with no full-text index has nothing to delete.
+// (their record keys). A database with no full-text index has nothing to
+// delete.
 func DeleteIndexedFiles(db *badger.DB, fileIDs []string) (err error) {
 	if len(fileIDs) == 0 {
 		return nil
 	}
-	index, err := openExisting(db)
+	h, err := acquire(db, false)
 	if errors.Is(err, ErrIndexNotReady) {
 		return nil
 	}
@@ -127,289 +247,182 @@ func DeleteIndexedFiles(db *badger.DB, fileIDs []string) (err error) {
 		return err
 	}
 	defer func() {
-		if cerr := index.Close(); err == nil {
+		if cerr := h.release(); err == nil {
 			err = cerr
 		}
 	}()
 	const batchSize = 4096
 	for i := 0; i < len(fileIDs); i += batchSize {
-		b := index.NewBatch()
+		b := h.idx.NewBatch()
 		for _, id := range fileIDs[i:min(i+batchSize, len(fileIDs))] {
 			b.Delete(id)
-			b.Delete(id + "#text")
+			b.Delete(id + textSuffix)
 		}
-		if err := index.Batch(b); err != nil {
+		if err := h.idx.Batch(b); err != nil {
 			return err
 		}
 	}
 	return nil
 }
 
-func indexIndexedFileWithIndex(index bleve.Index, db *badger.DB, fileID string, name string) error {
-	if err := indexNamesWithIndex(index, fileID, name, "indexed"); err != nil {
-		return err
-	}
-	text := extractTextForFTS(db, []byte(fileID), defaultMaxIndexBytes, defaultMaxExtractedRunes)
-	if text == "" {
-		return nil
-	}
-	return index.Index(fileID+"#text", map[string]string{
-		"content":  text,
-		"doc_type": "indexed_text",
-	})
+// Candidates is what the full-text index offers for a query.
+type Candidates struct {
+	// Scores are by document ID: a record key, or, in an index written
+	// before W7, a record key and textSuffix.
+	Scores map[string]float64
+	// Total is the documents the query matched, which can be more than
+	// were returned.
+	Total uint64
 }
 
-func SearchFileScores(ctx context.Context, db *badger.DB, query string, limit int) (map[string]float64, error) {
-	index, err := openExisting(db)
-	if err != nil {
-		return nil, err
-	}
-	defer index.Close()
-
-	if limit <= 0 {
-		limit = defaultLimit
-	}
-
-	q := bleve.NewQueryStringQuery(query)
-	req := bleve.NewSearchRequestOptions(q, limit, 0, false)
-	res, err := index.SearchInContext(ctx, req)
-	if err != nil {
-		return nil, err
-	}
-
-	scores := make(map[string]float64, len(res.Hits))
-	for _, hit := range res.Hits {
-		scores[hit.ID] = hit.Score
-	}
-	return scores, nil
-}
-
-func IndexDocumentCount(db *badger.DB) (uint64, error) {
-	index, err := openExisting(db)
-	if err != nil {
-		return 0, err
-	}
-	defer index.Close()
-
-	return index.DocCount()
-}
-
-// SearchFileScoresParsed evaluates FTS scores using already-parsed terms and a
-// caller-selected AND/OR mode so FTS candidate retrieval matches higher-level
-// query semantics.
-func SearchFileScoresParsed(ctx context.Context, db *badger.DB, terms []string, mode QueryMode, limit int) (map[string]float64, error) {
-	index, err := openExisting(db)
-	if err != nil {
-		return nil, err
-	}
-	defer index.Close()
-
-	if limit <= 0 {
-		limit = defaultLimit
-	}
-
-	query := buildParsedQueryString(terms, mode)
-	if query == "" {
-		return map[string]float64{}, nil
-	}
-
-	q := bleve.NewQueryStringQuery(query)
-	req := bleve.NewSearchRequestOptions(q, limit, 0, false)
-	res, err := index.SearchInContext(ctx, req)
-	if err != nil {
-		return nil, err
-	}
-
-	scores := make(map[string]float64, len(res.Hits))
-	for _, hit := range res.Hits {
-		scores[hit.ID] = hit.Score
-	}
-	return scores, nil
-}
-
-func buildParsedQueryString(terms []string, mode QueryMode) string {
-	parts := make([]string, 0, len(terms))
-	for _, term := range terms {
-		t := strings.TrimSpace(strings.ToLower(term))
-		if t == "" {
-			continue
-		}
-		parts = append(parts, ftsTermToQueryString(t))
-	}
-	if len(parts) == 0 {
-		return ""
-	}
-	if len(parts) == 1 {
-		return parts[0]
-	}
-	sep := " AND "
-	if mode == QueryModeOr {
-		sep = " OR "
-	}
-	return strings.Join(parts, sep)
-}
-
-func ftsTermToQueryString(term string) string {
-	escaped := escapeQueryStringTerm(term)
-	if strings.ContainsRune(term, ' ') {
-		return "\"" + escaped + "\""
-	}
-	return escaped
-}
-
-func escapeQueryStringTerm(term string) string {
-	const special = `+-=&|><!(){}[]^"~*?:\\/`
-	var b strings.Builder
-	b.Grow(len(term) * 2)
-	for _, r := range term {
-		if strings.ContainsRune(special, r) {
-			b.WriteRune('\\')
-		}
-		b.WriteRune(r)
-	}
-	return b.String()
-}
-
-// BuildFromIndexedFiles backfills the sidecar index from existing indexed-file
-// metadata so full-text mode is usable on already-populated databases.
-func BuildFromIndexedFiles(ctx context.Context, db *badger.DB) error {
-	index, err := createOrOpen(db)
-	if err != nil {
-		return err
-	}
-	defer index.Close()
-
-	ids := make([][]byte, 0, 1024)
-	err = db.View(func(txn *badger.Txn) error {
-		opts := badger.DefaultIteratorOptions
-		opts.PrefetchValues = false
-		it := txn.NewIterator(opts)
-		defer it.Close()
-
-		prefix := []byte(cnst.IdxFileNamespace)
-		for it.Seek(prefix); it.ValidForPrefix(prefix); it.Next() {
-			if err := ctx.Err(); err != nil {
-				return err
-			}
-			ids = append(ids, it.Item().KeyCopy(nil))
-		}
-		return nil
-	})
-	if err != nil {
-		return err
-	}
-
-	bar := progressbar.NewOptions64(
-		int64(len(ids)),
-		progressbar.OptionSetDescription("building full-text index (names + extracted content)"),
-		progressbar.OptionSetWriter(console.Progress()),
-		progressbar.OptionSetTheme(cnst.CommonProgressBarTheme),
-	)
-
-	for _, fid := range ids {
-		if err := ctx.Err(); err != nil {
-			return err
-		}
-		ifile, err := dbio.GetIndexedFile(fid, db)
-		if err != nil {
-			bar.Add(1) //nolint:errcheck
-			continue
-		}
-		fileID := string(fid)
-		if err := indexNamesWithIndex(index, fileID, ifile.Name, "indexed"); err != nil {
-			bar.Add(1) //nolint:errcheck
-			continue
-		}
-		text := extractTextForFTS(db, fid, defaultMaxIndexBytes, defaultMaxExtractedRunes)
-		if text == "" {
-			bar.Add(1) //nolint:errcheck
-			continue
-		}
-		_ = index.Index(fileID+"#text", map[string]string{
-			"content":  text,
-			"doc_type": "indexed_text",
-		})
-		bar.Add(1) //nolint:errcheck
-	}
-	bar.Finish()
-	fmt.Fprintln(console.Err())
-	return nil
-}
-
-func indexNamesWithIndex(index bleve.Index, fileID string, name string, docType string) error {
-	if name == "" {
-		return nil
-	}
-
-	var b strings.Builder
-	b.WriteString(name)
-	b.WriteByte(' ')
-	b.WriteString(strings.ReplaceAll(name, "/", " "))
-	b.WriteByte(' ')
-	b.WriteString(strings.ReplaceAll(name, "_", " "))
-	b.WriteByte(' ')
-
-	doc := map[string]string{
-		"content":  b.String(),
-		"doc_type": docType,
-	}
-	return index.Index(fileID, doc)
-}
-
-func TopCandidateIDs(scores map[string]float64) map[string]struct{} {
-	if len(scores) == 0 {
-		return nil
-	}
-	ids := make(map[string]struct{}, len(scores))
-	for id := range scores {
-		baseID := id
-		baseID = strings.TrimSuffix(baseID, "#text")
-		ids[baseID] = struct{}{}
+// IDs returns the record keys of the candidates.
+func (c Candidates) IDs() map[string]struct{} {
+	ids := make(map[string]struct{}, len(c.Scores))
+	for id := range c.Scores {
+		ids[strings.TrimSuffix(id, textSuffix)] = struct{}{}
 	}
 	return ids
 }
 
-func extractTextForFTS(db *badger.DB, fid []byte, maxBytes int64, maxRunes int) string {
-	if maxBytes <= 0 || maxRunes <= 0 {
-		return ""
+// FileScores returns the best score of each candidate, by record key.
+func (c Candidates) FileScores() map[string]float64 {
+	out := make(map[string]float64, len(c.Scores))
+	for id, s := range c.Scores {
+		key := strings.TrimSuffix(id, textSuffix)
+		out[key] = max(out[key], s)
 	}
-	remaining := maxBytes
-	var out strings.Builder
-	out.Grow(8 * 1024)
+	return out
+}
 
-	_ = dbio.StreamLogicalFileBytes(fid, db, func(chunk []byte) error {
-		if remaining <= 0 || out.Len() >= maxRunes {
-			return context.Canceled
-		}
-		if int64(len(chunk)) > remaining {
-			chunk = chunk[:remaining]
-		}
-		remaining -= int64(len(chunk))
+// Capped reports whether the index matched more documents than it returned.
+func (c Candidates) Capped() bool { return c.Total > uint64(len(c.Scores)) }
 
-		if !utf8.Valid(chunk) || !isLikelyText(chunk) {
-			return nil
+// SearchCandidates returns up to limit documents that hold every term (or,
+// with QueryModeOr, any term), each term matched as a phrase of the words it
+// holds. The terms are never parsed as bleve query syntax (SRC-3).
+func SearchCandidates(ctx context.Context, db *badger.DB, terms []string, mode QueryMode, limit int) (c Candidates, err error) {
+	q := buildQuery(terms, mode)
+	if q == nil {
+		return Candidates{Scores: map[string]float64{}}, nil
+	}
+	h, err := acquire(db, false)
+	if err != nil {
+		return c, err
+	}
+	defer func() {
+		if cerr := h.release(); err == nil {
+			err = cerr
 		}
-		for len(chunk) > 0 {
-			r, size := utf8.DecodeRune(chunk)
-			if r == utf8.RuneError && size == 1 {
-				chunk = chunk[size:]
-				continue
-			}
-			if unicode.IsLetter(r) || unicode.IsNumber(r) || unicode.IsSpace(r) || strings.ContainsRune("._-/:\\", r) {
-				out.WriteRune(unicode.ToLower(r))
-			} else {
-				out.WriteByte(' ')
-			}
-			if out.Len() >= maxRunes {
-				return context.Canceled
-			}
-			chunk = chunk[size:]
+	}()
+	if limit <= 0 {
+		limit = DefaultLimit
+	}
+	res, err := h.idx.SearchInContext(ctx, bleve.NewSearchRequestOptions(q, limit, 0, false))
+	if err != nil {
+		return c, err
+	}
+	c = Candidates{Scores: make(map[string]float64, len(res.Hits)), Total: res.Total}
+	for _, hit := range res.Hits {
+		c.Scores[hit.ID] = hit.Score
+	}
+	return c, nil
+}
+
+func buildQuery(terms []string, mode QueryMode) query.Query {
+	var qs []query.Query
+	for _, t := range terms {
+		if t = strings.ToLower(strings.TrimSpace(t)); t != "" {
+			qs = append(qs, bleve.NewMatchPhraseQuery(t))
 		}
-		out.WriteByte(' ')
+	}
+	switch {
+	case len(qs) == 0:
+		return nil
+	case len(qs) == 1:
+		return qs[0]
+	case mode == QueryModeOr:
+		return bleve.NewDisjunctionQuery(qs...)
+	}
+	return bleve.NewConjunctionQuery(qs...)
+}
+
+// errTextFull ends a file's text extraction once it has enough.
+var errTextFull = errors.New("text full")
+
+// extractText returns the text of the first MaxTextBytes of an indexed file:
+// letters, digits and a few separators, lower-cased, from the parts that
+// look like UTF-8 text. A file without content has no text.
+func extractText(ctx context.Context, db *badger.DB, fid []byte) (string, error) {
+	l, err := dbio.OpenLogical(db, fid, dbio.ReadOptions{})
+	if errors.Is(err, dbio.ErrContentUnavailable) {
+		return "", nil
+	}
+	if err != nil {
+		return "", err
+	}
+	x := textExtractor{remaining: MaxTextBytes}
+	err = l.Stream(ctx, func(b []byte) error {
+		if x.write(b) {
+			return errTextFull
+		}
 		return nil
 	})
+	if errors.Is(err, errTextFull) {
+		err = nil
+	}
+	return strings.TrimSpace(x.out.String()), err
+}
 
-	return strings.TrimSpace(out.String())
+// textExtractor collects text from a file's bytes as they stream past. A
+// rune cut by the end of one piece is completed from the next, so a piece is
+// not taken for binary because a chunk boundary split a rune.
+type textExtractor struct {
+	remaining int
+	carry     []byte
+	out       strings.Builder
+}
+
+// write adds the text of b; it returns true once no more is wanted.
+func (x *textExtractor) write(b []byte) bool {
+	if x.remaining <= 0 || x.out.Len() >= maxTextRunes {
+		return true
+	}
+	b = b[:min(len(b), x.remaining)]
+	x.remaining -= len(b)
+	data := append(x.carry, b...)
+	// Hold back the start of a rune the next piece completes.
+	cut := len(data)
+	for i := len(data) - 1; i >= 0 && i >= len(data)-utf8.UTFMax+1; i-- {
+		if utf8.RuneStart(data[i]) {
+			if !utf8.FullRune(data[i:]) {
+				cut = i
+			}
+			break
+		}
+	}
+	body := data[:cut]
+	x.carry = append([]byte(nil), data[cut:]...)
+	if len(body) == 0 {
+		return x.remaining <= 0
+	}
+	if !utf8.Valid(body) || !isLikelyText(body) {
+		// Text on either side of a binary piece is not one word.
+		x.out.WriteByte(' ')
+		return x.remaining <= 0
+	}
+	for len(body) > 0 {
+		r, size := utf8.DecodeRune(body)
+		if unicode.IsLetter(r) || unicode.IsNumber(r) || unicode.IsSpace(r) || strings.ContainsRune("._-/:\\", r) {
+			x.out.WriteRune(unicode.ToLower(r))
+		} else {
+			x.out.WriteByte(' ')
+		}
+		if x.out.Len() >= maxTextRunes {
+			return true
+		}
+		body = body[size:]
+	}
+	return x.remaining <= 0
 }
 
 func isLikelyText(data []byte) bool {

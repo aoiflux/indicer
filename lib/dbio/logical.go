@@ -50,6 +50,9 @@ type ReadOptions struct {
 	// CacheBytes bounds the decoded chunks a reader keeps for reuse. Zero
 	// means DefaultChunkCacheBytes; a negative value keeps none.
 	CacheBytes int64
+	// Cache, when set, is the cache the reader keeps decoded chunks in,
+	// shared with the other readers given it; CacheBytes is then ignored.
+	Cache *ChunkCache
 }
 
 // DefaultChunkCacheBytes is the decoded chunk data a reader keeps by default.
@@ -125,9 +128,13 @@ func openEvidenceChunks(db *badger.DB, rid []byte, rec structs.EvidenceFile, opt
 		return nil, err
 	}
 	codec := blobcodec.For(db)
-	cacheBytes := opts.CacheBytes
-	if cacheBytes == 0 {
-		cacheBytes = DefaultChunkCacheBytes
+	cache := opts.Cache
+	if cache == nil {
+		cacheBytes := opts.CacheBytes
+		if cacheBytes == 0 {
+			cacheBytes = DefaultChunkCacheBytes
+		}
+		cache = newChunkCache(cacheBytes)
 	}
 	return &EvidenceChunks{
 		db:     db,
@@ -138,7 +145,7 @@ func openEvidenceChunks(db *badger.DB, rid []byte, rec structs.EvidenceFile, opt
 		codec:  codec,
 		// The v2 codec checks every chunk it decodes against its hash.
 		verify: !opts.SkipVerify && codec.Name() != blobcodec.V2,
-		cache:  newChunkCache(cacheBytes),
+		cache:  cache,
 	}, nil
 }
 
@@ -441,6 +448,15 @@ func openContent(db *badger.DB, fid, rid []byte, rec structs.IndexedFile, erec s
 	return l, nil
 }
 
+// IndexedExtents returns the extents of the extents file whose record key and
+// record are key and rec, or nil for a record of another kind.
+func IndexedExtents(db *badger.DB, key []byte, rec structs.IndexedFile) ([]structs.Extent, error) {
+	if rec.Content == nil || rec.Content.Kind != structs.ContentExtents {
+		return nil, nil
+	}
+	return recordExtents(db, CanonicalIndexedKey(key), rec.Content)
+}
+
 // recordExtents returns an extents file's extents, from its record or from
 // the pages a very fragmented file keeps them in.
 func recordExtents(db *badger.DB, fid []byte, c *structs.ContentRef) ([]structs.Extent, error) {
@@ -619,6 +635,15 @@ func (l *Logical) Stream(ctx context.Context, fn func([]byte) error) error {
 		return nil
 	})
 }
+
+// ChunkCache is a cache of decoded chunks that readers of one database can
+// share (ReadOptions.Cache): a search reads the same chunk for an evidence,
+// its partition and every small file in the chunk.
+type ChunkCache = chunkCache
+
+// NewChunkCache returns a cache that keeps up to budget bytes of decoded
+// chunks.
+func NewChunkCache(budget int64) *ChunkCache { return newChunkCache(budget) }
 
 // chunkCache keeps recently decoded chunks, keyed by chunk hash, within a
 // byte budget. Content is immutable for a hash, so entries never go stale.

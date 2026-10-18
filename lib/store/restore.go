@@ -151,16 +151,6 @@ func Restore(ctx context.Context, db *badger.DB, rhash string, dst io.Writer, op
 	return restoreLogical(ctx, l, dst, opts, ewf)
 }
 
-func GetFileMeta(fid []byte, db *badger.DB) (structs.FileMeta, error) {
-	if bytes.HasPrefix(fid, []byte(cnst.IdxFileNamespace)) {
-		return getIndexedFileMeta(fid, db)
-	}
-	if bytes.HasPrefix(fid, []byte(cnst.PartiFileNamespace)) {
-		return getPartitionFileMeta(fid, db)
-	}
-	return getEvidenceFileMeta(fid, db)
-}
-
 func checkCompleted(ehash []byte, db *badger.DB) error {
 	eid := util.GetEvidenceFileID(ehash)
 	eviFile, err := dbio.GetEvidenceFile(eid, db)
@@ -173,40 +163,6 @@ func checkCompleted(ehash []byte, db *badger.DB) error {
 	return nil
 }
 
-func getIndexedFileMeta(fid []byte, db *badger.DB) (structs.FileMeta, error) {
-	var meta structs.FileMeta
-
-	ifile, err := dbio.GetIndexedFile(fid, db)
-	if err != nil {
-		return meta, err
-	}
-	ehash, err := GetLogicalFileEviHash(ifile.Name, db)
-	if err != nil {
-		return meta, err
-	}
-
-	meta.EviHash = ehash
-	meta.Start = ifile.Start
-	meta.Size = ifile.Size
-	return meta, nil
-}
-func getPartitionFileMeta(fid []byte, db *badger.DB) (structs.FileMeta, error) {
-	var meta structs.FileMeta
-
-	pfile, err := dbio.GetPartitionFile(fid, db)
-	if err != nil {
-		return meta, err
-	}
-	ehash, err := GetLogicalFileEviHash(pfile.Name, db)
-	if err != nil {
-		return meta, err
-	}
-
-	meta.EviHash = ehash
-	meta.Start = pfile.Start
-	meta.Size = pfile.Size
-	return meta, nil
-}
 func GetLogicalFileEviHash(name string, db *badger.DB) ([]byte, error) {
 	ehash, err := util.GetEvidenceFileHash(name)
 	if err != nil {
@@ -217,24 +173,6 @@ func GetLogicalFileEviHash(name string, db *badger.DB) ([]byte, error) {
 		return nil, err
 	}
 	return ehash, nil
-}
-
-func getEvidenceFileMeta(fid []byte, db *badger.DB) (structs.FileMeta, error) {
-	var meta structs.FileMeta
-
-	efile, err := dbio.GetEvidenceFile(fid, db)
-	if err != nil {
-		return meta, err
-	}
-	if !efile.Completed {
-		return meta, cnst.ErrIncompleteFile
-	}
-	ehash := dbio.EvidenceRawID(fid)
-
-	meta.EviHash = ehash
-	meta.Start = efile.Start
-	meta.Size = efile.Size
-	return meta, nil
 }
 
 // restoreLogical writes the content of l to dst. Chunks are read and checked

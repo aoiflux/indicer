@@ -63,6 +63,7 @@ type cliFlags struct {
 	repairYes     *bool
 	repairVfy     *bool
 	repairReindex *bool
+	repairRevrel  *bool
 	resetYes      *bool
 
 	reindexIDs    *[]string
@@ -81,10 +82,16 @@ type cliFlags struct {
 	outVerify       *bool
 	outTopK         *int
 	outpath         *string
+	inOut           *string
+	inForce         *bool
+	outOut          *string
+	outForce        *bool
 
-	query     *string
-	rankAlpha *float64
-	fullText  *bool
+	query       *string
+	rankAlpha   *float64
+	fullText    *bool
+	searchOut   *string
+	searchForce *bool
 
 	microExtractForce *bool
 	microExtractTopK  *int
@@ -182,6 +189,7 @@ func newCLIDefinition() cliDefinition {
 	commands.repair = app.Command(cnst.CmdRepair, "Inspect and optionally finish what interrupted ingests left")
 	flags.repairFix = commands.repair.Flag(cnst.FlagRepairFix, "Finish what interrupted ingests left: fail unfinished attempts (storing the file again resumes them), commit flushed ones, remove duplicates, mark interrupted index passes").Short(cnst.FlagRepairFixShort).Default("false").Bool()
 	flags.repairReindex = commands.repair.Flag("reindex-failed", "With --fix, rebuild every index whose pass failed or was interrupted").Default("false").Bool()
+	flags.repairRevrel = commands.repair.Flag("revrel", "With --fix, add reverse relations (which near needs) to every stored evidence stored without them").Default("false").Bool()
 	flags.repairUpg = commands.repair.Flag(cnst.FlagRepairUpgrade, "Move a legacy hierarchical block index into the database").Default("false").Bool()
 	flags.repairYes = commands.repair.Flag("yes", "With --upgrade, delete the moved block index files without asking").Default("false").Bool()
 	flags.repairVfy = commands.repair.Flag(cnst.FlagRepairVerify, "Read back every stored chunk and check it against its hash").Default("false").Bool()
@@ -200,6 +208,8 @@ func newCLIDefinition() cliDefinition {
 	flags.inVerify = commands.nearIn.Flag(cnst.FlagAdvancedDeep, "Phase 2: full-file SimHash re-ranking of top K candidates").Short(cnst.FlagAdvancedDeepShort).Default("false").Bool()
 	flags.inTopK = commands.nearIn.Flag(cnst.FlagTopK, "Top K candidates for Phase 2 re-ranking (0 = auto-select based on available resources)").Short(cnst.FlagTopKShort).Default("0").Int()
 	flags.inhash = commands.nearIn.Arg(cnst.OperandHash, "Hash of the file in DUES DB for which you need to run NeAR").String()
+	flags.inOut = commands.nearIn.Flag("out", "Write the report to this path").Default("near_report.json").String()
+	flags.inForce = commands.nearIn.Flag("force", "Replace the report path if it already exists").Default("false").Bool()
 
 	commands.nearOut = commands.near.Command(cnst.SubCmdOut, "Finds NeAR objects & generates GReAt graph for file OUTside of the database")
 	flags.outDeep = commands.nearOut.Flag(cnst.FlagDeep, "Enable/Disable partial chunk match").Short(cnst.FlagDeepShort).Default("false").Bool()
@@ -207,11 +217,15 @@ func newCLIDefinition() cliDefinition {
 	flags.outVerify = commands.nearOut.Flag(cnst.FlagAdvancedDeep, "Phase 2: full-file SimHash re-ranking of top K candidates").Short(cnst.FlagAdvancedDeepShort).Default("false").Bool()
 	flags.outTopK = commands.nearOut.Flag(cnst.FlagTopK, "Top K candidates for Phase 2 re-ranking (0 = auto-select based on available resources)").Short(cnst.FlagTopKShort).Default("0").Int()
 	flags.outpath = commands.nearOut.Arg(cnst.OperandFile, "Path to the file for which you need to run NeAR").String()
+	flags.outOut = commands.nearOut.Flag("out", "Write the report to this path").Default("near_report.json").String()
+	flags.outForce = commands.nearOut.Flag("force", "Replace the report path if it already exists").Default("false").Bool()
 
 	commands.search = app.Command(cnst.CmdSearch, "Search anything in DUES DB")
 	flags.query = commands.search.Arg(cnst.OperandQuery, "Search query string").String()
 	flags.rankAlpha = commands.search.Flag(cnst.FlagRankAlpha, "Occurrence boost weight for ranking (>= 0, default: 0.35)").Short(cnst.FlagRankAlphaShort).Default("0.35").Float64()
-	flags.fullText = commands.search.Flag(cnst.FlagEnableFts, "Enable sidecar full-text search first, then fallback to scan path").Short(cnst.FlagEnableFtsShort).Default("false").Bool()
+	flags.fullText = commands.search.Flag(cnst.FlagEnableFts, "Search only the indexed files the full-text index offers, falling back to a full search when it offers none").Short(cnst.FlagEnableFtsShort).Default("false").Bool()
+	flags.searchOut = commands.search.Flag("out", "Write the report to this path").Default("report.json").String()
+	flags.searchForce = commands.search.Flag("force", "Replace the report path if it already exists").Default("false").Bool()
 
 	commands.micro = app.Command(cnst.CmdMicro, "Manage micro-artefacts")
 	commands.microExtract = commands.micro.Command("extract", "Extract micro-artefacts from all indexed files and populate graph database")

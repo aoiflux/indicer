@@ -26,7 +26,7 @@ func features(ctx context.Context, db *badger.DB, eid []byte, node evidenceNode,
 			return nil
 		})
 		if err == nil && len(jobs) > 0 {
-			err = fts.IndexIndexedFileJobs(db, jobs, nil)
+			_, err = fts.IndexFiles(ctx, db, jobs)
 		}
 		if err != nil {
 			errs = append(errs, fmt.Errorf("full-text index: %w", err))

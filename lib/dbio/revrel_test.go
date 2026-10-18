@@ -2,6 +2,7 @@ package dbio
 
 import (
 	"encoding/base64"
+	"strconv"
 	"testing"
 
 	"indicer/lib/cnst"
@@ -9,6 +10,7 @@ import (
 
 	"github.com/dgraph-io/badger/v4"
 	"github.com/klauspost/compress/zstd"
+	"github.com/vmihailenco/msgpack/v5"
 )
 
 func openDBIOTestDB(t testing.TB) *badger.DB {
@@ -239,33 +241,69 @@ func TestReverseRelationAppendMemberIndexParsesLegacyPayloadRobustly(t *testing.
 	}
 }
 
-func TestGetReverseRelationAppendPrefixMembersIncludesSegments(t *testing.T) {
+func TestForEachChunkOccurrenceReadsEveryForm(t *testing.T) {
 	db := openDBIOTestDB(t)
-	chash := []byte("chunk-segment-prefix")
-	seedMembers := []ReverseRelationAppendMember{
-		{Chash: chash, Index: 4},
-		{Chash: chash, Index: 20},
-	}
+	chash := []byte("chunk-everywhere")
 
 	batch := db.NewWriteBatch()
-	if err := seedLegacySegmentMembers([]byte("segment-prefix"), seedMembers, db, batch); err != nil {
-		batch.Cancel()
-		t.Fatalf("SetReverseRelationSegmentMembers seed: %v", err)
+	// One key per occurrence, as ingests since W3 write them.
+	for _, m := range []struct {
+		owner string
+		index int64
+	}{{"evidence-a", 0}, {"evidence-a", 8192}, {"evidence-b", 4096}} {
+		if err := SetBatchNode(ReverseRelationAppendMemberKey(chash, m.index, []byte(m.owner)), []byte(m.owner), batch); err != nil {
+			t.Fatal(err)
+		}
+	}
+	// The text form of the same key.
+	legacyKey := util.AppendToBytesSlice(cnst.ReverseRelationAppendNamespace, chash, cnst.DataSeperator, int64(12288),
+		cnst.DataSeperator, reverseRelationAppendShard([]byte("evidence-c")), cnst.DataSeperator, "encoded")
+	if err := SetBatchNode(legacyKey, []byte("evidence-c"), batch); err != nil {
+		t.Fatal(err)
+	}
+	// A legacy per-offset map, repeating one occurrence.
+	legacyMap, err := msgpack.Marshal(map[string]struct{}{"evidence-a": {}, "evidence-d": {}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := SetBatchNode(util.AppendToBytesSlice(cnst.ReverseRelationNamespace, chash, cnst.DataSeperator, int64(0)), legacyMap, batch); err != nil {
+		t.Fatal(err)
+	}
+	// Segments.
+	if err := seedLegacySegmentMembers([]byte("evidence-e"), []ReverseRelationAppendMember{{Chash: chash, Index: 4}, {Chash: chash, Index: 20}}, db, batch); err != nil {
+		t.Fatal(err)
 	}
 	if err := batch.Flush(); err != nil {
-		t.Fatalf("batch.Flush seed: %v", err)
+		t.Fatal(err)
 	}
 
-	revPrefixKey := util.AppendToBytesSlice(cnst.ReverseRelationNamespace, chash, cnst.DataSeperator, int64(0))
-	prefixMap, err := GetReverseRelationAppendPrefixMembers(revPrefixKey, db)
-	if err != nil {
-		t.Fatalf("GetReverseRelationAppendPrefixMembers segment read: %v", err)
+	got := map[string]int{}
+	truncated, err := ForEachChunkOccurrence(db, chash, 0, func(owner []byte, off int64) error {
+		got[string(owner)+"@"+strconv.FormatInt(off, 10)]++
+		return nil
+	})
+	if err != nil || truncated {
+		t.Fatalf("truncated %v, %v", truncated, err)
 	}
-
-	for _, idx := range []int64{4, 20} {
-		values := prefixMap[idx]
-		if len(values) != 1 || values[0] != "segment-prefix" {
-			t.Fatalf("unexpected prefix values at %d: %#v", idx, values)
+	want := []string{"evidence-a@0", "evidence-a@8192", "evidence-b@4096", "evidence-c@12288", "evidence-d@0", "evidence-e@4", "evidence-e@20"}
+	if len(got) != len(want) {
+		t.Fatalf("occurrences %v, want %v", got, want)
+	}
+	for _, w := range want {
+		if got[w] != 1 {
+			t.Fatalf("occurrence %s reported %d times: %v", w, got[w], got)
 		}
+	}
+
+	n := 0
+	truncated, err = ForEachChunkOccurrence(db, chash, 3, func([]byte, int64) error { n++; return nil })
+	if err != nil || !truncated || n != 3 {
+		t.Fatalf("with a limit of 3: %d reported, truncated %v, %v", n, truncated, err)
+	}
+	if ok, err := ChunkOccursAt(db, chash, 4096, []byte("evidence-b")); err != nil || !ok {
+		t.Fatalf("ChunkOccursAt: %v, %v", ok, err)
+	}
+	if ok, err := ChunkOccursAt(db, chash, 4096, []byte("evidence-a")); err != nil || ok {
+		t.Fatalf("ChunkOccursAt of an absent occurrence: %v, %v", ok, err)
 	}
 }

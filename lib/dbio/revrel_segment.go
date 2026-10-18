@@ -5,7 +5,6 @@ import (
 	"errors"
 	"fmt"
 	"indicer/lib/cnst"
-	"indicer/lib/util"
 
 	"github.com/dgraph-io/badger/v4"
 )
@@ -53,51 +52,6 @@ func getReverseRelationSegmentMembersAtIndex(chash []byte, index int64, db *badg
 			for fhash, idxs := range state {
 				if containsInt64(idxs, index) {
 					result[fhash] = struct{}{}
-				}
-			}
-		}
-		return nil
-	})
-
-	return result, err
-}
-
-func getReverseRelationSegmentPrefixMembers(chash []byte, db *badger.DB) (map[int64][]string, error) {
-	result := make(map[int64][]string)
-	seen := make(map[int64]map[string]struct{})
-	prefix := util.AppendToBytesSlice(cnst.ReverseRelationSegmentNamespace, chash, cnst.DataSeperator)
-
-	err := db.View(func(txn *badger.Txn) error {
-		opts := badger.DefaultIteratorOptions
-		opts.PrefetchSize = 64
-		it := txn.NewIterator(opts)
-		defer it.Close()
-
-		for it.Seek(prefix); it.ValidForPrefix(prefix); it.Next() {
-			item := it.Item()
-			value, err := item.ValueCopy(nil)
-			if err != nil {
-				return err
-			}
-			decoded, err := cnst.DECODER.DecodeAll(value, nil)
-			if err == nil {
-				value = decoded
-			}
-
-			state, err := decodeReverseRelationSegmentState(value)
-			if err != nil {
-				return err
-			}
-			for fhash, idxs := range state {
-				for _, idx := range idxs {
-					if _, ok := seen[idx]; !ok {
-						seen[idx] = make(map[string]struct{})
-					}
-					if _, ok := seen[idx][fhash]; ok {
-						continue
-					}
-					seen[idx][fhash] = struct{}{}
-					result[idx] = append(result[idx], fhash)
 				}
 			}
 		}

@@ -1,6 +1,10 @@
 package search
 
-import "testing"
+import (
+	"errors"
+	"strings"
+	"testing"
+)
 
 // --- query parser tests ---
 
@@ -55,24 +59,41 @@ func TestParseQueryNormalizesCase(t *testing.T) {
 	}
 }
 
-func TestValidateParsedQueryRejectsShortTerm(t *testing.T) {
-	pq := parsedQuery{terms: []string{"a"}, op: queryOpAnd}
-	if err := validateParsedQuery(pq); err == nil {
+func TestValidateTermsRejectsShortTerm(t *testing.T) {
+	if err := validateTerms([]string{"a"}); err == nil {
 		t.Fatal("expected error for single-char term, got nil")
 	}
 }
 
-func TestValidateParsedQueryRejectsEmpty(t *testing.T) {
-	pq := parsedQuery{terms: nil, op: queryOpAnd}
-	if err := validateParsedQuery(pq); err == nil {
+func TestValidateTermsRejectsEmpty(t *testing.T) {
+	if err := validateTerms(nil); err == nil {
 		t.Fatal("expected error for empty terms, got nil")
+	}
+}
+
+// TestValidateTermsCapsQueries (SRC-2): a term longer than MaxTermBytes, or
+// more than MaxTerms terms, is refused before anything is read.
+func TestValidateTermsCapsQueries(t *testing.T) {
+	long := strings.Repeat("x", MaxTermBytes+1)
+	if err := validateTerms([]string{long}); !errors.Is(err, ErrQueryTooLong) {
+		t.Fatalf("a %d-byte term: %v, want ErrQueryTooLong", len(long), err)
+	}
+	if err := validateTerms([]string{strings.Repeat("x", MaxTermBytes)}); err != nil {
+		t.Fatalf("a %d-byte term: %v", MaxTermBytes, err)
+	}
+	many := make([]string, MaxTerms+1)
+	for i := range many {
+		many[i] = "ab"
+	}
+	if err := validateTerms(many); !errors.Is(err, ErrQueryTooLong) {
+		t.Fatalf("%d terms: %v, want ErrQueryTooLong", len(many), err)
 	}
 }
 
 // --- BM25 tests ---
 
 func TestRankBM25ReturnsNilForEmptyHits(t *testing.T) {
-	result := rankBM25([]map[string]int{{}}, map[string]int64{}, 10, queryOpAnd)
+	result := rankBM25([]map[string]int{{}}, map[string]int64{}, 10, queryOpAnd, DefaultRankAlpha)
 	if result != nil {
 		t.Fatalf("expected nil for empty hits, got %v", result)
 	}
@@ -80,7 +101,7 @@ func TestRankBM25ReturnsNilForEmptyHits(t *testing.T) {
 
 func TestRankBM25ReturnsNilForZeroTotalDocs(t *testing.T) {
 	hits := map[string]int{"a": 5}
-	result := rankBM25([]map[string]int{hits}, map[string]int64{"a": 100}, 0, queryOpAnd)
+	result := rankBM25([]map[string]int{hits}, map[string]int64{"a": 100}, 0, queryOpAnd, DefaultRankAlpha)
 	if result != nil {
 		t.Fatalf("expected nil for zero totalDocs, got %v", result)
 	}
@@ -90,7 +111,7 @@ func TestRankBM25ScoresDescending(t *testing.T) {
 	// doc "a" has more occurrences than doc "b" with same size, expect higher score
 	hits := map[string]int{"a": 10, "b": 1}
 	sizes := map[string]int64{"a": 1000, "b": 1000}
-	results := rankBM25([]map[string]int{hits}, sizes, 100, queryOpAnd)
+	results := rankBM25([]map[string]int{hits}, sizes, 100, queryOpAnd, DefaultRankAlpha)
 	if len(results) != 2 {
 		t.Fatalf("expected 2 results, got %d", len(results))
 	}
@@ -106,7 +127,7 @@ func TestRankBM25ANDIntersects(t *testing.T) {
 	term1 := map[string]int{"a": 5, "b": 3}
 	term2 := map[string]int{"b": 2, "c": 1}
 	sizes := map[string]int64{"a": 1000, "b": 1000, "c": 1000}
-	results := rankBM25([]map[string]int{term1, term2}, sizes, 100, queryOpAnd)
+	results := rankBM25([]map[string]int{term1, term2}, sizes, 100, queryOpAnd, DefaultRankAlpha)
 
 	// AND: only "b" appears in both
 	if len(results) != 1 || results[0].FileID != "b" {
@@ -118,7 +139,7 @@ func TestRankBM25ORUnion(t *testing.T) {
 	term1 := map[string]int{"a": 5}
 	term2 := map[string]int{"b": 3}
 	sizes := map[string]int64{"a": 1000, "b": 1000}
-	results := rankBM25([]map[string]int{term1, term2}, sizes, 100, queryOpOr)
+	results := rankBM25([]map[string]int{term1, term2}, sizes, 100, queryOpOr, DefaultRankAlpha)
 
 	if len(results) != 2 {
 		t.Fatalf("expected 2 results for OR, got %d", len(results))
@@ -129,7 +150,7 @@ func TestRankBM25TFSummedAcrossTerms(t *testing.T) {
 	term1 := map[string]int{"a": 3}
 	term2 := map[string]int{"a": 4}
 	sizes := map[string]int64{"a": 1000}
-	results := rankBM25([]map[string]int{term1, term2}, sizes, 100, queryOpAnd)
+	results := rankBM25([]map[string]int{term1, term2}, sizes, 100, queryOpAnd, DefaultRankAlpha)
 
 	if len(results) != 1 || results[0].TF != 7 {
 		t.Fatalf("expected TF=7 for 'a', got %v", results)
@@ -167,7 +188,7 @@ func TestSortRankedResultsTieBreaksByTF(t *testing.T) {
 		{FileID: "b", Score: 1.25, TF: 5},
 	}
 
-	sortRankedResults(results)
+	sortRankedResults(results, DefaultRankAlpha)
 
 	if results[0].FileID != "b" {
 		t.Fatalf("expected higher-TF result first when scores tie, got %q", results[0].FileID)
@@ -180,7 +201,7 @@ func TestSortRankedResultsTieBreaksByFileID(t *testing.T) {
 		{FileID: "a", Score: 1.25, TF: 5},
 	}
 
-	sortRankedResults(results)
+	sortRankedResults(results, DefaultRankAlpha)
 
 	if results[0].FileID != "a" {
 		t.Fatalf("expected lexicographically smaller file ID first on full tie, got %q", results[0].FileID)
@@ -188,28 +209,27 @@ func TestSortRankedResultsTieBreaksByFileID(t *testing.T) {
 }
 
 func TestSortRankedResultsHybridCanPreferHigherTF(t *testing.T) {
-	oldAlpha := GetOccurrenceBoostAlpha()
-	t.Cleanup(func() { SetOccurrenceBoostAlpha(oldAlpha) })
-	SetOccurrenceBoostAlpha(0.35)
-
 	results := []RankedResult{
 		{FileID: "low-tf", Score: 1.00, TF: 1},
 		{FileID: "high-tf", Score: 0.90, TF: 100},
 	}
 
-	sortRankedResults(results)
+	sortRankedResults(results, 0.35)
 
 	if results[0].FileID != "high-tf" {
 		t.Fatalf("expected higher TF to win when BM25 scores are close, got %q", results[0].FileID)
 	}
 }
 
-func TestSetOccurrenceBoostAlphaClampsNegativeToZero(t *testing.T) {
-	oldAlpha := GetOccurrenceBoostAlpha()
-	t.Cleanup(func() { SetOccurrenceBoostAlpha(oldAlpha) })
+func TestSortRankedResultsNegativeAlphaCountsAsZero(t *testing.T) {
+	results := []RankedResult{
+		{FileID: "high-tf", Score: 0.90, TF: 100},
+		{FileID: "low-tf", Score: 1.00, TF: 1},
+	}
 
-	SetOccurrenceBoostAlpha(-1)
-	if got := GetOccurrenceBoostAlpha(); got != 0 {
-		t.Fatalf("expected alpha to clamp to 0, got %v", got)
+	sortRankedResults(results, -1)
+
+	if results[0].FileID != "low-tf" {
+		t.Fatalf("expected BM25 alone to rank with a negative alpha, got %q first", results[0].FileID)
 	}
 }

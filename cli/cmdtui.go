@@ -64,8 +64,11 @@ func TUICmd(ctx context.Context, opts DBOptions) (err error) {
 			if len(query) < 2 {
 				return fmt.Errorf("query must be at least 2 characters")
 			}
+			// The TUI replaces the report of its previous search, as it
+			// always has.
 			return runQuiet(func() error {
-				return search.SearchWithContext(ctx, strings.ToLower(query), db)
+				_, err := search.SearchReport(ctx, db, search.Request{Query: query, RankAlpha: search.DefaultRankAlpha, Force: true})
+				return err
 			})
 		},
 		Restore: func(hash string, restorePath string) error {
@@ -78,12 +81,14 @@ func TUICmd(ctx context.Context, opts DBOptions) (err error) {
 		},
 		NearIn: func(hash string, deep bool) error {
 			return runQuiet(func() error {
-				return near.NearInFile(hash, db, deep, false, 0)
+				_, err := near.In(ctx, db, hash, near.Options{Deep: deep, Force: true})
+				return err
 			})
 		},
 		NearOut: func(filePath string) error {
 			return runQuiet(func() error {
-				return near.NearOutFile(filePath, db, false, false, false, 0)
+				_, err := near.Out(ctx, db, filePath, near.Options{Force: true})
+				return err
 			})
 		},
 		Reset: func() error {

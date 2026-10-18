@@ -2,7 +2,9 @@ package cli
 
 import (
 	"context"
+	"errors"
 	"indicer/internal/console"
+	"indicer/internal/lifecycle"
 	"indicer/lib/dbopen"
 	"indicer/lib/enrichment"
 	"indicer/lib/logging"
@@ -33,15 +35,30 @@ func EnrichData(ctx context.Context, opts DBOptions) (err error) {
 	}
 
 	service := enrichment.NewService(db, repo)
-	defer service.Close()
+	defer func() {
+		if cerr := service.Close(); err == nil {
+			err = cerr
+		}
+	}()
 
 	logging.GetLogger().Info("EnrichData ENRICH_ALL_EXECUTE")
-	if err := service.EnrichAll(); err != nil {
+	rep, err := service.EnrichAll(ctx)
+	var incomplete *enrichment.IncompleteError
+	if err != nil && !errors.As(err, &incomplete) {
 		logging.GetLogger().Error("EnrichData ENRICH_ALL_ERROR", zap.Error(err))
 		return err
 	}
 
-	console.Println("Graph enrichment complete: evidence files, partitions, and indexed-file metadata upserted.")
+	console.Printf("Graph enrichment: %d evidence, %d partition(s), %d indexed file(s) written.\n", rep.Evidence, rep.Partitions, rep.Files)
+	if rep.Quarantined > 0 {
+		console.Printf("%d evidence with a quarantined index: only the evidence itself was written.\n", rep.Quarantined)
+	}
+	if incomplete != nil {
+		for _, p := range rep.Problems {
+			console.Errorf("unreadable: %s\n", p)
+		}
+		return &lifecycle.WarningError{Err: incomplete}
+	}
 	logging.GetLogger().Info("EnrichData COMPLETE", zap.Int64("duration_ms", time.Since(start).Milliseconds()))
 	return nil
 }

@@ -12,7 +12,11 @@ func ListMicroArtefacts(repo *microartefact.GrapheneRepository) error {
 	if err != nil {
 		return err
 	}
+	return PrintMicroArtefacts(tree)
+}
 
+// PrintMicroArtefacts prints a micro-artefact hierarchy as JSON.
+func PrintMicroArtefacts(tree *microartefact.EvidenceFileHierarchy) error {
 	// Build output structure
 	output := map[string]interface{}{
 		"totalArtefacts":         tree.TotalArtefacts,

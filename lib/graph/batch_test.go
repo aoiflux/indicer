@@ -350,7 +350,7 @@ func TestBatch_RefusesUseAfterFinish(t *testing.T) {
 
 func TestWriter_RefusedOnReadOnlyHandle(t *testing.T) {
 	cleanRegistry(t)
-	root := t.TempDir()
+	root := storeWithNode(t)
 
 	handle, err := OpenWith(root, OpenOptions{ReadOnly: true})
 	if err != nil {

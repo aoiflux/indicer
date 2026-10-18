@@ -4,6 +4,7 @@ package graph
 
 import (
 	"errors"
+	"io/fs"
 	"os"
 
 	"golang.org/x/sys/unix"
@@ -33,4 +34,10 @@ func unlockFile(file *os.File) error {
 // compared so the check holds wherever they differ.
 func isLockContended(err error) bool {
 	return errors.Is(err, unix.EWOULDBLOCK) || errors.Is(err, unix.EAGAIN)
+}
+
+// isReadOnlyMedia reports whether err says the file cannot be opened for
+// writing: a read-only mount, or file modes that forbid it.
+func isReadOnlyMedia(err error) bool {
+	return errors.Is(err, fs.ErrPermission) || errors.Is(err, unix.EROFS)
 }

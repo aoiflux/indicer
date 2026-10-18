@@ -19,6 +19,12 @@ func OpenGrapheneRepository(root string) (*GrapheneRepository, error) {
 	return graphrepo.Open(root)
 }
 
+// OpenGrapheneRepositoryReadOnly opens root's graph store for reading. A data
+// root without one is duesgraph.ErrNoGraph, and nothing is created.
+func OpenGrapheneRepositoryReadOnly(root string) (*GrapheneRepository, error) {
+	return graphrepo.OpenWith(root, duesgraph.OpenOptions{ReadOnly: true})
+}
+
 // OpenGrapheneRepositoryOn borrows a graph handle the caller already holds,
 // for code paths that run inside a command which has one open. Close on the
 // result is a no-op.

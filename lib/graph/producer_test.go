@@ -57,7 +57,11 @@ func TestProducer_EdgesAreStampedToo(t *testing.T) {
 		t.Fatal(err)
 	}
 	for _, edge := range edges {
-		if props.Unpack(edge.Properties).Str(duesgraph.ProducerVersionProperty) == "" {
+		fields, err := props.Unpack(edge.Properties)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if fields.Str(duesgraph.ProducerVersionProperty) == "" {
 			t.Fatalf("edge %d carries no producer_version", edge.ID)
 		}
 	}
@@ -133,8 +137,8 @@ func TestProducer_ExplicitStampIsNotOverwritten(t *testing.T) {
 
 func TestProducer_StringNamesBothVersions(t *testing.T) {
 	got := duesgraph.Producer{Pipeline: "enrichment", Version: "2"}.String()
-	if got != "enrichment@2/graphene@v0.4.0" {
-		t.Errorf("String() = %q", got)
+	if !strings.HasPrefix(got, "enrichment@2/graphene@v") {
+		t.Errorf("String() = %q, want the pipeline and the linked graphene version", got)
 	}
 	if !(duesgraph.Producer{}).Zero() {
 		t.Error("the zero Producer does not report itself as zero")

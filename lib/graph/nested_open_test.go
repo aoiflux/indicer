@@ -14,6 +14,9 @@ const (
 	nestedPartitionID  = "cGFydGl0aW9uLW5lc3RlZA=="
 	nestedPath         = "/Windows/System32/config/SOFTWARE"
 	nestedHash         = "c29mdHdhcmUtaGFzaA=="
+	// nestedIndexedID is the base64 of the indexed record's ID, as
+	// enrichment names indexed files in the graph.
+	nestedIndexedID = "aW5kZXhlZC1uZXN0ZWQ="
 )
 
 func indexedFileRecord(root string) enrichment.FileRecord {
@@ -27,7 +30,7 @@ func indexedFileRecord(root string) enrichment.FileRecord {
 		EvidenceFileName: nestedEvidenceName,
 		PartitionID:      nestedPartitionID,
 		PartitionName:    "p1",
-		IndexedFileID:    model.BuildIndexedFileID(nestedPartitionID, nestedPath, nestedHash),
+		IndexedFileID:    nestedIndexedID,
 		IndexedFileHash:  nestedHash,
 	}
 }

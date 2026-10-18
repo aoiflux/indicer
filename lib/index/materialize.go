@@ -10,6 +10,7 @@ import (
 
 	"indicer/lib/dbio"
 	"indicer/lib/dbmeta"
+	"indicer/lib/entropy"
 	"indicer/lib/store"
 	"indicer/lib/structs"
 	"indicer/lib/util"
@@ -36,6 +37,8 @@ type sequentialReaderAt struct {
 	r    io.Reader
 	pos  int64
 	head []byte
+	// counts, when set, counts every byte read, for the content's entropy.
+	counts *entropy.Counter
 }
 
 func (s *sequentialReaderAt) ReadAt(p []byte, off int64) (int, error) {
@@ -47,6 +50,9 @@ func (s *sequentialReaderAt) ReadAt(p []byte, off int64) (int, error) {
 	n, err := io.ReadFull(s.r, p)
 	if len(s.head) < headLen {
 		s.head = append(s.head, p[:min(n, headLen-len(s.head))]...)
+	}
+	if s.counts != nil {
+		s.counts.Add(p[:n])
 	}
 	s.pos += int64(n)
 	if errors.Is(err, io.ErrUnexpectedEOF) {
@@ -77,6 +83,9 @@ func (ix *indexer) materialize(op *openPartition, iid []byte, f *structs.Indexed
 		return ix.unavailable(op, iid, f, "decoded content could not be opened")
 	}
 	sr := &sequentialReaderAt{r: src.r}
+	if ix.opts.Entropy {
+		sr.counts = new(entropy.Counter)
+	}
 	res, err := store.IngestChunks(ix.ctx, store.ChunkPass{DB: ix.opts.DB, ID: iid, Source: sr, Size: size, Quiet: true})
 	if src.c != nil {
 		_ = src.c.Close() // a read-only stream; what was read was checked
@@ -111,6 +120,10 @@ func (ix *indexer) materialize(op *openPartition, iid []byte, f *structs.Indexed
 	f.Content = &structs.ContentRef{Kind: structs.ContentMaterialized, Located: size, ObjectID: iid}
 	f.FileHash = hash
 	f.IndexedType = util.DetectFileType(f.Path, sr.head)
+	if sr.counts != nil {
+		v := sr.counts.Value()
+		f.Entropy = &v
+	}
 	return ix.write(op, iid, f, nil, kv{dbio.ObjectKey(iid), obj})
 }
 

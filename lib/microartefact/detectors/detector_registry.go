@@ -17,6 +17,14 @@ func (d RegistryHiveDetector) Name() string {
 	return "registry-hive"
 }
 
+// WantsRaw: the detector parses the hive itself.
+func (d RegistryHiveDetector) WantsRaw() bool { return true }
+
+// maxRegistryDepth bounds the key walk. A hive is evidence, and a key can
+// name an ancestor as its subkey; the walk was recursive and unbounded, so
+// such a hive never ended or overflowed the stack (GRA-13).
+const maxRegistryDepth = 512
+
 func (d RegistryHiveDetector) Detect(_ model.FileRecord, content []byte) ([]model.Artefact, error) {
 	registry, err := regparser.NewRegistry(bytes.NewReader(content))
 	if err != nil {
@@ -30,18 +38,31 @@ func (d RegistryHiveDetector) Detect(_ model.FileRecord, content []byte) ([]mode
 
 	maxResults := resolveMaxResults(d.MaxResults, defaultRegistryValueResults)
 
-	results := make([]model.Artefact, 0, maxResults)
-	var walk func(key *regparser.CM_KEY_NODE, path string)
-	walk = func(key *regparser.CM_KEY_NODE, path string) {
-		if key == nil || len(results) >= maxResults {
-			return
+	results := make([]model.Artefact, 0, min(maxResults, 64))
+	type frame struct {
+		key   *regparser.CM_KEY_NODE
+		path  string
+		depth int
+	}
+	visited := map[int64]struct{}{}
+	stack := []frame{{key: root}}
+	for len(stack) > 0 && len(results) < maxResults {
+		f := stack[len(stack)-1]
+		stack = stack[:len(stack)-1]
+		key := f.key
+		if key == nil || f.depth > maxRegistryDepth {
+			continue
 		}
+		if _, seen := visited[key.Offset]; seen {
+			continue
+		}
+		visited[key.Offset] = struct{}{}
 
-		currentPath := joinRegistryPath(path, key.Name())
+		currentPath := joinRegistryPath(f.path, key.Name())
 		lastWrite := fmt.Sprint(key.LastWriteTime())
 		for _, value := range key.Values() {
 			if len(results) >= maxResults {
-				return
+				break
 			}
 			valueData := value.ValueData()
 			valueName := value.ValueName()
@@ -68,14 +89,11 @@ func (d RegistryHiveDetector) Detect(_ model.FileRecord, content []byte) ([]mode
 			})
 		}
 
-		for _, child := range key.Subkeys() {
-			walk(child, currentPath)
-			if len(results) >= maxResults {
-				return
-			}
+		// Pushed in reverse, so subkeys are visited in their stored order.
+		children := key.Subkeys()
+		for i := len(children) - 1; i >= 0; i-- {
+			stack = append(stack, frame{key: children[i], path: currentPath, depth: f.depth + 1})
 		}
 	}
-
-	walk(root, "")
 	return results, nil
 }

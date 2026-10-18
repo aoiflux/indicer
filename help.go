@@ -387,7 +387,7 @@ func printMicroArtefactsHelp() {
 	fmt.Println("  dues micro list")
 	fmt.Println()
 	fmt.Println("  micro extract  — Extract micro-artefacts from all indexed files and populate graph database")
-	fmt.Println("                  Options: --force|-V, --top-k|-K")
+	fmt.Println("                  Options: --force|-V, --top-k|-K, --out, --overwrite")
 	fmt.Println("  micro list     — List all micro-artefacts in JSON format")
 	fmt.Println()
 	fmt.Println("Try: dues help micro extract")
@@ -402,11 +402,14 @@ func printMicroArtefactsHelp() {
 
 func printMicroExtractHelp() {
 	printHelpHeader("micro extract")
-	fmt.Println("Usage: dues micro extract [--force|-V] [--top-k|-K N] [global options]")
+	fmt.Println("Usage: dues micro extract [--force|-V] [--top-k|-K N] [--out PATH] [--overwrite] [global options]")
 	fmt.Println("Extracts micro-artefacts from indexed files and writes them into graph storage.")
+	fmt.Println("Files an earlier run examined are skipped. Exits 2 when some files could not be read.")
 	printHelpSection("Options")
-	fmt.Println("  --force, -V   Re-process files even when artefacts already exist")
+	fmt.Println("  --force, -V   Extract again from files an earlier run examined, replacing their artefacts")
 	fmt.Println("  --top-k, -K   Limit exported HTML graph input to top-K files by artefact count (0 = all)")
+	fmt.Println("  --out         Write the HTML graph view here (default graph.html in the working directory)")
+	fmt.Println("  --overwrite   Replace the HTML graph view if it exists")
 	printExamples(
 		"dues micro extract",
 		"dues micro extract --top-k 10",

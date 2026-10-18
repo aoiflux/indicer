@@ -33,7 +33,11 @@ func nodeProps(t *testing.T, handle *duesgraph.Handle, key, value string) props.
 	if err != nil {
 		t.Fatal(err)
 	}
-	return props.Unpack(node.Properties)
+	fields, err := props.Unpack(node.Properties)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return fields
 }
 
 func enrichedStore(t *testing.T) *duesgraph.Handle {

@@ -19,6 +19,8 @@
 package props
 
 import (
+	"bytes"
+	"fmt"
 	"strconv"
 	"time"
 
@@ -27,45 +29,37 @@ import (
 
 // Map is a decoded property blob. Accessors are total: a missing key, a nil
 // map or a value of an unexpected type yields the zero value rather than an
-// error, because a property blob is data DUES wrote itself and a decode
-// mismatch is a bug to be surfaced by tests, not a condition every call site
-// should branch on.
+// error. A blob that does not decode at all is an error from Unpack.
 type Map map[string]any
 
-// Pack encodes a value as msgpack.
+// Pack encodes a value as msgpack, with map keys in order, so the same
+// properties always encode to the same bytes.
 func Pack(value any) ([]byte, error) {
-	return msgpack.Marshal(value)
-}
-
-// MustPack panics on an encoding failure.
-//
-// Deprecated: prefer Pack. Panicking part-way through an ingest is the wrong
-// behaviour for a forensic tool — it abandons the run with a partially written
-// store. This exists to bound the diff while the write path moves onto
-// transactions; new code should return the error.
-func MustPack(value any) []byte {
-	packed, err := msgpack.Marshal(value)
-	if err != nil {
-		panic("graph/props: pack: " + err.Error())
+	var buf bytes.Buffer
+	enc := msgpack.NewEncoder(&buf)
+	enc.SetSortMapKeys(true)
+	if err := enc.Encode(value); err != nil {
+		return nil, err
 	}
-	return packed
+	return buf.Bytes(), nil
 }
 
-// Unpack decodes a property blob. It never returns nil, so callers can index
-// the result unconditionally, and it never returns an error: an undecodable
-// blob yields an empty Map.
-func Unpack(packed []byte) Map {
+// Unpack decodes a property blob. The Map is never nil, so callers can index
+// it unconditionally. A blob that does not decode is an error: it used to
+// read as an empty Map, which made a damaged node look like one with no
+// properties (GRA-10).
+func Unpack(packed []byte) (Map, error) {
 	if len(packed) == 0 {
-		return Map{}
+		return Map{}, nil
 	}
 	var decoded map[string]any
 	if err := msgpack.Unmarshal(packed, &decoded); err != nil {
-		return Map{}
+		return Map{}, fmt.Errorf("props: undecodable property blob: %w", err)
 	}
 	if decoded == nil {
-		return Map{}
+		return Map{}, nil
 	}
-	return decoded
+	return decoded, nil
 }
 
 // Has reports whether the key is present, regardless of its value.

@@ -1,66 +1,93 @@
 package cli
 
 import (
-	"bytes"
 	"context"
 	"encoding/base64"
 	"errors"
 	"fmt"
 	"indicer/internal/console"
+	"indicer/internal/lifecycle"
 	"indicer/internal/termsafe"
 	"indicer/lib/cnst"
 	"indicer/lib/dbio"
 	"indicer/lib/dbopen"
 	"indicer/lib/enrichment"
+	duesgraph "indicer/lib/graph"
 	"indicer/lib/logging"
 	"indicer/lib/microartefact"
-	mmodel "indicer/lib/microartefact/model"
+	reppkg "indicer/lib/microartefact/repository"
+	graphrepo "indicer/lib/microartefact/repository/graphene"
 	"indicer/lib/store"
 	"indicer/lib/structs"
-	"indicer/lib/util"
-	"path/filepath"
-	"strings"
+	"io/fs"
+	"os"
+	"path"
 	"time"
 
 	"github.com/dgraph-io/badger/v4"
-	"github.com/vmihailenco/msgpack/v5"
 	"go.uber.org/zap"
 )
 
-// microScanLimit matches the Service's defaultScanLimit so we never stream
-// more bytes than the detectors will actually examine.
-const microScanLimit = 4 << 20 // 4 MB
-
-// errScanLimitReached is a sentinel used to stop streaming once we have
-// collected enough bytes for the scan window.
-var errScanLimitReached = errors.New("scan limit reached")
-
-type microEvidenceContext struct {
-	evidenceFileID   string
-	evidenceFileName string
+// MicroOptions control micro-artefact extraction.
+type MicroOptions struct {
+	// Force extracts again from files an earlier run examined, replacing the
+	// artefacts it stored.
+	Force bool
+	// TopK is how many indexed files, by artefact count, the HTML view shows
+	// (0: all).
+	TopK int
+	// Out is where the HTML view is written; "" is graph.html in the working
+	// directory. It used to be written into the database directory.
+	Out string
+	// Overwrite replaces an existing file at Out.
+	Overwrite bool
 }
 
-type microPartitionContext struct {
-	microEvidenceContext
-	partitionID   string
-	partitionName string
+// microReport counts what an extraction run did.
+type microReport struct {
+	examined, skipped, noContent, backfilled int
+	byStatus                                 map[string]int
+	artefacts                                int
+	failures                                 []string
+	failed                                   int
 }
 
-type microFileNodeStatus struct {
-	checked    bool
-	backfilled bool
+func (r *microReport) fail(what string, err error) {
+	r.failed++
+	if len(r.failures) < 10 {
+		r.failures = append(r.failures, fmt.Sprintf("%s: %v", what, err))
+	}
 }
 
-// MicroArtefactCmd opens the DUES database and extracts micro-artefacts from
-// every indexed file that has been stored in the hierarchy:
+// MicroArtefactCmd extracts micro-artefacts from every indexed file of every
+// completed evidence and stores them in the graph under their file:
 //
 // evidence_file → partition → indexed_file → micro_artefact
-func MicroArtefactCmd(ctx context.Context, opts DBOptions, force bool, topK int) (err error) {
+//
+// A file an earlier run examined is skipped unless opts.Force. A file whose
+// content cannot be read or stored is counted, and the command exits 2; it
+// used to log the failure and exit 0 (GRA-12).
+func MicroArtefactCmd(ctx context.Context, opts DBOptions, mo MicroOptions) (err error) {
 	start := time.Now()
+	out := mo.Out
+	if out == "" {
+		out = "graph.html"
+	}
+	if mo.TopK < 0 {
+		return lifecycle.Usagef("--top-k must be 0 or more")
+	}
+	if !mo.Overwrite {
+		if _, serr := os.Stat(out); serr == nil {
+			return lifecycle.Usagef("%s exists; pass --overwrite to replace it, or --out to write elsewhere", out)
+		} else if !errors.Is(serr, fs.ErrNotExist) {
+			return serr
+		}
+	}
 	logging.GetLogger().Info("MicroArtefactCmd START",
 		zap.String("db_path", opts.Path),
-		zap.Bool("force", force),
-		zap.Int("top_k", topK),
+		zap.Bool("force", mo.Force),
+		zap.Int("top_k", mo.TopK),
+		zap.String("out", out),
 	)
 
 	h, err := Common(ctx, opts, dbopen.ReadWrite, true)
@@ -69,30 +96,32 @@ func MicroArtefactCmd(ctx context.Context, opts DBOptions, force bool, topK int)
 		return err
 	}
 	defer closeDB(h, &err)
-	db, dbpath := h.DB, h.Root
+	db := h.DB
 
-	repo, err := microartefact.OpenGrapheneRepository(dbpath)
+	repo, err := microartefact.OpenGrapheneRepository(h.Root)
 	if err != nil {
 		logging.GetLogger().Error("MicroArtefactCmd OPEN_GRAPH_REPOSITORY_ERROR", zap.Error(err))
 		return err
 	}
-
 	service := microartefact.NewService(repo)
-	defer service.Close()
+	defer func() {
+		if cerr := service.Close(); err == nil {
+			err = cerr
+		}
+	}()
 
-	status := &microFileNodeStatus{}
-	logging.GetLogger().Info("MicroArtefactCmd PROCESS_INDEXED_FILES")
-	if err := processAllIndexedFiles(db, service, repo, force, status); err != nil {
-		logging.GetLogger().Error("MicroArtefactCmd PROCESS_INDEXED_FILES_ERROR", zap.Error(err))
+	rep := &microReport{byStatus: map[string]int{}}
+	if err := extractAll(ctx, db, service, repo, mo.Force, rep); err != nil {
+		logging.GetLogger().Error("MicroArtefactCmd EXTRACT_ERROR", zap.Error(err))
 		return err
 	}
 
-	if status.backfilled {
-		console.Println("[micro] File-level graph nodes were missing; enrichment backfill completed before micro extraction.")
-	} else if status.checked {
-		console.Println("[micro] File-level graph nodes already present; enrichment backfill not needed.")
-	} else {
-		console.Println("[micro] No indexed files found for micro extraction.")
+	console.Printf("[micro] %d file(s) examined: %d with artefacts (%d artefacts), %d without, %d unsupported, %d parse failure(s), %d too large; %d skipped (examined before; --force extracts again), %d without content.\n",
+		rep.examined, rep.byStatus[reppkg.StatusExtracted], rep.artefacts, rep.byStatus[reppkg.StatusNone],
+		rep.byStatus[reppkg.StatusUnsupported], rep.byStatus[reppkg.StatusParseFailed], rep.byStatus[reppkg.StatusTooLarge],
+		rep.skipped, rep.noContent)
+	if rep.backfilled > 0 {
+		console.Printf("[micro] %d evidence had no file nodes in the graph; enriched them first.\n", rep.backfilled)
 	}
 
 	tree, err := repo.ReadHierarchy()
@@ -100,290 +129,243 @@ func MicroArtefactCmd(ctx context.Context, opts DBOptions, force bool, topK int)
 		logging.GetLogger().Error("MicroArtefactCmd READ_HIERARCHY_ERROR", zap.Error(err))
 		return err
 	}
-
-	htmlPath := filepath.Join(dbpath, "graph.html")
-	if err := repo.ExportInteractiveHTMLTopK(htmlPath, topK); err != nil {
-		logging.GetLogger().Error("MicroArtefactCmd EXPORT_HTML_ERROR", zap.Error(err), zap.String("file_path", htmlPath))
+	shown, err := repo.ExportHTML(out, mo.TopK, mo.Overwrite)
+	switch {
+	case errors.Is(err, graphrepo.ErrNothingToExport):
+		console.Println("[micro] No indexed file has micro-artefacts; no HTML view written.")
+	case errors.Is(err, fs.ErrExist):
+		return lifecycle.Usagef("%s exists; pass --overwrite to replace it, or --out to write elsewhere", out)
+	case err != nil:
+		logging.GetLogger().Error("MicroArtefactCmd EXPORT_HTML_ERROR", zap.Error(err), zap.String("file_path", out))
 		return err
+	default:
+		printHierarchyTree(tree)
+		console.Printf("HTML graph visualisation (%d file(s)): %s\n", shown, out)
 	}
-
-	printHierarchyTree(tree)
-	console.Printf("HTML graph visualisation: %s\n", htmlPath)
 	logging.GetLogger().Info("MicroArtefactCmd COMPLETE",
 		zap.Int64("duration_ms", time.Since(start).Milliseconds()),
-		zap.String("html_path", htmlPath),
+		zap.Int("failed", rep.failed),
 	)
+	if rep.failed > 0 {
+		for _, f := range rep.failures {
+			console.Errorf("failed: %s\n", termsafe.Line(f))
+		}
+		return &lifecycle.WarningError{Err: fmt.Errorf("micro-artefacts could not be extracted from %d file(s)", rep.failed)}
+	}
 	return nil
 }
 
-// processAllIndexedFiles iterates all completed evidence files in the store and
-// processes each indexed file within them for micro-artefact extraction.
-func processAllIndexedFiles(db *badger.DB, service *microartefact.Service, repo *microartefact.GrapheneRepository, force bool, status *microFileNodeStatus) error {
-	logging.GetLogger().Debug("processAllIndexedFiles START", zap.Bool("force", force))
-	return db.View(func(txn *badger.Txn) error {
+// extractAll extracts from every completed evidence in turn. Evidence whose
+// index is quarantined is skipped, as list and search skip it.
+func extractAll(ctx context.Context, db *badger.DB, service *microartefact.Service, repo *microartefact.GrapheneRepository, force bool, rep *microReport) error {
+	var ids [][]byte
+	err := db.View(func(txn *badger.Txn) error {
 		opts := badger.DefaultIteratorOptions
-		opts.PrefetchSize = 100
+		opts.PrefetchValues = false
+		prefix := []byte(cnst.EviFileNamespace)
 		it := txn.NewIterator(opts)
 		defer it.Close()
+		for it.Seek(prefix); it.ValidForPrefix(prefix); it.Next() {
+			ids = append(ids, dbio.EvidenceRawID(it.Item().KeyCopy(nil)))
+		}
+		return nil
+	})
+	if err != nil {
+		return err
+	}
+	for _, eid := range ids {
+		if err := ctx.Err(); err != nil {
+			return context.Cause(ctx)
+		}
+		e, err := dbio.GetEvidenceFile(eid, db)
+		if err != nil {
+			return err
+		}
+		if !e.Completed || (e.Index != nil && e.Index.State == structs.IndexInvalid) {
+			continue
+		}
+		if err := extractEvidence(ctx, db, service, repo, eid, e, force, rep); err != nil {
+			return err
+		}
+	}
+	return nil
+}
 
-		eviPrefix := []byte(cnst.EviFileNamespace)
-		for it.Seek(eviPrefix); it.ValidForPrefix(eviPrefix); it.Next() {
-			item := it.Item()
-			k := item.KeyCopy(nil)
-			v, err := item.ValueCopy(nil)
+func extractEvidence(ctx context.Context, db *badger.DB, service *microartefact.Service, repo *microartefact.GrapheneRepository, eid []byte, e structs.EvidenceFile, force bool, rep *microReport) error {
+	evidenceID := base64.StdEncoding.EncodeToString(eid)
+	type member struct{ pid, pname, iid string }
+	var members []member
+	err := db.View(func(txn *badger.Txn) error {
+		for pidB64 := range e.InternalObjects {
+			pid, err := base64.StdEncoding.DecodeString(pidB64)
+			if err != nil {
+				return fmt.Errorf("partition %s: %w", pidB64, err)
+			}
+			var pdata structs.PartitionFile
+			if err := dbio.GetRecordTxn(txn, dbio.CanonicalPartitionKey(pid), &pdata); err != nil {
+				return fmt.Errorf("partition %s: %w", pidB64, err)
+			}
+			err = dbio.ForEachPartitionMemberTxn(txn, pid, pdata, func(iid string, _ structs.InternalOffset) error {
+				members = append(members, member{pid: pidB64, pname: pdata.Name, iid: iid})
+				return nil
+			})
 			if err != nil {
 				return err
 			}
+		}
+		return nil
+	})
+	if err != nil {
+		return err
+	}
 
-			decoded, err := cnst.DECODER.DecodeAll(v, nil)
-			if err == nil {
-				v = decoded
-			}
-
-			var evidata structs.EvidenceFile
-			if err := msgpack.Unmarshal(v, &evidata); err != nil {
-				logging.GetLogger().Error("processAllIndexedFiles UNMARSHAL_EVIDENCE_ERROR", zap.Error(err))
+	backfilled := false
+	for _, m := range members {
+		if err := ctx.Err(); err != nil {
+			return context.Cause(ctx)
+		}
+		// The graph holds the evidence's files under their record IDs, as
+		// enrichment writes them (GRA-1). An evidence never enriched is
+		// enriched once, before its first file.
+		has, err := repo.HasIndexedFile(m.iid)
+		if err != nil {
+			return err
+		}
+		if !has && !backfilled {
+			backfilled = true
+			if err := backfillEvidence(ctx, db, eid); err != nil {
 				return err
 			}
-			if !evidata.Completed {
-				continue
-			}
-
-			eviHash := bytes.TrimPrefix(k, eviPrefix)
-			evidenceCtx := microEvidenceContext{
-				evidenceFileID:   base64.StdEncoding.EncodeToString(eviHash),
-				evidenceFileName: evidata.Name,
-			}
-
-			for phashB64 := range evidata.InternalObjects {
-				if err := processPartition(txn, db, service, repo, force, status, evidenceCtx, phashB64); err != nil {
-					logging.GetLogger().Error("processAllIndexedFiles PROCESS_PARTITION_ERROR", zap.Error(err), zap.String("partition_id", phashB64))
-					return err
-				}
+			rep.backfilled++
+			if has, err = repo.HasIndexedFile(m.iid); err != nil {
+				return err
 			}
 		}
-		return nil
-	})
-}
-
-// processPartition retrieves a partition file from the store and processes each
-// indexed file it contains.
-func processPartition(txn *badger.Txn, db *badger.DB, service *microartefact.Service, repo *microartefact.GrapheneRepository, force bool, status *microFileNodeStatus, evidenceCtx microEvidenceContext, partitionHashB64 string) error {
-	logging.GetLogger().Debug("processPartition START",
-		zap.String("partition_id", partitionHashB64),
-		zap.String("evidence_id", evidenceCtx.evidenceFileID),
-	)
-	rawPhash, err := base64.StdEncoding.DecodeString(partitionHashB64)
-	if err != nil {
-		logging.GetLogger().Error("processPartition DECODE_HASH_ERROR", zap.Error(err), zap.String("partition_id", partitionHashB64))
-		return fmt.Errorf("partition hash decode: %w", err)
-	}
-	pid := util.AppendToBytesSlice(cnst.PartiFileNamespace, rawPhash)
-
-	item, err := txn.Get(pid)
-	if err != nil {
-		logging.GetLogger().Error("processPartition GET_PARTITION_ERROR", zap.Error(err), zap.String("partition_id", partitionHashB64))
-		return fmt.Errorf("get partition %s: %w", partitionHashB64, err)
-	}
-	v, err := item.ValueCopy(nil)
-	if err != nil {
-		return err
-	}
-	decoded, err := cnst.DECODER.DecodeAll(v, nil)
-	if err == nil {
-		v = decoded
-	}
-
-	var pdata structs.PartitionFile
-	if err := msgpack.Unmarshal(v, &pdata); err != nil {
-		logging.GetLogger().Error("processPartition UNMARSHAL_PARTITION_ERROR", zap.Error(err), zap.String("partition_id", partitionHashB64))
-		return err
-	}
-	partitionCtx := microPartitionContext{
-		microEvidenceContext: evidenceCtx,
-		partitionID:          partitionHashB64,
-		partitionName:        pdata.Name,
-	}
-
-	return dbio.ForEachPartitionMemberTxn(txn, pid, pdata, func(ihashB64 string, _ structs.InternalOffset) error {
-		if err := processIndexedFile(db, service, repo, force, status, partitionCtx, ihashB64); err != nil {
-			// Non-fatal: log and continue so one bad file does not abort the run.
-			logging.GetLogger().Error("processPartition PROCESS_INDEXED_FILE_ERROR", zap.Error(err), zap.String("indexed_file_id", ihashB64))
-			console.Printf("warning: skipping indexed file %s: %v\n", ihashB64, err)
+		if !has {
+			rep.fail(m.iid, errors.New("no indexed-file node in the graph after enrichment"))
+			continue
 		}
-		return nil
-	})
+		if err := extractFile(ctx, db, service, repo, evidenceID, e.Name, m.pid, m.pname, m.iid, force, rep); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
-// processIndexedFile reads one indexed file from the store and runs micro-artefact
-// detection on its content, using the real hierarchy IDs for the graph record.
-func processIndexedFile(db *badger.DB, service *microartefact.Service, repo *microartefact.GrapheneRepository, force bool, status *microFileNodeStatus, partitionCtx microPartitionContext, indexedFileHashB64 string) error {
-	start := time.Now()
-	logging.GetLogger().Debug("processIndexedFile START",
-		zap.String("indexed_file_id", indexedFileHashB64),
-		zap.String("partition_id", partitionCtx.partitionID),
-		zap.Bool("force", force),
-	)
-	rawIhash, err := base64.StdEncoding.DecodeString(indexedFileHashB64)
+// backfillEvidence writes an evidence's hierarchy to the graph. Entropy it
+// cannot compute does not stop extraction.
+func backfillEvidence(ctx context.Context, db *badger.DB, eid []byte) (err error) {
+	enrichRepo, err := enrichment.OpenGrapheneRepository(db.Opts().Dir)
 	if err != nil {
-		logging.GetLogger().Error("processIndexedFile DECODE_HASH_ERROR", zap.Error(err), zap.String("indexed_file_id", indexedFileHashB64))
-		return fmt.Errorf("indexed file hash decode: %w", err)
-	}
-	iid := util.AppendToBytesSlice(cnst.IdxFileNamespace, rawIhash)
-
-	ifile, err := dbio.GetIndexedFile(iid, db)
-	if err != nil {
-		logging.GetLogger().Error("processIndexedFile GET_INDEXED_FILE_ERROR", zap.Error(err))
-		return fmt.Errorf("get indexed file: %w", err)
-	}
-
-	records := buildIndexedFileRecords(ifile, partitionCtx, indexedFileHashB64)
-	if err := ensureIndexedFileNodes(db, repo, records, status); err != nil {
-		logging.GetLogger().Error("processIndexedFile ENSURE_GRAPH_NODES_ERROR", zap.Error(err))
 		return err
 	}
+	svc := enrichment.NewService(db, enrichRepo)
+	defer func() {
+		if cerr := svc.Close(); err == nil {
+			err = cerr
+		}
+	}()
+	var incomplete *enrichment.IncompleteError
+	if _, err := svc.EnrichEvidenceIndex(ctx, eid); err != nil && !errors.As(err, &incomplete) {
+		return err
+	}
+	return nil
+}
+
+// extractFile extracts from one indexed file. Only a database or graph error
+// stops the run; a file that cannot be read or stored is counted.
+func extractFile(ctx context.Context, db *badger.DB, service *microartefact.Service, repo *microartefact.GrapheneRepository, evidenceID, evidenceName, pid, pname, iidB64 string, force bool, rep *microReport) error {
+	raw, err := base64.StdEncoding.DecodeString(iidB64)
+	if err != nil {
+		rep.fail(iidB64, err)
+		return nil
+	}
+	key := dbio.CanonicalIndexedKey(raw)
+	ifile, err := dbio.GetIndexedFile(key, db)
+	if err != nil {
+		rep.fail(iidB64, err)
+		return nil
+	}
+	filePath := dbio.RecordPath(ifile)
 	if !force {
-		pending := make([]microartefact.FileRecord, 0, len(records))
-		for _, record := range records {
-			exists, err := repo.HasMicroArtefacts(record.IndexedFileID)
-			if err != nil {
-				return fmt.Errorf("check indexed file extraction status: %w", err)
-			}
-			if exists {
-				console.Printf("Skipping already-extracted indexed file node: %s\n", termsafe.Line(record.Path))
-				continue
-			}
-			pending = append(pending, record)
-		}
-		records = pending
-	}
-	if len(records) == 0 {
-		return nil
-	}
-
-	content, err := readIndexedFileContent(iid, db)
-	if err != nil {
-		logging.GetLogger().Error("processIndexedFile READ_CONTENT_ERROR", zap.Error(err))
-		return fmt.Errorf("read indexed file content: %w", err)
-	}
-
-	for _, record := range records {
-		if err := service.Process(record, content); err != nil {
-			logging.GetLogger().Error("processIndexedFile PROCESS_ERROR", zap.Error(err), zap.String("record_name", record.Name))
-			return fmt.Errorf("micro-artefact process: %w", err)
-		}
-		console.Printf("Micro-artefacts extracted: %s\n", termsafe.Line(record.Name))
-	}
-	logging.GetLogger().Debug("processIndexedFile COMPLETE",
-		zap.String("indexed_file_id", indexedFileHashB64),
-		zap.Int("record_count", len(records)),
-		zap.Int64("duration_ms", time.Since(start).Milliseconds()),
-	)
-	return nil
-}
-
-func ensureIndexedFileNodes(db *badger.DB, repo *microartefact.GrapheneRepository, records []microartefact.FileRecord, status *microFileNodeStatus) error {
-	if len(records) == 0 {
-		return nil
-	}
-	if status != nil {
-		status.checked = true
-	}
-
-	missing := false
-	for _, record := range records {
-		exists, err := repo.HasIndexedFile(record.IndexedFileID)
+		status, err := repo.ExtractionStatus(iidB64)
 		if err != nil {
 			return err
 		}
-		if !exists {
-			missing = true
-			break
+		if status != "" {
+			rep.skipped++
+			return nil
 		}
 	}
-	if !missing {
+
+	content, size, err := readIndexedFileContent(ctx, db, key, microartefact.RawLimit)
+	switch {
+	case errors.Is(err, dbio.ErrContentUnavailable):
+		rep.noContent++
+		return nil
+	case err != nil && ctx.Err() != nil:
+		return context.Cause(ctx)
+	case err != nil:
+		rep.fail(filePath, err)
 		return nil
 	}
 
-	if status != nil && !status.backfilled {
-		console.Println("Missing file-level graph nodes detected. Running enrichment backfill...")
-		enrichmentRepo, err := enrichment.OpenGrapheneRepository(db.Opts().Dir)
-		if err != nil {
-			return err
-		}
-		enrichmentSvc := enrichment.NewService(db, enrichmentRepo)
-		defer enrichmentSvc.Close()
-		if err := enrichmentSvc.EnrichAll(); err != nil {
-			return err
-		}
-		status.backfilled = true
-	}
-
-	for _, record := range records {
-		exists, err := repo.HasIndexedFile(record.IndexedFileID)
-		if err != nil {
-			return err
-		}
-		if !exists {
-			return fmt.Errorf("indexed file node still missing for %s after enrichment backfill", record.Path)
-		}
-	}
-
-	return nil
-}
-
-func buildIndexedFileRecords(ifile structs.IndexedFile, partitionCtx microPartitionContext, indexedFileHashB64 string) []microartefact.FileRecord {
-	name, path := resolveIndexedFileNameSingle(ifile.Name)
-	return []microartefact.FileRecord{{
-		Hash:             indexedFileHashB64,
-		Name:             name,
-		Path:             path,
-		Size:             ifile.Size,
+	record := microartefact.FileRecord{
+		Hash:             iidB64,
+		Name:             path.Base(filePath),
+		Path:             filePath,
+		Size:             size,
 		IsDeleted:        ifile.IsDeleted,
 		IsFragmented:     ifile.IsFragmented,
 		FileType:         ifile.IndexedType,
-		EvidenceFileID:   partitionCtx.evidenceFileID,
-		EvidenceFileName: partitionCtx.evidenceFileName,
-		PartitionID:      partitionCtx.partitionID,
-		PartitionName:    partitionCtx.partitionName,
-		IndexedFileID:    mmodel.BuildIndexedFileID(partitionCtx.partitionID, path, indexedFileHashB64),
-	}}
+		EvidenceFileID:   evidenceID,
+		EvidenceFileName: evidenceName,
+		PartitionID:      pid,
+		PartitionName:    pname,
+		IndexedFileID:    iidB64,
+	}
+	outcome, err := service.ProcessFile(record, content, size, force)
+	if err != nil {
+		rep.fail(filePath, err)
+		return nil
+	}
+	rep.examined++
+	rep.byStatus[outcome.Status]++
+	rep.artefacts += outcome.Artefacts
+	if outcome.Artefacts > 0 {
+		console.Printf("Micro-artefacts extracted: %s (%d)\n", termsafe.Line(filePath), outcome.Artefacts)
+	}
+	return nil
 }
 
-// readIndexedFileContent streams up to microScanLimit bytes of the indexed file
-// from the store without writing the full file to disk.
-func readIndexedFileContent(iid []byte, db *badger.DB) ([]byte, error) {
-	buf := make([]byte, 0, microScanLimit)
-	err := dbio.StreamLogicalFileBytes(iid, db, func(chunk []byte) error {
-		remaining := microScanLimit - len(buf)
-		if remaining <= 0 {
-			return errScanLimitReached
+// readIndexedFileContent reads up to limit bytes of an indexed file through
+// the reader, which verifies each chunk and serves every content kind. It
+// returns the bytes and the file's size.
+func readIndexedFileContent(ctx context.Context, db *badger.DB, key []byte, limit int64) ([]byte, int64, error) {
+	lg, err := dbio.OpenLogical(db, key, dbio.ReadOptions{})
+	if err != nil {
+		return nil, 0, err
+	}
+	n := min(lg.Size(), limit)
+	buf := make([]byte, 0, n)
+	err = lg.Stream(ctx, func(p []byte) error {
+		if room := n - int64(len(buf)); int64(len(p)) > room {
+			p = p[:room]
 		}
-		if len(chunk) > remaining {
-			chunk = chunk[:remaining]
+		buf = append(buf, p...)
+		if int64(len(buf)) >= n {
+			return errMicroLimit
 		}
-		buf = append(buf, chunk...)
 		return nil
 	})
-	if errors.Is(err, errScanLimitReached) {
-		return buf, nil
+	if errors.Is(err, errMicroLimit) {
+		err = nil
 	}
-	return buf, err
+	return buf, lg.Size(), err
 }
 
-// resolveIndexedFileName extracts a human-readable name and path from the
-// flattened IndexedFile.Name field. Values that follow the
-// "hash|||evi_path|||file_name" convention are split accordingly; otherwise
-// the raw entry is used for both.
-func resolveIndexedFileNameSingle(name string) (fileName, path string) {
-	if strings.Contains(name, cnst.DataSeperator) {
-		parts := strings.SplitN(name, cnst.DataSeperator, 3)
-		if len(parts) == 3 {
-			return parts[2], name
-		}
-	}
-	return name, name
-}
+// errMicroLimit stops a read once the bytes extraction needs are read.
+var errMicroLimit = errors.New("read limit reached")
 
 // ─── CLI visualisation tree ───────────────────────────────────────────────────
 
@@ -585,11 +567,19 @@ func ListMicroArtefactsCmd(ctx context.Context, opts DBOptions) (err error) {
 	}
 	defer closeDB(h, &err)
 
-	repo, err := microartefact.OpenGrapheneRepository(h.Root)
+	repo, err := microartefact.OpenGrapheneRepositoryReadOnly(h.Root)
+	if errors.Is(err, duesgraph.ErrNoGraph) {
+		console.Errorln("no micro-artefacts: this database has no graph store; run 'dues micro extract' first")
+		return store.PrintMicroArtefacts(&microartefact.EvidenceFileHierarchy{})
+	}
 	if err != nil {
 		return err
 	}
-	defer repo.Close()
+	defer func() {
+		if cerr := repo.Close(); err == nil {
+			err = cerr
+		}
+	}()
 
 	return store.ListMicroArtefacts(repo)
 }

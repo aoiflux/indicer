@@ -2,6 +2,7 @@ package graph
 
 import (
 	"fmt"
+	"reflect"
 	"strings"
 
 	"indicer/lib/graph/ids"
@@ -29,12 +30,23 @@ type UpsertKey struct {
 
 func (k UpsertKey) cacheKey() string { return k.Key + "\x00" + k.Value }
 
-// indexOp is a property-index registration deferred until after the commit.
-type indexOp struct {
-	node  graphstore.NodeID
-	edge  graphstore.EdgeID
-	isB   bool // true for an edge
-	pairs map[string][]byte
+// pendingNode is a node this batch writes: one it creates, or a stored one it
+// changes. Its record and index entries are written at Commit, in the
+// transaction.
+type pendingNode struct {
+	created bool
+	labels  []graphstore.NodeType
+	fields  props.Map
+	index   map[string][]byte
+
+	// stored and storedLabels are the record as it was read, for a stored
+	// node, so a change that changes nothing writes nothing.
+	stored       props.Map
+	storedLabels []graphstore.NodeType
+
+	// changed records that a node created in this batch was changed after it
+	// was buffered.
+	changed bool
 }
 
 // Batch groups writes into one atomic, durable, attributed commit.
@@ -48,7 +60,10 @@ type indexOp struct {
 // signed at all, whatever options it was opened with. Moving the write path
 // onto batches is what makes the signing posture mean anything.
 //
-// It is also two orders of magnitude fewer fsyncs, but that is the lesser half.
+// Index entries are part of the same commit (GRA-3/GRA-4): they used to be
+// written after it, so a crash in between left nodes that were stored but
+// could not be found by the key they were written under, and the next run
+// created duplicates of them.
 type Batch struct {
 	writer *Writer
 	graph  *graphenedb.Graph
@@ -60,15 +75,19 @@ type Batch struct {
 	// written unattributed by omission.
 	producer string
 
-	// local resolves nodes created earlier in this same batch. They are not yet
-	// visible to NodesByProperty, which reads committed state.
+	// local resolves keys to nodes created or found earlier in this same batch.
+	// Nodes created here are not yet visible to NodesByProperty, which reads
+	// committed state.
 	local map[string]graphstore.NodeID
 
-	// edgeKeys dedupes within the batch, for the same reason.
+	nodes   map[graphstore.NodeID]*pendingNode
+	order   []graphstore.NodeID
+	deleted map[graphstore.NodeID]struct{}
+
+	// edgeKeys dedupes within the batch, for the same reason as local.
 	edgeKeys map[string]struct{}
 
-	deferred []indexOp
-	done     bool
+	done bool
 }
 
 // Batch begins a transaction. Every write on it lands, or none does.
@@ -80,6 +99,8 @@ func (w *Writer) Batch() *Batch {
 		kinds:    w.handle.Schema(),
 		producer: w.producer.String(),
 		local:    map[string]graphstore.NodeID{},
+		nodes:    map[graphstore.NodeID]*pendingNode{},
+		deleted:  map[graphstore.NodeID]struct{}{},
 		edgeKeys: map[string]struct{}{},
 	}
 }
@@ -102,7 +123,11 @@ func (b *Batch) hasEquivalentEdge(
 		if edge == nil || edge.Dst != dst {
 			continue
 		}
-		stored := props.Unpack(edge.Properties).Str(EdgeKeyProperty)
+		fields, err := props.Unpack(edge.Properties)
+		if err != nil {
+			return false, fmt.Errorf("graph: edge %d: %w", edge.ID, err)
+		}
+		stored := fields.Str(EdgeKeyProperty)
 		if stored == "" || stored == edgeKey {
 			return true, nil
 		}
@@ -119,19 +144,44 @@ func (b *Batch) Attributed() bool { return b.tx.Attributed() }
 func (b *Batch) Atomic() bool { return b.tx.Atomic() }
 
 // Ops is the number of pending operations.
-func (b *Batch) Ops() int { return b.tx.Ops() }
+func (b *Batch) Ops() int { return b.tx.Ops() + len(b.nodes) }
 
-// Upsert returns the node identified by key, creating it if absent.
+// Upsert writes the full record of the node identified by key: it creates the
+// node if absent, and otherwise merges properties over the stored ones and
+// replaces the index entries named in indexPairs, so a value the node no
+// longer has stops matching (GRA-2). The key itself is always indexed.
 //
 // Resolution order is batch-local, then the handle's process-wide identity
 // cache, then the store. The cache is safe to keep because graphene never
-// reuses IDs and compaction preserves them, so an ID once resolved stays valid
-// for the life of the process.
+// reuses IDs and compaction preserves them; a node this process deletes is
+// dropped from it.
 func (b *Batch) Upsert(
 	key UpsertKey,
 	labels []graphstore.NodeType,
 	properties props.Map,
 	indexPairs map[string][]byte,
+) (graphstore.NodeID, error) {
+	return b.upsert(key, labels, properties, indexPairs, true)
+}
+
+// UpsertFill writes a stub of the node identified by key: it creates the node
+// if absent and otherwise leaves it as it is, so a stub written while walking
+// a file never overwrites the full record of its partition or evidence.
+func (b *Batch) UpsertFill(
+	key UpsertKey,
+	labels []graphstore.NodeType,
+	properties props.Map,
+	indexPairs map[string][]byte,
+) (graphstore.NodeID, error) {
+	return b.upsert(key, labels, properties, indexPairs, false)
+}
+
+func (b *Batch) upsert(
+	key UpsertKey,
+	labels []graphstore.NodeType,
+	properties props.Map,
+	indexPairs map[string][]byte,
+	replace bool,
 ) (graphstore.NodeID, error) {
 	if b.done {
 		return graphstore.InvalidNodeID, fmt.Errorf("graph: Upsert on a finished batch")
@@ -139,45 +189,46 @@ func (b *Batch) Upsert(
 	if key.Key == "" || key.Value == "" {
 		return graphstore.InvalidNodeID, fmt.Errorf("graph: Upsert needs a non-empty index key and value")
 	}
-
-	cacheKey := key.cacheKey()
-	if id, ok := b.local[cacheKey]; ok {
-		return id, nil
-	}
-	if id, ok := b.writer.handle.lookupIdentity(cacheKey); ok {
-		return id, nil
+	if len(labels) == 0 {
+		return graphstore.InvalidNodeID, fmt.Errorf("graph: node %s=%q has no labels", key.Key, key.Value)
 	}
 
-	hits, err := b.graph.NodesByProperty(key.Key, []byte(key.Value))
-	if err != nil {
-		return graphstore.InvalidNodeID, fmt.Errorf("graph: Upsert lookup %s: %w", key.Key, err)
-	}
-	if len(hits) > 0 {
-		b.local[cacheKey] = hits[0]
-		b.writer.handle.rememberIdentity(cacheKey, hits[0])
-		return hits[0], nil
-	}
-
-	packed, err := props.Pack(map[string]any(b.stamped(properties)))
-	if err != nil {
-		return graphstore.InvalidNodeID, fmt.Errorf("graph: Upsert pack properties: %w", err)
-	}
-
-	// The ID is reserved immediately and is usable as an edge endpoint before
-	// the commit, which is what lets a node and its containment edge land in
-	// one atomic unit.
-	id := b.tx.AddNode(&graphstore.Node{Labels: labels, Properties: packed})
-	if id == graphstore.InvalidNodeID {
-		return id, fmt.Errorf("graph: Upsert could not reserve a node id (batch already failed)")
-	}
-	b.local[cacheKey] = id
-
-	pairs := map[string][]byte{key.Key: []byte(key.Value)}
+	pairs := make(map[string][]byte, len(indexPairs)+1)
 	for k, v := range indexPairs {
 		pairs[k] = v
 	}
-	b.deferred = append(b.deferred, indexOp{node: id, pairs: pairs})
+	pairs[key.Key] = []byte(key.Value)
 
+	cacheKey := key.cacheKey()
+	id, found := b.local[cacheKey]
+	if !found {
+		id, found = b.writer.handle.lookupIdentity(cacheKey)
+	}
+	if !found {
+		hits, err := b.graph.NodesByProperty(key.Key, []byte(key.Value))
+		if err != nil {
+			return graphstore.InvalidNodeID, fmt.Errorf("graph: Upsert lookup %s: %w", key.Key, err)
+		}
+		if len(hits) > 0 {
+			id, found = hits[0], true
+		}
+	}
+	if found {
+		b.local[cacheKey] = id
+		if !replace {
+			return id, nil
+		}
+		if err := b.merge(id, labels, properties, pairs); err != nil {
+			return graphstore.InvalidNodeID, err
+		}
+		return id, nil
+	}
+
+	id, err := b.create(labels, properties, pairs)
+	if err != nil {
+		return id, err
+	}
+	b.local[cacheKey] = id
 	return id, nil
 }
 
@@ -190,55 +241,112 @@ func (b *Batch) Add(
 	if b.done {
 		return graphstore.InvalidNodeID, fmt.Errorf("graph: Add on a finished batch")
 	}
-
-	packed, err := props.Pack(map[string]any(b.stamped(properties)))
-	if err != nil {
-		return graphstore.InvalidNodeID, fmt.Errorf("graph: Add pack properties: %w", err)
+	if len(labels) == 0 {
+		return graphstore.InvalidNodeID, fmt.Errorf("graph: Add of a node with no labels")
 	}
+	pairs := make(map[string][]byte, len(indexPairs))
+	for k, v := range indexPairs {
+		pairs[k] = v
+	}
+	return b.create(labels, properties, pairs)
+}
 
+// Update merges properties into the node id, which exists in the store or was
+// created by this batch, and replaces the index entries named in indexPairs.
+func (b *Batch) Update(id graphstore.NodeID, properties props.Map, indexPairs map[string][]byte) error {
+	if b.done {
+		return fmt.Errorf("graph: Update on a finished batch")
+	}
+	if _, gone := b.deleted[id]; gone {
+		return fmt.Errorf("graph: Update of node %d, which this batch deletes", id)
+	}
+	return b.merge(id, nil, properties, indexPairs)
+}
+
+// DeleteNode deletes the node id and every edge incident to it.
+func (b *Batch) DeleteNode(id graphstore.NodeID) {
+	if b.done || id == graphstore.InvalidNodeID {
+		return
+	}
+	if _, gone := b.deleted[id]; gone {
+		return
+	}
+	b.deleted[id] = struct{}{}
+	delete(b.nodes, id)
+	for k, local := range b.local {
+		if local == id {
+			delete(b.local, k)
+		}
+	}
+	b.tx.DeleteNode(id)
+}
+
+// create buffers a new node. The ID is reserved immediately and is usable as an
+// edge endpoint before the commit, which is what lets a node and its
+// containment edge land in one atomic unit.
+func (b *Batch) create(labels []graphstore.NodeType, properties props.Map, pairs map[string][]byte) (graphstore.NodeID, error) {
+	fields := b.stamped(properties)
+	packed, err := props.Pack(map[string]any(fields))
+	if err != nil {
+		return graphstore.InvalidNodeID, fmt.Errorf("graph: pack properties: %w", err)
+	}
 	id := b.tx.AddNode(&graphstore.Node{Labels: labels, Properties: packed})
 	if id == graphstore.InvalidNodeID {
-		return id, fmt.Errorf("graph: Add could not reserve a node id (batch already failed)")
+		return id, fmt.Errorf("graph: could not reserve a node id (batch already failed)")
 	}
-	if len(indexPairs) > 0 {
-		b.deferred = append(b.deferred, indexOp{node: id, pairs: indexPairs})
-	}
+	b.nodes[id] = &pendingNode{created: true, labels: labels, fields: fields, index: pairs}
+	b.order = append(b.order, id)
 	return id, nil
 }
 
-// stamped returns the property map with the producer version applied. A caller
-// that has already set one keeps it, so a re-derivation can preserve the stamp
-// of whatever produced the value it is carrying forward.
+// merge applies properties and index entries to a node this batch writes,
+// reading a stored node the first time. labels nil keeps the node's own.
+func (b *Batch) merge(id graphstore.NodeID, labels []graphstore.NodeType, properties props.Map, pairs map[string][]byte) error {
+	p, ok := b.nodes[id]
+	if !ok {
+		node, err := b.graph.GetNode(id)
+		if err != nil {
+			return fmt.Errorf("graph: read node %d: %w", id, err)
+		}
+		stored, err := props.Unpack(node.Properties)
+		if err != nil {
+			return fmt.Errorf("graph: node %d: %w", id, err)
+		}
+		fields := make(props.Map, len(stored)+len(properties))
+		for k, v := range stored {
+			fields[k] = v
+		}
+		p = &pendingNode{labels: node.Labels, fields: fields, index: map[string][]byte{}, stored: stored, storedLabels: node.Labels}
+		b.nodes[id] = p
+		b.order = append(b.order, id)
+	}
+	for k, v := range b.stamped(properties) {
+		p.fields[k] = v
+	}
+	for k, v := range pairs {
+		p.index[k] = v
+	}
+	if len(labels) > 0 {
+		p.labels = labels
+	}
+	if p.created {
+		p.changed = true
+	}
+	return nil
+}
+
+// stamped returns a copy of the property map with the producer version
+// applied. A caller that has already set one keeps it, so a re-derivation can
+// preserve the stamp of whatever produced the value it is carrying forward.
 func (b *Batch) stamped(fields props.Map) props.Map {
-	if fields == nil {
-		fields = props.Map{}
+	out := make(props.Map, len(fields)+1)
+	for k, v := range fields {
+		out[k] = v
 	}
-	if _, already := fields[ProducerVersionProperty]; !already {
-		fields[ProducerVersionProperty] = b.producer
+	if _, already := out[ProducerVersionProperty]; !already {
+		out[ProducerVersionProperty] = b.producer
 	}
-	return fields
-}
-
-// Index registers property-index entries against a node, whether or not this
-// batch created it.
-//
-// Upsert only registers on insert, which is not always enough: a node can be
-// created by one call that knows a single key and later revisited by another
-// that knows more. Registering unconditionally is what keeps the second call's
-// keys from being lost when the first happened to run earlier.
-func (b *Batch) Index(id graphstore.NodeID, pairs map[string][]byte) {
-	if b.done || id == graphstore.InvalidNodeID || len(pairs) == 0 {
-		return
-	}
-	b.deferred = append(b.deferred, indexOp{node: id, pairs: pairs})
-}
-
-// IndexEdge registers property-index entries against an edge.
-func (b *Batch) IndexEdge(id graphstore.EdgeID, pairs map[string][]byte) {
-	if b.done || id == graphstore.InvalidEdgeID || len(pairs) == 0 {
-		return
-	}
-	b.deferred = append(b.deferred, indexOp{edge: id, isB: true, pairs: pairs})
+	return out
 }
 
 // EnsureEdge creates an edge unless an equivalent one already exists.
@@ -258,6 +366,9 @@ func (b *Batch) EnsureEdge(
 	}
 	if src == graphstore.InvalidNodeID || dst == graphstore.InvalidNodeID {
 		return fmt.Errorf("graph: EnsureEdge needs two valid endpoints (got %d -> %d)", src, dst)
+	}
+	if len(labels) == 0 {
+		return fmt.Errorf("graph: edge %d -> %d has no labels", src, dst)
 	}
 
 	edgeKey := edgeIdentity(src, dst, labels, discriminators)
@@ -293,12 +404,9 @@ func (b *Batch) EnsureEdge(
 
 	// Carry the key in the blob as well as the index so a later run can compare
 	// it without consulting the index, which is what the fallback above needs.
-	if properties == nil {
-		properties = props.Map{}
-	}
-	properties[EdgeKeyProperty] = edgeKey
-
-	packed, err := props.Pack(map[string]any(b.stamped(properties)))
+	fields := b.stamped(properties)
+	fields[EdgeKeyProperty] = edgeKey
+	packed, err := props.Pack(map[string]any(fields))
 	if err != nil {
 		return fmt.Errorf("graph: EnsureEdge pack properties: %w", err)
 	}
@@ -313,60 +421,89 @@ func (b *Batch) EnsureEdge(
 	for k, v := range indexPairs {
 		pairs[k] = v
 	}
-	b.deferred = append(b.deferred, indexOp{edge: id, isB: true, pairs: pairs})
-
+	b.tx.IndexEdgeProperties(id, pairs)
 	return nil
 }
 
-// Commit applies the batch and then registers the property-index entries.
-//
-// # The gap this cannot close
-//
-// Index registration is not part of the transaction — graphene writes it as a
-// separate WAL operation — so a crash between the commit and the flush leaves
-// correctly stored nodes with missing index entries. Those nodes are reachable
-// by ID and by label but not by property lookup.
-//
-// This is recoverable but not automatically: RebuildIndexes repairs structure,
-// not content, and explicitly cannot recreate property entries, because the
-// values were supplied by DUES in an encoding the storage layer never sees. A
-// flush failure is therefore reported with the affected IDs rather than
-// swallowed, so the operator knows what to re-run.
+// Commit applies the batch, with every node's record and index entries, as one
+// atomic unit.
 func (b *Batch) Commit() error {
 	if b.done {
 		return fmt.Errorf("graph: Commit on a finished batch")
 	}
 	b.done = true
 
+	for _, id := range b.order {
+		p, ok := b.nodes[id]
+		if !ok {
+			continue // deleted later in the batch
+		}
+		if p.created && !p.changed {
+			b.tx.IndexNodeProperties(id, p.index)
+			continue
+		}
+		if !p.created && sameFields(p.stored, p.fields) && sameLabels(p.labels, p.storedLabels) {
+			// Nothing changed. A re-run over unchanged data writes nothing,
+			// because the log is never compacted (D6). The index entries are
+			// derived from the properties, so they are unchanged too as long as
+			// a producer that changes what it indexes bumps its version.
+			continue
+		}
+		packed, err := props.Pack(map[string]any(p.fields))
+		if err != nil {
+			_ = b.tx.Rollback()
+			return fmt.Errorf("graph: pack properties of node %d: %w", id, err)
+		}
+		node := &graphstore.Node{ID: id, Labels: p.labels, Properties: packed}
+		if p.created {
+			// The whole index of a node created here is what this batch gives it.
+			b.tx.UpdateNodeIndexed(node, p.index)
+		} else {
+			b.tx.UpdateNodePartialIndex(node, p.index)
+		}
+	}
+
 	if err := b.tx.Commit(); err != nil {
 		return fmt.Errorf("graph: commit batch: %w", err)
 	}
 
-	for _, op := range b.deferred {
-		if op.isB {
-			if err := b.graph.IndexEdgeProperties(op.edge, op.pairs); err != nil {
-				return fmt.Errorf(
-					"graph: batch committed but indexing edge %d failed: %w; "+
-						"the edge is stored and reachable by id, but not by property lookup",
-					op.edge, err)
-			}
-			continue
-		}
-		if err := b.graph.IndexNodeProperties(op.node, op.pairs); err != nil {
-			return fmt.Errorf(
-				"graph: batch committed but indexing node %d failed: %w; "+
-					"the node is stored and reachable by id, but not by property lookup",
-				op.node, err)
-		}
-	}
-
 	// Identity is only promoted to the process-wide cache once it is durable.
 	// Promoting at Upsert time would leave a rolled-back node cached as real.
+	b.writer.handle.forgetIdentities(b.deleted)
 	for cacheKey, id := range b.local {
 		b.writer.handle.rememberIdentity(cacheKey, id)
 	}
-
 	return nil
+}
+
+// sameFields reports whether merged holds exactly the stored properties.
+// merged is compared as it would read back, since msgpack decodes a value to
+// the narrowest type that holds it.
+func sameFields(stored, merged props.Map) bool {
+	if stored == nil {
+		return false
+	}
+	packed, err := props.Pack(map[string]any(merged))
+	if err != nil {
+		return false
+	}
+	back, err := props.Unpack(packed)
+	if err != nil {
+		return false
+	}
+	return reflect.DeepEqual(map[string]any(stored), map[string]any(back))
+}
+
+func sameLabels(a, b []graphstore.NodeType) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	for i := range a {
+		if a[i] != b[i] {
+			return false
+		}
+	}
+	return true
 }
 
 // Rollback discards the batch. Nothing is written and nothing is cached.

@@ -1,36 +1,50 @@
 package graph
 
 import (
+	"errors"
 	"fmt"
+	"io/fs"
+	"os"
 	"path/filepath"
+	"runtime"
+	"strings"
 	"sync"
 
+	"indicer/internal/console"
 	"indicer/lib/graph/migrate"
 	"indicer/lib/graph/propindex"
 	"indicer/lib/graph/schema"
+	"indicer/lib/logging"
 	"indicer/lib/util"
 
 	graphenedb "github.com/aoiflux/graphene"
+	graphenedisk "github.com/aoiflux/graphene/disk"
 	graphstore "github.com/aoiflux/graphene/store"
+	"go.uber.org/zap"
 )
 
-// writtenBy is recorded in the schema marker so a store says which build
-// stamped it.
-const writtenBy = "dues / graphene v0.4.0"
+// ErrNoGraph is returned by a read-only open of a data root that has no graph
+// store. Nothing is created: a read-only command must not leave a store
+// behind (CFG-7).
+var ErrNoGraph = errors.New("graph: no graph store")
 
 // Handle is the process's single reference-counted grip on one graph store.
 //
 // Open returns the same Handle for the same directory, so a command that
 // already holds one and then calls into code which opens "another" repository
 // gets the store it already has rather than a second, independent view of the
-// same files. See the package doc for why a second view is corruption rather
-// than merely waste.
+// same files. graphene refuses a second writer since v0.9.0, so a second view
+// would now fail rather than corrupt, but the code paths that nest opens would
+// still fail.
 type Handle struct {
 	key      string
 	dir      string
 	graph    *graphenedb.Graph
 	lock     *fileLock
 	readOnly bool
+
+	// replayWarning is set when the store's log makes every open slow.
+	replayWarning string
 
 	// schema resolves DUES kinds to the raw type values this particular store
 	// uses, which differ between a store written by graphene v0.1.3 and one
@@ -51,7 +65,7 @@ type Handle struct {
 	// monotonically, never reuses them, and preserves them across compaction.
 	// It exists because the enrichment write path looks the same evidence and
 	// partition up once per file, which on a large image is the dominant cost
-	// of an upsert.
+	// of an upsert. Deleting a node forgets it (forgetIdentity).
 	identity sync.Map
 
 	// refs is guarded by registryMu, not by an atomic, so that finding a live
@@ -80,16 +94,53 @@ func (h *Handle) rememberIdentity(cacheKey string, id graphstore.NodeID) {
 	h.identity.Store(cacheKey, id)
 }
 
+// forgetIdentities drops every cached identity that resolves to one of ids.
+func (h *Handle) forgetIdentities(ids map[graphstore.NodeID]struct{}) {
+	if h == nil || len(ids) == 0 {
+		return
+	}
+	h.identity.Range(func(key, value any) bool {
+		if _, gone := ids[value.(graphstore.NodeID)]; gone {
+			h.identity.Delete(key)
+		}
+		return true
+	})
+}
+
 type OpenOptions struct {
-	// ReadOnly takes a shared lock and refuses writes, so several inspection
-	// commands can run against one store at once.
+	// ReadOnly takes shared locks and refuses writes, so several inspection
+	// commands can run against one store at once. A missing store is
+	// ErrNoGraph.
 	ReadOnly bool
 }
 
 var (
 	registryMu sync.Mutex
 	registry   = map[string]*Handle{}
+
+	// opening holds a channel per directory being opened, closed when the open
+	// ends. The open itself replays the store's log, which can take minutes,
+	// so it runs without registryMu: other stores' handles stay usable, and a
+	// second open of the same directory waits for the first (GRA-6).
+	opening = map[string]chan struct{}{}
 )
+
+// openStore opens graphene's store. It is a variable so tests can slow it.
+//
+// A read-only open takes graphene's shared lock. graphene opens its lock file
+// for writing even to share it, so on media nothing can be written to the
+// shared open fails; the store is then read without a process lock, which is
+// safe there because no writer can exist (CFG-12).
+var openStore = func(dir string, readOnly bool) (*graphenedb.Graph, error) {
+	if !readOnly {
+		return graphenedb.Open(dir)
+	}
+	g, err := graphenedb.OpenReadOnly(dir)
+	if err != nil && isReadOnlyMedia(err) {
+		return graphenedb.OpenLive(dir)
+	}
+	return g, err
+}
 
 // Open returns the handle for root's graph directory, opening the store on the
 // first call and incrementing the reference count on every subsequent one.
@@ -99,40 +150,113 @@ func Open(root string) (*Handle, error) { return OpenWith(root, OpenOptions{}) }
 
 func OpenWith(root string, opts OpenOptions) (*Handle, error) {
 	dir := util.GraphPath(root)
-	key, err := filepath.Abs(dir)
+	key, err := registryKey(dir)
 	if err != nil {
 		return nil, fmt.Errorf("graph: resolve %s: %w", dir, err)
 	}
-	key = filepath.Clean(key)
 
-	registryMu.Lock()
-	defer registryMu.Unlock()
-
-	if existing, ok := registry[key]; ok {
-		// A read-only caller can share an existing writable handle; the reverse
-		// cannot be allowed, because the shared lock already taken does not
-		// exclude other processes from writing.
-		if existing.readOnly && !opts.ReadOnly {
-			return nil, fmt.Errorf(
-				"graph: %s is already open read-only in this process; "+
-					"cannot escalate to a writable handle", key)
+	for {
+		registryMu.Lock()
+		if existing, ok := registry[key]; ok {
+			// A read-only caller can share an existing writable handle; the
+			// reverse cannot be allowed, because the shared lock already taken
+			// does not exclude other processes from writing.
+			if existing.readOnly && !opts.ReadOnly {
+				registryMu.Unlock()
+				return nil, fmt.Errorf(
+					"graph: %s is already open read-only in this process; "+
+						"cannot escalate to a writable handle", existing.dir)
+			}
+			existing.refs++
+			registryMu.Unlock()
+			return existing, nil
 		}
-		existing.refs++
-		return existing, nil
+		if wait, ok := opening[key]; ok {
+			registryMu.Unlock()
+			<-wait
+			continue
+		}
+		done := make(chan struct{})
+		opening[key] = done
+		registryMu.Unlock()
+
+		handle, err := openHandle(dir, key, opts)
+
+		registryMu.Lock()
+		delete(opening, key)
+		if err == nil {
+			registry[key] = handle
+		}
+		registryMu.Unlock()
+		close(done)
+		return handle, err
+	}
+}
+
+// registryKey names a graph directory so that two spellings of it are one
+// key: symlinks are resolved, and on Windows case is folded (GRA-8).
+func registryKey(dir string) (string, error) {
+	abs, err := filepath.Abs(dir)
+	if err != nil {
+		return "", err
+	}
+	key := filepath.Clean(abs)
+	// The graph directory may not exist yet; resolve the deepest part that
+	// does and keep the rest as written.
+	var rest []string
+	for probe := key; ; {
+		if resolved, err := filepath.EvalSymlinks(probe); err == nil {
+			key = filepath.Join(append([]string{resolved}, rest...)...)
+			break
+		}
+		parent := filepath.Dir(probe)
+		if parent == probe {
+			break
+		}
+		rest = append([]string{filepath.Base(probe)}, rest...)
+		probe = parent
+	}
+	if runtime.GOOS == "windows" {
+		key = strings.ToLower(key)
+	}
+	return key, nil
+}
+
+func openHandle(dir, key string, opts OpenOptions) (*Handle, error) {
+	if opts.ReadOnly {
+		info, err := os.Stat(dir)
+		if errors.Is(err, fs.ErrNotExist) {
+			return nil, fmt.Errorf("%w at %s", ErrNoGraph, dir)
+		}
+		if err != nil {
+			return nil, fmt.Errorf("graph: %w", err)
+		}
+		if !info.IsDir() {
+			return nil, fmt.Errorf("graph: %s is not a directory", dir)
+		}
 	}
 
-	lock, err := acquireLock(key, opts.ReadOnly)
+	lock, err := acquireLock(dir, opts.ReadOnly)
 	if err != nil {
 		return nil, err
 	}
 
-	store, err := graphenedb.Open(key)
-	if err != nil {
-		_ = lock.release()
-		return nil, fmt.Errorf("graph: open %s: %w", key, err)
+	warning := replayWarningFor(dir)
+	if warning != "" {
+		logging.GetLogger().Warn("graph: slow open", zap.String("dir", dir), zap.String("warning", warning))
+		console.Errorln("warning: " + warning)
 	}
 
-	vocabulary, kinds, err := resolveSchema(key, store, opts.ReadOnly)
+	store, err := openStore(dir, opts.ReadOnly)
+	if err != nil {
+		_ = lock.release()
+		if errors.Is(err, graphenedisk.ErrStoreLocked) {
+			return nil, &ErrGraphLocked{Dir: dir, Holder: readLockInfo(dir), err: err}
+		}
+		return nil, fmt.Errorf("graph: open %s: %w", dir, err)
+	}
+
+	vocabulary, kinds, err := resolveSchema(dir, store, opts.ReadOnly)
 	if err != nil {
 		_ = store.Close()
 		_ = lock.release()
@@ -150,26 +274,64 @@ func OpenWith(root string, opts OpenOptions) (*Handle, error) {
 		}
 	}
 
-	handle := &Handle{
-		key:        key,
-		dir:        key,
-		graph:      store,
-		lock:       lock,
-		readOnly:   opts.ReadOnly,
-		schema:     kinds,
-		vocabulary: vocabulary,
-		refs:       1,
+	return &Handle{
+		key:           key,
+		dir:           dir,
+		graph:         store,
+		lock:          lock,
+		readOnly:      opts.ReadOnly,
+		replayWarning: warning,
+		schema:        kinds,
+		vocabulary:    vocabulary,
+		refs:          1,
+	}, nil
+}
+
+// The store is never compacted (D6), so every open replays its whole log.
+// Past these sizes that is slow enough, and needs enough memory, to say so.
+var (
+	replayWarnBytes   int64 = 1 << 30
+	replayWarnRecords int64 = 5_000_000
+)
+
+// minWALRecordBytes is the smallest record graphene's log holds: a type byte,
+// a length and a checksum. A log shorter than replayWarnRecords of them
+// cannot hold that many records, so it is not walked to count them.
+const minWALRecordBytes = 9
+
+// replayWarningFor describes what opening dir will cost, when that is worth
+// a warning. The size is read from the file system; the records are counted
+// only when the log could hold enough of them to matter.
+func replayWarningFor(dir string) string {
+	info, err := os.Stat(filepath.Join(dir, "graphene.wal"))
+	if err != nil {
+		return ""
 	}
-	registry[key] = handle
-	return handle, nil
+	size := info.Size()
+	const advice = "; DUES never compacts the graph, so older releases can still read it"
+	if size >= replayWarnBytes {
+		return fmt.Sprintf("the graph store at %s replays %d MiB of log at every open, "+
+			"which is slow and needs memory in proportion%s", dir, size>>20, advice)
+	}
+	if size < replayWarnRecords*minWALRecordBytes {
+		return ""
+	}
+	est, err := graphenedisk.PreflightOpen(dir)
+	if err != nil {
+		return ""
+	}
+	if records := est.WALRecords + est.WALRecordsBuffered; records > replayWarnRecords {
+		return fmt.Sprintf("the graph store at %s replays %d log records at every open, "+
+			"which is slow and needs memory in proportion%s", dir, records, advice)
+	}
+	return ""
 }
 
 // resolveSchema classifies the store's label encoding and stamps the marker.
 //
 // This is the automatic half of the migration: a store written by graphene
 // v0.1.3 is detected here and read through a registry that matches both
-// encodings, with no user action and nothing rewritten. Consolidating to a
-// single vocabulary is a separate, explicit rebuild.
+// encodings, with no user action and nothing rewritten.
 func resolveSchema(dir string, store *graphenedb.Graph, readOnly bool) (migrate.Vocabulary, *schema.Registry, error) {
 	report, err := migrate.Detect(dir, store)
 	if err != nil {
@@ -224,7 +386,7 @@ func (h *Handle) Release() error {
 	registryMu.Lock()
 	if h.refs <= 0 {
 		registryMu.Unlock()
-		return fmt.Errorf("graph: unbalanced Release on %s (reference count is already zero)", h.key)
+		return fmt.Errorf("graph: unbalanced Release on %s (reference count is already zero)", h.dir)
 	}
 	h.refs--
 	if h.refs > 0 {
@@ -245,17 +407,16 @@ func (h *Handle) Release() error {
 	lockErr := lock.release()
 
 	if closeErr != nil {
-		return fmt.Errorf("graph: close %s: %w", h.key, closeErr)
+		return fmt.Errorf("graph: close %s: %w", h.dir, closeErr)
 	}
 	return lockErr
 }
 
 // Graph exposes the underlying store.
 //
-// This is the seam that will narrow as the rest of the plan lands: today the
-// repositories drive graphene directly through it, and later they will go
-// through Writer/Batch instead. It returns nil after the final Release, which
-// callers reach only by using a handle they no longer own.
+// The repositories drive graphene directly through it for reads. It returns
+// nil after the final Release, which callers reach only by using a handle they
+// no longer own.
 func (h *Handle) Graph() *graphenedb.Graph {
 	if h == nil {
 		return nil
@@ -294,6 +455,15 @@ func (h *Handle) Dir() string {
 // ReadOnly reports whether this handle was opened for inspection only.
 func (h *Handle) ReadOnly() bool { return h != nil && h.readOnly }
 
+// ReplayWarning is the warning printed when the store was opened, or "" when
+// its log is small enough not to need one.
+func (h *Handle) ReplayWarning() string {
+	if h == nil {
+		return ""
+	}
+	return h.replayWarning
+}
+
 // ExclusiveWrite runs fn with the handle's writer lock held.
 //
 // Wrap any sequence that reads the graph and then writes based on what it read.
@@ -304,7 +474,7 @@ func (h *Handle) ExclusiveWrite(fn func() error) error {
 		return fmt.Errorf("graph: ExclusiveWrite on a nil handle")
 	}
 	if h.readOnly {
-		return fmt.Errorf("graph: %s is open read-only; writes are refused", h.key)
+		return fmt.Errorf("graph: %s is open read-only; writes are refused", h.dir)
 	}
 	h.writeMu.Lock()
 	defer h.writeMu.Unlock()
@@ -324,4 +494,11 @@ func refCountFor(h *Handle) int {
 	registryMu.Lock()
 	defer registryMu.Unlock()
 	return h.refs
+}
+
+// Exists reports whether root has a graph store, without opening or creating
+// one.
+func Exists(root string) bool {
+	info, err := os.Stat(util.GraphPath(root))
+	return err == nil && info.IsDir()
 }

@@ -2,8 +2,11 @@ package cli
 
 import (
 	"context"
+	"errors"
+	"indicer/internal/console"
 	"indicer/lib/dbopen"
 	"indicer/lib/enrichment"
+	duesgraph "indicer/lib/graph"
 	"indicer/lib/logging"
 	"indicer/lib/store"
 	"time"
@@ -27,13 +30,17 @@ func ListData(ctx context.Context, opts DBOptions, statusFilter string) (err err
 	db := h.DB
 	encryptionNotice(h)
 
-	// Try to open enrichment graphdb for graphdb-first retrieval. It lives in
-	// the data root, not the working directory (CFG-7).
+	// Open the enrichment graph, read-only, for graphdb-first retrieval. It
+	// lives in the data root, not the working directory, and a listing never
+	// creates it (CFG-7).
 	logging.GetLogger().Debug("ListData OPEN_GRAPH_REPOSITORY")
-	enrichRepo, err := enrichment.OpenGrapheneRepository(h.Root)
+	enrichRepo, err := enrichment.OpenGrapheneRepositoryReadOnly(h.Root)
 	if err != nil {
-		// Graphdb not available, fall back to KVDB-only
+		// No graph, or one that cannot be read now: list from the database.
 		logging.GetLogger().Debug("ListData GRAPH_REPOSITORY_UNAVAILABLE", zap.Error(err))
+		if !errors.Is(err, duesgraph.ErrNoGraph) {
+			console.Errorf("warning: listing without graph enrichment: %v\n", err)
+		}
 		err = store.List(db, statusFilter)
 		if err != nil {
 			logging.GetLogger().Error("ListData LIST_ERROR", zap.Error(err), zap.String("mode", "kvdb_only"))
@@ -45,7 +52,11 @@ func ListData(ctx context.Context, opts DBOptions, statusFilter string) (err err
 		)
 		return nil
 	}
-	defer enrichRepo.Close()
+	defer func() {
+		if cerr := enrichRepo.Close(); err == nil {
+			err = cerr
+		}
+	}()
 
 	// Try graphdb-first listing
 	logging.GetLogger().Info("ListData LIST_EXECUTE", zap.String("mode", "graphdb_first"))

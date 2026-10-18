@@ -12,6 +12,7 @@ import (
 	"indicer/lib/dbopen"
 	"indicer/lib/fio"
 	"indicer/lib/fsx"
+	"indicer/lib/ingest"
 	"indicer/lib/logging"
 	"indicer/lib/store"
 	"io"
@@ -59,6 +60,11 @@ func quarantineContainerIndexes(ctx context.Context, h *dbopen.Handle) error {
 	console.Printf("Quarantined %d index(es) built over raw container bytes; store each evidence again to index its decoded disk:\n", len(q))
 	for _, e := range q {
 		console.Printf("  %s (%s)\n", termsafe.Line(e.Name), e.Format)
+		// The graph hides the index too, as list does: its partitions and
+		// files go, the evidence node stays.
+		if err := ingest.DeleteGraphIndex(h.DB, e.ID, true); err != nil {
+			return fmt.Errorf("remove the quarantined index of %s from the graph: %w", termsafe.Line(e.Name), err)
+		}
 	}
 	return nil
 }

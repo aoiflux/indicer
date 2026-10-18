@@ -60,10 +60,16 @@ func (e *Engine) Detect(file model.FileRecord, parsed parsingpkg.Result) ([]mode
 		if !ok {
 			continue
 		}
+		// A detector that parses the format itself is given the file's bytes,
+		// the others the text (GRA-13).
+		input := parsed.Content
+		if raw, ok := detector.(detectorpkg.RawDetector); ok && raw.WantsRaw() {
+			input = parsed.Raw
+		}
 		// Detectors read evidence content: a panic fails this file, not the
 		// process (PAR-1).
 		detected, err := safe.Value(safe.Site{Component: "microartefact/detect", Op: detectorName, Path: file.Path}, func() ([]model.Artefact, error) {
-			return detector.Detect(file, parsed.Content)
+			return detector.Detect(file, input)
 		})
 		if err != nil {
 			return nil, err
@@ -109,5 +115,6 @@ func DefaultMethods() []Method {
 		{ID: "elf.service", DetectorName: "service-artefact", AppliesTo: []parsingpkg.Kind{parsingpkg.KindELF}, Enabled: true},
 		{ID: "evtx.native", DetectorName: "evtx-native", AppliesTo: []parsingpkg.Kind{parsingpkg.KindEVTX}, Enabled: true},
 		{ID: "evtx.windows_event", DetectorName: "windows-event-record", AppliesTo: []parsingpkg.Kind{parsingpkg.KindEVTX}, Enabled: true},
+		{ID: "registry.hive", DetectorName: "registry-hive", AppliesTo: []parsingpkg.Kind{parsingpkg.KindRegistry}, Enabled: true},
 	}
 }

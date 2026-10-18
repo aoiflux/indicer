@@ -70,6 +70,10 @@ type IndexedFile struct {
 	Prov       uint32      `msgpack:"prov,omitempty"`       // core.Prov flags
 	Confidence uint8       `msgpack:"confidence,omitempty"` // core.Confidence
 	Content    *ContentRef `msgpack:"content,omitempty"`
+	// Entropy is the content's Shannon entropy in bits per byte, computed
+	// by an index pass run for graph enrichment from the bytes it already
+	// reads (GRA-19); nil when it was not computed.
+	Entropy *float64 `msgpack:"entropy,omitempty"`
 }
 
 // NewIndexedFile creates a new IndexedFile with optional FileHash

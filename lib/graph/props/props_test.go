@@ -18,7 +18,11 @@ func roundTrip(t *testing.T, value any) props.Map {
 	if err != nil {
 		t.Fatal(err)
 	}
-	return props.Unpack(packed)
+	m, err := props.Unpack(packed)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return m
 }
 
 // TestInt64_EveryMsgpackWidth is the regression for the divergence between the
@@ -186,6 +190,7 @@ func TestTime_AcceptsEveryStoredForm(t *testing.T) {
 }
 
 // Unpack must never hand back a nil Map: call sites index the result directly.
+// A blob that does not decode is an error, not an empty Map (GRA-10).
 func TestUnpack_NeverNil(t *testing.T) {
 	for _, name := range []string{"nil", "empty", "garbage"} {
 		var input []byte
@@ -195,8 +200,34 @@ func TestUnpack_NeverNil(t *testing.T) {
 		case "garbage":
 			input = []byte{0xc1, 0xff, 0x00}
 		}
-		if got := props.Unpack(input); got == nil {
+		got, err := props.Unpack(input)
+		if got == nil {
 			t.Errorf("Unpack(%s) returned nil", name)
+		}
+		if (err != nil) != (name == "garbage") {
+			t.Errorf("Unpack(%s): error %v", name, err)
+		}
+	}
+}
+
+// The same properties always pack to the same bytes, whatever the order Go
+// iterates the map in.
+func TestPack_IsDeterministic(t *testing.T) {
+	fields := map[string]any{}
+	for _, k := range []string{"z", "a", "m", "b", "y", "c", "x", "d"} {
+		fields[k] = map[string]any{"q": 1, "p": k}
+	}
+	first, err := props.Pack(fields)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for i := 0; i < 20; i++ {
+		again, err := props.Pack(fields)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if string(again) != string(first) {
+			t.Fatal("the same properties packed to different bytes")
 		}
 	}
 }

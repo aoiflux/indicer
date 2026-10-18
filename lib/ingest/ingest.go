@@ -271,7 +271,7 @@ func run(ctx context.Context, db *badger.DB, src *evidence.Source, eid []byte, n
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
-			idx, idxErr = runIndex(idxCtx, index.Options{DB: db, EvidenceID: eid, EvidenceName: name, Image: src.Image()})
+			idx, idxErr = runIndex(idxCtx, index.Options{DB: db, EvidenceID: eid, EvidenceName: name, Image: src.Image(), Entropy: req.Enrich})
 		}()
 	}
 
@@ -331,7 +331,7 @@ func run(ctx context.Context, db *badger.DB, src *evidence.Source, eid []byte, n
 			}
 		}
 		if info.State == structs.IndexComplete || info.State == structs.IndexPartial {
-			if err := features(ctx, db, eid, evidenceNode{Name: name, Path: src.Path(), Size: src.Size()}, req); err != nil {
+			if err := features(ctx, db, eid, req); err != nil {
 				info.State, info.Reason, idxErr = structs.IndexPartial, err.Error(), err
 			}
 		}

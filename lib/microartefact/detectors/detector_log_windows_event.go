@@ -18,7 +18,8 @@ func (d LogLineDetector) Detect(_ model.FileRecord, content []byte) ([]model.Art
 	maxResults := resolveMaxResults(d.MaxResults, defaultLogLineResults)
 
 	lines := strings.Split(string(content), "\n")
-	results := make([]model.Artefact, 0, len(lines))
+	// Capacity for the results that can be kept, not one per line (GRA-17).
+	results := make([]model.Artefact, 0, min(len(lines), maxResults))
 	offset := 0
 	for _, line := range lines {
 		trimmed := strings.TrimSpace(line)

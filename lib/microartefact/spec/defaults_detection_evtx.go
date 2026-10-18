@@ -18,3 +18,16 @@ func defaultEVTXDetectionRules() []DetectionRule {
 		},
 	}
 }
+
+// defaultRegistryDetectionRules run the registry detector on hives, which
+// no rule named before, so it never ran (GRA-13).
+func defaultRegistryDetectionRules() []DetectionRule {
+	return []DetectionRule{
+		{
+			ID:           "registry.hive",
+			DetectorName: "registry-hive",
+			AppliesTo:    []parsingpkg.Kind{parsingpkg.KindRegistry},
+			Enabled:      true,
+		},
+	}
+}

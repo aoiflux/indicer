@@ -43,6 +43,9 @@ type Options struct {
 	// Workers hash file content; 0 picks one per CPU, at most 16.
 	Workers int
 	Limits  core.Limits
+	// Entropy also computes each file's entropy from the bytes the pass
+	// reads, for graph enrichment, so enrichment need not read them again.
+	Entropy bool
 }
 
 // Partition is one partition record a pass wrote.

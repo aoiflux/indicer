@@ -1,9 +1,11 @@
 package tui
 
 import (
+	"errors"
 	"fmt"
 	"strings"
 
+	duesgraph "indicer/lib/graph"
 	"indicer/lib/microartefact"
 
 	"charm.land/bubbles/v2/viewport"
@@ -53,13 +55,19 @@ func (m *MicroModel) Resize(width, height int) {
 
 func (m MicroModel) Init() tea.Cmd {
 	return func() tea.Msg {
-		repo, err := microartefact.OpenGrapheneRepository(m.dbpath)
+		// Read-only: viewing artefacts never creates or stamps a store (GRA-5).
+		repo, err := microartefact.OpenGrapheneRepositoryReadOnly(m.dbpath)
+		if errors.Is(err, duesgraph.ErrNoGraph) {
+			return microLoadedMsg{tree: &microartefact.EvidenceFileHierarchy{}}
+		}
 		if err != nil {
 			return microLoadedMsg{err: err}
 		}
-		defer repo.Close()
 
 		tree, err := repo.ReadHierarchy()
+		if cerr := repo.Close(); err == nil {
+			err = cerr
+		}
 		return microLoadedMsg{tree: tree, err: err}
 	}
 }

@@ -20,7 +20,8 @@ func defaultDetectionRules() []DetectionRule {
 			len(defaultPDFDetectionRules())+
 			len(defaultPEDetectionRules())+
 			len(defaultELFDetectionRules())+
-			len(defaultEVTXDetectionRules()),
+			len(defaultEVTXDetectionRules())+
+			len(defaultRegistryDetectionRules()),
 	)
 
 	rules = append(rules, defaultTextDetectionRules()...)
@@ -28,6 +29,7 @@ func defaultDetectionRules() []DetectionRule {
 	rules = append(rules, defaultPEDetectionRules()...)
 	rules = append(rules, defaultELFDetectionRules()...)
 	rules = append(rules, defaultEVTXDetectionRules()...)
+	rules = append(rules, defaultRegistryDetectionRules()...)
 
 	return rules
 }

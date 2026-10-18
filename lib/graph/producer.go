@@ -8,10 +8,11 @@ import (
 // that derived a node or edge.
 const ProducerVersionProperty = "producer_version"
 
-// grapheneVersion is the storage engine this build links against. It belongs in
-// the producer string because a change to how the engine encodes or indexes
-// data is as capable of changing a derived result as a change to DUES.
-const grapheneVersion = "graphene@v0.4.0"
+// grapheneVersion is the storage engine this build links against, read from
+// the build information (GRA-11). It belongs in the producer string because a
+// change to how the engine encodes or indexes data is as capable of changing a
+// derived result as a change to DUES.
+var grapheneVersion = "graphene@" + linkedGrapheneVersion
 
 // Producer identifies the code that derived a node or edge.
 //

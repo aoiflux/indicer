@@ -12,8 +12,23 @@ import (
 )
 
 func List(db *badger.DB, statusFilter string) error {
+	out, err := listOutput(db, statusFilter)
+	if err != nil {
+		return err
+	}
+	jsonData, err := json.MarshalIndent(out, "", "  ")
+	if err != nil {
+		return err
+	}
+	console.Println(string(jsonData))
+	return nil
+}
+
+// listOutput builds the listing of the database's evidence.
+func listOutput(db *badger.DB, statusFilter string) (map[string]interface{}, error) {
 	statusFilter = normalizeStatusFilter(statusFilter)
-	return db.View(func(txn *badger.Txn) error {
+	var output map[string]interface{}
+	err := db.View(func(txn *badger.Txn) error {
 		var evidenceFiles []map[string]interface{}
 		var completedCount, pendingCount, failedCount int
 
@@ -96,8 +111,7 @@ func List(db *badger.DB, statusFilter string) error {
 			}
 		}
 
-		// Output as JSON
-		output := map[string]interface{}{
+		output = map[string]interface{}{
 			"statusFilter":      statusFilter,
 			"totalEvidence":     len(evidenceFiles),
 			"completedEvidence": visibleCompleted,
@@ -108,13 +122,7 @@ func List(db *badger.DB, statusFilter string) error {
 			"scanFailed":        failedCount,
 			"evidence":          evidenceFiles,
 		}
-
-		jsonData, err := json.MarshalIndent(output, "", "  ")
-		if err != nil {
-			return err
-		}
-
-		console.Println(string(jsonData))
 		return nil
 	})
+	return output, err
 }

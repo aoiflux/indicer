@@ -74,9 +74,7 @@ func (r Report) Summary() string {
 			"%d nodes written by graphene v0.1.3; labels are read through the compatibility shim",
 			r.NodeCount)
 	case VocabMixed:
-		return fmt.Sprintf(
-			"%d nodes in mixed vocabulary; reads match both encodings. "+
-				"Run 'dues graph migrate --rebuild' to consolidate", r.NodeCount)
+		return fmt.Sprintf("%d nodes in mixed vocabulary; reads match both encodings", r.NodeCount)
 	default:
 		return fmt.Sprintf("%d nodes in an unrecognised vocabulary", r.NodeCount)
 	}
@@ -124,38 +122,30 @@ func Detect(dir string, g *graphenedb.Graph) (Report, error) {
 		return report, nil
 	}
 
+	// Counted by type rather than listed: listing materialised every node ID of
+	// the four container kinds, at every open (GRA-6).
+	nodeCounts, err := g.CountNodesByType()
+	if err != nil {
+		return report, fmt.Errorf("migrate: count nodes by type: %w", err)
+	}
+	edgeCounts, err := g.CountEdgesByType()
+	if err != nil {
+		return report, fmt.Errorf("migrate: count edges by type: %w", err)
+	}
+
 	current := schema.NewRegistry()
 	for _, kind := range []schema.NodeKind{
 		schema.KindEvidenceFile, schema.KindPartition, schema.KindIndexedFile, schema.KindFile,
 	} {
-		legacyHits, err := g.NodesByType(schema.LegacyNodeBase + graphstore.NodeType(kind))
-		if err != nil {
-			return report, fmt.Errorf("migrate: probe legacy %s: %w", current.Name(kind), err)
+		if n := nodeCounts[schema.LegacyNodeBase+graphstore.NodeType(kind)]; n > 0 {
+			report.LegacyNodes[kind] = int(n)
 		}
-		if len(legacyHits) > 0 {
-			report.LegacyNodes[kind] = len(legacyHits)
-		}
-
-		currentHits, err := g.NodesByType(current.NodeType(kind))
-		if err != nil {
-			return report, fmt.Errorf("migrate: probe current %s: %w", current.Name(kind), err)
-		}
-		if len(currentHits) > 0 {
-			report.CurrentNodes[kind] = len(currentHits)
+		if n := nodeCounts[current.NodeType(kind)]; n > 0 {
+			report.CurrentNodes[kind] = int(n)
 		}
 	}
-
-	legacyEdges, err := g.EdgesByType(schema.LegacyRelationEdge)
-	if err != nil {
-		return report, fmt.Errorf("migrate: probe legacy relation edges: %w", err)
-	}
-	report.LegacyRelationEdges = len(legacyEdges)
-
-	currentEdges, err := g.EdgesByType(current.EdgeType(schema.EdgeKindRelation))
-	if err != nil {
-		return report, fmt.Errorf("migrate: probe current relation edges: %w", err)
-	}
-	report.CurrentRelationEdges = len(currentEdges)
+	report.LegacyRelationEdges = int(edgeCounts[schema.LegacyRelationEdge])
+	report.CurrentRelationEdges = int(edgeCounts[current.EdgeType(schema.EdgeKindRelation)])
 
 	sawLegacy := len(report.LegacyNodes) > 0 || report.LegacyRelationEdges > 0
 	sawCurrent := len(report.CurrentNodes) > 0 || report.CurrentRelationEdges > 0
@@ -169,10 +159,11 @@ func Detect(dir string, g *graphenedb.Graph) (Report, error) {
 		report.Vocabulary = VocabCurrentV2
 	default:
 		// Nodes exist but carry none of the container kinds. A store holding
-		// only micro-artefacts is the benign case — those use a graphene
-		// built-in label, which the band move never touched — so treat a marker
-		// or its absence as the tiebreak rather than refusing a usable store.
-		if hasMarker {
+		// only graphene's own types — micro-artefacts — is the benign case:
+		// built-in labels sit below both custom bands and the band move never
+		// touched them, so there is nothing to misread, marker or not (GRA-9).
+		// Only a custom-band label this build does not know is refused.
+		if hasMarker || onlyBuiltinTypes(nodeCounts) {
 			report.Vocabulary = VocabCurrentV2
 		} else {
 			report.Vocabulary = VocabUnknown
@@ -186,6 +177,17 @@ func Detect(dir string, g *graphenedb.Graph) (Report, error) {
 	}
 
 	return report, nil
+}
+
+// onlyBuiltinTypes reports whether every node type counted is one of
+// graphene's own, below the oldest custom band.
+func onlyBuiltinTypes(counts map[graphstore.NodeType]uint64) bool {
+	for t, n := range counts {
+		if n > 0 && t >= schema.LegacyNodeBase {
+			return false
+		}
+	}
+	return true
 }
 
 // RegistryFor builds the registry a detection report calls for.

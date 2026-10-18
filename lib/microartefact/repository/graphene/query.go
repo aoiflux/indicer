@@ -1,6 +1,7 @@
 package graphene
 
 import (
+	"fmt"
 	"sort"
 
 	"indicer/lib/enrichment"
@@ -54,7 +55,10 @@ func (r *Repository) ReadHierarchy() (*EvidenceFileHierarchy, error) {
 		if err != nil {
 			return nil, err
 		}
-		dProps := unpackProps(evidenceNode.Properties)
+		dProps, err := unpackProps(evidenceNode)
+		if err != nil {
+			return nil, err
+		}
 		evidenceFile := &EvidenceFileNode{
 			ID:   strProp(dProps, "evidence_file_id"),
 			Name: strProp(dProps, "name"),
@@ -69,7 +73,10 @@ func (r *Repository) ReadHierarchy() (*EvidenceFileHierarchy, error) {
 			if !kinds.Is(pn.Node, schema.KindPartition) {
 				continue
 			}
-			pProps := unpackProps(pn.Node.Properties)
+			pProps, err := unpackProps(pn.Node)
+			if err != nil {
+				return nil, err
+			}
 			partition := &PartitionFileNode{
 				ID:   strProp(pProps, "partition_id"),
 				Name: strProp(pProps, "name"),
@@ -84,7 +91,10 @@ func (r *Repository) ReadHierarchy() (*EvidenceFileHierarchy, error) {
 				if !kinds.Is(fn.Node, schema.KindIndexedFile) {
 					continue
 				}
-				fProps := unpackProps(fn.Node.Properties)
+				fProps, err := unpackProps(fn.Node)
+				if err != nil {
+					return nil, err
+				}
 				ifile := &IndexedFileArtefactView{
 					IndexedFileProjection: enrichment.IndexedFileProjection{
 						ID:           strProp(fProps, "indexed_file_id"),
@@ -106,10 +116,13 @@ func (r *Repository) ReadHierarchy() (*EvidenceFileHierarchy, error) {
 				}
 
 				for _, an := range artNeighbours {
-					if !an.Node.HasLabel(graphstore.NodeTypeMicroArtefact) {
+					if an.Node == nil || !an.Node.HasLabel(graphstore.NodeTypeMicroArtefact) {
 						continue
 					}
-					aProps := unpackProps(an.Node.Properties)
+					aProps, err := unpackProps(an.Node)
+					if err != nil {
+						return nil, err
+					}
 					ifile.Artefacts = append(ifile.Artefacts, &MicroArtefactNode{
 						MicroArtefactNodeFields: model.MicroArtefactNodeFields{
 							Kind:       strProp(aProps, "kind"),
@@ -168,7 +181,10 @@ func (r *Repository) ReadHierarchy() (*EvidenceFileHierarchy, error) {
 				continue
 			}
 			tree.TotalRelations++
-			edgeProps := unpackProps(edge.Properties)
+			edgeProps, err := props.Unpack(edge.Properties)
+			if err != nil {
+				return nil, fmt.Errorf("graph edge %d: %w", edge.ID, err)
+			}
 			if boolProp(edgeProps, "deterministic_flag") {
 				tree.DeterministicRelations++
 			} else {
@@ -185,7 +201,15 @@ func (r *Repository) ReadHierarchy() (*EvidenceFileHierarchy, error) {
 // These delegate to lib/graph/props, which is the union of the three helper
 // sets DUES used to carry. See that package's doc for where they disagreed.
 
-func unpackProps(data []byte) props.Map { return props.Unpack(data) }
+// unpackProps decodes a node's properties, naming the node when they do not
+// decode (GRA-10).
+func unpackProps(node *graphstore.Node) (props.Map, error) {
+	fields, err := props.Unpack(node.Properties)
+	if err != nil {
+		return nil, fmt.Errorf("graph node %d: %w", node.ID, err)
+	}
+	return fields, nil
+}
 
 func strProp(m props.Map, key string) string      { return m.Str(key) }
 func int64Prop(m props.Map, key string) int64     { return m.Int64(key) }

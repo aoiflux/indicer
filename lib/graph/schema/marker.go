@@ -6,6 +6,11 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+
+	"indicer/lib/fsx"
+	"indicer/lib/logging"
+
+	"go.uber.org/zap"
 )
 
 // MarkerFileName is the one DUES-owned file inside the graph directory.
@@ -79,6 +84,16 @@ func ReadMarker(dir string) (Marker, bool, error) {
 	if err != nil {
 		return Marker{}, false, fmt.Errorf("schema: read marker: %w", err)
 	}
+	if len(raw) == 0 {
+		// Earlier releases wrote the marker without syncing it, so a crash
+		// could leave it empty, and an empty marker refused every open of an
+		// otherwise healthy store (GRA-7). It records nothing, so it is
+		// treated as absent: the store is probed, and the next writable open
+		// writes it again.
+		logging.GetLogger().Warn("schema: marker is empty; treating the store as unmarked",
+			zap.String("path", filepath.Join(dir, MarkerFileName)))
+		return Marker{}, false, nil
+	}
 
 	var marker Marker
 	if err := json.Unmarshal(raw, &marker); err != nil {
@@ -92,24 +107,18 @@ func ReadMarker(dir string) (Marker, bool, error) {
 
 // WriteMarker persists the marker, replacing any existing one.
 //
-// The write goes to a temporary file and is renamed into place, so an
-// interrupted write cannot leave a half-parsed marker behind — which would fail
-// the open of an otherwise healthy store.
+// The write goes to a unique temporary file that is synced and renamed into
+// place, and the directory is synced, so a crash leaves either the old marker
+// or the complete new one (GRA-7). The fixed ".tmp" name used before let two
+// writers collide, and nothing was synced.
 func WriteMarker(dir string, marker Marker) error {
 	encoded, err := json.MarshalIndent(marker, "", "  ")
 	if err != nil {
 		return fmt.Errorf("schema: encode marker: %w", err)
 	}
 	encoded = append(encoded, '\n')
-
-	final := filepath.Join(dir, MarkerFileName)
-	temp := final + ".tmp"
-	if err := os.WriteFile(temp, encoded, 0o644); err != nil {
+	if err := fsx.WriteFileAtomic(filepath.Join(dir, MarkerFileName), encoded, 0o644); err != nil {
 		return fmt.Errorf("schema: write marker: %w", err)
-	}
-	if err := os.Rename(temp, final); err != nil {
-		_ = os.Remove(temp)
-		return fmt.Errorf("schema: install marker: %w", err)
 	}
 	return nil
 }

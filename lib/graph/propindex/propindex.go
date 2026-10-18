@@ -110,7 +110,8 @@ var DeferredKeys = []string{"start", "end", "is_deleted", "is_fragmented", "dete
 var ErrLegacyEncoding = fmt.Errorf(
 	"propindex: values under this key were written with strconv, which is not a valid " +
 		"byte-wise sort order; declaring it would make range queries answer wrongly. " +
-		"Run 'dues graph migrate --rebuild' to re-encode")
+		"a graph rebuilt from the database (remove the data root's graph directory, then run " +
+		"'dues enrich' and 'dues micro extract') writes them in order")
 
 // Declare registers the keys that are safe to range-query on this store.
 //

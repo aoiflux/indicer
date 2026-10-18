@@ -1,6 +1,8 @@
 package enrichment
 
 import (
+	"errors"
+	"fmt"
 	"sort"
 	"strconv"
 	"strings"
@@ -32,6 +34,10 @@ type GrapheneRepository struct {
 
 const storeDirName = "graph"
 
+// ErrRepositoryClosed is returned by a write, or a read, through a repository
+// that is not open. Writes used to succeed doing nothing (GRA-10).
+var ErrRepositoryClosed = errors.New("enrichment: graph repository is not open")
+
 // kinds resolves node kinds to the raw type values this particular store uses.
 //
 // The package-level vars this replaced were derived once from
@@ -43,10 +49,20 @@ func (repository *GrapheneRepository) kinds() *schema.Registry {
 	return repository.handle.Schema()
 }
 
-// OpenGrapheneRepository acquires a reference to root's graph store. Close
-// releases it.
+// OpenGrapheneRepository acquires a reference to root's graph store,
+// creating it if needed. Close releases it.
 func OpenGrapheneRepository(root string) (*GrapheneRepository, error) {
-	handle, err := duesgraph.Open(root)
+	return OpenGrapheneRepositoryWith(root, duesgraph.OpenOptions{})
+}
+
+// OpenGrapheneRepositoryReadOnly opens root's graph store for reading. A data
+// root without one is duesgraph.ErrNoGraph, and nothing is created.
+func OpenGrapheneRepositoryReadOnly(root string) (*GrapheneRepository, error) {
+	return OpenGrapheneRepositoryWith(root, duesgraph.OpenOptions{ReadOnly: true})
+}
+
+func OpenGrapheneRepositoryWith(root string, opts duesgraph.OpenOptions) (*GrapheneRepository, error) {
+	handle, err := duesgraph.OpenWith(root, opts)
 	if err != nil {
 		return nil, err
 	}
@@ -98,7 +114,7 @@ func (repository *GrapheneRepository) inBatch(fn func(*duesgraph.Batch) error) e
 
 func (repository *GrapheneRepository) UpsertEvidence(record EvidenceRecord) error {
 	if repository == nil || repository.graph == nil {
-		return nil
+		return ErrRepositoryClosed
 	}
 	return repository.inBatch(func(batch *duesgraph.Batch) error {
 		return repository.upsertEvidence(batch, record)
@@ -106,7 +122,7 @@ func (repository *GrapheneRepository) UpsertEvidence(record EvidenceRecord) erro
 }
 
 func (repository *GrapheneRepository) upsertEvidence(batch *duesgraph.Batch, record EvidenceRecord) error {
-	evidenceNode, err := batch.Upsert(
+	_, err := batch.Upsert(
 		duesgraph.UpsertKey{Key: "evidence_file_id", Value: record.HashBase64},
 		[]graphstore.NodeType{repository.kinds().NodeType(schema.KindEvidenceFile)},
 		props.Map{
@@ -122,28 +138,23 @@ func (repository *GrapheneRepository) upsertEvidence(batch *duesgraph.Batch, rec
 			"failed":           record.Failed,
 			"partition_count":  record.PartitionCount,
 		},
-		nil,
+		// The full record replaces a stub UpsertPartition or upsertFile wrote
+		// knowing only the ID, index entries included (GRA-2).
+		map[string][]byte{
+			"evidence_hash": []byte(record.HashBase64),
+			"name":          []byte(record.Name),
+			"path":          []byte(record.Path),
+			"evidence_type": []byte(record.EvidenceType),
+			"ingest_state":  []byte(record.IngestState),
+			"size":          propindex.Int64(record.Size),
+		},
 	)
-	if err != nil {
-		return err
-	}
-
-	// Registered unconditionally, not only on insert: the node may already
-	// exist because UpsertPartition created it knowing only its ID.
-	batch.Index(evidenceNode, map[string][]byte{
-		"evidence_hash": []byte(record.HashBase64),
-		"name":          []byte(record.Name),
-		"path":          []byte(record.Path),
-		"evidence_type": []byte(record.EvidenceType),
-		"ingest_state":  []byte(record.IngestState),
-		"size":          propindex.Int64(record.Size),
-	})
-	return nil
+	return err
 }
 
 func (repository *GrapheneRepository) UpsertPartition(record PartitionRecord) error {
 	if repository == nil || repository.graph == nil {
-		return nil
+		return ErrRepositoryClosed
 	}
 	return repository.inBatch(func(batch *duesgraph.Batch) error {
 		return repository.upsertPartition(batch, record)
@@ -169,19 +180,17 @@ func (repository *GrapheneRepository) upsertPartition(batch *duesgraph.Batch, re
 			"hash":               record.Hash,
 			"indexed_file_count": record.IndexedFileCount,
 		},
-		nil,
+		// Replaces the thin stub upsertFile creates when it walks a file
+		// before this runs.
+		map[string][]byte{
+			"name":            []byte(record.PartitionName),
+			"filesystem_type": []byte(record.FilesystemType),
+			"size":            propindex.Int64(record.Size),
+		},
 	)
 	if err != nil {
 		return err
 	}
-
-	// Registered unconditionally: a partition node may already exist as the
-	// thin stub upsertFile creates when it walks a file before this runs.
-	batch.Index(partitionNode, map[string][]byte{
-		"name":            []byte(record.PartitionName),
-		"filesystem_type": []byte(record.FilesystemType),
-		"size":            propindex.Int64(record.Size),
-	})
 
 	return repository.ensureContains(batch, evidenceNode, partitionNode)
 }
@@ -192,7 +201,7 @@ func (repository *GrapheneRepository) upsertPartition(batch *duesgraph.Batch, re
 func (repository *GrapheneRepository) upsertEvidenceStub(
 	batch *duesgraph.Batch, evidenceFileID, evidenceFileName string,
 ) (graphstore.NodeID, error) {
-	return batch.Upsert(
+	return batch.UpsertFill(
 		duesgraph.UpsertKey{Key: "evidence_file_id", Value: evidenceFileID},
 		[]graphstore.NodeType{repository.kinds().NodeType(schema.KindEvidenceFile)},
 		props.Map{"evidence_file_id": evidenceFileID, "name": evidenceFileName},
@@ -202,7 +211,7 @@ func (repository *GrapheneRepository) upsertEvidenceStub(
 
 func (repository *GrapheneRepository) UpsertFile(record FileRecord) error {
 	if repository == nil || repository.graph == nil {
-		return nil
+		return ErrRepositoryClosed
 	}
 	return repository.inBatch(func(batch *duesgraph.Batch) error {
 		return repository.upsertFile(batch, record)
@@ -215,7 +224,10 @@ func (repository *GrapheneRepository) UpsertFile(record FileRecord) error {
 // file. Callers walking a partition should prefer this: EnrichAll on a large
 // image is the difference between a commit per file and a commit per partition.
 func (repository *GrapheneRepository) UpsertFiles(records []FileRecord) error {
-	if repository == nil || repository.graph == nil || len(records) == 0 {
+	if repository == nil || repository.graph == nil {
+		return ErrRepositoryClosed
+	}
+	if len(records) == 0 {
 		return nil
 	}
 	return repository.inBatch(func(batch *duesgraph.Batch) error {
@@ -239,7 +251,7 @@ func (repository *GrapheneRepository) upsertFile(batch *duesgraph.Batch, record 
 
 	// For partition and indexed_file levels, create/get partition node
 	if record.Level != "evidence_file" && record.PartitionID != "" {
-		partitionNode, err := batch.Upsert(
+		partitionNode, err := batch.UpsertFill(
 			duesgraph.UpsertKey{Key: "partition_id", Value: record.PartitionID},
 			[]graphstore.NodeType{repository.kinds().NodeType(schema.KindPartition)},
 			props.Map{"partition_id": record.PartitionID, "name": record.PartitionName, "evidence_file_id": record.EvidenceFileID},
@@ -296,12 +308,11 @@ func (repository *GrapheneRepository) upsertFile(batch *duesgraph.Batch, record 
 				duesgraph.UpsertKey{Key: "indexed_file_id", Value: record.IndexedFileID},
 				[]graphstore.NodeType{repository.kinds().NodeType(schema.KindIndexedFile)},
 				indexedProps,
-				nil,
+				indexedIndex,
 			)
 			if err != nil {
 				return err
 			}
-			batch.Index(indexedNode, indexedIndex)
 			if err := repository.ensureContains(batch, partitionNode, indexedNode); err != nil {
 				return err
 			}
@@ -346,16 +357,6 @@ func (repository *GrapheneRepository) upsertFile(batch *duesgraph.Batch, record 
 		fileProps["entropy"] = record.Entropy
 	}
 	timeProps(fileProps, record.Times)
-	fileNode, err := batch.Upsert(
-		duesgraph.UpsertKey{Key: "file_node_id", Value: fileNodeID},
-		[]graphstore.NodeType{repository.kinds().NodeType(schema.KindFile)},
-		fileProps,
-		nil,
-	)
-	if err != nil {
-		return err
-	}
-
 	// strconv encodings, deliberately unchanged. These are equality-only index
 	// values today; switching them to the order-preserving encoders would make
 	// new entries incomparable with the ones already stored. They are re-encoded
@@ -383,7 +384,15 @@ func (repository *GrapheneRepository) upsertFile(batch *duesgraph.Batch, record 
 	if record.Path != "" {
 		fileIndex["path"] = propindex.String(record.Path)
 	}
-	batch.Index(fileNode, fileIndex)
+	fileNode, err := batch.Upsert(
+		duesgraph.UpsertKey{Key: "file_node_id", Value: fileNodeID},
+		[]graphstore.NodeType{repository.kinds().NodeType(schema.KindFile)},
+		fileProps,
+		fileIndex,
+	)
+	if err != nil {
+		return err
+	}
 
 	// Create edge from parent to file
 	return repository.ensureContains(batch, parentNode, fileNode)
@@ -448,7 +457,7 @@ func (repository *GrapheneRepository) ensureContains(batch *duesgraph.Batch, src
 // evidence_file → partition → indexed_file hierarchy with file-level metadata.
 func (repository *GrapheneRepository) ReadHierarchy() (*EnrichmentHierarchy, error) {
 	if repository == nil || repository.graph == nil {
-		return &EnrichmentHierarchy{}, nil
+		return nil, ErrRepositoryClosed
 	}
 
 	tree := &EnrichmentHierarchy{}
@@ -470,7 +479,10 @@ func (repository *GrapheneRepository) ReadHierarchy() (*EnrichmentHierarchy, err
 		if err != nil {
 			return nil, err
 		}
-		dProps := unpackProps(evidenceNode.Properties)
+		dProps, err := unpackProps(evidenceNode)
+		if err != nil {
+			return nil, err
+		}
 		evidenceFile := &EnrichmentEvidenceFileNode{
 			ID:   strProp(dProps, "evidence_file_id"),
 			Name: strProp(dProps, "name"),
@@ -485,7 +497,10 @@ func (repository *GrapheneRepository) ReadHierarchy() (*EnrichmentHierarchy, err
 			if !kinds.Is(pn.Node, schema.KindPartition) {
 				continue
 			}
-			pProps := unpackProps(pn.Node.Properties)
+			pProps, err := unpackProps(pn.Node)
+			if err != nil {
+				return nil, err
+			}
 			partition := &EnrichmentPartitionNode{
 				ID:   strProp(pProps, "partition_id"),
 				Name: strProp(pProps, "name"),
@@ -501,7 +516,10 @@ func (repository *GrapheneRepository) ReadHierarchy() (*EnrichmentHierarchy, err
 				if !kinds.Is(fn.Node, schema.KindIndexedFile) {
 					continue
 				}
-				fProps := unpackProps(fn.Node.Properties)
+				fProps, err := unpackProps(fn.Node)
+				if err != nil {
+					return nil, err
+				}
 				indexedMeta := &EnrichmentFileNode{
 					ID:         strProp(fProps, "indexed_file_id"),
 					Hash:       strProp(fProps, "hash"),
@@ -522,7 +540,10 @@ func (repository *GrapheneRepository) ReadHierarchy() (*EnrichmentHierarchy, err
 					if !kinds.Is(file.Node, schema.KindFile) {
 						continue
 					}
-					fileProps := unpackProps(file.Node.Properties)
+					fileProps, err := unpackProps(file.Node)
+					if err != nil {
+						return nil, err
+					}
 					if strProp(fileProps, "level") != "indexed_file" {
 						continue
 					}
@@ -604,7 +625,15 @@ func mergeIndexedFallback(fileNode, indexedMeta *EnrichmentFileNode) {
 // int16 — which it does for most real values — and rejected the string form of
 // a bool. See the package doc for the full drift.
 
-func unpackProps(packed []byte) props.Map { return props.Unpack(packed) }
+// unpackProps decodes a node's properties, naming the node when they do not
+// decode (GRA-10).
+func unpackProps(node *graphstore.Node) (props.Map, error) {
+	fields, err := props.Unpack(node.Properties)
+	if err != nil {
+		return nil, fmt.Errorf("graph node %d: %w", node.ID, err)
+	}
+	return fields, nil
+}
 
 func strProp(m props.Map, key string) string        { return m.Str(key) }
 func int64Prop(m props.Map, key string) int64       { return m.Int64(key) }
@@ -617,4 +646,138 @@ func joinTags(tags []string) string {
 		return ""
 	}
 	return strings.Join(tags, "|")
+}
+
+// deleteBatchSize bounds how many nodes one commit deletes.
+const deleteBatchSize = 10000
+
+// DeleteEvidenceIndex removes from the graph what was derived from an
+// evidence's index: its partitions, their indexed files, the file nodes under
+// them and the micro-artefacts under those, with every edge they have. A
+// reindex rebuilds the index under new records, a duplicate's index is
+// removed, and a quarantined index is hidden; each left the old nodes in the
+// graph beside the current ones. keepEvidence keeps the evidence node and the
+// file node describing the evidence itself. It returns how many nodes it
+// deleted.
+func (repository *GrapheneRepository) DeleteEvidenceIndex(evidenceID string, keepEvidence bool) (int, error) {
+	if repository == nil || repository.graph == nil {
+		return 0, ErrRepositoryClosed
+	}
+	kinds := repository.kinds()
+	contains := []graphstore.EdgeType{graphstore.EdgeTypeContains}
+
+	roots, err := repository.graph.NodesByProperty("evidence_file_id", []byte(evidenceID))
+	if err != nil {
+		return 0, err
+	}
+	doomed := map[graphstore.NodeID]struct{}{}
+	var order, queue []graphstore.NodeID
+	mark := func(id graphstore.NodeID) {
+		if _, seen := doomed[id]; !seen {
+			doomed[id] = struct{}{}
+			order = append(order, id)
+			queue = append(queue, id)
+		}
+	}
+	for _, id := range roots {
+		node, err := repository.graph.GetNode(id)
+		if err != nil {
+			return 0, err
+		}
+		if !kinds.Is(node, schema.KindEvidenceFile) {
+			continue
+		}
+		if !keepEvidence {
+			mark(id)
+			continue
+		}
+		children, err := repository.graph.Neighbours(id, graphstore.DirectionOutbound, contains)
+		if err != nil {
+			return 0, err
+		}
+		for _, child := range children {
+			if child.Node == nil {
+				continue
+			}
+			if kinds.Is(child.Node, schema.KindFile) {
+				fields, err := unpackProps(child.Node)
+				if err != nil {
+					return 0, err
+				}
+				if fields.Str("level") == "evidence_file" {
+					continue
+				}
+			}
+			mark(child.Node.ID)
+		}
+	}
+	for len(queue) > 0 {
+		id := queue[0]
+		queue = queue[1:]
+		children, err := repository.graph.Neighbours(id, graphstore.DirectionOutbound, contains)
+		if err != nil {
+			return 0, err
+		}
+		for _, child := range children {
+			if child.Node != nil {
+				mark(child.Node.ID)
+			}
+		}
+	}
+
+	for start := 0; start < len(order); start += deleteBatchSize {
+		part := order[start:min(start+deleteBatchSize, len(order))]
+		err := repository.inBatch(func(batch *duesgraph.Batch) error {
+			for _, id := range part {
+				batch.DeleteNode(id)
+			}
+			return nil
+		})
+		if err != nil {
+			return start, err
+		}
+	}
+	return len(order), nil
+}
+
+// FileAnnotation is what enrichment derived for one indexed file.
+type FileAnnotation struct {
+	MimeType   string
+	Tags       []string
+	Entropy    float64
+	HasEntropy bool
+}
+
+// IndexedFileAnnotations returns what enrichment derived for each indexed
+// file the graph holds, by indexed-file ID.
+func (repository *GrapheneRepository) IndexedFileAnnotations() (map[string]FileAnnotation, error) {
+	if repository == nil || repository.graph == nil {
+		return nil, ErrRepositoryClosed
+	}
+	ids, err := repository.graph.NodesByProperty("level", []byte("indexed_file"))
+	if err != nil {
+		return nil, err
+	}
+	out := make(map[string]FileAnnotation, len(ids))
+	for _, id := range ids {
+		node, err := repository.graph.GetNode(id)
+		if err != nil {
+			return nil, err
+		}
+		fields, err := unpackProps(node)
+		if err != nil {
+			return nil, err
+		}
+		iid := fields.Str("indexed_file_id")
+		if iid == "" {
+			continue
+		}
+		out[iid] = FileAnnotation{
+			MimeType:   fields.Str("mime_type"),
+			Tags:       fields.Strings("tags"),
+			Entropy:    fields.Float64("entropy"),
+			HasEntropy: fields.Bool("has_entropy"),
+		}
+	}
+	return out, nil
 }

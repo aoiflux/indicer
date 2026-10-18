@@ -93,8 +93,10 @@ type cliFlags struct {
 	searchOut   *string
 	searchForce *bool
 
-	microExtractForce *bool
-	microExtractTopK  *int
+	microExtractForce     *bool
+	microExtractTopK      *int
+	microExtractOut       *string
+	microExtractOverwrite *bool
 
 	serverHashAlgo *string
 }
@@ -229,8 +231,10 @@ func newCLIDefinition() cliDefinition {
 
 	commands.micro = app.Command(cnst.CmdMicro, "Manage micro-artefacts")
 	commands.microExtract = commands.micro.Command("extract", "Extract micro-artefacts from all indexed files and populate graph database")
-	flags.microExtractForce = commands.microExtract.Flag("force", "Re-process indexed files even when micro-artefacts already exist in graph").Short(cnst.FlagMicroExtractForceShort).Default("false").Bool()
+	flags.microExtractForce = commands.microExtract.Flag("force", "Extract again from indexed files an earlier run examined, replacing their artefacts").Short(cnst.FlagMicroExtractForceShort).Default("false").Bool()
 	flags.microExtractTopK = commands.microExtract.Flag("top-k", "Top-K indexed files (by artefact count) to include in exported HTML graph (0 = all)").Short(cnst.FlagMicroExtractTopKShort).Default("1").Int()
+	flags.microExtractOut = commands.microExtract.Flag("out", "Write the HTML graph view to this path").Default("graph.html").String()
+	flags.microExtractOverwrite = commands.microExtract.Flag("overwrite", "Replace the HTML graph view if it already exists").Default("false").Bool()
 	commands.microList = commands.micro.Command(cnst.CmdList, "List all micro-artefacts in JSON format")
 
 	commands.enrich = app.Command(cnst.CmdEnrich, "Backfill file hierarchy metadata enrichment into graphdb")

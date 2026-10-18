@@ -2,6 +2,7 @@ package graph
 
 import (
 	"errors"
+	"os"
 	"path/filepath"
 	"sync"
 	"testing"
@@ -220,6 +221,10 @@ func TestLock_ReleasedLockCanBeRetaken(t *testing.T) {
 
 func TestLock_SharedLocksCoexist(t *testing.T) {
 	dir := filepath.Join(t.TempDir(), "graph")
+	// A shared lock is taken on a store that exists.
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
 
 	first, err := acquireLock(dir, true)
 	if err != nil {
@@ -300,7 +305,7 @@ func TestExclusiveWrite_Serialises(t *testing.T) {
 
 func TestExclusiveWrite_RefusedOnReadOnlyHandle(t *testing.T) {
 	cleanRegistry(t)
-	root := t.TempDir()
+	root := storeWithNode(t)
 
 	handle, err := OpenWith(root, OpenOptions{ReadOnly: true})
 	if err != nil {
@@ -315,7 +320,7 @@ func TestExclusiveWrite_RefusedOnReadOnlyHandle(t *testing.T) {
 
 func TestOpen_ReadOnlyHandleWillNotEscalate(t *testing.T) {
 	cleanRegistry(t)
-	root := t.TempDir()
+	root := storeWithNode(t)
 
 	readOnly, err := OpenWith(root, OpenOptions{ReadOnly: true})
 	if err != nil {

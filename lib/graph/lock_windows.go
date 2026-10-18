@@ -4,6 +4,7 @@ package graph
 
 import (
 	"errors"
+	"io/fs"
 	"os"
 
 	"golang.org/x/sys/windows"
@@ -50,4 +51,10 @@ func unlockFile(file *os.File) error {
 func isLockContended(err error) bool {
 	return errors.Is(err, windows.ERROR_LOCK_VIOLATION) ||
 		errors.Is(err, windows.ERROR_SHARING_VIOLATION)
+}
+
+// isReadOnlyMedia reports whether err says the file cannot be opened for
+// writing: a write-protected volume, or a read-only file.
+func isReadOnlyMedia(err error) bool {
+	return errors.Is(err, fs.ErrPermission) || errors.Is(err, windows.ERROR_WRITE_PROTECT)
 }

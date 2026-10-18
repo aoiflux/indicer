@@ -7,6 +7,7 @@ import (
 	"strconv"
 	"strings"
 	"time"
+	"unicode/utf8"
 
 	"indicer/lib/microartefact/model"
 
@@ -42,6 +43,12 @@ const (
 type Detector interface {
 	Name() string
 	Detect(file model.FileRecord, content []byte) ([]model.Artefact, error)
+}
+
+// RawDetector is a detector that parses a file format itself, and so must be
+// given the file's own bytes rather than its text.
+type RawDetector interface {
+	WantsRaw() bool
 }
 
 func estimateEntropy(data []byte) float64 {
@@ -100,11 +107,16 @@ func registryValueString(valueData *regparser.ValueData) string {
 	return ""
 }
 
+// filetimeUnixEpoch is 1970-01-01 as a Windows FILETIME.
+const filetimeUnixEpoch = 116444736000000000
+
 func windowsFiletimeToRFC3339(filetime uint64) string {
-	if filetime == 0 {
+	// A FILETIME before 1970 used to wrap around in the unsigned subtraction
+	// and print as a date tens of thousands of years ahead (GRA-18).
+	if filetime <= filetimeUnixEpoch {
 		return ""
 	}
-	unixSeconds := int64((filetime - 116444736000000000) / 10000000)
+	unixSeconds := int64((filetime - filetimeUnixEpoch) / 10000000)
 	if unixSeconds <= 0 {
 		return ""
 	}
@@ -122,9 +134,15 @@ func trimMatchPunctuation(value string) string {
 	return strings.TrimRight(value, ").,;]")
 }
 
+// truncate cuts value to at most limit bytes, at a rune boundary: cutting
+// inside a rune left invalid UTF-8 in artefact values (GRA-18).
 func truncate(value string, limit int) string {
 	if len(value) <= limit {
 		return value
 	}
-	return value[:limit]
+	cut := limit
+	for cut > 0 && !utf8.RuneStart(value[cut]) {
+		cut--
+	}
+	return value[:cut]
 }

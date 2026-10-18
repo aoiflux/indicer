@@ -2,6 +2,7 @@ package enrichment
 
 import (
 	"encoding/base64"
+	"errors"
 	"path/filepath"
 	"testing"
 
@@ -92,9 +93,13 @@ func TestEnrichAllCreatesFileNodesAtAllLevels(t *testing.T) {
 		t.Fatalf("seed badger data: %v", err)
 	}
 
+	// The records have no stored content, so their entropy cannot be read:
+	// the hierarchy is written, and the run says what it could not compute.
 	service := NewService(db, repo)
-	if err := service.EnrichAll(); err != nil {
-		t.Fatalf("EnrichAll: %v", err)
+	rep, err := service.EnrichAll(t.Context())
+	var incomplete *IncompleteError
+	if !errors.As(err, &incomplete) || rep.Unreadable != 3 {
+		t.Fatalf("EnrichAll: %v, %d unreadable; want an IncompleteError for the evidence, partition and file", err, rep.Unreadable)
 	}
 
 	hierarchy, err := repo.ReadHierarchy()

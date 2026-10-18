@@ -8,6 +8,7 @@ import (
 
 	"indicer/lib/cnst"
 	"indicer/lib/dbio"
+	"indicer/lib/entropy"
 	"indicer/lib/parser/core"
 	"indicer/lib/structs"
 	"indicer/lib/util"
@@ -54,6 +55,7 @@ func (ix *indexer) file(_ core.PartitionInfo, rec core.FileRecord) error {
 		f.Content = &structs.ContentRef{Kind: structs.ContentNone}
 		f.FileHash = ix.hashOf(nil)
 		f.IndexedType = util.DetectFileType(rec.Path, nil)
+		ix.setEntropy(&f, nil)
 		return ix.write(op, iid, &f, nil)
 
 	case c.Kind == core.ContentExtents:
@@ -73,6 +75,7 @@ func (ix *indexer) file(_ core.PartitionInfo, rec core.FileRecord) error {
 		data := bytes.Clone(c.Inline)
 		f.Content = &structs.ContentRef{Kind: structs.ContentInline, Located: int64(len(data)), Inline: data}
 		f.FileHash = ix.hashOf(data)
+		ix.setEntropy(&f, data)
 		f.IndexedType = util.DetectFileType(rec.Path, data[:min(len(data), headLen)])
 		return ix.write(op, iid, &f, nil)
 
@@ -95,6 +98,14 @@ func (ix *indexer) file(_ core.PartitionInfo, rec core.FileRecord) error {
 	ix.cov.Unavailable++
 	f.Content = &structs.ContentRef{Kind: structs.ContentUnavailable}
 	return ix.write(op, iid, &f, nil)
+}
+
+// setEntropy records the entropy of data, when the pass computes it.
+func (ix *indexer) setEntropy(f *structs.IndexedFile, data []byte) {
+	if ix.opts.Entropy {
+		v := entropy.Of(data)
+		f.Entropy = &v
+	}
 }
 
 // nextID returns the record's deterministic ID, counting earlier records of

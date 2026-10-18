@@ -73,7 +73,10 @@ func TestTimestamps_ReachTheGraph(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	fields := props.Unpack(node.Properties)
+	fields, err := props.Unpack(node.Properties)
+	if err != nil {
+		t.Fatal(err)
+	}
 	if got := fields.Int64("mtime"); got != fileModified.UnixNano() {
 		t.Errorf("mtime = %d, want %d", got, fileModified.UnixNano())
 	}
@@ -194,7 +197,10 @@ func TestTimestamps_AbsentTimesWriteNothing(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	fields := props.Unpack(node.Properties)
+	fields, err := props.Unpack(node.Properties)
+	if err != nil {
+		t.Fatal(err)
+	}
 	for _, key := range []string{"mtime", "atime", "ctime", "btime"} {
 		if fields.Has(key) {
 			t.Errorf("untimed record wrote %q", key)

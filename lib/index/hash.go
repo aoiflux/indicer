@@ -7,6 +7,7 @@ import (
 	"fmt"
 
 	"indicer/lib/dbio"
+	"indicer/lib/entropy"
 	"indicer/lib/structs"
 	"indicer/lib/util"
 )
@@ -57,6 +58,10 @@ func (ix *indexer) hashAndWrite(j hashJob, buf []byte) error {
 		return fmt.Errorf("index: %s: %w", j.rec.Path, err)
 	}
 	h := ix.newHash()
+	var counts *entropy.Counter
+	if ix.opts.Entropy {
+		counts = new(entropy.Counter)
+	}
 	var head []byte
 	for off, n := int64(0), 0; off < r.Size(); n++ {
 		if n%64 == 63 && ix.ctx.Err() != nil {
@@ -71,7 +76,14 @@ func (ix *indexer) hashAndWrite(j hashJob, buf []byte) error {
 			head = bytes.Clone(buf[:min(m, headLen)])
 		}
 		h.Write(buf[:m])
+		if counts != nil {
+			counts.Add(buf[:m])
+		}
 		off += int64(m)
+	}
+	if counts != nil {
+		v := counts.Value()
+		j.rec.Entropy = &v
 	}
 	j.rec.FileHash = base64.StdEncoding.EncodeToString(h.Sum(nil))
 	j.rec.IndexedType = util.DetectFileType(j.rec.Path, head)

@@ -172,14 +172,14 @@ func CheckLibraryBases(recordedNode uint16, recordedEdge uint16) error {
 		return fmt.Errorf(
 			"schema: store records a custom node base of %d but the linked graphene uses %d; "+
 				"the library's custom band has moved and this store's labels would be "+
-				"misread (run: dues graph migrate --rebuild)",
+				"misread; rebuild the graph: remove the data root's graph directory, then run 'dues enrich' and 'dues micro extract'",
 			recordedNode, graphstore.NodeCustomBase)
 	}
 	if graphstore.EdgeType(recordedEdge) != graphstore.EdgeCustomBase {
 		return fmt.Errorf(
 			"schema: store records a custom edge base of %d but the linked graphene uses %d; "+
 				"the library's custom band has moved and this store's labels would be "+
-				"misread (run: dues graph migrate --rebuild)",
+				"misread; rebuild the graph: remove the data root's graph directory, then run 'dues enrich' and 'dues micro extract'",
 			recordedEdge, graphstore.EdgeCustomBase)
 	}
 	return nil

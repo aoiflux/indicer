@@ -330,7 +330,12 @@ func buildCommandHandlers(cliDef cliDefinition, dbOpts cli.DBOptions, tuning pip
 				zap.String("dbpath", *cliDef.flags.dbpath),
 				zap.Int("topk", *cliDef.flags.microExtractTopK),
 				zap.Bool("force", *cliDef.flags.microExtractForce))
-			return cli.MicroArtefactCmd(ctx, dbOpts, *cliDef.flags.microExtractForce, *cliDef.flags.microExtractTopK)
+			return cli.MicroArtefactCmd(ctx, dbOpts, cli.MicroOptions{
+				Force:     *cliDef.flags.microExtractForce,
+				TopK:      *cliDef.flags.microExtractTopK,
+				Out:       *cliDef.flags.microExtractOut,
+				Overwrite: *cliDef.flags.microExtractOverwrite,
+			})
 		},
 		cliDef.commands.microList.FullCommand(): func(ctx context.Context) error {
 			logging.GetLogger().Info("Command: micro list", zap.String("dbpath", *cliDef.flags.dbpath))

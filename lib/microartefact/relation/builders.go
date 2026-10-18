@@ -71,6 +71,7 @@ func (TransactionPropagationBuilder) Build(_ model.FileRecord, artefacts []model
 		if len(members) < 2 {
 			continue
 		}
+		sort.Slice(members, func(i, j int) bool { return members[i].Span.Start < members[j].Span.Start })
 		relations = appendPairwiseRelations(relations, members, method, func(from, to model.Artefact) []model.EvidenceField {
 			return []model.EvidenceField{
 				{FieldName: "transaction_id", Parser: from.Detector, RawValue: txid},
@@ -81,12 +82,21 @@ func (TransactionPropagationBuilder) Build(_ model.FileRecord, artefacts []model
 	return relations
 }
 
+// maxGroupMembers bounds the artefacts of one group that relations are built
+// between. Every pair of a group is related, so a value seen thousands of
+// times in one file made millions of relations (GRA-17). The first members
+// by offset are kept.
+const maxGroupMembers = 32
+
 func appendPairwiseRelations(
 	relations []model.Relation,
 	members []model.Artefact,
 	method Method,
 	evidenceBuilder func(from, to model.Artefact) []model.EvidenceField,
 ) []model.Relation {
+	if len(members) > maxGroupMembers {
+		members = members[:maxGroupMembers]
+	}
 	for i := 0; i < len(members)-1; i++ {
 		for j := i + 1; j < len(members); j++ {
 			from := members[i]

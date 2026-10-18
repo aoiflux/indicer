@@ -5,12 +5,14 @@ import (
 	"encoding/base64"
 	"encoding/hex"
 	"fmt"
+	"math"
 	"slices"
 	"testing"
 
 	"indicer/internal/testutil/fsfixture"
 	"indicer/lib/cnst"
 	"indicer/lib/dbio"
+	"indicer/lib/entropy"
 	"indicer/lib/evidence"
 	"indicer/lib/structs"
 
@@ -116,7 +118,7 @@ func TestRunIndexesFixtures(t *testing.T) {
 			defer src.Close()
 			img := src.Image()
 			db := openIndexDB(t, img.Size())
-			opts := Options{DB: db, EvidenceID: testEID, EvidenceName: "ev", Image: img}
+			opts := Options{DB: db, EvidenceID: testEID, EvidenceName: "ev", Image: img, Entropy: true}
 			res, err := Run(t.Context(), opts)
 			if err != nil {
 				t.Fatalf("index: %v", err)
@@ -144,6 +146,11 @@ func TestRunIndexesFixtures(t *testing.T) {
 					if int64(len(b)) == wantSize && sha256Hex(b) == wantSum {
 						if r.rec.FileHash != fileHash(db, b) {
 							t.Errorf("%s: the record's hash is not the plain hash of its content", name)
+						}
+						if r.rec.Entropy == nil {
+							t.Errorf("%s: no entropy recorded", name)
+						} else if want := entropy.Of(b); math.Abs(*r.rec.Entropy-want) > 1e-9 {
+							t.Errorf("%s: entropy %v, the content's is %v", name, *r.rec.Entropy, want)
 						}
 						if k, ok := expectedKinds[m.Name+"|"+name]; ok && r.rec.Content.Kind != k {
 							t.Errorf("%s: indexed as %s, want %s", name, r.rec.Content.Kind, k)

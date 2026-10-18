@@ -78,12 +78,17 @@ func Reindex(ctx context.Context, db *badger.DB, eid []byte, opts ReindexOptions
 	if err := fts.DeleteIndexedFiles(db, docs); err != nil {
 		return res, fmt.Errorf("delete the previous full-text documents: %w", err)
 	}
+	// And its graph nodes, which a rebuilt index would otherwise sit beside.
+	if err := deleteGraphIndex(db, eid, true); err != nil {
+		return res, fmt.Errorf("delete the previous index from the graph: %w", err)
+	}
+	req := Request{FTS: opts.FTS || hasFeature(e, "fts"), Enrich: opts.Enrich || hasFeature(e, "enrich")}
 
 	info := &structs.IndexInfo{State: structs.IndexRunning, Started: time.Now().UnixNano()}
 	if err := setIndexInfo(db, eid, info); err != nil {
 		return res, err
 	}
-	idx, idxErr := runIndex(ctx, index.Options{DB: db, EvidenceID: eid, EvidenceName: e.Name, Image: img})
+	idx, idxErr := runIndex(ctx, index.Options{DB: db, EvidenceID: eid, EvidenceName: e.Name, Image: img, Entropy: req.Enrich})
 	res.Partitions = idx.Partitions
 	info.Coverage, info.Finished = idx.Coverage, time.Now().UnixNano()
 	switch {
@@ -96,8 +101,7 @@ func Reindex(ctx context.Context, db *badger.DB, eid []byte, opts ReindexOptions
 		}
 	}
 	if info.State == structs.IndexComplete || info.State == structs.IndexPartial {
-		req := Request{FTS: opts.FTS || hasFeature(e, "fts"), Enrich: opts.Enrich || hasFeature(e, "enrich")}
-		if err := reindexFeatures(ctx, db, eid, e, req); err != nil {
+		if err := features(ctx, db, eid, req); err != nil {
 			info.State, info.Reason, idxErr = structs.IndexPartial, err.Error(), err
 		}
 	}
@@ -181,14 +185,4 @@ func reindexPartitionHashes(ctx context.Context, db *badger.DB, e structs.Eviden
 		}
 	}
 	return nil
-}
-
-// reindexFeatures runs the features over the rebuilt index. It has no source
-// file, so the graph's evidence node is named after the record.
-func reindexFeatures(ctx context.Context, db *badger.DB, eid []byte, e structs.EvidenceFile, req Request) error {
-	node := evidenceNode{Name: e.Name, Size: e.Size}
-	if e.Source != nil && len(e.Source.Members) > 0 {
-		node.Path = e.Source.Members[0].Path
-	}
-	return features(ctx, db, eid, node, req)
 }

@@ -23,6 +23,9 @@ const (
 	SourceEWF    = "ewf"    // an EWF set, stored decoded
 	SourceVHD    = "vhd"    // a VHD/VHDX chain, stored decoded
 	SourceOpaque = "opaque" // a container DUES cannot decode, stored as is
+	// SourceClient: a path a server client reported for content already
+	// stored; nothing was read from it.
+	SourceClient = "client"
 )
 
 // EvidenceSource says where an evidence's stored bytes came from.

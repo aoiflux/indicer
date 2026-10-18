@@ -98,7 +98,11 @@ type cliFlags struct {
 	microExtractOut       *string
 	microExtractOverwrite *bool
 
-	serverHashAlgo *string
+	serverHashAlgo    *string
+	serverListen      *[]string
+	serverToken       *string
+	serverTokenFile   *string
+	serverCORSOrigins *[]string
 }
 
 type cliCommands struct {
@@ -241,6 +245,10 @@ func newCLIDefinition() cliDefinition {
 
 	commands.server = app.Command(cnst.CmdServer, "Run gRPC / Web combined DUES server")
 	flags.serverHashAlgo = commands.server.Flag(cnst.FlagHashAlgo, "Hashing algorithm to use [sha3|blake3] (default: BLAKE3)").Short(cnst.FlagHashAlgoShort).Default(cnst.BLAKE3).String()
+	flags.serverListen = commands.server.Flag(flagListen, "Serve on this host:port (repeatable; default 127.0.0.1:50051 and [::1]:50051). A non-loopback address needs a token").Strings()
+	flags.serverTokenFile = commands.server.Flag(flagTokenFile, "Require the bearer token on the first line of this file").String()
+	flags.serverToken = commands.server.Flag(flagToken, "Require this bearer token (visible to other users; prefer --token-file or DUES_TOKEN)").String()
+	flags.serverCORSOrigins = commands.server.Flag(flagCORSOrigin, "Also let pages from this origin call the server, as scheme://host[:port] (repeatable)").Strings()
 
 	commands.reset = app.Command(cnst.CmdReset, "Delete the database").Alias(cnst.CmdPurge).Alias(cnst.CmdDelete).Alias(cnst.CmdDestroy)
 	flags.resetYes = commands.reset.Flag("yes", "Delete without asking for the folder name (required when stdin is not a terminal)").Default("false").Bool()

@@ -351,7 +351,19 @@ func buildCommandHandlers(cliDef cliDefinition, dbOpts cli.DBOptions, tuning pip
 		},
 		cliDef.commands.server.FullCommand(): func(ctx context.Context) error {
 			logging.GetLogger().Info("Command: server", zap.String("dbpath", *cliDef.flags.dbpath), zap.Int("chonksize_kb", *cliDef.flags.chonkSize))
-			return api.Server(ctx, dbOpts)
+			token, warnings, err := resolveServerToken(cliDef.flags)
+			if err != nil {
+				return err
+			}
+			for _, w := range warnings {
+				logging.GetLogger().Warn("server token", zap.String("detail", w))
+				fmt.Fprintln(os.Stderr, "dues: warning:", w)
+			}
+			return api.Server(ctx, dbOpts, api.Options{
+				Listen:      *cliDef.flags.serverListen,
+				Token:       token,
+				CORSOrigins: *cliDef.flags.serverCORSOrigins,
+			})
 		},
 	}
 }

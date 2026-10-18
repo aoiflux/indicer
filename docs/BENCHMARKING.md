@@ -5,7 +5,7 @@ performance tracking.
 
 ## What is included
 
-- Service benchmark: `BenchmarkGetChonkMap` in `lib/service`
+- Service benchmark: `BenchmarkGetChonkMap` in `lib/server`
 - Store benchmarks:
   - `BenchmarkIngestDataPath` in `lib/store`
   - `BenchmarkIngestMetadataPath` in `lib/store`
@@ -101,7 +101,7 @@ Notes:
 Service benchmark only:
 
 ```bash
-go test ./lib/service -run '^$' -bench '^BenchmarkGetChonkMap$' -benchmem -count 5 -benchtime 2s
+go test ./lib/server -run '^$' -bench '^BenchmarkGetChonkMap$' -benchmem -count 5 -benchtime 2s
 ```
 
 Store repair scan benchmark only:

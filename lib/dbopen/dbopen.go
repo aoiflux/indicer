@@ -452,8 +452,21 @@ func (h *Handle) badgerError(err error) error {
 // cleanly switches to a writable open, so badger can recover, when the root
 // is writable.
 func (h *Handle) openBadger(m dbmeta.Manifest, keys dbmeta.Keys) error {
-	db, err := badger.Open(h.badgerOptions(m.Layout, keys, h.ReadOnly))
-	if err != nil && h.ReadOnly && errors.Is(err, badger.ErrTruncateNeeded) {
+	opts := h.badgerOptions(m.Layout, keys, h.ReadOnly)
+	// A database whose process died still has its memtable logs, which
+	// badger must truncate before it opens read-only. A read-only open that
+	// fails on them leaves a log mapped, and Windows refuses to truncate a
+	// mapped file, so the logs are looked for before badger is asked.
+	if h.ReadOnly && hasMemtableLogs(opts.Dir) {
+		if !h.upgradeLock() {
+			return fmt.Errorf("%w: %s was not closed cleanly; run `dues repair --fix` with write access", ErrNeedsRecovery, h.Root)
+		}
+		h.notice("database %s was not closed cleanly; recovered it", h.Root)
+		h.ReadOnly = false
+		opts = h.badgerOptions(m.Layout, keys, false)
+	}
+	db, err := badger.Open(opts)
+	if err != nil && h.ReadOnly && truncateNeeded(err) {
 		if !h.upgradeLock() {
 			return fmt.Errorf("%w: %s was not closed cleanly; run `dues repair --fix` with write access", ErrNeedsRecovery, h.Root)
 		}
@@ -468,7 +481,32 @@ func (h *Handle) openBadger(m dbmeta.Manifest, keys dbmeta.Keys) error {
 	return nil
 }
 
-// upgradeLock swaps the shared lock for an exclusive one.
+// truncateNeeded reports whether badger refused an open because its log must
+// be truncated, as after a crash. badger wraps the error with %+v outside its
+// debug mode, so errors.Is cannot see it (CFG-13); its text is matched too.
+func truncateNeeded(err error) bool {
+	return errors.Is(err, badger.ErrTruncateNeeded) || strings.Contains(err.Error(), badger.ErrTruncateNeeded.Error())
+}
+
+// hasMemtableLogs reports whether the badger directory holds memtable logs.
+// badger removes them when it closes, so they are left only by a process
+// that did not close the database.
+func hasMemtableLogs(dir string) bool {
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		return false
+	}
+	for _, e := range entries {
+		if strings.HasSuffix(e.Name(), ".mem") {
+			return true
+		}
+	}
+	return false
+}
+
+// upgradeLock swaps the shared lock for an exclusive one. When another
+// process holds the lock too, the shared lock is taken back and false
+// returned.
 func (h *Handle) upgradeLock() bool {
 	if h.lock == nil {
 		return false
@@ -477,8 +515,12 @@ func (h *Handle) upgradeLock() bool {
 		return false
 	}
 	h.lock = nil
-	l, err := fsx.TryLock(filepath.Join(h.Root, LockName), false)
+	path := filepath.Join(h.Root, LockName)
+	l, err := fsx.TryLock(path, false)
 	if err != nil {
+		if l, err := fsx.TryLock(path, true); err == nil {
+			h.lock = l
+		}
 		return false
 	}
 	h.lock = l

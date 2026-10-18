@@ -223,7 +223,7 @@ if (Test-Path $summaryFile) {
     Remove-Item $summaryFile -Force
 }
 
-Run-Bench -Name "service_getchonkmap" -Package "./lib/service" -Pattern "^BenchmarkGetChonkMap$" -WithProfiles:$Profiles
+Run-Bench -Name "service_getchonkmap" -Package "./lib/server" -Pattern "^BenchmarkGetChonkMap$" -WithProfiles:$Profiles
 Run-Bench -Name "store_ingest_path" -Package "./lib/store" -Pattern "^BenchmarkIngestDataPath$" -WithProfiles:$Profiles
 Run-Bench -Name "store_ingest_metadata_path" -Package "./lib/store" -Pattern "^BenchmarkIngestMetadataPath$" -WithProfiles:$Profiles
 Run-Bench -Name "store_ingest_metadata_hotspots" -Package "./lib/store" -Pattern "^BenchmarkIngestMetadataPathHotspots$" -WithProfiles:$Profiles

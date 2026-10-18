@@ -167,7 +167,7 @@ write_io_uring_depth_summary() {
     } | tee -a "$SUMMARY_FILE" | tee -a "$FULL_RUN_FILE" > /dev/null
 }
 
-run_bench "service_getchonkmap" "./lib/service" "^BenchmarkGetChonkMap$"
+run_bench "service_getchonkmap" "./lib/server" "^BenchmarkGetChonkMap$"
 run_bench "store_ingest_path" "./lib/store" "^BenchmarkIngestDataPath$"
 run_bench "store_ingest_metadata_path" "./lib/store" "^BenchmarkIngestMetadataPath$"
 run_bench "store_ingest_metadata_hotspots" "./lib/store" "^BenchmarkIngestMetadataPathHotspots$"

@@ -94,13 +94,24 @@ See also:
 
 ### 6) API, server, and browser upload path
 
-- Connect + gRPC + gRPC-Web server mode on port 50051.
-- Localhost-aware CORS behavior for browser clients.
-- Browser upload session endpoints:
+- Connect, gRPC and gRPC-Web on port 50051, served on 127.0.0.1 and [::1]
+  only unless `--listen` says otherwise.
+- A non-loopback address needs a bearer token of at least 32 characters
+  (`--token-file` or `DUES_TOKEN`). Once set, the token is required on every
+  request but the health checks. Traffic is plain HTTP; use a TLS proxy or an
+  SSH tunnel for remote clients.
+- Browser pages from loopback origins, and from `--cors-origin` origins, may
+  call the server; other origins are refused.
+- Paged listings of evidence, partitions and indexed files, with chunk maps.
+- Resumable browser uploads, checked against the client's hash before they
+  are stored:
   - POST /web/upload/start
-  - POST /web/upload/chunk
+  - POST /web/upload/chunk (with `Upload-Offset`)
+  - POST /web/upload/status
+  - POST /web/upload/abort
   - POST /web/upload/finalize
-- Health endpoint at GET /
+- Health checks at GET /healthz and GET /readyz.
+- The protocol is described in [docs/SERVER_API.md](docs/SERVER_API.md).
 
 ### 7) TUI and operator workflow
 

@@ -1,4 +1,4 @@
-package service
+package server
 
 import (
 	"context"
@@ -149,10 +149,22 @@ func BenchmarkGetChonkMap(b *testing.B) {
 
 func benchChonkMapCase(b *testing.B, meta structs.FileMeta, db *badger.DB, expectedChunks int) {
 	b.Helper()
+	key := util.AppendToBytesSlice(cnst.EviFileNamespace, meta.EviHash)
+	if meta.Start != 0 {
+		// A range of the evidence: a partition record.
+		key = util.AppendToBytesSlice(cnst.PartiFileNamespace, meta.EviHash)
+		var p structs.PartitionFile
+		p.Name = "benchmark_p0"
+		p.Start, p.Size = meta.Start, meta.Size
+		p.EvidenceID = meta.EviHash
+		if err := dbio.SetFile(key, p, db); err != nil {
+			b.Fatalf("set partition: %v", err)
+		}
+	}
 	b.ReportAllocs()
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
-		res, err := chunkMap(context.Background(), db, meta.EviHash, meta.Start, meta.Start+meta.Size)
+		res, _, err := chunkMap(context.Background(), db, key, maxChunkEntries)
 		if err != nil {
 			b.Fatalf("chunk map: %v", err)
 		}

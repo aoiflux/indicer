@@ -17,7 +17,6 @@ import (
 	"indicer/lib/dbio"
 	"indicer/lib/fio"
 	"indicer/lib/structs"
-	"indicer/lib/util"
 	"io"
 	"sync"
 	"time"
@@ -149,30 +148,6 @@ func Restore(ctx context.Context, db *badger.DB, rhash string, dst io.Writer, op
 		}
 	}
 	return restoreLogical(ctx, l, dst, opts, ewf)
-}
-
-func checkCompleted(ehash []byte, db *badger.DB) error {
-	eid := util.GetEvidenceFileID(ehash)
-	eviFile, err := dbio.GetEvidenceFile(eid, db)
-	if err != nil {
-		return err
-	}
-	if !eviFile.Completed {
-		return cnst.ErrIncompleteFile
-	}
-	return nil
-}
-
-func GetLogicalFileEviHash(name string, db *badger.DB) ([]byte, error) {
-	ehash, err := util.GetEvidenceFileHash(name)
-	if err != nil {
-		return nil, err
-	}
-	err = checkCompleted(ehash, db)
-	if err != nil {
-		return nil, err
-	}
-	return ehash, nil
 }
 
 // restoreLogical writes the content of l to dst. Chunks are read and checked

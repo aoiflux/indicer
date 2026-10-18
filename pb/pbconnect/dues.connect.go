@@ -2,6 +2,12 @@
 //
 // Source: dues.proto
 
+// Regenerate pb with the repository root as the working directory:
+//   protoc -I protos --go_out=. --go_opt=module=indicer \
+//     --go-grpc_out=. --go-grpc_opt=module=indicer \
+//     --connect-go_out=. --connect-go_opt=module=indicer protos/dues.proto
+// The protocol is described in docs/SERVER_API.md.
+
 package pbconnect
 
 import (

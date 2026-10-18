@@ -64,7 +64,6 @@ type Globals struct {
 	StoreTaskQueueDepth, RestoreWorkerCount               int
 	RestoreTaskQueueDepth, RestoreProgressIntervalMs      int
 	RestoreWriteBufferMB                                  int
-	DB                                                    *badger.DB
 }
 
 // Snapshot captures the current globals.
@@ -90,7 +89,6 @@ func Snapshot() Globals {
 		RestoreTaskQueueDepth:     cnst.RestoreTaskQueueDepth,
 		RestoreProgressIntervalMs: cnst.RestoreProgressIntervalMs,
 		RestoreWriteBufferMB:      cnst.RestoreWriteBufferMB,
-		DB:                        cnst.DB,
 	}
 }
 
@@ -116,7 +114,6 @@ func (g Globals) Restore() {
 	cnst.RestoreTaskQueueDepth = g.RestoreTaskQueueDepth
 	cnst.RestoreProgressIntervalMs = g.RestoreProgressIntervalMs
 	cnst.RestoreWriteBufferMB = g.RestoreWriteBufferMB
-	cnst.DB = g.DB
 }
 
 // Isolate snapshots the globals now and restores them when the test ends.

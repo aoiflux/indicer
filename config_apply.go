@@ -76,6 +76,39 @@ func resolveCredentials(f cliFlags, set map[string]bool, stdin io.Reader) (dbmet
 	return dbmeta.Password(pw), warnings, nil
 }
 
+// Server token sources, highest precedence first: --token-file, DUES_TOKEN,
+// --token.
+const (
+	flagListen     = "listen"
+	flagToken      = "token"
+	flagTokenFile  = "token-file"
+	flagCORSOrigin = "cors-origin"
+	envToken       = "DUES_TOKEN"
+)
+
+// resolveServerToken returns the server's bearer token from the first source
+// that has one, and warnings for the user. An empty token is no token.
+func resolveServerToken(f cliFlags) (string, []string, error) {
+	switch {
+	case *f.serverTokenFile != "":
+		b, err := os.ReadFile(*f.serverTokenFile)
+		if err != nil {
+			return "", nil, lifecycle.Usagef("--%s: %v", flagTokenFile, err)
+		}
+		tok := strings.TrimSpace(firstLine(string(b)))
+		if tok == "" {
+			return "", nil, lifecycle.Usagef("--%s: %s holds no token", flagTokenFile, *f.serverTokenFile)
+		}
+		return tok, nil, nil
+	case os.Getenv(envToken) != "":
+		return strings.TrimSpace(os.Getenv(envToken)), nil, nil
+	case *f.serverToken != "":
+		return *f.serverToken, []string{fmt.Sprintf("--%s on the command line is visible to other users of this machine; prefer --%s or %s",
+			flagToken, flagTokenFile, envToken)}, nil
+	}
+	return "", nil, nil
+}
+
 // firstLine returns s up to its first line break.
 func firstLine(s string) string {
 	if i := strings.IndexAny(s, "\r\n"); i >= 0 {

@@ -8,7 +8,6 @@ import (
 	"strings"
 	"time"
 
-	"github.com/dgraph-io/badger/v4"
 	"github.com/klauspost/compress/zstd"
 	"github.com/shirou/gopsutil/v3/mem"
 	"github.com/zeebo/blake3"
@@ -80,7 +79,6 @@ var RestoreWorkerCount = 0
 var RestoreTaskQueueDepth = 0
 var RestoreProgressIntervalMs = 0
 var RestoreWriteBufferMB = 0
-var DB *badger.DB
 
 const (
 	EviFileNamespace                = "E|||:"

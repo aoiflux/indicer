@@ -18,6 +18,7 @@ import (
 	"indicer/lib/cnst"
 	"indicer/lib/dbio"
 	"indicer/lib/dbmeta"
+	"indicer/lib/fsx"
 
 	"github.com/dgraph-io/badger/v4"
 	"github.com/zeebo/blake3"
@@ -363,5 +364,72 @@ func TestLegacyFixtures(t *testing.T) {
 			again := open(t, Request{Path: root, Mode: ReadOnly, Creds: creds})
 			readSomeChunks(t, again.DB, root, container)
 		})
+	}
+}
+
+// copyTree copies the files under src to dst, except the lock files a live
+// process holds.
+func copyTree(t *testing.T, src, dst string) {
+	t.Helper()
+	err := filepath.WalkDir(src, func(p string, d os.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+		rel, _ := filepath.Rel(src, p)
+		target := filepath.Join(dst, rel)
+		if d.IsDir() {
+			return os.MkdirAll(target, 0o755)
+		}
+		if d.Name() == LockName || d.Name() == "LOCK" {
+			return nil
+		}
+		b, err := os.ReadFile(p)
+		if err != nil {
+			return err
+		}
+		return os.WriteFile(target, b, 0o644)
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+}
+
+// A read-only open of a database whose process died (here, a copy taken
+// while it was open) recovers it when the root is writable. badger wraps
+// ErrTruncateNeeded with %+v, so errors.Is never matched it and every read
+// command failed with "Log truncate required" until a writer opened the
+// database (CFG-13).
+func TestReadOnlyOpenRecoversUncleanDatabase(t *testing.T) {
+	root := setup(t)
+	w := open(t, Request{Path: root, Mode: ReadWrite})
+	if err := w.DB.Update(func(txn *badger.Txn) error { return txn.Set([]byte("k"), []byte("v")) }); err != nil {
+		t.Fatal(err)
+	}
+	crashed := filepath.Join(t.TempDir(), "crashed")
+	copyTree(t, root, crashed)
+	w.Close()
+
+	// While another reader holds the root, it cannot be recovered.
+	other, err := fsx.TryLock(filepath.Join(crashed, LockName), true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := openErr(t, Request{Path: crashed, Mode: ReadOnly}); !errors.Is(err, ErrNeedsRecovery) {
+		t.Errorf("beside another reader: %v, want ErrNeedsRecovery", err)
+	}
+	if err := other.Unlock(); err != nil {
+		t.Fatal(err)
+	}
+
+	h := open(t, Request{Path: crashed, Mode: ReadOnly})
+	if !slices.ContainsFunc(h.Notices, func(n string) bool { return strings.Contains(n, "not closed cleanly") }) {
+		t.Errorf("notices %q; want the recovery noted", h.Notices)
+	}
+	err = h.DB.View(func(txn *badger.Txn) error {
+		_, err := txn.Get([]byte("k"))
+		return err
+	})
+	if err != nil {
+		t.Fatalf("reading the recovered database: %v", err)
 	}
 }

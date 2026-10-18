@@ -38,6 +38,11 @@ type Request struct {
 	Path string
 	// Name is the evidence's display name; the file's base name when empty.
 	Name string
+	// SourcePath, when set, is recorded as the path the evidence was read
+	// from instead of Path: an upload records the path its client gave, not
+	// the temporary file it was received into. It applies to a source of
+	// one file.
+	SourcePath string
 	// Decode stores a recognised container decoded (D5). Without it the
 	// file's own bytes are stored and not indexed: the compression product
 	// archives files, and must give back exactly the file it was given.
@@ -128,7 +133,7 @@ func Run(ctx context.Context, db *badger.DB, req Request) (Result, error) {
 	}
 	defer src.Close()
 
-	res := Result{Source: src.Info(), Size: src.Size()}
+	res := Result{Source: recordedSource(src, req), Size: src.Size()}
 	name := req.Name
 	if name == "" {
 		name = src.Name()
@@ -137,7 +142,7 @@ func Run(ctx context.Context, db *badger.DB, req Request) (Result, error) {
 	if err != nil {
 		return res, fmt.Errorf("fingerprint %s: %w", req.Path, err)
 	}
-	rec, err := newRecord(db, src, name, fp, req)
+	rec, err := newRecord(db, src, res.Source, name, fp, req)
 	if err != nil {
 		return res, err
 	}
@@ -148,7 +153,11 @@ func Run(ctx context.Context, db *badger.DB, req Request) (Result, error) {
 		return res, err
 	}
 	if winner != nil {
-		a := structs.AliasRecord{Name: name, Path: src.Path(), Size: src.Size(), Source: res.Source}
+		path := src.Path()
+		if req.SourcePath != "" {
+			path = req.SourcePath
+		}
+		a := structs.AliasRecord{Name: name, Path: path, Size: src.Size(), Source: res.Source}
 		if err := store.WriteAlias(db, winner, a); err != nil {
 			return res, err
 		}
@@ -164,8 +173,17 @@ func Run(ctx context.Context, db *badger.DB, req Request) (Result, error) {
 	return run(ctx, db, src, eid, name, req, res)
 }
 
+// recordedSource is what the evidence records about where it was read from.
+func recordedSource(src *evidence.Source, req Request) structs.EvidenceSource {
+	info := src.Info()
+	if req.SourcePath != "" && len(info.Members) == 1 {
+		info.Members = []structs.SourceMember{{Path: req.SourcePath, Size: info.Members[0].Size}}
+	}
+	return info
+}
+
 // newRecord builds the evidence record an ingest starts from.
-func newRecord(db *badger.DB, src *evidence.Source, name, fp string, req Request) (structs.EvidenceFile, error) {
+func newRecord(db *badger.DB, src *evidence.Source, info structs.EvidenceSource, name, fp string, req Request) (structs.EvidenceFile, error) {
 	switch cnst.StoreHashStrategy {
 	case cnst.SyncHashStrategy, cnst.AsyncHashStrategy, cnst.HochoHashStrategy:
 	default:
@@ -182,7 +200,6 @@ func newRecord(db *badger.DB, src *evidence.Source, name, fp string, req Request
 	rec.ChunkHashAlgo, rec.FileHashAlgo = hashNames(db)
 	rec.HashStrategy = cnst.StoreHashStrategy
 	rec.Fingerprint = fp
-	info := src.Info()
 	rec.Source = &info
 	if cnst.ENABLEREVREL {
 		rec.Features = append(rec.Features, "revrel")

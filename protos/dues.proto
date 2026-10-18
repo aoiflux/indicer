@@ -1,5 +1,11 @@
 syntax = "proto3";
 
+// Regenerate pb with the repository root as the working directory:
+//   protoc -I protos --go_out=. --go_opt=module=indicer \
+//     --go-grpc_out=. --go-grpc_opt=module=indicer \
+//     --connect-go_out=. --connect-go_opt=module=indicer protos/dues.proto
+// The protocol is described in docs/SERVER_API.md.
+
 package dues;
 option go_package = "indicer/pb;pb";
 
@@ -16,13 +22,24 @@ service DuesService {
 
 message BaseFile {
     string file_path = 1;
+    // file_id is the base64 of the object's record key; the listings take
+    // it as evi_file_id and parti_file_id.
     string file_id = 2;
     int64 file_size = 3;
+    // chunk_map maps the base64 hash of each stored chunk holding part of
+    // the object to that chunk's stored size.
     map<string, int64> chunk_map = 4;
+    // chunk_map_truncated: the object has more chunks than one response
+    // carries; chunk_map holds the first of them.
+    bool chunk_map_truncated = 5;
 }
 
 message AppendIfExistsReq {
+    // file_hash is the base64 of the file's plain content hash, in the
+    // database's file hash algorithm (BLAKE3-256 unless it was created with
+    // SHA3).
     string file_hash = 1;
+    // file_path is recorded as an alias of the evidence holding the content.
     string file_path = 2;
 }
 message AppendIfExistsRes {
@@ -34,7 +51,12 @@ message AppendIfExistsRes {
 message StreamFileMeta {
     string file_path = 1;
     string file_type = 2; // evidence file type (windows_exfat, linux_ext4, something else)
+    // file_hash is checked against the uploaded bytes, as in
+    // AppendIfExistsReq.
     string file_hash = 3;
+    // size, when set, is the number of bytes the stream carries; more is
+    // refused, and less fails the upload.
+    int64 size = 4;
 }
 message StreamFileReq {
     oneof payload {
@@ -48,27 +70,41 @@ message StreamFileRes {
     BaseFile evi_file = 3;
 }
 
-message GetEviFilesReq {}
+// The listings are paged. A response holds at most page_size objects
+// (default 1000, at most 10000) and ends a page early rather than carry more
+// than 1M chunk-map entries. next_page_token, when set, is passed as
+// page_token to get the next page.
+message GetEviFilesReq {
+    int32 page_size = 1;
+    string page_token = 2;
+}
 message GetEviFilesRes {
     bool done  = 1;
     string err = 2;
     repeated BaseFile evi_file = 3;
+    string next_page_token = 4;
 }
 message GetPartiFilesReq {
     string evi_file_id = 1;
+    int32 page_size = 2;
+    string page_token = 3;
 }
 message GetPartiFilesRes {
     bool done  = 1;
     string err = 2;
     repeated BaseFile partition_file = 3;
+    string next_page_token = 4;
 }
 message GetIdxFilesReq {
     string parti_file_id = 1;
+    int32 page_size = 2;
+    string page_token = 3;
 }
 message GetIdxFilesRes {
     bool done  = 1;
     string err = 2;
     repeated BaseFile indexed_file = 3;
+    string next_page_token = 4;
 }
 
 
@@ -78,8 +114,12 @@ message SearchReq {
 }
 message SearchRes {
     string err = 1;
+    // total_count is the occurrences in the stored evidence, counted once
+    // however many partitions and files they also fall in.
     int64 total_count = 2;
-    // Keys are base64-encoded internal file IDs from the search index.
-    // Values are occurrence counts for the matched keyword within that file.
+    // Keys are the base64 record keys of the objects (evidence, partitions,
+    // indexed files) the keyword occurs in; values are its occurrences there.
     map<string, int64> keyword_count_map = 3;
+    // truncated: more objects matched than one response carries (100,000).
+    bool truncated = 4;
 }

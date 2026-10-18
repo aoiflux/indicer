@@ -203,7 +203,7 @@ func printRootHelp() {
 	fmt.Printf("  %-20s %s\n", cmd(cnst.CmdMicro), "Manage micro-artefacts (extract, list)")
 	fmt.Printf("  %-20s %s\n", cmd(cnst.CmdEnrich), "Backfill file hierarchy metadata into graphdb")
 	fmt.Printf("  %-20s %s\n", cmd(cnst.CmdNear), "Find NeAR file objects")
-	fmt.Printf("  %-20s %s\n", cmd(cnst.CmdServer), "Run gRPC/Web server")
+	fmt.Printf("  %-20s %s\n", cmd(cnst.CmdServer), "Serve the database over Connect/gRPC/gRPC-Web (loopback by default)")
 	fmt.Printf("  %-20s %s\n", cmd(cnst.CmdReset), "Delete database")
 	fmt.Printf("  %-20s %s\n", cmd(cnst.CmdVeresion), "Show version details")
 	fmt.Printf("  %-20s %s\n", cmd(cnst.CmdStats), "Show stats about data")
@@ -521,12 +521,24 @@ func printNearOutHelp() {
 
 func printServerHelp() {
 	printHelpHeader("server")
-	fmt.Println("Usage: dues server [--hash-algo|-g sha3|blake3] [global options]")
-	fmt.Println("Runs the combined gRPC/Web DUES server.")
+	fmt.Println("Usage: dues server [--listen HOST:PORT]... [--token-file PATH] [--cors-origin ORIGIN]... [--hash-algo|-g sha3|blake3] [global options]")
+	fmt.Println("Serves the database over Connect, gRPC and gRPC-Web, with resumable browser uploads.")
+	fmt.Println("It listens on 127.0.0.1:50051 and [::1]:50051 unless told otherwise. docs/SERVER_API.md describes the protocol.")
+	printHelpSection("Options")
+	fmt.Println("  --listen        Serve on this host:port (repeatable). A non-loopback address needs a token")
+	fmt.Println("  --token-file    Require the bearer token on the first line of this file (at least 32 characters)")
+	fmt.Println("  --token         Require this bearer token (visible to other users; prefer --token-file or DUES_TOKEN)")
+	fmt.Println("  --cors-origin   Also let pages from this origin call the server, as scheme://host[:port] (repeatable)")
+	printHelpSection("Environment")
+	fmt.Println("  DUES_TOKEN      The bearer token, when --token-file is not given")
+	printHelpSection("Notes")
+	fmt.Println("  Traffic is plain HTTP: put a TLS proxy or an SSH tunnel in front of a non-loopback address.")
+	fmt.Println("  Health checks: GET /healthz and GET /readyz, without the token.")
 	printExamples(
 		"dues server",
-		"dues server --hash-algo sha3",
 		"dues server --dbpath ./caseA",
+		"dues server --listen 192.168.1.10:50051 --token-file ./token",
+		"dues server --cors-origin https://ui.example.org",
 	)
 }
 

@@ -105,6 +105,17 @@ func (im *vhdImage) ChainDepth() int { return im.d.ChainDepth() }
 // ChainComplete reports whether every parent in the chain was attached.
 func (im *vhdImage) ChainComplete() bool { return im.d.ChainComplete() }
 
+// ChainPaths returns the file of every disk in the chain, the image first.
+func (im *vhdImage) ChainPaths() []string {
+	var out []string
+	for x := im.d; x != nil; x = x.Parent() {
+		if p := x.Path(); p != "" {
+			out = append(out, p)
+		}
+	}
+	return out
+}
+
 // maxVHDChainDepth bounds a differencing chain, counting the child.
 const maxVHDChainDepth = 16
 

@@ -271,6 +271,7 @@ func buildRecord(fsys core.Filesystem, p core.Partition, fsType core.FSType, n c
 	rec := core.FileRecord{
 		Name:           n.Name,
 		Path:           n.Path,
+		Stream:         n.Stream,
 		Kind:           n.Kind,
 		IsDeleted:      n.IsDeleted,
 		Prov:           n.Prov,
@@ -305,6 +306,7 @@ func buildRecord(fsys core.Filesystem, p core.Partition, fsType core.FSType, n c
 	if rec.Kind != core.KindFile {
 		return rec
 	}
+	rec.Open = func() (io.ReadCloser, error) { return fsys.Open(n) }
 
 	c, err := fsys.Content(n)
 	if err != nil {

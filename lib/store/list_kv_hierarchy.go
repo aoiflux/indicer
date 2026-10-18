@@ -51,7 +51,7 @@ func buildPartitionData(phash string, txn *badger.Txn) (map[string]interface{}, 
 	partData := map[string]interface{}{
 		"id":           phash,
 		"hash":         pdata.FileHash,
-		"fileName":     firstCleanName(pdata.Name),
+		"fileName":     dbio.RecordPath(pdata.IndexedFile),
 		"type":         pdata.IndexedType,
 		"size":         pdata.Size,
 		"fileCount":    1,
@@ -160,7 +160,9 @@ func buildIndexedFileData(ihash string, txn *badger.Txn) ([]map[string]interface
 		return nil, badger.ErrKeyNotFound
 	}
 
-	name := firstCleanName(idata.Name)
+	// The path, from the record's own field or its legacy name; splitting
+	// the name broke paths holding the separator (SRC-8).
+	name := dbio.RecordPath(idata)
 	if name == "" {
 		name = ihash
 	}
@@ -199,6 +201,16 @@ func buildCompletedEvidenceFromKV(evidenceHash string, db *badger.DB) (map[strin
 		partitionHashes, err := getEvidencePartitionHashes(txn, evidenceID, evidata)
 		if err != nil {
 			return err
+		}
+		if evidata.Index != nil {
+			result["indexState"] = string(evidata.Index.State)
+			if evidata.Index.Reason != "" {
+				result["indexReason"] = evidata.Index.Reason
+			}
+			// A quarantined index is known wrong: it is not listed.
+			if evidata.Index.State == structs.IndexInvalid {
+				partitionHashes = nil
+			}
 		}
 
 		partitions := make([]map[string]interface{}, 0, len(partitionHashes))

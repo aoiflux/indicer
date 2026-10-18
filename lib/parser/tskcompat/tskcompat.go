@@ -1,9 +1,8 @@
 // Package tskcompat renders the pure-Go scan output into the exact JSON shape
-// produced by libtusk_analyze. This lets the existing ingest consumer
-// (parser.IndexFilesystem / buildIdxMap) run unchanged against the new stack,
-// and lets the two producers be diffed byte-for-byte during the migration.
+// produced by libtusk_analyze. It is a debug renderer: ingest indexes through
+// lib/index since W6, and this output lets the scan be compared with libtusk.
 //
-// The JSON shape mirrors clib/LIBTUSK_ABI.md and lib/parser/tusk.go:
+// The JSON shape mirrors clib/LIBTUSK_ABI.md:
 //
 //	{ "image", "partitions": [ { "name","start_offset","end_offset",
 //	    "filesystem": {"type","block_size","offset"},
@@ -68,8 +67,7 @@ type resultJSON struct {
 }
 
 // Analyze opens the image at path and renders libtusk-compatible JSON: the same
-// shape the CGo libtusk path used to emit, so ParseImage/IndexFilesystem consume
-// it unchanged.
+// shape the CGo libtusk path used to emit.
 func Analyze(path string) (string, error) {
 	img, err := image.Open(path)
 	if err != nil {

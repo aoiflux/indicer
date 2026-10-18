@@ -24,18 +24,15 @@ package store
 
 import (
 	"context"
-	"encoding/base64"
 	"encoding/binary"
 	"fmt"
 	"hash"
-	"indicer/internal/console"
 	"indicer/lib/cnst"
 	"indicer/lib/fio"
-	"indicer/lib/structs"
 	"indicer/lib/util"
+	"sync"
 
 	"github.com/dgraph-io/badger/v4"
-	"github.com/schollz/progressbar/v3"
 )
 
 // chunkTask carries per-chunk outputs from hash/materialize workers to the
@@ -49,44 +46,30 @@ type chunkTask struct {
 	size  int64 // bytes of evidence content in the chunk
 }
 
-type workerRes struct {
-	err   error
-	bytes int64
-}
-
-type chunkJob struct {
-	idx      int64
-	chonkEnd int64
-}
-
 type writerResult struct {
-	hochoHash string
-	err       error
+	root []byte
+	err  error
 }
 
+// hochoAccumulator computes the hocho root, the hash over every chunk hash in
+// order (length-prefixed), from chunk hashes that arrive in any order.
 type hochoAccumulator struct {
-	enabled      bool
 	hasher       hash.Hash
+	stride       int64
 	expectedIdx  int64
 	pendingChunk map[int64][]byte
 }
 
-func newHochoAccumulator(enabled bool, startIndex int64) *hochoAccumulator {
-	if !enabled {
-		return &hochoAccumulator{enabled: false}
-	}
+func newHochoAccumulator(newHash func() hash.Hash, stride, startIndex int64) *hochoAccumulator {
 	return &hochoAccumulator{
-		enabled:      true,
-		hasher:       cnst.GetHashAlgo(true),
+		hasher:       newHash(),
+		stride:       stride,
 		expectedIdx:  startIndex,
 		pendingChunk: make(map[int64][]byte),
 	}
 }
 
 func (h *hochoAccumulator) add(index int64, chash []byte) error {
-	if !h.enabled {
-		return nil
-	}
 	h.pendingChunk[index] = append([]byte(nil), chash...)
 
 	for {
@@ -105,38 +88,27 @@ func (h *hochoAccumulator) add(index int64, chash []byte) error {
 		}
 
 		delete(h.pendingChunk, h.expectedIdx)
-		h.expectedIdx += cnst.ChonkSize
+		h.expectedIdx += h.stride
 	}
 
 	return nil
 }
 
-func (h *hochoAccumulator) finalize() (string, error) {
-	if !h.enabled {
-		return "", nil
-	}
+func (h *hochoAccumulator) finalize() ([]byte, error) {
 	if len(h.pendingChunk) != 0 {
-		return "", fmt.Errorf("hocho accumulation incomplete: %d chunks pending", len(h.pendingChunk))
+		return nil, fmt.Errorf("hocho accumulation incomplete: %d chunks pending", len(h.pendingChunk))
 	}
-	return base64.StdEncoding.EncodeToString(h.hasher.Sum(nil)), nil
+	return h.hasher.Sum(nil), nil
 }
 
-// storeEvidenceDataBatchOwner is the production evidence ingest path.
-// Returns a hocho evidence hash only when hocho strategy is active.
-func storeEvidenceDataBatchOwner(parentCtx context.Context, infile structs.InputFile) (evidenceHochoHash string, err error) {
-	if parentCtx == nil {
-		parentCtx = context.Background()
-	}
-	bar := progressbar.NewOptions64(
-		infile.GetSize(),
-		progressbar.OptionShowBytes(true),
-		progressbar.OptionSetWriter(console.Progress()),
-		progressbar.OptionSetTheme(cnst.CommonProgressBarTheme),
-	)
+// ingestChunksBatchOwner is the production chunk pass.
+func ingestChunksBatchOwner(parentCtx context.Context, p ChunkPass) (res ChunkResult, err error) {
+	shape := shapeFor(p)
+	bar := newPassBar(p)
 
 	var simhashWriter *simhashAsyncWriter
 	if cnst.ENABLESIMHASH {
-		simhashWriter = newSimhashAsyncWriter(infile.GetDB(), cnst.GetMaxThreadCount())
+		simhashWriter = newSimhashAsyncWriter(p.DB, cnst.GetMaxThreadCount())
 		defer func() {
 			simhashErr := simhashWriter.wait()
 			if err == nil && simhashErr != nil {
@@ -147,120 +119,62 @@ func storeEvidenceDataBatchOwner(parentCtx context.Context, infile structs.Input
 
 	var containerMgr *fio.ContainerManager
 	if cnst.CONTAINERMODE {
-		containerMgr = fio.NewContainerManager(infile.GetDB().Opts().Dir)
+		containerMgr = fio.NewContainerManager(p.DB.Opts().Dir)
 		defer closeContainerManager(&err, containerMgr)
 	}
 
-	// ctx is cancelled when parent context is canceled or writer exits with an error so that
-	// in-flight workers do not block indefinitely on taskCh.
+	// ctx is cancelled when the caller cancels or any stage fails, which
+	// stops the feed and lets every worker drain.
 	ctx, cancel := context.WithCancel(parentCtx)
 	defer cancel()
 
-	// Tune worker/queue shape by storage mode; container/hierarchical paths
-	// include serialized components and benefit from steadier queue pressure.
-	workerCount, taskQueueDepth := cnst.GetStorePipelineTuning(cnst.CONTAINERMODE)
-	taskCh := make(chan chunkTask, taskQueueDepth)
+	taskCh := make(chan chunkTask, shape.queueDepth)
 	writerResCh := make(chan writerResult, 1)
+	go runBatchOwnerWriter(p.ID, shape, p.DB, containerMgr, taskCh, cancel, writerResCh)
 
-	go runBatchOwnerWriter(
-		infile.GetHash(),
-		infile.GetStartIndex(),
-		infile.GetDB(),
-		containerMgr,
-		taskCh,
-		cancel,
-		writerResCh,
-	)
-
-	jobCh := make(chan chunkJob, taskQueueDepth)
-	workerResCh := make(chan workerRes, workerCount+1)
+	tap := newDigestTap(shape.fileHash, p.Ranges, p.EWF)
+	feed := shape.feed(ctx, p, tap)
 	seenChunks := newShardedChunkSet()
-	mappedFile := infile.GetMappedFile()
+
+	var mu sync.Mutex
 	var firstWorkerErr error
-
-	for i := 0; i < workerCount; i++ {
-		go batchOwnerHashWorkerLoop(ctx, mappedFile, infile.GetDB(), containerMgr, seenChunks, jobCh, taskCh, workerResCh, simhashWriter)
-	}
-
-	totalJobs := 0
-	completedJobs := 0
-	jobChClosed := false
-	for storeIndex := infile.GetStartIndex(); storeIndex < infile.GetSize(); storeIndex += cnst.ChonkSize {
-		if err := ctx.Err(); err != nil {
-			close(jobCh)
-			jobChClosed = true
-			for completedJobs < totalJobs {
-				res := <-workerResCh
-				completedJobs++
-				captureFirstWorkerErr(res.err, &firstWorkerErr)
-				bar.Add64(res.bytes)
-			}
-			break
-		}
-		var buffsize int64
-		if infile.GetSize()-storeIndex <= cnst.ChonkSize {
-			buffsize = infile.GetSize() - storeIndex
-		} else {
-			buffsize = cnst.ChonkSize
-		}
-		chonkEnd := storeIndex + buffsize
-		job := chunkJob{idx: storeIndex, chonkEnd: chonkEnd}
-
-		for {
-			select {
-			case jobCh <- job:
-				totalJobs++
-				goto enqueued
-			case res := <-workerResCh:
-				completedJobs++
-				captureFirstWorkerErr(res.err, &firstWorkerErr)
-				bar.Add64(res.bytes)
-			case <-ctx.Done():
-				close(jobCh)
-				jobChClosed = true
-				for completedJobs < totalJobs {
-					res := <-workerResCh
-					completedJobs++
-					captureFirstWorkerErr(res.err, &firstWorkerErr)
-					bar.Add64(res.bytes)
+	var chunks int64
+	var wg sync.WaitGroup
+	for range shape.workers {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			h := shape.chunkHash()
+			for c := range feed.chunks() {
+				n := int64(len(c.data))
+				werr := batchOwnerHashWorker(ctx, c.off, c.data, h, p.DB, containerMgr, seenChunks, taskCh, simhashWriter)
+				c.release()
+				mu.Lock()
+				if werr != nil {
+					captureFirstWorkerErr(werr, &firstWorkerErr)
+					cancel()
+				} else {
+					chunks++
+					bar.Add64(n)
 				}
-				goto doneScheduling
+				mu.Unlock()
 			}
-		}
-
-	enqueued:
+		}()
 	}
-
-doneScheduling:
-	if ctx.Err() != nil && firstWorkerErr == nil {
-		firstWorkerErr = ctx.Err()
-	}
-	if !jobChClosed {
-		close(jobCh)
-	}
-
-	for completedJobs < totalJobs {
-		res := <-workerResCh
-		completedJobs++
-		captureFirstWorkerErr(res.err, &firstWorkerErr)
-		bar.Add64(res.bytes)
-	}
+	wg.Wait()
+	feedErr := feed.wait()
 
 	close(taskCh)
 	writerRes := <-writerResCh
-	bar.Finish()
-	fmt.Fprintln(console.Err())
-	// A progress bar error (an empty input has nothing to show) is not the
-	// operation's error.
-	_ = bar.Close()
+	finishPassBar(p, bar)
 
-	if firstWorkerErr != nil {
-		return "", firstWorkerErr
+	if err := passErr(parentCtx, feedErr, firstWorkerErr); err != nil {
+		return ChunkResult{}, err
 	}
 	if writerRes.err != nil {
-		return "", writerRes.err
+		return ChunkResult{}, writerRes.err
 	}
-	return writerRes.hochoHash, nil
+	return passResult(tap, writerRes.root, chunks), nil
 }
 
 func mergeDeferredErr(target *error, incoming error) {
@@ -279,62 +193,37 @@ func closeContainerManager(target *error, containerMgr *fio.ContainerManager) {
 
 func runBatchOwnerWriter(
 	fhash []byte,
-	startIndex int64,
+	shape passShape,
 	db *badger.DB,
 	containerMgr *fio.ContainerManager,
 	taskCh <-chan chunkTask,
 	cancel context.CancelFunc,
 	writerResCh chan<- writerResult,
 ) {
-	hochoHash, werr := batchOwnerWriteLoop(fhash, startIndex, db, containerMgr, taskCh)
+	root, werr := batchOwnerWriteLoop(fhash, shape, db, containerMgr, taskCh)
 	if werr != nil {
 		cancel()
 	}
-	writerResCh <- writerResult{hochoHash: hochoHash, err: werr}
+	writerResCh <- writerResult{root: root, err: werr}
 }
 
-func batchOwnerHashWorkerLoop(
-	ctx context.Context,
-	mappedFile []byte,
-	db *badger.DB,
-	containerMgr *fio.ContainerManager,
-	seenChunks *shardedChunkSet,
-	jobCh <-chan chunkJob,
-	taskCh chan<- chunkTask,
-	workerResCh chan<- workerRes,
-	simhashWriter *simhashAsyncWriter,
-) {
-	for job := range jobCh {
-		err := batchOwnerHashWorker(
-			ctx,
-			mappedFile,
-			job.idx,
-			job.chonkEnd,
-			db,
-			containerMgr,
-			seenChunks,
-			taskCh,
-			simhashWriter,
-		)
-		workerResCh <- workerRes{err: err, bytes: job.chonkEnd - job.idx}
-	}
-}
-
+// batchOwnerHashWorker hashes the chunk data at idx, stores it unless this
+// pass or the database already did, and hands the result to the writer. h is
+// the worker's own chunk hasher.
 func batchOwnerHashWorker(
 	ctx context.Context,
-	mappedFile []byte,
-	idx, chonkEnd int64,
+	idx int64,
+	chunkBytes []byte,
+	h hash.Hash,
 	db *badger.DB,
 	containerMgr *fio.ContainerManager,
 	seenChunks *shardedChunkSet,
 	taskCh chan<- chunkTask,
 	simhashWriter *simhashAsyncWriter,
 ) error {
-	chunkBytes := mappedFile[idx:chonkEnd]
-	chash, herr := util.GetChonkHash(chunkBytes, cnst.GetHashAlgo())
-	if herr != nil {
-		return herr
-	}
+	h.Reset()
+	h.Write(chunkBytes)
+	chash := h.Sum(nil)
 
 	if simhashWriter != nil {
 		simhashWriter.enqueue(chunkBytes, chash)
@@ -350,7 +239,7 @@ func batchOwnerHashWorker(
 	}
 
 	select {
-	case taskCh <- chunkTask{index: idx, chash: chash, cmeta: cmeta, size: chonkEnd - idx}:
+	case taskCh <- chunkTask{index: idx, chash: chash, cmeta: cmeta, size: int64(len(chunkBytes))}:
 		return nil
 	case <-ctx.Done():
 		return context.Canceled
@@ -366,56 +255,58 @@ func captureFirstWorkerErr(err error, firstWorkerErr *error) {
 
 // batchOwnerWriteLoop is the single writer goroutine. It owns the WriteBatch,
 // and the chunk-metadata barrier exclusively — no synchronisation primitives
-// are needed for those structures here.
+// are needed for those structures here. It returns the hocho root.
 func batchOwnerWriteLoop(
 	fhash []byte,
-	startIndex int64,
+	shape passShape,
 	db *badger.DB,
 	containerMgr *fio.ContainerManager,
 	taskCh <-chan chunkTask,
-) (string, error) {
+) ([]byte, error) {
 	batch, err := util.InitBatch(db)
 	if err != nil {
-		return "", err
+		return nil, err
 	}
 
 	barrier := newChunkMetaBarrier(db.Opts().Dir, containerMgr, batch)
-	hocho := newHochoAccumulator(cnst.StoreHashStrategy == cnst.HochoHashStrategy, startIndex)
+	hocho := newHochoAccumulator(shape.fileHash, shape.chunk, 0)
 
+	// On failure the writer returns at once; its caller cancels the pass,
+	// so workers blocked on taskCh give up.
+	fail := func(err error) ([]byte, error) {
+		batch.Cancel()
+		return nil, err
+	}
 	for task := range taskCh {
 		if err := hocho.add(task.index, task.chash); err != nil {
-			batch.Cancel()
-			return "", err
+			return fail(err)
 		}
 		ckey := util.AppendToBytesSlice(cnst.ChonkNamespace, task.chash)
 		if err := barrier.record(ckey, task.cmeta, task.size); err != nil {
-			batch.Cancel()
-			return "", err
+			return fail(err)
 		}
 		if err := processRel(task.index, fhash, task.chash, db, batch); err != nil {
-			batch.Cancel()
-			return "", err
+			return fail(err)
 		}
 		if err := processRevRel(task.index, fhash, task.chash, batch); err != nil {
-			batch.Cancel()
-			return "", err
+			return fail(err)
 		}
 	}
 
 	if err := barrier.fire(); err != nil {
 		batch.Cancel()
-		return "", err
+		return nil, err
 	}
 
-	hochoHash, err := hocho.finalize()
+	root, err := hocho.finalize()
 	if err != nil {
 		batch.Cancel()
-		return "", err
+		return nil, err
 	}
 
 	if err := batch.Flush(); err != nil {
-		return "", err
+		return nil, err
 	}
 
-	return hochoHash, nil
+	return root, nil
 }

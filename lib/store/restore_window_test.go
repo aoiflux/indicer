@@ -41,7 +41,7 @@ func TestRestoreReorderWindowIsBounded(t *testing.T) {
 	}
 
 	var out bytes.Buffer
-	report, err := restoreLogical(context.Background(), l, &out, RestoreOptions{})
+	report, err := restoreLogical(context.Background(), l, &out, RestoreOptions{}, nil)
 	if err != nil {
 		t.Fatalf("restore: %v", err)
 	}

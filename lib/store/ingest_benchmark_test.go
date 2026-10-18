@@ -259,62 +259,13 @@ func ingestBatchOwnerWorkerWorkload(db *badger.DB, mappedFile []byte, fileCount 
 }
 
 func ingestBatchOwnerWorkerOnce(db *badger.DB, fhash, mappedFile []byte, enableSimhash bool) error {
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
-
-	workerCount := cnst.GetMaxThreadCount()
-	taskCh := make(chan chunkTask, workerCount*2)
-	workerResCh := make(chan workerRes, workerCount+1)
-	writerResCh := make(chan writerResult, 1)
-
-	var simhashWriter *simhashAsyncWriter
-	if enableSimhash {
-		simhashWriter = newSimhashAsyncWriter(db, workerCount)
-		defer func() {
-			_ = simhashWriter.wait()
-		}()
-	}
-
-	go runBatchOwnerWriter(fhash, 0, db, nil, taskCh, cancel, writerResCh)
-	seenChunks := newShardedChunkSet()
-
-	active := 0
-	for idx := int64(0); idx < int64(len(mappedFile)); idx += cnst.ChonkSize {
-		chonkEnd := idx + cnst.ChonkSize
-		if chonkEnd > int64(len(mappedFile)) {
-			chonkEnd = int64(len(mappedFile))
-		}
-
-		go func(start, end int64) {
-			err := batchOwnerHashWorker(ctx, mappedFile, start, end, db, nil, seenChunks, taskCh, simhashWriter)
-			workerResCh <- workerRes{err: err, bytes: end - start}
-		}(idx, chonkEnd)
-		active++
-
-		if active > workerCount {
-			res := <-workerResCh
-			if res.err != nil {
-				return res.err
-			}
-			active--
-		}
-	}
-
-	for active > 0 {
-		res := <-workerResCh
-		if res.err != nil {
-			return res.err
-		}
-		active--
-	}
-
-	close(taskCh)
-	writerRes := <-writerResCh
-	if writerRes.err != nil {
-		return writerRes.err
-	}
-
-	return nil
+	prev := cnst.ENABLESIMHASH
+	cnst.ENABLESIMHASH = enableSimhash
+	defer func() { cnst.ENABLESIMHASH = prev }()
+	_, err := ingestChunksBatchOwner(context.Background(), ChunkPass{
+		DB: db, ID: fhash, Source: byteReaderAt(mappedFile), Size: int64(len(mappedFile)), Quiet: true,
+	})
+	return err
 }
 
 func ingestMetadataWorkload(db *badger.DB, fileCount int, chunkHashes [][]byte) error {

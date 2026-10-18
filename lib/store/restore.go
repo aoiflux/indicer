@@ -4,6 +4,8 @@ import (
 	"bufio"
 	"bytes"
 	"context"
+	"crypto/md5"
+	"crypto/sha1"
 	"crypto/sha3"
 	"encoding/base64"
 	"encoding/binary"
@@ -56,6 +58,9 @@ func ParseVerifyLevel(s string) (VerifyLevel, error) {
 // RestoreOptions control a restore.
 type RestoreOptions struct {
 	Verify VerifyLevel
+	// VerifyEWF checks a restored EWF evidence against the MD5 and SHA-1 the
+	// set recorded at acquisition, when it recorded any.
+	VerifyEWF bool
 }
 
 // DigestStatus says what a restore found out about the whole object.
@@ -84,6 +89,14 @@ type RestoreReport struct {
 	// DigestForm names the hash that matched, such as "blake3" or
 	// "hocho-sha3-256".
 	DigestForm string
+	// RecordedSize is the size the record gives. A file whose content could
+	// only partly be located restores the Size bytes that were (Truncated).
+	RecordedSize int64
+	Truncated    bool
+	// EWF is the result of checking an EWF evidence against the digests its
+	// set recorded (structs.EWFVerified or EWFMismatch), or "" when it was
+	// not checked.
+	EWF string
 }
 
 type restoreChunkJob struct {
@@ -125,7 +138,17 @@ func Restore(ctx context.Context, db *badger.DB, rhash string, dst io.Writer, op
 	if !l.Completed() {
 		return RestoreReport{}, cnst.ErrIncompleteFile
 	}
-	return restoreLogical(ctx, l, dst, opts)
+	var ewf *structs.EWFCheck
+	if opts.VerifyEWF && bytes.HasPrefix(fid, []byte(cnst.EviFileNamespace)) {
+		rec, err := dbio.GetEvidenceFile(fid, db)
+		if err != nil {
+			return RestoreReport{}, err
+		}
+		if rec.Source != nil && rec.Source.EWF != nil && (len(rec.Source.EWF.StoredMD5) > 0 || len(rec.Source.EWF.StoredSHA1) > 0) {
+			ewf = rec.Source.EWF
+		}
+	}
+	return restoreLogical(ctx, l, dst, opts, ewf)
 }
 
 func GetFileMeta(fid []byte, db *badger.DB) (structs.FileMeta, error) {
@@ -217,8 +240,8 @@ func getEvidenceFileMeta(fid []byte, db *badger.DB) (structs.FileMeta, error) {
 // restoreLogical writes the content of l to dst. Chunks are read and checked
 // in parallel and written in order; at most the window is between being read
 // and being written (RST-5).
-func restoreLogical(ctx context.Context, l *dbio.Logical, dst io.Writer, opts RestoreOptions) (RestoreReport, error) {
-	report := RestoreReport{Key: l.Key(), Size: l.Size(), Digest: DigestSkipped}
+func restoreLogical(ctx context.Context, l *dbio.Logical, dst io.Writer, opts RestoreOptions, ewf *structs.EWFCheck) (RestoreReport, error) {
+	report := RestoreReport{Key: l.Key(), Size: l.Size(), RecordedSize: l.RecordedSize(), Truncated: l.Truncated(), Digest: DigestSkipped}
 	configureRestoreCache()
 
 	fio.EnableContainerReadCache()
@@ -229,6 +252,10 @@ func restoreLogical(ctx context.Context, l *dbio.Logical, dst io.Writer, opts Re
 	if opts.Verify == VerifyFull {
 		digest = newDigester(l)
 	}
+	var ewfMD5, ewfSHA1 hash.Hash
+	if ewf != nil {
+		ewfMD5, ewfSHA1 = md5.New(), sha1.New()
+	}
 
 	bar := progressbar.NewOptions64(
 		l.Size(),
@@ -238,7 +265,7 @@ func restoreLogical(ctx context.Context, l *dbio.Logical, dst io.Writer, opts Re
 	)
 
 	workerCount, jobQueueDepth := cnst.GetRestorePipelineTuning()
-	fetchBatchSize, window := restoreWindow(l.Evidence().ChunkSize())
+	fetchBatchSize, window := restoreWindow(l.ChunkSize())
 	slots := make(chan struct{}, window)
 	jobs := make(chan restoreChunkJob, jobQueueDepth)
 	results := make(chan restoreChunkResult, jobQueueDepth)
@@ -335,6 +362,10 @@ func restoreLogical(ctx context.Context, l *dbio.Logical, dst io.Writer, opts Re
 		if digest != nil {
 			digest.add(r.span, r.data)
 		}
+		if ewfMD5 != nil {
+			ewfMD5.Write(r.data)
+			ewfSHA1.Write(r.data)
+		}
 		<-slots
 		pendingProgress += int64(len(r.data))
 		restored += int64(len(r.data))
@@ -409,6 +440,15 @@ func restoreLogical(ctx context.Context, l *dbio.Logical, dst io.Writer, opts Re
 		report.Digest, report.DigestForm = digest.result()
 		if report.Digest == "" {
 			return report, fmt.Errorf("%w: %x records %s", ErrDigestMismatch, l.Key(), l.FileHash())
+		}
+	}
+	if ewf != nil {
+		// A set whose digests did not match at ingest restores the bytes it
+		// holds; the report says they differ from what the imager hashed.
+		report.EWF = structs.EWFVerified
+		if (len(ewf.StoredMD5) > 0 && !bytes.Equal(ewfMD5.Sum(nil), ewf.StoredMD5)) ||
+			(len(ewf.StoredSHA1) > 0 && !bytes.Equal(ewfSHA1.Sum(nil), ewf.StoredSHA1)) {
+			report.EWF = structs.EWFMismatch
 		}
 	}
 
@@ -524,11 +564,22 @@ func newDigester(l *dbio.Logical) *digester {
 		// No hash, or none in a form restore computes.
 		want = nil
 	}
-	return &digester{want: want, stride: l.Evidence().ChunkSize(), chunks: l.Evidence()}
+	return &digester{want: want, stride: l.ChunkSize(), chunks: l.Evidence()}
 }
 
 func (d *digester) add(s dbio.ChunkSpan, data []byte) {
 	if d.want == nil {
+		return
+	}
+	if !s.Stored() {
+		// Holes and inline bytes: only an indexed file recorded since W6 has
+		// them, and its hash is a plain one.
+		if d.algos == nil {
+			d.algos = []fileHashAlgo{newFileHashAlgo("blake3", newBLAKE3), newFileHashAlgo("sha3-256", newSHA3256)}
+		}
+		for _, a := range d.algos {
+			a.plain.Write(data)
+		}
 		return
 	}
 	if d.algos == nil {

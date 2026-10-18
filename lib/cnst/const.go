@@ -98,6 +98,13 @@ const (
 	ChonkNamespace                  = "C|||:"
 	ChonkSimhashNamespace           = "S|||:"
 	FileSimhashNamespace            = "F|||:"
+	EviRootLookupNamespace          = "ER|||:" // content root to the evidence holding it (D1)
+	EviQuickLookupNamespace         = "EQ|||:" // size and fingerprint to candidate evidence (D1)
+	EviAliasNamespace               = "EA|||:" // later ingests of stored content (D1)
+	EviAttemptNamespace             = "EP|||:" // source path to its unfinished attempt
+	ObjectNamespace                 = "X|||:"  // materialised content objects (D10)
+	ExtentPageNamespace             = "XE|||:" // extents of very fragmented indexed files
+	PartitionReportNamespace        = "PR|||:" // a partition's index report
 	NamespaceSeperator              = "|||:"
 	RangeSeperator                  = "-"
 	DataSeperator                   = "|||"

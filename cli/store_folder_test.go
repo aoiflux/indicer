@@ -11,7 +11,6 @@ import (
 	"indicer/internal/testutil"
 	"indicer/internal/testutil/testdb"
 	"indicer/lib/cnst"
-	"indicer/lib/structs"
 
 	"github.com/dgraph-io/badger/v4"
 )
@@ -42,7 +41,9 @@ func TestStoreZeroByteFile(t *testing.T) {
 
 // TestStoreReleasesEvidenceFile is an ING-11/ING-5 regression: the evidence
 // file's handle and mapping were released only when a store succeeded, so a
-// store that failed kept the file open and mapped until DUES exited.
+// store that failed kept the file open and mapped until DUES exited. Windows
+// refuses to rename a file another handle holds open, so a rename after the
+// failed store shows the handle is gone.
 func TestStoreReleasesEvidenceFile(t *testing.T) {
 	testdb.Isolate(t)
 	testdb.EnsureCodecs(t)
@@ -50,21 +51,13 @@ func TestStoreReleasesEvidenceFile(t *testing.T) {
 	opts := optsFor(filepath.Join(dir, "db"), matrixChunkKB, nil)
 	src := testutil.WriteRandomFile(t, dir, "evidence.bin", 31, 3*matrixChunkKB*1024)
 
-	prev := releaseEvidenceFile
-	t.Cleanup(func() { releaseEvidenceFile = prev })
-	var released int
-	releaseEvidenceFile = func(f structs.InputFile) error {
-		released++
-		return prev(f)
-	}
-
 	// An unknown hash strategy fails the store after the file is opened.
 	cnst.StoreHashStrategy = "no-such-strategy"
 	if err := StoreData(t.Context(), opts, src, false, true, false, false); err == nil {
 		t.Fatal("store with an unknown hash strategy succeeded")
 	}
-	if released != 1 {
-		t.Fatalf("failed store released the evidence file %d times, want 1", released)
+	if err := os.Rename(src, src+".moved"); err != nil {
+		t.Fatalf("the failed store still holds the evidence file: %v", err)
 	}
 }
 
@@ -82,11 +75,11 @@ func TestStoreFolderContinuesPastErrors(t *testing.T) {
 
 	prev := storeOneFile
 	t.Cleanup(func() { storeOneFile = prev })
-	storeOneFile = func(ctx context.Context, cs int, path string, key []byte, syncIndex, noIndex, fts, enrich bool, db *badger.DB) error {
+	storeOneFile = func(ctx context.Context, db *badger.DB, path string, sopts StoreOptions) error {
 		if filepath.Base(path) == "b-bad.bin" {
 			return errors.New("simulated read failure")
 		}
-		return prev(ctx, cs, path, key, syncIndex, noIndex, fts, enrich, db)
+		return prev(ctx, db, path, sopts)
 	}
 
 	opts := optsFor(filepath.Join(dir, "db"), matrixChunkKB, nil)

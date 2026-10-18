@@ -249,9 +249,9 @@ func TestRestoreVerifiesRecordedHash(t *testing.T) {
 			// whole and the hash of each partly covered piece.
 			rid := seedCompletedEvidence(t, db.DB, "verify-partitions", content, "")
 			start, size := cs-100, 2*cs+300
-			edges, ok, err := TryComputeLogicalHochoWithEdges(rid, start, size, content, db.DB)
-			if err != nil || !ok {
-				t.Fatalf("hocho with edges: ok=%v err=%v", ok, err)
+			edges, err := legacyHochoWithEdges(rid, start, size, content, db.DB)
+			if err != nil {
+				t.Fatalf("hocho with edges: %v", err)
 			}
 			for _, p := range []struct{ name, fileHash string }{
 				{"p-plain", plainHash(content[start : start+size])},

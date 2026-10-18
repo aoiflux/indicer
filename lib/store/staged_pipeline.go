@@ -2,14 +2,11 @@ package store
 
 import (
 	"context"
-	"encoding/base64"
 	"encoding/binary"
-	"fmt"
-	"indicer/internal/console"
+	"hash"
 	"indicer/lib/cnst"
 	"indicer/lib/dbio"
 	"indicer/lib/fio"
-	"indicer/lib/structs"
 	"indicer/lib/util"
 	"sync"
 
@@ -37,48 +34,45 @@ type HashedChunk struct {
 type ingestedChunk struct {
 	chunk  Chunk
 	offset int64
+	fc     *feedChunk
 }
 
 type hashedChunkEnvelope struct {
 	hashed HashedChunk
 	offset int64
+	fc     *feedChunk
 }
 
 // stagedWriteChunk is one chunk for the writer. dup marks a chunk already
 // sent earlier in this session: its bytes are stored once, but every
-// occurrence still needs its relation, reverse relation and hocho entry.
+// occurrence still needs its relation, reverse relation and hocho entry. The
+// writer releases fc once the chunk is stored.
 type stagedWriteChunk struct {
 	offset int64
 	hash   []byte
 	data   []byte
 	dup    bool
+	fc     *feedChunk
 }
 
 type stagedWriterResult struct {
-	hochoHash string
-	err       error
+	root []byte
+	err  error
 }
 
 type stageErr struct {
 	err error
 }
 
-// storeEvidenceDataStaged runs an explicit staged ingest pipeline:
-// ingestion -> hashing -> dedup -> batched disk writer.
-func storeEvidenceDataStaged(parentCtx context.Context, infile structs.InputFile) (evidenceHochoHash string, err error) {
-	if parentCtx == nil {
-		parentCtx = context.Background()
-	}
-	bar := progressbar.NewOptions64(
-		infile.GetSize(),
-		progressbar.OptionShowBytes(true),
-		progressbar.OptionSetWriter(console.Progress()),
-		progressbar.OptionSetTheme(cnst.CommonProgressBarTheme),
-	)
+// ingestChunksStaged runs an explicit staged ingest pipeline:
+// feed -> hashing -> dedup -> batched disk writer.
+func ingestChunksStaged(parentCtx context.Context, p ChunkPass) (res ChunkResult, err error) {
+	shape := shapeFor(p)
+	bar := newPassBar(p)
 
 	var simhashWriter *simhashAsyncWriter
 	if cnst.ENABLESIMHASH {
-		simhashWriter = newSimhashAsyncWriter(infile.GetDB(), cnst.GetMaxThreadCount())
+		simhashWriter = newSimhashAsyncWriter(p.DB, cnst.GetMaxThreadCount())
 		defer func() {
 			simhashErr := simhashWriter.wait()
 			if err == nil && simhashErr != nil {
@@ -89,18 +83,18 @@ func storeEvidenceDataStaged(parentCtx context.Context, infile structs.InputFile
 
 	var containerMgr *fio.ContainerManager
 	if cnst.CONTAINERMODE {
-		containerMgr = fio.NewContainerManager(infile.GetDB().Opts().Dir)
+		containerMgr = fio.NewContainerManager(p.DB.Opts().Dir)
 		defer closeContainerManager(&err, containerMgr)
 	}
 
-	workerCount, queueDepth := cnst.GetStorePipelineTuning(cnst.CONTAINERMODE)
 	ctx, cancel := context.WithCancel(parentCtx)
 	defer cancel()
 
+	queueDepth := shape.queueDepth
 	hashCh := make(chan ingestedChunk, queueDepth)
 	dedupCh := make(chan hashedChunkEnvelope, queueDepth)
 	writeCh := make(chan stagedWriteChunk, queueDepth)
-	stageErrCh := make(chan stageErr, workerCount+4)
+	stageErrCh := make(chan stageErr, shape.workers+4)
 	writerResCh := make(chan stagedWriterResult, 1)
 
 	var firstErr error
@@ -119,12 +113,16 @@ func storeEvidenceDataStaged(parentCtx context.Context, infile structs.InputFile
 		}
 	}
 
+	// The writer holds chunks until it stores them, so its batch must stay
+	// well below the feed's ring, or the feed would wait for slots the
+	// writer waits to fill.
+	batchSize := max(1, min(stagedDiskBatchSize, shape.slots/4))
 	var writerWG sync.WaitGroup
 	writerWG.Add(1)
 	go func() {
 		defer writerWG.Done()
-		hochoHash, werr := stagedDiskWriterLoop(infile.GetHash(), infile.GetStartIndex(), infile.GetDB(), containerMgr, writeCh)
-		writerResCh <- stagedWriterResult{hochoHash: hochoHash, err: werr}
+		root, werr := stagedDiskWriterLoop(p.ID, shape, batchSize, p.DB, containerMgr, writeCh)
+		writerResCh <- stagedWriterResult{root: root, err: werr}
 		if werr != nil {
 			reportErr(werr)
 		}
@@ -142,27 +140,33 @@ func storeEvidenceDataStaged(parentCtx context.Context, infile structs.InputFile
 	}()
 
 	var hashWG sync.WaitGroup
-	for i := 0; i < workerCount; i++ {
+	for i := 0; i < shape.workers; i++ {
 		hashWG.Add(1)
 		go func() {
 			defer hashWG.Done()
-			if herr := hashStageWorkerLoop(ctx, hashCh, dedupCh, simhashWriter); herr != nil {
+			if herr := hashStageWorkerLoop(ctx, shape.chunkHash, hashCh, dedupCh, simhashWriter); herr != nil {
 				reportErr(herr)
 			}
 		}()
 	}
 
+	tap := newDigestTap(shape.fileHash, p.Ranges, p.EWF)
+	feed := shape.feed(ctx, p, tap)
+	var chunks int64
 	var ingestWG sync.WaitGroup
 	ingestWG.Add(1)
 	go func() {
 		defer ingestWG.Done()
 		defer close(hashCh)
-		if ierr := ingestStageLoop(ctx, infile.GetMappedFile(), infile.GetStartIndex(), infile.GetSize(), hashCh, bar); ierr != nil {
+		n, ierr := ingestStageLoop(ctx, feed, hashCh, bar)
+		chunks = n
+		if ierr != nil {
 			reportErr(ierr)
 		}
 	}()
 
 	ingestWG.Wait()
+	feedErr := feed.wait()
 	hashWG.Wait()
 	close(dedupCh)
 	dedupWG.Wait()
@@ -174,11 +178,7 @@ func storeEvidenceDataStaged(parentCtx context.Context, infile structs.InputFile
 	default:
 	}
 
-	bar.Finish()
-	fmt.Fprintln(console.Err())
-	// A progress bar error (an empty input has nothing to show) is not the
-	// operation's error.
-	_ = bar.Close()
+	finishPassBar(p, bar)
 
 	select {
 	case serr := <-stageErrCh:
@@ -188,66 +188,64 @@ func storeEvidenceDataStaged(parentCtx context.Context, infile structs.InputFile
 	default:
 	}
 
-	if firstErr != nil {
-		return "", firstErr
+	if err := passErr(parentCtx, feedErr, firstErr); err != nil {
+		return ChunkResult{}, err
 	}
 	if writerRes.err != nil {
-		return "", writerRes.err
+		return ChunkResult{}, writerRes.err
 	}
-	return writerRes.hochoHash, nil
+	return passResult(tap, writerRes.root, chunks), nil
 }
 
+// ingestStageLoop hands the feed's chunks to the hash stage and returns how
+// many it handed on. It drains the feed even after a failure, releasing what
+// it does not pass on.
 func ingestStageLoop(
 	ctx context.Context,
-	mappedFile []byte,
-	startIndex int64,
-	totalSize int64,
+	feed *chunkFeed,
 	hashCh chan<- ingestedChunk,
 	bar *progressbar.ProgressBar,
-) error {
-	for offset := startIndex; offset < totalSize; offset += cnst.ChonkSize {
-		var chunkSize int64
-		if totalSize-offset <= cnst.ChonkSize {
-			chunkSize = totalSize - offset
-		} else {
-			chunkSize = cnst.ChonkSize
-		}
-		end := offset + chunkSize
-		chunkID, err := nextChunkIDV7()
+) (int64, error) {
+	var n int64
+	var err error
+	for c := range feed.chunks() {
 		if err != nil {
-			return err
+			c.release()
+			continue
 		}
-		payload := ingestedChunk{
-			chunk: Chunk{
-				ID:   chunkID,
-				Data: mappedFile[offset:end],
-			},
-			offset: offset,
+		chunkID, idErr := nextChunkIDV7()
+		if idErr != nil {
+			c.release()
+			err = idErr
+			continue
 		}
-
+		payload := ingestedChunk{chunk: Chunk{ID: chunkID, Data: c.data}, offset: c.off, fc: c}
 		select {
 		case hashCh <- payload:
-			bar.Add64(chunkSize)
+			bar.Add64(int64(len(c.data)))
+			n++
 		case <-ctx.Done():
-			return context.Canceled
+			c.release()
+			err = context.Canceled
 		}
 	}
-
-	return nil
+	return n, err
 }
 
 func hashStageWorkerLoop(
 	ctx context.Context,
+	newHash func() hash.Hash,
 	hashCh <-chan ingestedChunk,
 	dedupCh chan<- hashedChunkEnvelope,
 	simhashWriter *simhashAsyncWriter,
 ) error {
 	// The chunk hash is the database's, as in the batch pipeline (CFG-6).
-	digest := cnst.GetHashAlgo()
+	digest := newHash()
 
 	for ingestChunk := range hashCh {
 		digest.Reset()
 		if _, err := digest.Write(ingestChunk.chunk.Data); err != nil {
+			ingestChunk.fc.release()
 			return err
 		}
 		sum := digest.Sum(nil)
@@ -263,11 +261,13 @@ func hashStageWorkerLoop(
 				Data: ingestChunk.chunk.Data,
 			},
 			offset: ingestChunk.offset,
+			fc:     ingestChunk.fc,
 		}
 
 		select {
 		case dedupCh <- payload:
 		case <-ctx.Done():
+			ingestChunk.fc.release()
 			return context.Canceled
 		}
 	}
@@ -289,11 +289,13 @@ func dedupStageLoop(
 			hash:   hashed.hashed.Sum,
 			data:   hashed.hashed.Data,
 			dup:    seenChunks.loadOrStore(hashed.hashed.Sum),
+			fc:     hashed.fc,
 		}
 
 		select {
 		case writeCh <- payload:
 		case <-ctx.Done():
+			hashed.fc.release()
 			return context.Canceled
 		}
 	}
@@ -303,21 +305,30 @@ func dedupStageLoop(
 
 func stagedDiskWriterLoop(
 	fhash []byte,
-	startIndex int64,
+	shape passShape,
+	batchSize int,
 	db *badger.DB,
 	containerMgr *fio.ContainerManager,
 	writeCh <-chan stagedWriteChunk,
-) (string, error) {
+) ([]byte, error) {
 	batch, err := util.InitBatch(db)
 	if err != nil {
-		return "", err
+		return nil, err
 	}
 
 	barrier := newChunkMetaBarrier(db.Opts().Dir, containerMgr, batch)
-	hocho := newHochoAccumulator(cnst.StoreHashStrategy == cnst.HochoHashStrategy, startIndex)
-	pending := make([]stagedWriteChunk, 0, stagedDiskBatchSize)
+	hocho := newHochoAccumulator(shape.fileHash, shape.chunk, 0)
+	pending := make([]stagedWriteChunk, 0, batchSize)
 
 	flushPending := func() error {
+		defer func() {
+			for _, item := range pending {
+				if item.fc != nil {
+					item.fc.release()
+				}
+			}
+			pending = pending[:0]
+		}()
 		for _, item := range pending {
 			chash := item.hash
 
@@ -344,43 +355,42 @@ func stagedDiskWriterLoop(
 				return err
 			}
 		}
-		pending = pending[:0]
 		return nil
 	}
 
 	for item := range writeCh {
 		pending = append(pending, item)
-		if len(pending) < stagedDiskBatchSize {
+		if len(pending) < batchSize {
 			continue
 		}
 		if err := flushPending(); err != nil {
 			batch.Cancel()
-			return "", err
+			return nil, err
 		}
 	}
 
 	if len(pending) > 0 {
 		if err := flushPending(); err != nil {
 			batch.Cancel()
-			return "", err
+			return nil, err
 		}
 	}
 	if err := barrier.fire(); err != nil {
 		batch.Cancel()
-		return "", err
+		return nil, err
 	}
 
-	hochoHash, err := hocho.finalize()
+	root, err := hocho.finalize()
 	if err != nil {
 		batch.Cancel()
-		return "", err
+		return nil, err
 	}
 
 	if err := batch.Flush(); err != nil {
-		return "", err
+		return nil, err
 	}
 
-	return hochoHash, nil
+	return root, nil
 }
 
 // materializeChunkMeta stores the chunk under ckey unless the database
@@ -409,26 +419,4 @@ func nextChunkIDV7() (uint64, error) {
 		return 0, err
 	}
 	return binary.BigEndian.Uint64(id[8:16]), nil
-}
-
-func finalizeHochoFromChunkHashes(startIndex int64, orderedChunkHashes map[int64][]byte) (string, error) {
-	if len(orderedChunkHashes) == 0 {
-		return "", nil
-	}
-	hasher := cnst.GetHashAlgo(true)
-	for idx := startIndex; ; idx += cnst.ChonkSize {
-		chunkHash, ok := orderedChunkHashes[idx]
-		if !ok {
-			break
-		}
-		var lenPrefix [4]byte
-		binary.BigEndian.PutUint32(lenPrefix[:], uint32(len(chunkHash)))
-		if _, err := hasher.Write(lenPrefix[:]); err != nil {
-			return "", err
-		}
-		if _, err := hasher.Write(chunkHash); err != nil {
-			return "", err
-		}
-	}
-	return base64.StdEncoding.EncodeToString(hasher.Sum(nil)), nil
 }

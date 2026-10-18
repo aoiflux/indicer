@@ -49,6 +49,27 @@ type IndexedFile struct {
 	// Times are the filesystem's MACB timestamps, nil when the source
 	// filesystem did not carry them or the record predates this field.
 	Times *Timestamps `msgpack:"times,omitempty"`
+
+	// The fields below are written by the W6 index pass (ContentModelV2);
+	// legacy records leave them empty and carry the evidence ID and path in
+	// Name. Read them through dbio.RecordEvidenceID and dbio.RecordPath.
+
+	// EvidenceID and PartitionID are the raw IDs of the record's evidence
+	// and partition (a partition record has no PartitionID).
+	EvidenceID  []byte `msgpack:"evidence_id,omitempty"`
+	PartitionID []byte `msgpack:"partition_id,omitempty"`
+	// Path is the escaped full path in its filesystem, ":stream" included
+	// for an alternate data stream.
+	Path       string      `msgpack:"path,omitempty"`
+	Stream     string      `msgpack:"stream,omitempty"`
+	NodeKind   string      `msgpack:"node_kind,omitempty"` // file, symlink, other
+	Inode      uint64      `msgpack:"inode,omitempty"`
+	Seq        uint32      `msgpack:"seq,omitempty"`
+	Target     string      `msgpack:"target,omitempty"` // symlink target
+	Links      int         `msgpack:"links,omitempty"`
+	Prov       uint32      `msgpack:"prov,omitempty"`       // core.Prov flags
+	Confidence uint8       `msgpack:"confidence,omitempty"` // core.Confidence
+	Content    *ContentRef `msgpack:"content,omitempty"`
 }
 
 // NewIndexedFile creates a new IndexedFile with optional FileHash
@@ -71,6 +92,9 @@ type PartitionFile struct {
 	InternalObjects map[string]InternalOffset `msgpack:"internal_objects"`
 	// MemberCount is how many members a partition keeps as PX||| keys.
 	MemberCount int `msgpack:"member_count,omitempty"`
+	// Partition is what the scan found in the partition-table entry; nil for
+	// legacy records and evidence records.
+	Partition *PartitionMeta `msgpack:"partition,omitempty"`
 }
 
 // NewPartitionFile creates a new PartitionFile with optional FileHash
@@ -85,6 +109,30 @@ type EvidenceFile struct {
 	Completed    bool        `msgpack:"completed"`
 	Failed       bool        `msgpack:"failed"`
 	IngestState  IngestState `msgpack:"ingest_state"`
+
+	// The fields below are written by ingests from W6 on; a legacy record
+	// leaves them empty, and its layout is inferred (I3).
+	ContentModel  string `msgpack:"content_model,omitempty"`
+	ChunkSize     int64  `msgpack:"chunk_size,omitempty"`
+	ChunkHashAlgo string `msgpack:"chunk_hash_algo,omitempty"`
+	FileHashAlgo  string `msgpack:"file_hash_algo,omitempty"`
+	HashStrategy  string `msgpack:"hash_strategy,omitempty"`
+	// PlainHash is the hash of the stored bytes; ContentRoot is the hocho
+	// root over the chunk hashes, the content identity idempotence uses
+	// (D1). FileHash is one of the two, as the hash strategy says.
+	PlainHash   string          `msgpack:"plain_hash,omitempty"`
+	ContentRoot string          `msgpack:"content_root,omitempty"`
+	Fingerprint string          `msgpack:"fingerprint,omitempty"`
+	Source      *EvidenceSource `msgpack:"source,omitempty"`
+	// Features are the optional records this ingest wrote: revrel,
+	// simhash, fts, enrich.
+	Features  []string   `msgpack:"features,omitempty"`
+	Attempt   int        `msgpack:"attempt,omitempty"`
+	LastError string     `msgpack:"last_error,omitempty"`
+	Index     *IndexInfo `msgpack:"index,omitempty"`
+	// DuplicateOf is the raw ID of the evidence a duplicate attempt's
+	// content belongs to.
+	DuplicateOf []byte `msgpack:"duplicate_of,omitempty"`
 }
 
 // NewEvidenceFile creates a new EvidenceFile with optional FileHash

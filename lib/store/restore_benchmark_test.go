@@ -48,7 +48,7 @@ func BenchmarkRestoreDataPath(b *testing.B) {
 			b.ReportAllocs()
 			b.ResetTimer()
 			for i := 0; i < b.N; i++ {
-				report, err := restoreLogical(context.Background(), l, io.Discard, RestoreOptions{})
+				report, err := restoreLogical(context.Background(), l, io.Discard, RestoreOptions{}, nil)
 				if err != nil {
 					b.Fatalf("restore: %v", err)
 				}

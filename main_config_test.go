@@ -74,7 +74,6 @@ func TestConfigRejectsBadFlags(t *testing.T) {
 		{[]string{"near", "in", "--top-k", "5000", "h"}, cnst.FlagTopK},
 		{[]string{"store", "--store-workers", "100000", "x"}, cnst.FlagStoreWorkers},
 		{[]string{"store", "--hash-algo", "md5", "x"}, cnst.FlagHashAlgo},
-		{[]string{"store", "--hocho-mode", "reuse", "x"}, cnst.FlagHochoMode},
 	}
 	for _, c := range cases {
 		t.Run(strings.Join(c.args, " "), func(t *testing.T) {
@@ -136,6 +135,32 @@ func TestConfigAsyncFIODeprecated(t *testing.T) {
 	}
 	if warned(tuning) {
 		t.Fatal("deprecation warning without --async-fio")
+	}
+}
+
+// TestConfigIndexFlagsRetired: --hocho-mode and --sync are accepted with a
+// warning and change nothing (W6: partition and indexed-file hashes are
+// plain hashes, and the index pass always runs beside storage).
+func TestConfigIndexFlagsRetired(t *testing.T) {
+	for _, tc := range []struct {
+		args []string
+		flag string
+	}{
+		{[]string{"store", "--hocho-mode", "reuse", "x"}, cnst.FlagHochoMode},
+		{[]string{"store", "--hash-strategy", "hocho", "--hocho-mode", "postdedup", "x"}, cnst.FlagHochoMode},
+		{[]string{"store", "--sync", "x"}, cnst.FlagSyncIndex},
+	} {
+		tuning, err := configure(t, tc.args...)
+		if err != nil {
+			t.Fatalf("%v: %v", tc.args, err)
+		}
+		warned := false
+		for _, issue := range tuning.issues {
+			warned = warned || issue.Flag == tc.flag
+		}
+		if !warned {
+			t.Errorf("%v gave no retirement warning", tc.args)
+		}
 	}
 }
 

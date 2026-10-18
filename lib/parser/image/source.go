@@ -125,7 +125,11 @@ func OpenSource(ctx context.Context, path string, _ Options) (*Source, error) {
 		if err != nil {
 			return nil, err
 		}
-		return &Source{Image: img, Format: core.FormatVHD, Files: []string{path}}, nil
+		files := []string{path}
+		if c, ok := img.(interface{ ChainPaths() []string }); ok && len(c.ChainPaths()) > 0 {
+			files = c.ChainPaths()
+		}
+		return &Source{Image: img, Format: core.FormatVHD, Files: files}, nil
 	}
 
 	if segs, ok, err := splitSegments(path); ok {
@@ -140,6 +144,28 @@ func OpenSource(ctx context.Context, path string, _ Options) (*Source, error) {
 		return &Source{Image: img, Format: core.FormatRaw, Files: segs}, nil
 	}
 	return &Source{Image: &rawImage{ra: f, size: info.Size(), closer: f}, Format: core.FormatRaw, Files: []string{path}}, nil
+}
+
+// Container names the container format of the file at path ("ewf", "vhd",
+// "vmdk", ...), or returns "" for a file that is not one.
+func Container(path string) (string, error) {
+	f, err := os.Open(path)
+	if err != nil {
+		return "", err
+	}
+	defer f.Close()
+	info, err := f.Stat()
+	if err != nil {
+		return "", err
+	}
+	format, container := sniff(f, info.Size())
+	switch {
+	case container != "":
+		return container, nil
+	case format == core.FormatEWF, format == core.FormatVHD:
+		return string(format), nil
+	}
+	return "", nil
 }
 
 // sniff returns the image format, or the name of a container DUES does not
@@ -286,6 +312,8 @@ type DigestResult struct {
 	Bytes                  int64
 	MD5Checked, MD5Match   bool
 	SHA1Checked, SHA1Match bool
+	// MD5 and SHA1 are the digests computed, for each one the set stores.
+	MD5, SHA1 []byte
 }
 
 // OK reports whether at least one stored digest was checked and none failed.
@@ -319,10 +347,12 @@ func matchWord(ok bool) string {
 func (d *Digester) Result() DigestResult {
 	r := DigestResult{Bytes: d.n}
 	if d.md5 != nil {
-		r.MD5Checked, r.MD5Match = true, bytes.Equal(d.md5.Sum(nil), d.want.MD5)
+		r.MD5 = d.md5.Sum(nil)
+		r.MD5Checked, r.MD5Match = true, bytes.Equal(r.MD5, d.want.MD5)
 	}
 	if d.sha != nil {
-		r.SHA1Checked, r.SHA1Match = true, bytes.Equal(d.sha.Sum(nil), d.want.SHA1)
+		r.SHA1 = d.sha.Sum(nil)
+		r.SHA1Checked, r.SHA1Match = true, bytes.Equal(r.SHA1, d.want.SHA1)
 	}
 	return r
 }

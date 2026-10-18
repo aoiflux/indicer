@@ -20,8 +20,10 @@ var ErrNoChange = errors.New("evidence record unchanged")
 var ErrEvidenceExists = errors.New("evidence record already exists")
 
 // maxEvidenceUpdateAttempts bounds how often UpdateEvidence retries a
-// transaction that conflicted with a concurrent write.
-const maxEvidenceUpdateAttempts = 16
+// transaction that conflicted with a concurrent write: up to about 1.5 s of
+// pauses. 16 attempts (about 0.5 s) could starve one of eight busy writers on
+// a loaded machine.
+const maxEvidenceUpdateAttempts = 32
 
 // UpdateEvidence changes the evidence record eid in one transaction: it reads
 // the current record, passes it to fn, and writes back what fn leaves. Two

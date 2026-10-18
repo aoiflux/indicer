@@ -11,8 +11,10 @@ import (
 	"indicer/lib/fsx"
 	"indicer/lib/logging"
 	"indicer/lib/store"
+	"indicer/lib/structs"
 	"io/fs"
 	"os"
+	"strings"
 	"time"
 
 	"github.com/dgraph-io/badger/v4"
@@ -25,6 +27,9 @@ type RestoreOptions struct {
 	Force bool
 	// Verify is how much the restore checks what it writes.
 	Verify store.VerifyLevel
+	// VerifyEWF checks a restored EWF evidence against the digests its set
+	// recorded.
+	VerifyEWF bool
 }
 
 // RestoreData restores the object whose hash is rhash to rpath. An existing
@@ -59,6 +64,10 @@ func RestoreData(ctx context.Context, opts DBOptions, rhash, rpath string, ropts
 		return err
 	}
 	console.Println(describeVerification(report))
+	warning := restoreWarning(report)
+	if warning != "" {
+		console.Println("Warning:", warning)
+	}
 
 	console.Println("Restored in: ", time.Since(start))
 	logging.GetLogger().Info("RestoreData COMPLETE",
@@ -66,8 +75,27 @@ func RestoreData(ctx context.Context, opts DBOptions, rhash, rpath string, ropts
 		zap.String("restore_path", rpath),
 		zap.String("digest", string(report.Digest)),
 		zap.String("digest_form", report.DigestForm),
+		zap.Bool("truncated", report.Truncated),
+		zap.String("ewf", report.EWF),
 	)
+	if warning != "" {
+		// The file is restored, but it is not all the evidence holds, or
+		// not what the imager hashed: exit 2.
+		return &lifecycle.WarningError{Err: errors.New(warning)}
+	}
 	return nil
+}
+
+// restoreWarning says what about a finished restore needs attention, or "".
+func restoreWarning(r store.RestoreReport) string {
+	var parts []string
+	if r.Truncated {
+		parts = append(parts, fmt.Sprintf("only %d of the file's %d bytes could be located in the evidence; the restored file holds those %d bytes", r.Size, r.RecordedSize, r.Size))
+	}
+	if r.EWF == structs.EWFMismatch {
+		parts = append(parts, "the restored image does not match the MD5/SHA-1 its EWF set recorded at acquisition")
+	}
+	return strings.Join(parts, "; ")
 }
 
 // describeVerification says what a restore checked.
@@ -78,7 +106,11 @@ func describeVerification(r store.RestoreReport) string {
 	case store.DigestUnavailable:
 		return fmt.Sprintf("Verified: %d chunks match their hashes. The record carries no hash of the whole content to check.", r.Chunks)
 	}
-	return "Not verified against the recorded hash (--verify)."
+	s := "Not verified against the recorded hash (--verify)."
+	if r.EWF == structs.EWFVerified {
+		s += " The image matches the MD5/SHA-1 its EWF set recorded."
+	}
+	return s
 }
 
 // restoreToPath restores into a temporary file beside rpath, syncs it and
@@ -92,7 +124,7 @@ func restoreToPath(ctx context.Context, db *badger.DB, rhash, rpath string, ropt
 	}
 	err := fsx.WriteAtomic(rpath, cnst.FilePerm, fsx.Options{NoOverwrite: !ropts.Force}, func(f *os.File) error {
 		var err error
-		report, err = store.Restore(ctx, db, rhash, f, store.RestoreOptions{Verify: ropts.Verify})
+		report, err = store.Restore(ctx, db, rhash, f, store.RestoreOptions{Verify: ropts.Verify, VerifyEWF: ropts.VerifyEWF})
 		return err
 	})
 	if ctxErr := ctx.Err(); ctxErr != nil {

@@ -1236,7 +1236,9 @@ func (s *Service) createArchiveWithProgressCtx(ctx context.Context, req createAr
 	if err := ensureStoreRuntime(); err != nil {
 		return createArchiveRes{}, coreerr.NewWithDetails(coreerr.CodeInternal, errStoreRuntimeInitFailed, map[string]string{detailCause: err.Error()})
 	}
-	if err := cli.StoreData(ctx, archiveDBOptions(dbPath, req.Password, chunkSize), storeInputPath, false, true, false, false); err != nil {
+	// Files are archived as their own bytes, not decoded (an E01 must come
+	// back as the E01), and an archive needs no index.
+	if err := cli.StoreDataWithOptions(ctx, archiveDBOptions(dbPath, req.Password, chunkSize), storeInputPath, cli.StoreOptions{NoIndex: true, Decode: false}); err != nil {
 		if errors.Is(err, context.Canceled) {
 			return createArchiveRes{}, canceledError()
 		}

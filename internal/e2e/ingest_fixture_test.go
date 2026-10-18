@@ -54,26 +54,11 @@ func parseList(out string) (listOutput, error) {
 // ingestKnownDefects maps "<fixture>|<path>" (or "<fixture>|*") to the
 // inventory ID that keeps a ground-truth file from being indexed and
 // restored correctly today. The fix for each ID removes its entries.
-var ingestKnownDefects = map[string]string{
-	"ewf/fat12_multiseg|*":               "ING-7 (E01 indexed over the raw container)",
-	"vhd/fat16_dynamic_vhd|*":            "ING-7 (VHD indexed over the raw container)",
-	"vhd/fat16_vhdx|*":                   "ING-7 (VHDX indexed over the raw container)",
-	"exfat/exfat|/empty.txt":             "PAR-3 (zero-length files are not indexed)",
-	"ext/ext4|/empty.txt":                "PAR-3 (zero-length files are not indexed)",
-	"ext/ext4|/inline.txt":               "PAR-3 (inline data is not indexed; D2)",
-	"ext/ext4|/sparse.bin":               "PAR-3 (files with holes are not indexed; D2)",
-	"ext/ext4|/prealloc.bin":             "PAR-3 (files with unwritten extents are not indexed; D2)",
-	"ext/ext4|/unwritten.bin":            "PAR-3 (files with unwritten extents are not indexed; D2)",
-	"xfs/xfs|/sparse.bin":                "PAR-3 (files with holes are not indexed; D2)",
-	"xfs/xfs|/multi.bin":                 "PAR-3 (fragmented files are not indexed; D2)",
-	"xfs/xfs|/unwritten.bin":             "PAR-3 (files with holes are not indexed; D2)",
-	"xfs/xfs|/empty.txt":                 "PAR-3 (zero-length files are not indexed)",
-	"ntfs/ntfs_fsagen|*small*":           "PAR-3 (resident content is not indexed; D2)",
-	"ntfs/ntfs_compressed|/sparse.bin":   "PAR-3 (files with holes are not indexed; D2)",
-	"ntfs/ntfs_compressed|/z/mixed.bin":  "PAR-20 (compressed content is not indexed; D10)",
-	"ntfs/ntfs_compressed|/z/random.bin": "PAR-20 (compressed content is not indexed; D10)",
-	"ntfs/ntfs_compressed|/z/text.txt":   "PAR-20 (compressed content is not indexed; D10)",
-}
+//
+// W6 removed the last entries: ING-7 (containers indexed over their raw
+// bytes), PAR-3 (empty, inline, resident, sparse, unwritten and fragmented
+// files not indexed) and PAR-20 (compressed content not indexed).
+var ingestKnownDefects = map[string]string{}
 
 func ingestDefect(fixture string, f fsfixture.File) (string, bool) {
 	if id, ok := ingestKnownDefects[fixture+"|"+f.Path]; ok {
@@ -81,12 +66,6 @@ func ingestDefect(fixture string, f fsfixture.File) (string, bool) {
 	}
 	if id, ok := ingestKnownDefects[fixture+"|*"]; ok {
 		return id, true
-	}
-	if f.Size == 0 {
-		return "PAR-3 (zero-length files are not indexed)", true
-	}
-	if strings.HasPrefix(fixture, "ntfs/") && f.Size <= 700 {
-		return ingestKnownDefects["ntfs/ntfs_fsagen|*small*"], true
 	}
 	return "", false
 }

@@ -5,6 +5,7 @@ import (
 	"context"
 	"fmt"
 	"indicer/internal/console"
+	"indicer/internal/lifecycle"
 	"indicer/internal/termsafe"
 	"indicer/lib/cnst"
 	"indicer/lib/dbmeta"
@@ -28,6 +29,27 @@ type RepairOptions struct {
 	Upgrade bool // move a legacy block index into the database (--upgrade)
 	Yes     bool // delete the moved block index files without asking (--yes)
 	Verify  bool // read back and check every stored chunk (--verify)
+	// ReindexFailed rebuilds the index of every evidence whose index pass
+	// failed or was interrupted (--reindex-failed, with --fix).
+	ReindexFailed bool
+}
+
+// quarantineContainerIndexes hides the indexes ingests before W6 built over
+// the raw bytes of EWF and VHD containers (ING-7).
+func quarantineContainerIndexes(ctx context.Context, h *dbopen.Handle) error {
+	q, err := store.QuarantineRawContainerIndexes(ctx, h.DB)
+	if err != nil {
+		return err
+	}
+	if len(q) == 0 {
+		console.Println("No index built over raw container bytes.")
+		return nil
+	}
+	console.Printf("Quarantined %d index(es) built over raw container bytes; store each evidence again to index its decoded disk:\n", len(q))
+	for _, e := range q {
+		console.Printf("  %s (%s)\n", termsafe.Line(e.Name), e.Format)
+	}
+	return nil
 }
 
 // VerifyError reports evidence that failed `repair --verify`.
@@ -55,6 +77,9 @@ func repairData(ctx context.Context, opts DBOptions, ro RepairOptions, in io.Rea
 	// itself decides what to change, so the automatic startup recovery stays
 	// off (CFG-11).
 	mode := dbopen.ReadOnly
+	if ro.ReindexFailed && !ro.Fix {
+		return lifecycle.Usagef("--reindex-failed needs --fix")
+	}
 	if ro.Fix || ro.Upgrade {
 		mode = dbopen.ReadWrite
 	}
@@ -74,6 +99,16 @@ func repairData(ctx context.Context, opts DBOptions, ro RepairOptions, in io.Rea
 	if ro.Upgrade {
 		if err = upgradeBlockIndex(ctx, h, ro.Yes, in, interactive); err != nil {
 			logging.GetLogger().Error("RepairData UPGRADE_ERROR", zap.Error(err))
+			return err
+		}
+		if err = quarantineContainerIndexes(ctx, h); err != nil {
+			logging.GetLogger().Error("RepairData QUARANTINE_ERROR", zap.Error(err))
+			return err
+		}
+	}
+	if ro.ReindexFailed {
+		if err = reindexEvidence(ctx, h.DB, ReindexOptions{Failed: true}); err != nil {
+			logging.GetLogger().Error("RepairData REINDEX_ERROR", zap.Error(err))
 			return err
 		}
 	}

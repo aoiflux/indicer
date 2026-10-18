@@ -219,7 +219,13 @@ func buildCommandHandlers(cliDef cliDefinition, dbOpts cli.DBOptions, tuning pip
 				zap.Int("store_queue", *cliDef.flags.storeQueue),
 				zap.Int("store_workers_effective", tuning.storeWorkers),
 				zap.Int("store_queue_effective", tuning.storeQueue))
-			return cli.StoreData(ctx, dbOpts, *cliDef.flags.evipath, *cliDef.flags.syncIndex, *cliDef.flags.noIndex, *cliDef.flags.enableFTS, *cliDef.flags.enableEnrichment)
+			return cli.StoreDataWithOptions(ctx, dbOpts, *cliDef.flags.evipath, cli.StoreOptions{
+				NoIndex:         *cliDef.flags.noIndex,
+				FTS:             *cliDef.flags.enableFTS,
+				Enrich:          *cliDef.flags.enableEnrichment,
+				Decode:          true,
+				RequireVerified: *cliDef.flags.requireVerified,
+			})
 		},
 		cliDef.commands.restore.FullCommand(): func(ctx context.Context) error {
 			logging.GetLogger().Info("Command: restore",
@@ -237,7 +243,7 @@ func buildCommandHandlers(cliDef cliDefinition, dbOpts cli.DBOptions, tuning pip
 			if err != nil {
 				return lifecycle.Usagef("%v", err)
 			}
-			return cli.RestoreData(ctx, dbOpts, *cliDef.flags.rhash, *cliDef.flags.rpath, cli.RestoreOptions{Force: *cliDef.flags.restoreForce, Verify: verify})
+			return cli.RestoreData(ctx, dbOpts, *cliDef.flags.rhash, *cliDef.flags.rpath, cli.RestoreOptions{Force: *cliDef.flags.restoreForce, Verify: verify, VerifyEWF: *cliDef.flags.restoreVerifyEWF})
 		},
 		cliDef.commands.list.FullCommand(): func(ctx context.Context) error {
 			logging.GetLogger().Info("Command: list",
@@ -257,10 +263,26 @@ func buildCommandHandlers(cliDef cliDefinition, dbOpts cli.DBOptions, tuning pip
 				zap.Bool("fix", *cliDef.flags.repairFix),
 				zap.Bool("upgrade", *cliDef.flags.repairUpg))
 			return cli.RepairData(ctx, dbOpts, cli.RepairOptions{
-				Fix:     *cliDef.flags.repairFix,
-				Upgrade: *cliDef.flags.repairUpg,
-				Yes:     *cliDef.flags.repairYes,
-				Verify:  *cliDef.flags.repairVfy,
+				Fix:           *cliDef.flags.repairFix,
+				Upgrade:       *cliDef.flags.repairUpg,
+				Yes:           *cliDef.flags.repairYes,
+				Verify:        *cliDef.flags.repairVfy,
+				ReindexFailed: *cliDef.flags.repairReindex,
+			})
+		},
+		cliDef.commands.reindex.FullCommand(): func(ctx context.Context) error {
+			logging.GetLogger().Info("Command: reindex",
+				zap.String("dbpath", *cliDef.flags.dbpath),
+				zap.Strings("ids", *cliDef.flags.reindexIDs),
+				zap.Bool("failed", *cliDef.flags.reindexFailed),
+				zap.Bool("all", *cliDef.flags.reindexAll))
+			return cli.ReindexData(ctx, dbOpts, cli.ReindexOptions{
+				IDs:    *cliDef.flags.reindexIDs,
+				Failed: *cliDef.flags.reindexFailed,
+				All:    *cliDef.flags.reindexAll,
+				Source: *cliDef.flags.reindexSource,
+				FTS:    *cliDef.flags.reindexFTS,
+				Enrich: *cliDef.flags.reindexEnrich,
 			})
 		},
 		cliDef.commands.nearIn.FullCommand(): func(ctx context.Context) error {

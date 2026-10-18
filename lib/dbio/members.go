@@ -183,3 +183,18 @@ func PartitionMembers(db *badger.DB, pid []byte, pfile structs.PartitionFile) (m
 	})
 	return members, err
 }
+
+// HashLookupMemberKey is the key that makes member a member of the hash
+// lookup lookupKey; deleting it removes the member.
+func HashLookupMemberKey(lookupKey, member []byte) []byte {
+	return append(hashLookupMemberPrefix(lookupKey), member...)
+}
+
+// PartitionMemberKey is the key of the indexed file ihashB64 (base64 of its
+// raw ID) in the partition pid.
+func PartitionMemberKey(pid []byte, ihashB64 string) []byte {
+	return util.AppendToBytesSlice(partitionMemberPrefix(pid), ihashB64)
+}
+
+// PartitionMemberPrefix is the prefix of every member key of partition pid.
+func PartitionMemberPrefix(pid []byte) []byte { return partitionMemberPrefix(pid) }

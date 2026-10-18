@@ -302,6 +302,7 @@ func (a *ntfsFS) emitStreams(n core.Node, fn func(core.Node) error) error {
 		s := n
 		s.Name = n.Name + ":" + name
 		s.Path = n.Path + ":" + esc
+		s.Stream = name
 		s.Ref = streamRef{name: name}
 		if san {
 			s.Prov |= core.ProvNameSanitized

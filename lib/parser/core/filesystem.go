@@ -86,7 +86,10 @@ type Node struct {
 	Kind      NodeKind
 	IsDeleted bool
 	Prov      Prov
-	Ref       any
+	// Stream names the alternate data stream a node stands for; the node
+	// shares its file's ID, and its Name and Path end in ":<stream>".
+	Stream string
+	Ref    any
 }
 
 // Stream is a named data stream attached to a node: an NTFS alternate data

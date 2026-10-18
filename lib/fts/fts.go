@@ -112,6 +112,39 @@ func IndexIndexedFileJobs(db *badger.DB, jobs []IndexedFileJob, onIndexed func()
 	return nil
 }
 
+// DeleteIndexedFiles removes the documents of the indexed files fileIDs
+// (their record keys): the name document and the text extract. A database
+// with no full-text index has nothing to delete.
+func DeleteIndexedFiles(db *badger.DB, fileIDs []string) (err error) {
+	if len(fileIDs) == 0 {
+		return nil
+	}
+	index, err := openExisting(db)
+	if errors.Is(err, ErrIndexNotReady) {
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	defer func() {
+		if cerr := index.Close(); err == nil {
+			err = cerr
+		}
+	}()
+	const batchSize = 4096
+	for i := 0; i < len(fileIDs); i += batchSize {
+		b := index.NewBatch()
+		for _, id := range fileIDs[i:min(i+batchSize, len(fileIDs))] {
+			b.Delete(id)
+			b.Delete(id + "#text")
+		}
+		if err := index.Batch(b); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
 func indexIndexedFileWithIndex(index bleve.Index, db *badger.DB, fileID string, name string) error {
 	if err := indexNamesWithIndex(index, fileID, name, "indexed"); err != nil {
 		return err

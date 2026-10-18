@@ -9,6 +9,7 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
+	"sync"
 )
 
 // WriteChonk stores data, a chunk's encoded bytes, as the blob for the chunk
@@ -31,15 +32,72 @@ func WriteChonk(dbpath string, data, ckey, key []byte) ([]byte, error) {
 	}
 	cfname := base64.RawURLEncoding.EncodeToString(ckhash) + cnst.BLOBEXT
 	cfpath := filepath.Join(util.BlobPath(dbpath), cfname)
-	err = fsx.WriteNewFile(cfpath, data, cnst.FilePerm)
-	if errors.Is(err, fs.ErrExist) {
-		err = fsx.WriteFileAtomic(cfpath, data, cnst.FilePerm)
-	}
-	if err != nil {
+	if err := blobWrites.do(cfpath, func() error {
+		err := writeNewFile(cfpath, data, cnst.FilePerm)
+		if errors.Is(err, fs.ErrExist) {
+			err = replaceFile(cfpath, data, cnst.FilePerm)
+		}
+		return err
+	}); err != nil {
 		return nil, err
 	}
 	return []byte(cfpath), nil
 }
+
+// blobWrites makes writers of one blob in this process take turns: ingests
+// running at once (two ingests of the same content, an ingest's index pass
+// storing decoded content beside its chunk pass) write the same new chunk at
+// the same time. A second writer used to find the first one's half-written
+// file, take it for a torn blob and rename a replacement over it while it was
+// still open, which Windows refuses. Now it waits, and uses the first one's
+// blob when that succeeded. Writers in other processes are excluded by the
+// data root's lock.
+var blobWrites = newSingleFlight()
+
+type singleFlight struct {
+	mu       sync.Mutex
+	inFlight map[string]*flight
+}
+
+type flight struct {
+	done chan struct{}
+	err  error
+}
+
+func newSingleFlight() *singleFlight { return &singleFlight{inFlight: map[string]*flight{}} }
+
+// do runs write for key unless another call for key is running, in which
+// case it waits for that one and returns nil if it succeeded. If it failed,
+// do tries again itself.
+func (s *singleFlight) do(key string, write func() error) error {
+	for {
+		s.mu.Lock()
+		if f, ok := s.inFlight[key]; ok {
+			s.mu.Unlock()
+			<-f.done
+			if f.err == nil {
+				return nil
+			}
+			continue
+		}
+		f := &flight{done: make(chan struct{})}
+		s.inFlight[key] = f
+		s.mu.Unlock()
+
+		f.err = write()
+		s.mu.Lock()
+		delete(s.inFlight, key)
+		s.mu.Unlock()
+		close(f.done)
+		return f.err
+	}
+}
+
+// The two ways a blob is written; tests replace them.
+var (
+	writeNewFile = fsx.WriteNewFile
+	replaceFile  = fsx.WriteFileAtomic
+)
 
 // ReadChonk returns the stored (still encoded) bytes of a chunk blob;
 // lib/blobcodec decodes them.

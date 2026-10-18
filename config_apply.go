@@ -164,11 +164,20 @@ func applyRuntimeConfig(parsed string, args []string, cliDef cliDefinition) (pip
 		if err := cnst.SetStorePipeline(*f.storePipeline); err != nil {
 			return tuning, lifecycle.Usagef("--%s: %v", cnst.FlagStorePipeline, err)
 		}
-		if err := cnst.SetHochoMode(*f.hochoMode); err != nil {
-			return tuning, lifecycle.Usagef("--%s: %v", cnst.FlagHochoMode, err)
+		// Retired with W6: the index pass runs beside storage, and partition
+		// and indexed-file hashes are plain hashes (ING-20), so neither
+		// setting changes anything.
+		if set[cnst.FlagHochoMode] {
+			tuning.issues = append(tuning.issues, appconfig.Issue{
+				Flag:    cnst.FlagHochoMode,
+				Message: "is retired and has no effect; partition and indexed-file hashes are always plain hashes",
+			})
 		}
-		if cnst.StoreHashStrategy != cnst.HochoHashStrategy && set[cnst.FlagHochoMode] {
-			return tuning, lifecycle.Usagef("--%s is only valid when --%s=hocho", cnst.FlagHochoMode, cnst.FlagHashStrategy)
+		if set[cnst.FlagSyncIndex] {
+			tuning.issues = append(tuning.issues, appconfig.Issue{
+				Flag:    cnst.FlagSyncIndex,
+				Message: "is retired and has no effect; the index pass always runs beside storage",
+			})
 		}
 
 		cnst.ENABLESIMHASH = *f.enableSimhash
@@ -277,9 +286,6 @@ func printRuntimeBanner(parsed string, cliDef cliDefinition, tuning pipelineTuni
 		color.Cyan("⚙ store pipeline: workers=%d queue=%d", tuning.storeWorkers, tuning.storeQueue)
 		color.Cyan("⚙ store pipeline mode: %s", cnst.StorePipelineMode)
 		color.Cyan("⚙ store io engine: %s", cnst.StoreIOEngine)
-		if cnst.StoreHashStrategy == cnst.HochoHashStrategy {
-			color.Cyan("⚙ hocho mode: %s", cnst.HochoMode)
-		}
 	}
 
 	if parsed == cliDef.commands.restore.FullCommand() {

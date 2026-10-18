@@ -32,6 +32,7 @@ type cliFlags struct {
 	evipath             *string
 	syncIndex           *bool
 	noIndex             *bool
+	requireVerified     *bool
 	enableFTS           *bool
 	enableEnrichment    *bool
 	storeHashAlgo       *string
@@ -49,18 +50,27 @@ type cliFlags struct {
 	rpath             *string
 	restoreForce      *bool
 	restoreVerify     *string
+	restoreVerifyEWF  *bool
 	restoreWorkers    *int
 	restoreQueue      *int
 	restoreProgressMs *int
 	restoreBufferMB   *int
 	rhash             *string
 
-	listStatus *string
-	repairFix  *bool
-	repairUpg  *bool
-	repairYes  *bool
-	repairVfy  *bool
-	resetYes   *bool
+	listStatus    *string
+	repairFix     *bool
+	repairUpg     *bool
+	repairYes     *bool
+	repairVfy     *bool
+	repairReindex *bool
+	resetYes      *bool
+
+	reindexIDs    *[]string
+	reindexFailed *bool
+	reindexAll    *bool
+	reindexSource *string
+	reindexFTS    *bool
+	reindexEnrich *bool
 
 	deep            *bool
 	inVerify        *bool
@@ -90,6 +100,7 @@ type cliCommands struct {
 	list         *kingpin.CmdClause
 	stats        *kingpin.CmdClause
 	repair       *kingpin.CmdClause
+	reindex      *kingpin.CmdClause
 	near         *kingpin.CmdClause
 	nearIn       *kingpin.CmdClause
 	nearOut      *kingpin.CmdClause
@@ -137,8 +148,9 @@ func newCLIDefinition() cliDefinition {
 
 	commands.store = app.Command(cnst.CmdStore, "Store file in database")
 	flags.evipath = commands.store.Arg(cnst.OperandFile, "Path of file that must be saved").Required().String()
-	flags.syncIndex = commands.store.Flag(cnst.FlagSyncIndex, "Run indexer synchronously (disables overlap with chunk ingest; slower but deterministic ordering)").Short(cnst.FlagSyncIndexShort).Default("false").Bool()
+	flags.syncIndex = commands.store.Flag(cnst.FlagSyncIndex, "RETIRED: has no effect; the index pass always runs beside storage").Short(cnst.FlagSyncIndexShort).Hidden().Default("false").Bool()
 	flags.noIndex = commands.store.Flag(cnst.FlagNoIndex, "Don't run indexer").Short(cnst.FlagNoIndexShort).Default("false").Bool()
+	flags.requireVerified = commands.store.Flag("require-verified", "Fail an E01 whose stored MD5/SHA-1 does not match the decoded image, instead of storing it flagged").Default("false").Bool()
 	flags.enableFTS = commands.store.Flag(cnst.FlagEnableFts, "Enable full-text search indexing (sidecar Bleve index)").Short(cnst.FlagEnableFtsShort).Default("false").Bool()
 	flags.enableEnrichment = commands.store.Flag(cnst.FlagEnableEnrichment, "Upsert disk/partition/indexed-file metadata nodes into graphdb during store").Short(cnst.FlagEnableEnrichmentShort).Default("false").Bool()
 	flags.storeHashAlgo = commands.store.Flag(cnst.FlagHashAlgo, "Hashing algorithm to use [sha3|blake3] (default: BLAKE3)").Short(cnst.FlagHashAlgoShort).Default(cnst.BLAKE3).String()
@@ -147,7 +159,7 @@ func newCLIDefinition() cliDefinition {
 	flags.storeAsyncFileWrite = commands.store.Flag(cnst.FlagStoreAsyncFileWrite, "DEPRECATED: has no effect; chunk blobs are always written durably").Short(cnst.FlagStoreAsyncFileWriteShort).Hidden().Default("false").Bool()
 	flags.storeIOEngine = commands.store.Flag(cnst.FlagStoreIOEngine, "Store write engine [auto|stdlib|io-uring] (default: auto)").Short(cnst.FlagStoreIOEngineShort).Default(cnst.StoreIOEngineAuto).String()
 	flags.storeIOUringQueue = commands.store.Flag(cnst.FlagStoreIOUringQueueDepth, "io-uring SQ/CQ depth (0 = auto-tuned)").Short(cnst.FlagStoreIOUringQueueDepthShort).Default("0").Int()
-	flags.hochoMode = commands.store.Flag(cnst.FlagHochoMode, "Hocho logical hashing mode [baseline|reuse|postdedup] (default: baseline)").Short(cnst.FlagHochoModeShort).Default(cnst.HochoModeBaseline).String()
+	flags.hochoMode = commands.store.Flag(cnst.FlagHochoMode, "RETIRED: has no effect; partition and indexed-file hashes are always plain hashes").Short(cnst.FlagHochoModeShort).Hidden().Default(cnst.HochoModeBaseline).String()
 	flags.enableSimhash = commands.store.Flag(cnst.FlagSimhash, "Compute and store per-chunk simhash signatures during ingest (enables NeAR chunk-level similarity; off by default)").Short(cnst.FlagSimhashShort).Default("false").Bool()
 	flags.enableRevRel = commands.store.Flag(cnst.FlagEnableRevRel, "Persist reverse-relation keys during ingest (off by default for higher ingest throughput)").Short(cnst.FlagEnableRevRelShort).Default("false").Bool()
 	flags.storeWorkers = commands.store.Flag(cnst.FlagStoreWorkers, "Override batch-owner worker count (0 = mode-aware default)").Short(cnst.FlagStoreWorkersShort).Default("0").Int()
@@ -157,6 +169,7 @@ func newCLIDefinition() cliDefinition {
 	flags.rpath = commands.restore.Flag(cnst.FlagRestoreFilePath, "Path for restoring the file").Short(cnst.FlagRestoreFilePathShort).Default("restored").String()
 	flags.restoreForce = commands.restore.Flag("force", "Replace the restore path if it already exists").Default("false").Bool()
 	flags.restoreVerify = commands.restore.Flag("verify", "What to check while restoring: full (every chunk and the whole content's recorded hash), chunks (every chunk), or off").Default("full").Enum("full", "chunks", "off")
+	flags.restoreVerifyEWF = commands.restore.Flag("verify-ewf", "Also check a restored E01 evidence against the MD5 and SHA-1 its set recorded at acquisition").Default("false").Bool()
 	flags.restoreWorkers = commands.restore.Flag(cnst.FlagRestoreWorkers, "Override restore worker count (0 = adaptive default)").Short(cnst.FlagRestoreWorkersShort).Default("0").Int()
 	flags.restoreQueue = commands.restore.Flag(cnst.FlagRestoreQueue, "Override restore pipeline queue depth (0 = adaptive default)").Short(cnst.FlagRestoreQueueShort).Default("0").Int()
 	flags.restoreProgressMs = commands.restore.Flag(cnst.FlagRestoreProgressMs, "Restore progress update interval in milliseconds (default: 120)").Short(cnst.FlagRestoreProgressMsShort).Default("120").Int()
@@ -166,11 +179,20 @@ func newCLIDefinition() cliDefinition {
 	commands.list = app.Command(cnst.CmdList, "List all the saved files in the database")
 	flags.listStatus = commands.list.Flag(cnst.FlagListStatus, "Filter evidence by status [all|completed|pending|failed]").Short(cnst.FlagListStatusShort).Default("all").String()
 	commands.stats = app.Command(cnst.CmdStats, "Show database statistics")
-	commands.repair = app.Command(cnst.CmdRepair, "Inspect and optionally mark partial evidence ingests as failed")
-	flags.repairFix = commands.repair.Flag(cnst.FlagRepairFix, "Mark pending evidence ingests as failed so they are visible and retryable").Short(cnst.FlagRepairFixShort).Default("false").Bool()
+	commands.repair = app.Command(cnst.CmdRepair, "Inspect and optionally finish what interrupted ingests left")
+	flags.repairFix = commands.repair.Flag(cnst.FlagRepairFix, "Finish what interrupted ingests left: fail unfinished attempts (storing the file again resumes them), commit flushed ones, remove duplicates, mark interrupted index passes").Short(cnst.FlagRepairFixShort).Default("false").Bool()
+	flags.repairReindex = commands.repair.Flag("reindex-failed", "With --fix, rebuild every index whose pass failed or was interrupted").Default("false").Bool()
 	flags.repairUpg = commands.repair.Flag(cnst.FlagRepairUpgrade, "Move a legacy hierarchical block index into the database").Default("false").Bool()
 	flags.repairYes = commands.repair.Flag("yes", "With --upgrade, delete the moved block index files without asking").Default("false").Bool()
 	flags.repairVfy = commands.repair.Flag(cnst.FlagRepairVerify, "Read back every stored chunk and check it against its hash").Default("false").Bool()
+
+	commands.reindex = app.Command("reindex", "Rebuild the index of stored evidence from its stored chunks")
+	flags.reindexIDs = commands.reindex.Arg("id", "Evidence ID or hash, as list shows it").Strings()
+	flags.reindexFailed = commands.reindex.Flag("failed", "Every evidence whose index pass failed or was interrupted").Default("false").Bool()
+	flags.reindexAll = commands.reindex.Flag("all", "Every stored evidence").Default("false").Bool()
+	flags.reindexSource = commands.reindex.Flag("source", "Read the evidence from this file instead of the stored chunks (one evidence; its content must match)").String()
+	flags.reindexFTS = commands.reindex.Flag(cnst.FlagEnableFts, "Also build the full-text index").Default("false").Bool()
+	flags.reindexEnrich = commands.reindex.Flag(cnst.FlagEnableEnrichment, "Also upsert the graph nodes").Default("false").Bool()
 
 	commands.near = app.Command(cnst.CmdNear, "Get NeAR file objects")
 	commands.nearIn = commands.near.Command(cnst.SubCmdIn, "Finds NeAR objects & generates GReAt graph for file INside of the database")

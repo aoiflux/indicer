@@ -92,56 +92,78 @@ func (service *Service) EnrichAll() error {
 			if !evidata.Completed {
 				continue
 			}
-
-			evidenceHash := bytes.TrimPrefix(key, evidencePrefix)
-			context := evidenceContext{
-				evidenceFileID:   base64.StdEncoding.EncodeToString(evidenceHash),
-				evidenceFileName: evidata.Name,
-			}
-
-			// The structural evidence node used to be created as a stub
-			// carrying only an id and a name, because nothing called
-			// UpsertEvidence on this path. Acquisition format and ingest state
-			// are what tell an examiner whether a thin subtree means "nothing
-			// was there" or "we never finished reading it".
-			if err := service.repository.UpsertEvidence(EvidenceRecord{
-				HashBase64:     context.evidenceFileID,
-				Name:           evidata.Name,
-				Size:           evidata.Size,
-				EvidenceType:   evidata.EvidenceType,
-				IngestState:    string(evidata.IngestState),
-				Completed:      evidata.Completed,
-				Failed:         evidata.Failed,
-				PartitionCount: len(evidata.InternalObjects),
+			if err := service.enrichEvidenceRecord(txn, bytes.TrimPrefix(key, evidencePrefix), evidata, entropyCache, func() {
+				_ = bar.Add(1)
 			}); err != nil {
 				return err
-			}
-
-			evidenceEntropy, hasEvidenceEntropy := service.computeEntropyForLogicalFile(cnst.EviFileNamespace, context.evidenceFileID, entropyCache)
-			sharedEvidenceRecord := FileRecord{
-				Level:            "evidence_file",
-				Size:             evidata.Size,
-				EvidenceFileID:   context.evidenceFileID,
-				EvidenceFileName: context.evidenceFileName,
-				Entropy:          evidenceEntropy,
-				HasEntropy:       hasEvidenceEntropy,
-			}
-			if evidenceFileRecord := buildNameLevelRecord(sharedEvidenceRecord, evidata.Name, false); true {
-				if err := service.repository.UpsertFile(evidenceFileRecord); err != nil {
-					return err
-				}
-			}
-
-			for partitionHashB64 := range evidata.InternalObjects {
-				if err := service.enrichPartitionByHash(txn, context, partitionHashB64, entropyCache, func() {
-					_ = bar.Add(1)
-				}); err != nil {
-					return err
-				}
 			}
 		}
 		return nil
 	})
+}
+
+// EnrichEvidenceIndex upserts the hierarchy of one completed evidence (raw
+// ID eid) into graphdb: the evidence, its partitions and their indexed files.
+// An ingest runs it once the evidence is committed.
+func (service *Service) EnrichEvidenceIndex(eid []byte) error {
+	if service == nil || service.db == nil || service.repository == nil {
+		return nil
+	}
+	return service.db.View(func(txn *badger.Txn) error {
+		evidata, err := dbio.GetEvidenceTxn(txn, eid)
+		if err != nil {
+			return err
+		}
+		if !evidata.Completed {
+			return cnst.ErrIncompleteFile
+		}
+		return service.enrichEvidenceRecord(txn, eid, evidata, map[string]float64{}, nil)
+	})
+}
+
+func (service *Service) enrichEvidenceRecord(txn *badger.Txn, evidenceHash []byte, evidata structs.EvidenceFile, entropyCache map[string]float64, onProcessed func()) error {
+	context := evidenceContext{
+		evidenceFileID:   base64.StdEncoding.EncodeToString(evidenceHash),
+		evidenceFileName: evidata.Name,
+	}
+
+	// The structural evidence node used to be created as a stub
+	// carrying only an id and a name, because nothing called
+	// UpsertEvidence on this path. Acquisition format and ingest state
+	// are what tell an examiner whether a thin subtree means "nothing
+	// was there" or "we never finished reading it".
+	if err := service.repository.UpsertEvidence(EvidenceRecord{
+		HashBase64:     context.evidenceFileID,
+		Name:           evidata.Name,
+		Size:           evidata.Size,
+		EvidenceType:   evidata.EvidenceType,
+		IngestState:    string(evidata.IngestState),
+		Completed:      evidata.Completed,
+		Failed:         evidata.Failed,
+		PartitionCount: len(evidata.InternalObjects),
+	}); err != nil {
+		return err
+	}
+
+	evidenceEntropy, hasEvidenceEntropy := service.computeEntropyForLogicalFile(cnst.EviFileNamespace, context.evidenceFileID, entropyCache)
+	sharedEvidenceRecord := FileRecord{
+		Level:            "evidence_file",
+		Size:             evidata.Size,
+		EvidenceFileID:   context.evidenceFileID,
+		EvidenceFileName: context.evidenceFileName,
+		Entropy:          evidenceEntropy,
+		HasEntropy:       hasEvidenceEntropy,
+	}
+	if err := service.repository.UpsertFile(buildNameLevelRecord(sharedEvidenceRecord, evidata.Name, false)); err != nil {
+		return err
+	}
+
+	for partitionHashB64 := range evidata.InternalObjects {
+		if err := service.enrichPartitionByHash(txn, context, partitionHashB64, entropyCache, onProcessed); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 // EnrichPartition enriches graphdb metadata for one partition worth of indexed
@@ -522,6 +544,11 @@ func splitIndexedName(indexedName string) (name string, path string) {
 		if len(parts) == 3 {
 			return parts[2], indexedName
 		}
+		return indexedName, indexedName
+	}
+	// Records indexed since W6 are named by their path in the filesystem.
+	if i := strings.LastIndexByte(indexedName, '/'); i >= 0 && i < len(indexedName)-1 {
+		return indexedName[i+1:], indexedName
 	}
 	return indexedName, indexedName
 }

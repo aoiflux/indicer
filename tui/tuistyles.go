@@ -27,13 +27,12 @@ var (
 			Bold(true).
 			Foreground(accentColor).
 			Background(bgColor).
-			Padding(0, 2).
-			MarginBottom(1)
+			Padding(0, 2)
 
 	BorderStyle = lipgloss.NewStyle().
 			Border(lipgloss.RoundedBorder()).
 			BorderForeground(borderColor).
-			Padding(1)
+			Padding(0, 1)
 
 	SelectedItemStyle = lipgloss.NewStyle().
 				Foreground(primaryColor).
@@ -45,18 +44,23 @@ var (
 			Foreground(lipgloss.Color("250")).
 			Padding(0, 1)
 
+	DimStyle = lipgloss.NewStyle().
+			Foreground(borderColor)
+
 	HelpStyle = lipgloss.NewStyle().
-			Foreground(lipgloss.Color("240")).
-			Italic(true).
-			MarginTop(1)
+			Foreground(borderColor).
+			Italic(true)
 
 	InputStyle = lipgloss.NewStyle().
 			Border(lipgloss.RoundedBorder()).
-			Padding(1).
-			MarginBottom(1)
+			Padding(0, 1)
 
 	SuccessStyle = lipgloss.NewStyle().
 			Foreground(successColor).
+			Bold(true)
+
+	WarningStyle = lipgloss.NewStyle().
+			Foreground(warningColor).
 			Bold(true)
 
 	ErrorStyle = lipgloss.NewStyle().
@@ -65,12 +69,6 @@ var (
 
 	InfoStyle = lipgloss.NewStyle().
 			Foreground(secondaryColor)
-
-	StatusBarStyle = lipgloss.NewStyle().
-			Background(bgColor).
-			Foreground(lipgloss.Color("250")).
-			Padding(0, 1).
-			Height(1)
 
 	ButtonStyle = lipgloss.NewStyle().
 			Foreground(bgColor).
@@ -85,24 +83,14 @@ var (
 				MarginRight(1).
 				Bold(true)
 
+	ButtonDisabledStyle = lipgloss.NewStyle().
+				Foreground(lipgloss.Color("245")).
+				Background(lipgloss.Color("237")).
+				Padding(0, 2).
+				MarginRight(1)
+
 	DialogBoxStyle = lipgloss.NewStyle().
 			Border(lipgloss.DoubleBorder()).
 			BorderForeground(primaryColor).
-			Padding(1).
-			MarginTop(2).
-			MarginBottom(2)
+			Padding(1, 2)
 )
-
-// Helper function to create centered boxes
-func CenterBox(width int, content string) string {
-	return lipgloss.Place(width, 1, lipgloss.Center, lipgloss.Center, content)
-}
-
-// Render a titled section
-func Section(title string, content string) string {
-	return lipgloss.JoinVertical(
-		lipgloss.Left,
-		TitleStyle.Render(title),
-		BorderStyle.Render(content),
-	)
-}

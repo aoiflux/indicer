@@ -115,9 +115,15 @@ See also:
 
 ### 7) TUI and operator workflow
 
-- Bubble Tea v2 based TUI with integrated store/list/search/restore/near/reset
-  flows.
-- Improvements to command-line operational ergonomics and status visibility.
+- Bubble Tea v2 based TUI with store, list, search, restore, NeAR,
+  statistics, micro-artefact and reset screens.
+- Actions run as cancellable jobs behind the screen (`ctrl+x` cancels).
+  Quitting while one runs asks first, and DUES waits for the jobs before it
+  closes the database. If a job does not stop, the database is left unclosed
+  for badger to recover at its next open.
+- Reset asks for the database folder's name, and a restore over an existing
+  file asks first; the database's chunk layout is shown, not changed.
+- See [docs/TUI_QUICKSTART.md](docs/TUI_QUICKSTART.md).
 
 ## Installation
 

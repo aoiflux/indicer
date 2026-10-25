@@ -1,292 +1,256 @@
 package tui
 
 import (
-	"bytes"
-	"encoding/base64"
+	"context"
+	"errors"
 	"fmt"
-	"indicer/lib/cnst"
-	"indicer/lib/structs"
 	"strings"
+	"time"
 
-	"charm.land/bubbles/v2/spinner"
 	tea "charm.land/bubbletea/v2"
-	"charm.land/lipgloss/v2"
 	"github.com/atotto/clipboard"
-	"github.com/dgraph-io/badger/v4"
 	"github.com/dustin/go-humanize"
-	"github.com/vmihailenco/msgpack/v5"
 )
 
-type ListModel struct {
-	files     []FileInfo
-	db        *badger.DB
-	restoreFn func(hash string, restorePath string) error
-	width     int
-	height    int
-	loading   bool
-	spinner   spinner.Model
-	err       error
-	selected  int
-	status    string
-	restoring bool
-}
+// listLimit is the most evidence the list screen loads; `dues list` shows
+// every one (TUI-5).
+const listLimit = 5000
 
-type FileInfo struct {
-	Hash string
-	Size string
-	Time string
-}
+// writeClipboard is the clipboard; tests replace it.
+var writeClipboard = clipboard.WriteAll
 
-type listRestoreCompletedMsg struct {
+// copiedMsg reports a clipboard write.
+type copiedMsg struct {
+	text string
 	err  error
-	path string
 }
 
-func NewListModel(db *badger.DB, restoreFn func(hash string, restorePath string) error) *ListModel {
-	s := spinner.New()
-	s.Spinner = spinner.Dot
+// copyCmd writes text to the clipboard. It runs as a command: Update must
+// not wait for the clipboard (TUI-5).
+func copyCmd(text string) tea.Cmd {
+	return func() tea.Msg { return copiedMsg{text: text, err: writeClipboard(text)} }
+}
 
-	return &ListModel{
-		db:        db,
-		restoreFn: restoreFn,
-		width:     80,
-		height:    24,
-		loading:   true,
-		spinner:   s,
+type listScreen struct {
+	env      *env
+	run      running
+	loading  bool
+	loaded   bool
+	list     EvidenceList
+	sel      int
+	status   status
+	target   string // the path the selected evidence is restored to
+	restored string // the ID being restored
+	replace  prompt
+}
+
+func newListScreen(e *env) *listScreen {
+	return &listScreen{env: e, loading: true}
+}
+
+func (s *listScreen) resize()      {}
+func (s *listScreen) typing() bool { return false }
+func (s *listScreen) job() int     { return s.run.id }
+
+func (s *listScreen) escape() bool {
+	if s.replace.open {
+		s.replace.open = false
+		s.status = infoStatus("Not restored: " + clean(s.target) + " exists")
+		return true
 	}
+	return false
 }
 
-func (m *ListModel) Resize(width int, height int) {
-	m.width = width
-	m.height = height
-}
-
-func (m ListModel) Init() tea.Cmd {
-	m.loading = true
-	m.err = nil
-	m.files = nil
-	m.status = ""
-	m.selected = 0
-	return m.loadFiles()
-}
-
-func (m ListModel) loadFiles() tea.Cmd {
-	return func() tea.Msg {
-		files, err := loadEvidenceFiles(m.db)
-		return FileListLoadedMsg{files: files, err: err}
-	}
-}
-
-func loadEvidenceFiles(db *badger.DB) ([]FileInfo, error) {
-	files := make([]FileInfo, 0)
-
-	err := db.View(func(txn *badger.Txn) error {
-		opts := badger.DefaultIteratorOptions
-		opts.PrefetchSize = 256
-		it := txn.NewIterator(opts)
-		defer it.Close()
-
-		prefix := []byte(cnst.EviFileNamespace)
-		for it.Seek(prefix); it.ValidForPrefix(prefix); it.Next() {
-			item := it.Item()
-			key := item.KeyCopy(nil)
-			val, err := item.ValueCopy(nil)
-			if err != nil {
-				return err
-			}
-
-			decoded, err := cnst.DECODER.DecodeAll(val, nil)
-			if err == nil {
-				val = decoded
-			}
-
-			var evi structs.EvidenceFile
-			if err := msgpack.Unmarshal(val, &evi); err != nil {
-				return err
-			}
-			if !evi.Completed {
-				continue
-			}
-
-			hash := bytes.TrimPrefix(key, prefix)
-			hashStr := base64.StdEncoding.EncodeToString(hash)
-
-			files = append(files, FileInfo{
-				Hash: hashStr,
-				Size: humanize.Bytes(uint64(evi.Size)),
-				Time: "",
-			})
-		}
-
+func (s *listScreen) init() tea.Cmd {
+	load := s.env.actions.List
+	if load == nil {
+		s.loading = false
+		s.status = status{statusError, "Error: listing is not available"}
 		return nil
+	}
+	id, cmd, err := s.env.run("list", loaderJob, func(ctx context.Context) (any, error) {
+		return load(ctx, listLimit)
 	})
-
-	return files, err
+	if err != nil {
+		s.loading = false
+		s.status = errStatus(err)
+		return nil
+	}
+	s.run = running{id: id, since: time.Now()}
+	return cmd
 }
 
-type FileListLoadedMsg struct {
-	files []FileInfo
-	err   error
-}
-
-func (m ListModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
+func (s *listScreen) update(msg tea.Msg) tea.Cmd {
 	switch msg := msg.(type) {
-	case listRestoreCompletedMsg:
-		m.restoring = false
+	case jobDoneMsg:
+		s.run = running{}
+		if s.loading {
+			s.loading = false
+			if msg.err != nil {
+				s.status = errStatus(msg.err)
+				return nil
+			}
+			s.list, _ = msg.result.(EvidenceList)
+			s.loaded = true
+			return nil
+		}
+		return s.restoreDone(msg)
+	case copiedMsg:
 		if msg.err != nil {
-			m.status = "Error: " + msg.err.Error()
+			s.status = status{statusError, "Error: copying to the clipboard: " + errorText(msg.err)}
 		} else {
-			m.status = "Restored to " + msg.path
+			s.status = status{statusOK, "Copied " + clean(msg.text)}
 		}
-		return m, nil
-	case tea.KeyMsg:
-		if m.loading {
-			return m, nil
+		return nil
+	case tea.KeyPressMsg:
+		if s.replace.open {
+			if decided, yes := s.replace.key(msg); decided {
+				if yes {
+					return s.restore(true)
+				}
+				s.status = infoStatus("Not restored: " + clean(s.target) + " exists")
+			}
+			return nil
 		}
-
-		switch msg.String() {
-		case "ctrl+c", "esc", "q":
-			return m, tea.Quit
-		case "up", "k":
-			if len(m.files) > 0 && m.selected > 0 {
-				m.selected--
-			}
-		case "down", "j":
-			if len(m.files) > 0 && m.selected < len(m.files)-1 {
-				m.selected++
-			}
-		case "c":
-			if len(m.files) == 0 {
-				return m, nil
-			}
-			hash := m.files[m.selected].Hash
-			if err := clipboard.WriteAll(hash); err != nil {
-				m.status = "Error copying hash: " + err.Error()
-			} else {
-				m.status = "Copied hash to clipboard"
-			}
-		case "r", "enter":
-			if len(m.files) == 0 || m.restoring {
-				return m, nil
-			}
-			if m.restoreFn == nil {
-				m.status = "Error: restore action not configured"
-				return m, nil
-			}
-			hash := m.files[m.selected].Hash
-			path := defaultRestorePath(hash)
-			m.restoring = true
-			m.status = "Restoring selected file..."
-			return m, runListRestoreCmd(m.restoreFn, hash, path)
-		}
-	case spinner.TickMsg:
-		var cmd tea.Cmd
-		m.spinner, cmd = m.spinner.Update(msg)
-		return m, cmd
-	case FileListLoadedMsg:
-		m.loading = false
-		m.files = msg.files
-		m.err = msg.err
-		if m.selected >= len(m.files) {
-			m.selected = 0
-		}
+		return s.key(msg)
 	}
-
-	return m, nil
+	return nil
 }
 
-func (m ListModel) View() tea.View {
-	title := TitleStyle.Render("Files in DUES Database")
+func (s *listScreen) key(msg tea.KeyPressMsg) tea.Cmd {
+	n := len(s.list.Rows)
+	if n == 0 {
+		return nil
+	}
+	page := max(1, s.rows()-1)
+	switch msg.String() {
+	case "up", "k":
+		s.sel = max(0, s.sel-1)
+	case "down", "j":
+		s.sel = min(n-1, s.sel+1)
+	case "pgup":
+		s.sel = max(0, s.sel-page)
+	case "pgdown":
+		s.sel = min(n-1, s.sel+page)
+	case "home", "g":
+		s.sel = 0
+	case "end", "G":
+		s.sel = n - 1
+	case "c":
+		return copyCmd(s.list.Rows[s.sel].ID)
+	case "r", "enter":
+		return s.restore(false)
+	}
+	return nil
+}
 
-	if m.loading {
-		return tea.NewView(BorderStyle.Render(
-			lipgloss.JoinVertical(
-				lipgloss.Left,
-				title,
-				"",
-				m.spinner.View()+" Loading files...",
-			),
-		))
+// restore restores the selected evidence beside the working directory.
+func (s *listScreen) restore(replace bool) tea.Cmd {
+	if s.run.active() || len(s.list.Rows) == 0 {
+		return nil
+	}
+	restore := s.env.actions.Restore
+	if restore == nil {
+		s.status = status{statusError, "Error: restoring is not available"}
+		return nil
+	}
+	id := s.list.Rows[s.sel].ID
+	target := defaultRestorePath(id)
+	jobID, cmd, err := s.env.run("restore "+truncate(id, 12), sharedJob, func(ctx context.Context) (any, error) {
+		return restore(ctx, id, target, replace)
+	})
+	if err != nil {
+		s.status = errStatus(err)
+		return nil
+	}
+	s.run = running{id: jobID, since: time.Now()}
+	s.target, s.restored = target, id
+	s.status = infoStatus("Restoring " + clean(id) + " to " + clean(target) + "…")
+	return cmd
+}
+
+func (s *listScreen) restoreDone(msg jobDoneMsg) tea.Cmd {
+	out, _ := msg.result.(Outcome)
+	switch {
+	case errors.Is(msg.err, ErrTargetExists):
+		s.status = status{}
+		s.replace.ask(clean(s.target)+" exists. Replace it?", "Yes, replace it", "No", false)
+	case msg.err != nil:
+		s.status = errStatus(msg.err)
+	case out.Warning:
+		s.status = status{statusWarn, "Restored to " + clean(s.target) + ", with warnings: " + strings.Join(cleanAll(out.Lines), "; ")}
+	default:
+		s.status = status{statusOK, "Restored to " + clean(s.target)}
+	}
+	return nil
+}
+
+// rows is how many evidence rows fit on the screen.
+func (s *listScreen) rows() int {
+	return max(3, s.env.height-14)
+}
+
+func (s *listScreen) view() string {
+	e := s.env
+	title := TitleStyle.Render("Stored evidence")
+	switch {
+	case s.loading:
+		return frame(e.width, e.height, joinLines(title, InfoStyle.Render("Loading…")))
+	case !s.loaded:
+		return frame(e.width, e.height, joinLines(title, s.status.render(), HelpStyle.Render("esc: Back")))
+	case len(s.list.Rows) == 0:
+		return frame(e.width, e.height, joinLines(title, InfoStyle.Render("No evidence is stored."), HelpStyle.Render("esc: Back")))
 	}
 
-	if m.err != nil {
-		return tea.NewView(BorderStyle.Render(
-			lipgloss.JoinVertical(
-				lipgloss.Left,
-				title,
-				"",
-				ErrorStyle.Render(fmt.Sprintf("Error: %v", m.err)),
-			),
-		))
+	count := fmt.Sprintf("%s evidence", humanize.Comma(int64(s.list.Total)))
+	if s.list.Total > len(s.list.Rows) {
+		count = fmt.Sprintf("The first %s of %s evidence; `dues list` lists them all.", humanize.Comma(int64(len(s.list.Rows))), humanize.Comma(int64(s.list.Total)))
 	}
-
-	if len(m.files) == 0 {
-		return tea.NewView(BorderStyle.Render(
-			lipgloss.JoinVertical(
-				lipgloss.Left,
-				title,
-				"",
-				InfoStyle.Render("No files found in database"),
-			),
-		))
-	}
-
-	// Build file list
-	fileEntries := []string{
-		lipgloss.NewStyle().
-			Bold(true).
-			Render(fmt.Sprintf("%-60s %-15s", "Hash", "Size")),
-	}
-
-	for i, f := range m.files {
-		entry := fmt.Sprintf("%-60s %-15s", f.Hash, f.Size)
-		if i == m.selected {
-			entry = SelectedItemStyle.Render(entry)
+	nameWidth := max(10, e.width-24-10-8-10-12)
+	header := fmt.Sprintf("%-24s %10s %-8s %-10s %s", "ID", "Size", "Format", "Index", "Name")
+	rows := []string{DimStyle.Render(header)}
+	from, to := window(len(s.list.Rows), s.sel, s.rows())
+	for i := from; i < to; i++ {
+		r := s.list.Rows[i]
+		line := fmt.Sprintf("%-24s %10s %-8s %-10s %s",
+			truncate(clean(r.ID), 24), humanize.IBytes(uint64(max(0, r.Size))), truncate(clean(r.Format), 8),
+			truncate(clean(r.Index), 10), truncate(clean(r.Name), nameWidth))
+		if i == s.sel {
+			line = SelectedItemStyle.Render(line)
+		} else {
+			line = NormalItemStyle.Render(line)
 		}
-		fileEntries = append(fileEntries, entry)
+		rows = append(rows, line)
 	}
-
-	fileList := lipgloss.JoinVertical(lipgloss.Left, fileEntries...)
-
-	help := HelpStyle.Render("up/down: Select | enter/r: Restore selected | c: Copy hash | esc: Back")
-	status := ""
-	if m.status != "" {
-		status = InfoStyle.Render(m.status)
+	position := DimStyle.Render(fmt.Sprintf("%d of %d", s.sel+1, len(s.list.Rows)))
+	help := "↑/↓/PgUp/PgDn/Home/End: Move | Enter/r: Restore to restored_<ID>.bin | c: Copy the ID | esc: Back"
+	if s.replace.open {
+		help = ""
 	}
-
-	content := lipgloss.JoinVertical(
-		lipgloss.Left,
+	return frame(e.width, e.height, joinLines(
 		title,
-		"",
-		fileList,
-		"",
-		status,
-		"",
-		help,
-	)
-
-	frame := BorderStyle
-	if m.width > 0 {
-		frame = frame.Width(max(40, m.width-4))
-	}
-	if m.height > 0 {
-		frame = frame.MaxHeight(max(12, m.height-2))
-	}
-
-	return tea.NewView(frame.Render(content))
+		count,
+		strings.Join(rows, "\n")+"\n"+position,
+		s.status.render(),
+		s.replace.view(),
+		HelpStyle.Render(help),
+	))
 }
 
-func defaultRestorePath(hash string) string {
-	name := hash
+func cleanAll(lines []string) []string {
+	out := make([]string, len(lines))
+	for i, l := range lines {
+		out[i] = clean(l)
+	}
+	return out
+}
+
+// defaultRestorePath is where the list restores an evidence: a name in the
+// working directory made from its ID.
+func defaultRestorePath(id string) string {
+	name := id
 	if len(name) > 16 {
 		name = name[:16]
 	}
-	replacer := strings.NewReplacer("/", "_", "+", "-", "=", "")
-	return "restored_" + replacer.Replace(name) + ".bin"
-}
-
-func runListRestoreCmd(restoreFn func(hash string, restorePath string) error, hash string, path string) tea.Cmd {
-	return func() tea.Msg {
-		return listRestoreCompletedMsg{err: restoreFn(hash, path), path: path}
-	}
+	return "restored_" + strings.NewReplacer("/", "_", "+", "-", "=", "").Replace(name) + ".bin"
 }

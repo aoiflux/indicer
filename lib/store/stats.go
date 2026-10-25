@@ -1,7 +1,7 @@
 package store
 
 import (
-	"bytes"
+	"context"
 	"fmt"
 	"indicer/internal/console"
 	"os"
@@ -9,6 +9,8 @@ import (
 	"strings"
 
 	"indicer/lib/cnst"
+	"indicer/lib/dbio"
+	"indicer/lib/dbmeta"
 	"indicer/lib/fio"
 	"indicer/lib/structs"
 	"indicer/lib/util"
@@ -16,7 +18,6 @@ import (
 	"github.com/dgraph-io/badger/v4"
 	"github.com/dustin/go-humanize"
 	"github.com/fatih/color"
-	"github.com/vmihailenco/msgpack/v5"
 )
 
 type DBStats struct {
@@ -32,12 +33,18 @@ type DBStats struct {
 	FragmentedIndexedNames int64
 	UniqueChunks           int64
 	TotalChunkRefs         int64
-	SharedChunks           int64 // chunk positions referenced by more than 1 file
-	OnDiskBytes            int64
+	// SharedChunks counts the chunks whose reverse relations name more than
+	// one object. Without reverse relations (stored without --revrel) it is
+	// 0.
+	SharedChunks int64
+	OnDiskBytes  int64
+	// ChunkSize is the database's chunk size, in bytes.
+	ChunkSize int64
 }
 
-func Stats(db *badger.DB) error {
-	s, err := gatherStats(db)
+// Stats prints the database's statistics.
+func Stats(ctx context.Context, db *badger.DB) error {
+	s, err := GatherStats(ctx, db)
 	if err != nil {
 		return err
 	}
@@ -45,154 +52,96 @@ func Stats(db *badger.DB) error {
 	return nil
 }
 
-func GatherStats(db *badger.DB) (*DBStats, error) {
-	return gatherStats(db)
-}
-
-func gatherStats(db *badger.DB) (*DBStats, error) {
-	s := &DBStats{}
+// GatherStats reads the database's statistics in one read transaction,
+// stopping when ctx ends. Its memory does not grow with the database.
+func GatherStats(ctx context.Context, db *badger.DB) (*DBStats, error) {
+	s := &DBStats{ChunkSize: dbmeta.ChunkSize(db)}
 
 	err := db.View(func(txn *badger.Txn) error {
-		valOpts := badger.DefaultIteratorOptions
-		valOpts.PrefetchSize = 1000
-
-		keyOpts := badger.DefaultIteratorOptions
-		keyOpts.PrefetchValues = false
-		keyOpts.PrefetchSize = 1000
-
-		// --- Evidence files (need values to get size + completed flag) ---
-		eviPrefix := []byte(cnst.EviFileNamespace)
-		it := txn.NewIterator(valOpts)
-		for it.Seek(eviPrefix); it.ValidForPrefix(eviPrefix); it.Next() {
-			v, err := it.Item().ValueCopy(nil)
+		// count calls fn for each key under prefix, checking ctx as it goes.
+		count := func(prefix string, values bool, fn func(*badger.Item) error) error {
+			opts := badger.DefaultIteratorOptions
+			opts.PrefetchValues = values
+			opts.PrefetchSize = 1000
+			it := txn.NewIterator(opts)
+			defer it.Close()
+			n := 0
+			for it.Seek([]byte(prefix)); it.ValidForPrefix([]byte(prefix)); it.Next() {
+				if n%4096 == 0 {
+					if err := ctx.Err(); err != nil {
+						return err
+					}
+				}
+				n++
+				if err := fn(it.Item()); err != nil {
+					return err
+				}
+			}
+			return nil
+		}
+		record := func(item *badger.Item, v any) error {
+			data, err := item.ValueCopy(nil)
 			if err != nil {
-				it.Close()
 				return err
 			}
-			if dec, err := cnst.DECODER.DecodeAll(v, nil); err == nil {
-				v = dec
+			if err := dbio.DecodeRecord(data, v); err != nil {
+				return fmt.Errorf("record %q: %w", item.Key(), err)
 			}
+			return nil
+		}
+
+		err := count(cnst.EviFileNamespace, true, func(item *badger.Item) error {
 			var ef structs.EvidenceFile
-			if err := msgpack.Unmarshal(v, &ef); err != nil {
-				it.Close()
+			if err := record(item, &ef); err != nil {
 				return err
 			}
 			s.TotalFiles++
-			if ef.Completed {
+			if ef.Completed && ef.IngestState != structs.IngestStateDuplicate {
 				s.CompletedFiles++
 				s.TotalLogicalSize += ef.Size
 			}
+			return nil
+		})
+		if err != nil {
+			return err
 		}
-		it.Close()
-
-		// --- Partitions (keys only) ---
-		partiPrefix := []byte(cnst.PartiFileNamespace)
-		it = txn.NewIterator(keyOpts)
-		for it.Seek(partiPrefix); it.ValidForPrefix(partiPrefix); it.Next() {
-			s.TotalPartitions++
+		if err := count(cnst.PartiFileNamespace, false, func(*badger.Item) error { s.TotalPartitions++; return nil }); err != nil {
+			return err
 		}
-		it.Close()
-
-		// --- Indexed files (values for metadata-aware stats) ---
-		idxPrefix := []byte(cnst.IdxFileNamespace)
-		it = txn.NewIterator(valOpts)
-		for it.Seek(idxPrefix); it.ValidForPrefix(idxPrefix); it.Next() {
-			v, err := it.Item().ValueCopy(nil)
-			if err != nil {
-				it.Close()
-				return err
-			}
-			if dec, err := cnst.DECODER.DecodeAll(v, nil); err == nil {
-				v = dec
-			}
-
+		err = count(cnst.IdxFileNamespace, true, func(item *badger.Item) error {
 			var ifile structs.IndexedFile
-			if err := msgpack.Unmarshal(v, &ifile); err != nil {
-				it.Close()
+			if err := record(item, &ifile); err != nil {
 				return err
 			}
-
 			s.TotalIndexedFiles++
 			if ifile.Name != "" {
 				s.TotalIndexedNames++
 			}
-
-			objDeleted := ifile.IsDeleted
-			var objFragmented bool
 			if ifile.IsDeleted {
+				s.DeletedIndexedFiles++
 				s.DeletedIndexedNames++
-				objDeleted = true
 			}
 			if ifile.IsFragmented {
-				s.FragmentedIndexedNames++
-				objFragmented = true
-			}
-
-			if objDeleted {
-				s.DeletedIndexedFiles++
-			}
-			if objFragmented {
 				s.FragmentedIndexedFiles++
+				s.FragmentedIndexedNames++
 			}
+			return nil
+		})
+		if err != nil {
+			return err
 		}
-		it.Close()
-
-		// --- Unique chunks (keys only) ---
-		chonkPrefix := []byte(cnst.ChonkNamespace)
-		it = txn.NewIterator(keyOpts)
-		for it.Seek(chonkPrefix); it.ValidForPrefix(chonkPrefix); it.Next() {
-			s.UniqueChunks++
+		if err := count(cnst.ChonkNamespace, false, func(*badger.Item) error { s.UniqueChunks++; return nil }); err != nil {
+			return err
 		}
-		it.Close()
-
-		// --- Total chunk references / file→chunk mappings (keys only) ---
-		relPrefix := []byte(cnst.RelationNamespace)
-		it = txn.NewIterator(keyOpts)
-		for it.Seek(relPrefix); it.ValidForPrefix(relPrefix); it.Next() {
-			s.TotalChunkRefs++
+		if err := count(cnst.RelationNamespace, false, func(*badger.Item) error { s.TotalChunkRefs++; return nil }); err != nil {
+			return err
 		}
-		it.Close()
-
-		// --- Shared chunks: logical rev-rel entries referenced by more than 1 file ---
-		sharedByRelation := make(map[string]map[string]struct{})
-
-		appendPrefix := []byte(cnst.ReverseRelationAppendNamespace)
-		it = txn.NewIterator(valOpts)
-		for it.Seek(appendPrefix); it.ValidForPrefix(appendPrefix); it.Next() {
-			memberKey := it.Item().KeyCopy(nil)
-			split := bytes.Split(memberKey, []byte(cnst.DataSeperator))
-			if len(split) < 4 {
-				it.Close()
-				return fmt.Errorf("invalid reverse-relation append key: %q", string(memberKey))
-			}
-			chash := bytes.TrimPrefix(split[1], []byte(":"))
-			logicalKey := string(util.AppendToBytesSlice(cnst.ReverseRelationNamespace, chash, cnst.DataSeperator, split[2]))
-
-			v, err := it.Item().ValueCopy(nil)
-			if err != nil {
-				it.Close()
-				return err
-			}
-			if dec, err := cnst.DECODER.DecodeAll(v, nil); err == nil {
-				v = dec
-			}
-
-			memberSet := sharedByRelation[logicalKey]
-			if memberSet == nil {
-				memberSet = make(map[string]struct{}, 1)
-				sharedByRelation[logicalKey] = memberSet
-			}
-			memberSet[string(v)] = struct{}{}
-		}
-		it.Close()
-
-		for _, memberSet := range sharedByRelation {
-			if len(memberSet) > 1 {
-				s.SharedChunks++
-			}
-		}
-
-		return nil
+		// Reverse relations are counted in every form they were kept in,
+		// one chunk at a time. Stats used to split their keys on the
+		// separator and hold every one in a map; the one-key-per-occurrence
+		// form written since W3 has fewer parts, and failed (STO-24).
+		s.SharedChunks, err = dbio.CountSharedChunks(ctx, txn, dbmeta.ChunkHasher(db)().Size())
+		return err
 	})
 	if err != nil {
 		return nil, err
@@ -264,12 +213,12 @@ func printStats(s *DBStats) {
 		avgSize := uint64(s.TotalLogicalSize) / uint64(s.TotalChunkRefs)
 		statRow("Avg chunk size", humanize.Bytes(avgSize), val)
 	}
-	statRow("Configured chunk size", humanize.Bytes(uint64(cnst.ChonkSize)), dim)
+	statRow("Chunk size", humanize.IBytes(uint64(s.ChunkSize)), dim)
 
 	if s.SharedChunks > 0 {
-		statRow("Chunks shared across files", humanize.Comma(s.SharedChunks), good)
+		statRow("Chunks shared by objects", humanize.Comma(s.SharedChunks), good)
 	} else {
-		statRow("Chunks shared across files", "0 (no cross-file duplicates)", dim)
+		statRow("Chunks shared by objects", "0 (or stored without --revrel)", dim)
 	}
 
 	deduped := s.TotalChunkRefs - s.UniqueChunks
@@ -299,7 +248,7 @@ func printStats(s *DBStats) {
 		if s.FragmentedIndexedFiles > 0 {
 			statRow("Fragmented indexed objects", fmt.Sprintf("%s (%.1f%%)", humanize.Comma(s.FragmentedIndexedFiles), fragmentedPct), warn)
 		} else {
-			statRow("Fragmented indexed objects", "0 (currently skipped by parser)", dim)
+			statRow("Fragmented indexed objects", "0", dim)
 		}
 	}
 
@@ -310,7 +259,7 @@ func printStats(s *DBStats) {
 		if s.FragmentedIndexedNames > 0 {
 			statRow("Fragmented indexed names", fmt.Sprintf("%s (%.1f%%)", humanize.Comma(s.FragmentedIndexedNames), fragmentedNamePct), warn)
 		} else {
-			statRow("Fragmented indexed names", "0 (currently skipped by parser)", dim)
+			statRow("Fragmented indexed names", "0", dim)
 		}
 	}
 
@@ -329,7 +278,7 @@ func printStats(s *DBStats) {
 			statRow("Space saved", fmt.Sprintf("%s (%.1f%%)", humanize.Bytes(uint64(saved)), pct), good)
 		} else {
 			ratio := float64(s.OnDiskBytes) / float64(s.TotalLogicalSize)
-			statRow("Storage overhead", fmt.Sprintf("%.2fx (encrypted+compressed)", ratio), dim)
+			statRow("Storage overhead", fmt.Sprintf("%.2fx", ratio), dim)
 		}
 	}
 

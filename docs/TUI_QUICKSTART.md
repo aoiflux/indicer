@@ -1,101 +1,133 @@
-# Quick Start: DUES TUI (Bubble Tea v2)
+# DUES TUI: Quick Start
+
+The TUI is a full-screen, keyboard-driven way to work with one DUES database
+in one session: store evidence, list it, search it, restore from it, run NeAR,
+look at statistics and micro-artefacts, and reset it. It runs the same code as
+the command line, so what it stores, finds and restores is what `dues store`,
+`dues search` and `dues restore` would. For scripts and batch work, use the
+command line.
 
 ## Launch
 
 ```bash
 dues tui
+dues tui --dbpath ./caseA
+dues tui --dbpath ./caseA --password-file ./caseA.key
 ```
 
-Optional flags:
+The TUI opens the database for writing and holds its lock until it ends, so
+no other DUES process can write to it meanwhile. The password comes from
+`--password-file`, `--password-stdin`, `DUES_PASSWORD` or `--password`, as for
+every command (`--password` is visible to other users).
 
-```bash
-dues tui --dbpath ./case-db --password mysecret --chonksize 512 --container --hierarchical
-```
+The chunk size and chunk hash are part of the database's layout, fixed when it
+was created. The menu shows them; the TUI cannot change them. A database
+without a password is not encrypted, and the menu says so.
 
-## Main Menu Flows
+## Keys
 
-1. Store File
-2. List Files
-3. Search
-4. Restore File
-5. NeAR Analysis
-6. Reset Database
+| Key | What it does |
+|---|---|
+| `↑`/`↓`, `Tab`/`Shift+Tab` | Move between items and fields |
+| `Enter` | Select, confirm, or press the focused button |
+| `Space` | Toggle the focused checkbox |
+| `esc` | Close a question, or go back to the menu |
+| `q` | Go back to the menu, or quit from the menu. In a text field, `q` is typed |
+| `ctrl+x` | Cancel the screen's job; on the menu, cancel every job |
+| `ctrl+c` | Quit. While jobs run, DUES asks first |
 
-## When To Use TUI vs CLI
+## Jobs
 
-- Use TUI when you want guided, keyboard-driven operations in one persistent session.
-- Use CLI commands for scripting, automation, or batch pipelines.
-- Both paths call the same backend logic, so resulting data/artifacts are consistent.
+Storing, searching, restoring, NeAR and the loading of the list, statistics and
+micro-artefact screens run as jobs behind the screen. Leaving a screen with
+`esc` does not stop its job: the menu lists the jobs still running, and shows
+the last one to finish, with a warning when it needs your attention. Several
+jobs can run at once; a reset runs only when nothing else does, and nothing
+starts while it runs.
 
-## Global Keys
+`ctrl+x` cancels a job. A cancelled store leaves an unfinished attempt, which
+storing the same file again resumes.
 
-- `↑/↓`: move in menus/lists.
-- `Enter`: confirm/select.
-- `Tab`: move between fields/toggles.
-- `esc`: back to main menu.
-- `q`: quit from menu (also acts as back on most screens).
-- `ctrl+c`: immediate exit.
+Quitting while jobs run asks first, with **No** chosen. **Yes** cancels the jobs
+and quits once they have stopped. A second `ctrl+c` while stopping ends the
+program at once, but DUES still waits up to 30 seconds for the jobs before it
+closes the database. If a job has still not stopped, DUES leaves the database
+unclosed, says so, and exits with an error; badger recovers the database the
+next time it is opened. A signal (SIGINT, SIGTERM) stops the jobs the same way,
+and DUES exits with code 130 or 143.
 
-## Workflow Details
+## Screens
 
-### Store File
+### Store
 
-1. Enter file path.
-2. Toggle options:
-   - `Sync Index`
-   - `Skip Index`
-3. Select `Store`.
-4. After success, choose whether to store another file.
+Enter the path of a file or a folder and press `Enter` (or the **Store**
+button). Evidence is stored as `dues store` stores it with its default
+options: containers (EWF, VHD/VHDX, split raw) decoded and the content
+indexed. The **Skip the index** checkbox stores the bytes only. A file whose
+content is already stored is recorded as an alias of the evidence holding it.
 
-### List Files
+The screen shows the store's report: the evidence ID, the index state, and any
+warning (for example EWF digests that do not match). **Cancel** goes back to
+the menu.
 
-- Loads files asynchronously.
-- Use `↑/↓` (or `k/j`) to move selection.
-- `c`: copy selected hash to clipboard.
-- `r` or `Enter`: restore selected item to auto path `restored_<hash>.bin`.
+The TUI does not record reverse relations, the full-text index or graph
+enrichment. NeAR needs reverse relations: `dues store --revrel` records them,
+and `dues repair --fix --revrel` adds them to evidence already stored.
+
+### List
+
+Lists the stored evidence, at most the first 5,000; the screen says when
+there are more, and `dues list` lists them all.
+
+- `↑`/`↓` (`k`/`j`), `PgUp`/`PgDn`, `Home`/`End` (`g`/`G`): move.
+- `c`: copy the selected evidence's ID to the clipboard.
+- `Enter` or `r`: restore it to `restored_<ID>.bin` in the working directory.
+  An existing file is replaced only after you agree.
 
 ### Search
 
-1. Enter query (minimum 2 characters).
-2. Press `Enter` to run search.
-3. Search backend writes `report.json` in current working directory.
+Type the query and press `Enter`. The search covers every stored object, as
+`dues search` does, and replaces `report.json` in the working directory. The
+screen shows how many objects match, what was searched, and any object that
+could not be read.
 
-### Restore File
+### Restore
 
-1. Enter hash.
-2. Enter restore path (default `restored`).
-3. Confirm restore.
-4. After success, choose whether to restore another file.
+Enter the ID or hash of a stored object and the path to restore to (default
+`restored`). Every chunk, and the whole content, is checked against its hash.
+An existing file is replaced only after you agree (**No** is chosen); a restore
+that fails leaves the file as it was.
 
-### NeAR Analysis
+### NeAR
 
-1. Choose mode:
-   - `Find in Database` (`near in` equivalent)
-   - `Find from File` (`near out` equivalent)
-2. Enter hash or file path.
-3. Optional: press `d` to toggle deep scan.
-4. Run analysis.
+Choose a stored object or a file outside the database, enter its ID or path,
+and press **Analyse**. For a stored object, the **Deep** checkbox also matches
+similar chunks. The report replaces `near_report.json` in the working
+directory.
 
-### Reset Database
+### Reset
 
-- Confirm destructive operation in the reset dialog.
-- On completion, press `Enter`/`esc` to return to menu.
+Deletes everything in the database: stored evidence, indexes, the graph and
+the full-text index. Type the database folder's name to confirm, then press
+**Yes, delete everything**. **No** is chosen, and `Enter` in the name field
+never resets. A reset cannot start while another job runs.
 
-## Performance Flags You Can Combine
+### Statistics
 
-```bash
-# Lower resource usage
-dues tui --low
+Counts of evidence, chunks, partitions and indexed files, the chunk layout,
+and the space used on disk. The chunks shared by objects are counted from
+reverse relations, so evidence stored without them is not counted there.
 
-# Throughput-oriented mode
-dues tui --quick
+### Micro-artefacts
 
-# Container + hierarchical indexing
-dues tui --container --hierarchical
-```
+The files with the most micro-artefacts (at most 500, and 20 artefacts each),
+under their evidence and partition, with the totals for every file. Run
+`dues micro extract` first; it also writes the full HTML view.
 
-## Notes
+## Things to know
 
-- TUI uses the same backend as CLI commands, so outputs and behavior are consistent.
-- If `--hierarchical` is passed without `--container`, container mode is auto-enabled.
-- Search produces `report.json`; NeAR analysis produces graph/report artifacts used by the same tooling as CLI runs.
+- Everything the TUI shows from the evidence (names, paths, artefact values,
+  error messages) is made safe to draw, so a crafted name cannot control the
+  terminal.
+- Search and NeAR write their reports to the working directory, replacing the
+  previous ones.

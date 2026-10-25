@@ -75,26 +75,45 @@ func SearchCmd(ctx context.Context, opts DBOptions, so SearchOptions) (err error
 		zap.String("mode", o.Mode),
 		zap.Int("result_count", o.Ranked),
 	)
-	if c := o.Result.Coverage; c.Incomplete() {
-		return &lifecycle.WarningError{Err: fmt.Errorf("%d objects could not be read and were not searched; the report's coverage names them", c.Unreadable)}
+	if w := searchIncomplete(o); w != "" {
+		return &lifecycle.WarningError{Err: errors.New(w)}
 	}
 	return nil
 }
 
 func reportSearch(o search.Outcome) {
-	c := o.Result.Coverage
-	console.Printf("Searched %d evidence, %d partitions and %d indexed files (%d bytes).\n", c.Evidence, c.Partitions, c.Files, c.Bytes)
-	if c.NotStored > 0 {
-		console.Printf("%d evidence records are not stored (pending, failed or duplicate) and were not searched.\n", c.NotStored)
+	lines, problems := searchSummary(o)
+	for _, l := range lines {
+		console.Println(l)
 	}
-	if c.Quarantined > 0 {
-		console.Printf("%d evidence have a quarantined index: only the evidence itself was searched.\n", c.Quarantined)
-	}
-	if c.Unavailable > 0 {
-		console.Printf("%d indexed files have no readable content (metadata only).\n", c.Unavailable)
-	}
-	for _, p := range c.Problems {
+	for _, p := range problems {
 		color.New(color.FgHiRed).Fprintf(console.Err(), "[search] not searched: %s\n", termsafe.Line(p))
 	}
-	console.Printf("%d objects hold a match. Report: %s\n", o.Ranked, o.ReportPath)
+}
+
+// searchSummary says what a search covered and found, and which objects it
+// could not read.
+func searchSummary(o search.Outcome) (lines, problems []string) {
+	c := o.Result.Coverage
+	lines = append(lines, fmt.Sprintf("%d objects hold a match. Report: %s", o.Ranked, o.ReportPath),
+		fmt.Sprintf("Searched %d evidence, %d partitions and %d indexed files (%d bytes).", c.Evidence, c.Partitions, c.Files, c.Bytes))
+	if c.NotStored > 0 {
+		lines = append(lines, fmt.Sprintf("%d evidence records are not stored (pending, failed or duplicate) and were not searched.", c.NotStored))
+	}
+	if c.Quarantined > 0 {
+		lines = append(lines, fmt.Sprintf("%d evidence have a quarantined index: only the evidence itself was searched.", c.Quarantined))
+	}
+	if c.Unavailable > 0 {
+		lines = append(lines, fmt.Sprintf("%d indexed files have no readable content (metadata only).", c.Unavailable))
+	}
+	return lines, c.Problems
+}
+
+// searchIncomplete is the warning for a search that could not read some
+// objects, or "".
+func searchIncomplete(o search.Outcome) string {
+	if c := o.Result.Coverage; c.Incomplete() {
+		return fmt.Sprintf("%d objects could not be read and were not searched; the report's coverage names them", c.Unreadable)
+	}
+	return ""
 }

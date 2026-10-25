@@ -25,7 +25,7 @@ func StatsData(ctx context.Context, opts DBOptions) (err error) {
 	encryptionNotice(h)
 
 	logging.GetLogger().Info("StatsData STATS_EXECUTE")
-	err = store.Stats(h.DB)
+	err = store.Stats(ctx, h.DB)
 	if err != nil {
 		logging.GetLogger().Error("StatsData STATS_ERROR", zap.Error(err))
 		return err

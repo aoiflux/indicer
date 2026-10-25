@@ -22,6 +22,7 @@ var layoutGuarded = []string{
 	"lib/dbio/members.go",
 	"lib/dbio/objects.go",
 	"lib/dbio/recordref.go",
+	"lib/dbio/revrel_scan.go",
 	"lib/evidence/evidence.go",
 	"lib/evidence/plan.go",
 	"lib/index/hash.go",
@@ -47,8 +48,10 @@ var layoutGuarded = []string{
 	"lib/server/rpc.go",
 	"lib/server/rpc_files.go",
 	"lib/server/upload.go",
+	"cli/cmdtui.go",
 	"lib/store/ingest_validation.go",
 	"lib/store/restore.go",
+	"lib/store/stats.go",
 	"lib/store/upgrade.go",
 	"lib/store/verify.go",
 }

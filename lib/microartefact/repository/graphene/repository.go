@@ -1,6 +1,8 @@
 package graphene
 
 import (
+	"container/heap"
+	"context"
 	"errors"
 	"fmt"
 	"os"
@@ -400,48 +402,12 @@ func (r *Repository) ExportHTML(outPath string, topK int, overwrite bool) (int, 
 	}
 
 	kinds := r.kinds()
-	indexedIDs, err := r.graph.NodesByAnyType(kinds.MatchTypes(schema.KindIndexedFile))
+	ranked, _, _, err := r.rankArtefactFiles(context.Background(), topK)
 	if err != nil {
 		return 0, err
 	}
-	type rankedIndexed struct {
-		id            graphstore.NodeID
-		artefactCount int
-	}
-	ranked := make([]rankedIndexed, 0, len(indexedIDs))
-	for _, id := range indexedIDs {
-		node, err := r.graph.GetNode(id)
-		if err != nil {
-			return 0, err
-		}
-		fields, err := props.Unpack(node.Properties)
-		if err != nil {
-			return 0, fmt.Errorf("graph node %d: %w", id, err)
-		}
-		count := intProp(fields, ArtefactCountProperty)
-		if count == 0 && !fields.Has(StatusProperty) {
-			// Stored before counts were recorded.
-			arts, err := r.fileArtefacts(id)
-			if err != nil {
-				return 0, err
-			}
-			count = len(arts)
-		}
-		if count > 0 {
-			ranked = append(ranked, rankedIndexed{id: id, artefactCount: count})
-		}
-	}
 	if len(ranked) == 0 {
 		return 0, ErrNothingToExport
-	}
-	sort.Slice(ranked, func(i, j int) bool {
-		if ranked[i].artefactCount != ranked[j].artefactCount {
-			return ranked[i].artefactCount > ranked[j].artefactCount
-		}
-		return ranked[i].id < ranked[j].id
-	})
-	if topK > 0 && topK < len(ranked) {
-		ranked = ranked[:topK]
 	}
 
 	nodesByID := map[graphstore.NodeID]*graphstore.Node{}
@@ -541,6 +507,86 @@ func (r *Repository) ExportHTML(outPath string, topK int, overwrite bool) (int, 
 		return 0, fmt.Errorf("micro-artefact export: %w", err)
 	}
 	return len(ranked), nil
+}
+
+// rankedFile is an indexed file node and how many artefacts it holds.
+type rankedFile struct {
+	id    graphstore.NodeID
+	count int
+}
+
+// before orders files by artefact count, most first, then by node.
+func (a rankedFile) before(b rankedFile) bool {
+	if a.count != b.count {
+		return a.count > b.count
+	}
+	return a.id < b.id
+}
+
+// fileHeap is a min-heap in that order: its root is the file to drop first.
+type fileHeap []rankedFile
+
+func (h fileHeap) Len() int           { return len(h) }
+func (h fileHeap) Less(i, j int) bool { return h[j].before(h[i]) }
+func (h fileHeap) Swap(i, j int)      { h[i], h[j] = h[j], h[i] }
+func (h *fileHeap) Push(x any)        { *h = append(*h, x.(rankedFile)) }
+func (h *fileHeap) Pop() any {
+	old := *h
+	x := old[len(old)-1]
+	*h = old[:len(old)-1]
+	return x
+}
+
+// rankArtefactFiles returns the limit indexed files with the most artefacts
+// (every one when limit is 0), most first, and how many files hold artefacts
+// and how many they hold in all. It reads every indexed file node once, but
+// keeps only the files it returns.
+func (r *Repository) rankArtefactFiles(ctx context.Context, limit int) (ranked []rankedFile, files, artefacts int, err error) {
+	indexedIDs, err := r.graph.NodesByAnyType(r.kinds().MatchTypes(schema.KindIndexedFile))
+	if err != nil {
+		return nil, 0, 0, err
+	}
+	top := &fileHeap{}
+	for i, id := range indexedIDs {
+		if i%1024 == 0 {
+			if err := ctx.Err(); err != nil {
+				return nil, 0, 0, err
+			}
+		}
+		node, err := r.graph.GetNode(id)
+		if err != nil {
+			return nil, 0, 0, err
+		}
+		fields, err := props.Unpack(node.Properties)
+		if err != nil {
+			return nil, 0, 0, fmt.Errorf("graph node %d: %w", id, err)
+		}
+		count := intProp(fields, ArtefactCountProperty)
+		if count == 0 && !fields.Has(StatusProperty) {
+			// Stored before counts were recorded.
+			arts, err := r.fileArtefacts(id)
+			if err != nil {
+				return nil, 0, 0, err
+			}
+			count = len(arts)
+		}
+		if count == 0 {
+			continue
+		}
+		files++
+		artefacts += count
+		f := rankedFile{id: id, count: count}
+		switch {
+		case limit <= 0 || top.Len() < limit:
+			heap.Push(top, f)
+		case f.before((*top)[0]):
+			(*top)[0] = f
+			heap.Fix(top, 0)
+		}
+	}
+	ranked = []rankedFile(*top)
+	sort.Slice(ranked, func(i, j int) bool { return ranked[i].before(ranked[j]) })
+	return ranked, files, artefacts, nil
 }
 
 func intProp(m props.Map, key string) int { return m.Int(key) }

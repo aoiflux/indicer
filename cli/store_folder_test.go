@@ -3,6 +3,7 @@ package cli
 import (
 	"context"
 	"errors"
+	"io"
 	"os"
 	"path/filepath"
 	"strings"
@@ -75,11 +76,11 @@ func TestStoreFolderContinuesPastErrors(t *testing.T) {
 
 	prev := storeOneFile
 	t.Cleanup(func() { storeOneFile = prev })
-	storeOneFile = func(ctx context.Context, db *badger.DB, path string, sopts StoreOptions) error {
+	storeOneFile = func(ctx context.Context, w io.Writer, db *badger.DB, path string, sopts StoreOptions) error {
 		if filepath.Base(path) == "b-bad.bin" {
 			return errors.New("simulated read failure")
 		}
-		return prev(ctx, db, path, sopts)
+		return prev(ctx, w, db, path, sopts)
 	}
 
 	opts := optsFor(filepath.Join(dir, "db"), matrixChunkKB, nil)

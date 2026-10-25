@@ -1,301 +1,190 @@
 package tui
 
 import (
+	"context"
+	"fmt"
+	"path/filepath"
 	"strings"
-
-	"indicer/lib/cnst"
+	"time"
 
 	"charm.land/bubbles/v2/textinput"
 	tea "charm.land/bubbletea/v2"
 	"charm.land/lipgloss/v2"
-	"github.com/dgraph-io/badger/v4"
 )
 
-type storeCompletedMsg struct {
-	err error
+const (
+	storeFocusPath = iota
+	storeFocusNoIndex
+	storeFocusStore
+	storeFocusCancel
+	storeFields
+)
+
+type storeScreen struct {
+	env     *env
+	path    textinput.Model
+	noIndex bool
+	focus   int
+	run     running
+	status  status
+	out     Outcome
+	another prompt // after a store: store another?
 }
 
-type storeBackToMenuMsg struct {
-	status string
+func newStoreScreen(e *env) *storeScreen {
+	in := textinput.New()
+	in.Placeholder = "Path of a file or folder…"
+	in.Focus()
+	return &storeScreen{env: e, path: in}
 }
 
-type StoreModel struct {
-	fileInput    textinput.Model
-	db           *badger.DB
-	storeFn      func(filePath string, syncIndex bool, noIndex bool, hashAlgo string) error
-	width        int
-	height       int
-	status       string
-	syncIndex    bool
-	noIndex      bool
-	hashAlgo     string // cnst.SHA3 or cnst.BLAKE3
-	focusedField int
-	running      bool
-	askAnother   bool
-	askChoice    int // 0 = Yes, 1 = No
-}
+func (s *storeScreen) init() tea.Cmd { return textinput.Blink }
+func (s *storeScreen) resize()       { s.path.SetWidth(max(24, s.env.width-14)) }
+func (s *storeScreen) job() int      { return s.run.id }
+func (s *storeScreen) typing() bool  { return s.focus == storeFocusPath && !s.another.open }
 
-func NewStoreModel(db *badger.DB, storeFn func(filePath string, syncIndex bool, noIndex bool, hashAlgo string) error) *StoreModel {
-	fileInput := textinput.New()
-	fileInput.Placeholder = "Enter file path..."
-	fileInput.Focus()
-
-	return &StoreModel{
-		fileInput: fileInput,
-		db:        db,
-		storeFn:   storeFn,
-		width:     80,
-		height:    24,
-		hashAlgo:  cnst.BLAKE3,
-	}
-}
-
-func (m *StoreModel) Resize(width int, height int) {
-	m.width = width
-	m.height = height
-
-	inputWidth := width - 18
-	if inputWidth < 24 {
-		inputWidth = 24
-	}
-	m.fileInput.SetWidth(inputWidth)
-}
-
-func (m StoreModel) Init() tea.Cmd {
-	return textinput.Blink
-}
-
-func (m StoreModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
-	var cmd tea.Cmd
-
-	switch msg := msg.(type) {
-	case storeCompletedMsg:
-		m.running = false
-		if msg.err != nil {
-			m.status = "Error: " + msg.err.Error()
-		} else {
-			m.status = "Stored successfully"
-			m.askAnother = true
-			m.askChoice = 0
-			m.fileInput.Blur()
-		}
-		return m, nil
-	case storeContinueMsg:
-		m.askAnother = false
-		m.askChoice = 0
-		m.status = "Ready to store another file"
-		m.fileInput.SetValue("")
-		m.focusedField = 0
-		m.fileInput.Focus()
-		return m, nil
-	case tea.KeyMsg:
-		if m.askAnother {
-			switch msg.String() {
-			case "left", "right", "tab":
-				m.askChoice = (m.askChoice + 1) % 2
-			case "y":
-				m.askChoice = 0
-				return m, continueStoreFlow()
-			case "n":
-				m.askChoice = 1
-				return m, backToMenuCmd(m.status)
-			case "enter":
-				if m.askChoice == 0 {
-					return m, continueStoreFlow()
-				}
-				return m, backToMenuCmd(m.status)
-			}
-			return m, nil
-		}
-
-		switch msg.String() {
-		case "ctrl+c", "esc":
-			return m, tea.Quit
-		case "tab":
-			m.focusedField = (m.focusedField + 1) % 6
-			if m.focusedField == 0 {
-				m.fileInput.Focus()
-			} else {
-				m.fileInput.Blur()
-			}
-		case "enter":
-			switch m.focusedField {
-			case 1:
-				m.syncIndex = !m.syncIndex
-				if m.syncIndex {
-					m.noIndex = false
-				}
-			case 2:
-				m.noIndex = !m.noIndex
-				if m.noIndex {
-					m.syncIndex = false
-				}
-			case 3:
-				if m.hashAlgo == cnst.SHA3 {
-					m.hashAlgo = cnst.BLAKE3
-				} else {
-					m.hashAlgo = cnst.SHA3
-				}
-			case 4:
-				if m.running {
-					return m, nil
-				}
-
-				path := strings.TrimSpace(m.fileInput.Value())
-				if path == "" {
-					m.status = "Error: file path is required"
-					return m, nil
-				}
-				if m.storeFn == nil {
-					m.status = "Error: store action not configured"
-					return m, nil
-				}
-
-				m.status = "Storing file... please wait"
-				m.running = true
-				return m, runStoreCmd(m.storeFn, path, m.syncIndex, m.noIndex, m.hashAlgo)
-			case 5:
-				return m, tea.Quit
-			}
-		}
-	}
-
-	if m.focusedField == 0 {
-		m.fileInput, cmd = m.fileInput.Update(msg)
-	}
-
-	return m, cmd
-}
-
-func continueStoreFlow() tea.Cmd {
-	return func() tea.Msg {
-		return storeContinueMsg{}
-	}
-}
-
-type storeContinueMsg struct{}
-
-func runStoreCmd(storeFn func(filePath string, syncIndex bool, noIndex bool, hashAlgo string) error, filePath string, syncIndex bool, noIndex bool, hashAlgo string) tea.Cmd {
-	return func() tea.Msg {
-		err := storeFn(filePath, syncIndex, noIndex, hashAlgo)
-		return storeCompletedMsg{err: err}
-	}
-}
-
-func backToMenuCmd(status string) tea.Cmd {
-	return func() tea.Msg {
-		return storeBackToMenuMsg{status: status}
-	}
-}
-
-func (m StoreModel) View() tea.View {
-	title := TitleStyle.Render("Store File in DUES Database")
-
-	fileLabel := "File Path:"
-	if m.focusedField == 0 {
-		fileLabel = SelectedItemStyle.Render(fileLabel)
-	}
-
-	fileField := InputStyle.Render(fileLabel + "\n" + m.fileInput.View())
-
-	syncLabel := "☐ Sync Index"
-	if m.syncIndex {
-		syncLabel = "☑ Sync Index"
-	}
-	if m.focusedField == 1 {
-		syncLabel = SelectedItemStyle.Render(syncLabel)
-	}
-
-	noIndexLabel := "☐ Skip Index"
-	if m.noIndex {
-		noIndexLabel = "☑ Skip Index"
-	}
-	if m.focusedField == 2 {
-		noIndexLabel = SelectedItemStyle.Render(noIndexLabel)
-	}
-
-	sha3Badge := lipgloss.NewStyle().Foreground(lipgloss.Color("42")).Bold(true).Render("SHA3")
-	blake3Badge := lipgloss.NewStyle().Foreground(lipgloss.Color("214")).Bold(true).Render("BLAKE3")
-	var hashLabel string
-	if m.hashAlgo == cnst.SHA3 {
-		hashLabel = "Hash Algo: " + sha3Badge + lipgloss.NewStyle().Foreground(lipgloss.Color("240")).Render(" (BLAKE3)")
+func (s *storeScreen) setFocus(f int) {
+	s.focus = f
+	if f == storeFocusPath {
+		s.path.Focus()
 	} else {
-		hashLabel = "Hash Algo: " + blake3Badge + lipgloss.NewStyle().Foreground(lipgloss.Color("240")).Render(" (SHA3)")
+		s.path.Blur()
 	}
-	if m.focusedField == 3 {
-		hashLabel = SelectedItemStyle.Render("Hash Algo:") + " " + func() string {
-			if m.hashAlgo == cnst.BLAKE3 {
-				return blake3Badge + lipgloss.NewStyle().Foreground(lipgloss.Color("240")).Render(" (SHA3)")
-			}
-			return sha3Badge + lipgloss.NewStyle().Foreground(lipgloss.Color("240")).Render(" (BLAKE3)")
-		}()
-	}
+}
 
-	options := lipgloss.JoinVertical(lipgloss.Left, syncLabel, noIndexLabel, hashLabel)
-
-	storeBtn := ButtonStyle.Render("Store")
-	if m.focusedField == 4 {
-		storeBtn = ButtonSelectedStyle.Render("Store")
-	}
-	cancelBtn := ButtonStyle.Render("Cancel")
-	if m.focusedField == 5 {
-		cancelBtn = ButtonSelectedStyle.Render("Cancel")
-	}
-
-	buttons := lipgloss.JoinHorizontal(lipgloss.Left, storeBtn, cancelBtn)
-
-	status := ""
-	if m.status != "" {
-		status = InfoStyle.Render(m.status)
-	}
-
-	askPrompt := ""
-	if m.askAnother {
-		yesBtn := ButtonStyle.Render("Yes")
-		noBtn := ButtonStyle.Render("No")
-		if m.askChoice == 0 {
-			yesBtn = ButtonSelectedStyle.Render("Yes")
-		} else {
-			noBtn = ButtonSelectedStyle.Render("No")
+func (s *storeScreen) update(msg tea.Msg) tea.Cmd {
+	switch msg := msg.(type) {
+	case jobDoneMsg:
+		s.run = running{}
+		s.out, _ = msg.result.(Outcome)
+		switch {
+		case msg.err != nil:
+			s.status = errStatus(msg.err)
+			return nil
+		case s.out.Warning:
+			s.status = status{statusWarn, "Stored, with warnings: see below"}
+		default:
+			s.status = status{statusOK, "Stored"}
 		}
-
-		askPrompt = lipgloss.JoinVertical(
-			lipgloss.Left,
-			InfoStyle.Render("Do you want to store another file?"),
-			lipgloss.JoinHorizontal(lipgloss.Left, yesBtn, noBtn),
-		)
+		s.setFocus(-1)
+		s.another.ask("Store another file or folder?", "Yes", "No", true)
+		return nil
+	case tea.KeyPressMsg:
+		if s.another.open {
+			decided, yes := s.another.key(msg)
+			switch {
+			case !decided:
+				return nil
+			case yes:
+				s.path.SetValue("")
+				s.out = Outcome{}
+				s.status = infoStatus("Ready to store another file or folder")
+				s.setFocus(storeFocusPath)
+				return nil
+			}
+			return back
+		}
+		return s.key(msg)
 	}
-
-	help := HelpStyle.Render("Tab: Navigate | Enter: Select | esc: Back")
-	if m.askAnother {
-		help = HelpStyle.Render("Left/Right/Tab: Choose | Enter: Confirm | y/n: Quick select")
+	if s.focus == storeFocusPath {
+		var cmd tea.Cmd
+		s.path, cmd = s.path.Update(msg)
+		return cmd
 	}
+	return nil
+}
 
-	content := lipgloss.JoinVertical(
-		lipgloss.Left,
-		title,
-		"",
-		fileField,
-		"",
-		"Options:",
-		options,
-		"",
+func (s *storeScreen) key(msg tea.KeyPressMsg) tea.Cmd {
+	switch msg.String() {
+	case "tab", "down":
+		s.setFocus((s.focus + 1) % storeFields)
+		return nil
+	case "shift+tab", "up":
+		s.setFocus((s.focus + storeFields - 1) % storeFields)
+		return nil
+	case "enter":
+		switch s.focus {
+		case storeFocusPath, storeFocusStore:
+			return s.start()
+		case storeFocusNoIndex:
+			s.noIndex = !s.noIndex
+		case storeFocusCancel:
+			// Cancel goes back to the menu; it used to quit (TUI-4).
+			return back
+		}
+		return nil
+	case "space":
+		if s.focus == storeFocusNoIndex {
+			s.noIndex = !s.noIndex
+			return nil
+		}
+	}
+	if s.focus == storeFocusPath {
+		var cmd tea.Cmd
+		s.path, cmd = s.path.Update(msg)
+		return cmd
+	}
+	return nil
+}
+
+func (s *storeScreen) start() tea.Cmd {
+	if s.run.active() {
+		return nil
+	}
+	path := strings.TrimSpace(s.path.Value())
+	if path == "" {
+		s.status = status{statusError, "Error: enter the path of a file or folder"}
+		return nil
+	}
+	store := s.env.actions.Store
+	if store == nil {
+		s.status = status{statusError, "Error: storing is not available"}
+		return nil
+	}
+	opts := StoreOptions{NoIndex: s.noIndex}
+	id, cmd, err := s.env.run("store "+filepath.Base(path), sharedJob, func(ctx context.Context) (any, error) {
+		return store(ctx, path, opts)
+	})
+	if err != nil {
+		s.status = errStatus(err)
+		return nil
+	}
+	s.run = running{id: id, since: time.Now()}
+	s.out = Outcome{}
+	s.status = status{}
+	return cmd
+}
+
+func (s *storeScreen) view() string {
+	e := s.env
+	label := "File or folder:"
+	if s.focus == storeFocusPath {
+		label = SelectedItemStyle.Render(label)
+	}
+	option := checkbox(s.noIndex, "Skip the index: store the bytes only")
+	if s.focus == storeFocusNoIndex {
+		option = SelectedItemStyle.Render(option)
+	}
+	layout := DimStyle.Render(fmt.Sprintf("Chunks of %d KiB, hashed with %s: the database's own layout, fixed when it was created.",
+		e.info.ChunkKiB, clean(e.info.ChunkHash)))
+	buttons := lipgloss.JoinHorizontal(lipgloss.Left,
+		button("Store", s.focus == storeFocusStore), button("Cancel", s.focus == storeFocusCancel))
+	stat := s.status.render()
+	if s.run.active() {
+		stat = InfoStyle.Render(fmt.Sprintf("Storing %s… %s", clean(strings.TrimSpace(s.path.Value())), since(s.run.since)))
+	}
+	help := "Tab/↑/↓: Move | Enter: Select | Space: Toggle | esc: Back (a store keeps running) | ctrl+x: Cancel the store"
+	if s.another.open {
+		help = ""
+	}
+	return frame(e.width, e.height, joinLines(
+		TitleStyle.Render("Store evidence"),
+		InputStyle.Render(label+"\n"+s.path.View()),
+		option+"\n"+layout,
 		buttons,
-		"",
-		status,
-		"",
-		askPrompt,
-		"",
-		help,
-	)
-
-	frame := BorderStyle
-	if m.width > 0 {
-		frame = frame.Width(max(40, m.width-4))
-	}
-	if m.height > 0 {
-		frame = frame.MaxHeight(max(12, m.height-2))
-	}
-
-	return tea.NewView(frame.Render(content))
+		stat,
+		outcomeLines(s.out, e.width-8),
+		s.another.view(),
+		HelpStyle.Render(help),
+	))
 }

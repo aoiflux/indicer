@@ -560,21 +560,24 @@ func printTuiHelp() {
 	printHelpHeader("tui")
 	fmt.Println("Usage: dues tui [global options]")
 	fmt.Println("Launches the interactive Terminal UI for DUES operations.")
-	fmt.Println("Use the TUI to store, list, search, restore, run NeAR analysis, and reset the database.")
+	fmt.Println("Use the TUI to store, list, search, restore, run NeAR analysis, view statistics and")
+	fmt.Println("micro-artefacts, and reset the database. Its jobs run behind the screen; quitting")
+	fmt.Println("while one runs asks first, and DUES waits for the jobs before closing the database.")
 	printExamples(
 		"dues tui",
 		"dues tui --dbpath ./caseA",
-		"dues tui --password secret123 --dbpath ./caseA",
-		"dues tui --chonksize 512 --container",
+		"dues tui --dbpath ./caseA --password-file ./caseA.key",
 	)
 
 	printHelpSection("TUI Keys")
-	fmt.Println("  Up/Down   Navigate menus")
-	fmt.Println("  Enter     Select/confirm")
-	fmt.Println("  Tab       Switch input fields")
-	fmt.Println("  Esc       Return to previous screen")
-	fmt.Println("  q         Quit (from main menu)")
-	fmt.Println("  Ctrl+C    Force exit")
+	fmt.Println("  Up/Down, Tab  Move between items and fields")
+	fmt.Println("  Enter         Select, confirm, or press the focused button")
+	fmt.Println("  Space         Toggle the focused checkbox")
+	fmt.Println("  Esc           Close a question, or go back to the menu")
+	fmt.Println("  q             Back, or quit from the menu (typed in a text field)")
+	fmt.Println("  Ctrl+X        Cancel the screen's job; on the menu, every job")
+	fmt.Println("  Ctrl+C        Quit (asks first while jobs run)")
+	fmt.Println("See docs/TUI_QUICKSTART.md.")
 }
 
 func printVersionHelp() {

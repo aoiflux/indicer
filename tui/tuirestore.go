@@ -1,257 +1,230 @@
 package tui
 
 import (
+	"context"
+	"errors"
+	"fmt"
 	"strings"
+	"time"
 
 	"charm.land/bubbles/v2/textinput"
 	tea "charm.land/bubbletea/v2"
 	"charm.land/lipgloss/v2"
-	"github.com/dgraph-io/badger/v4"
 )
 
-type RestoreModel struct {
-	hashInput    textinput.Model
-	pathInput    textinput.Model
-	db           *badger.DB
-	restoreFn    func(hash string, restorePath string) error
-	width        int
-	height       int
-	restoring    bool
-	focusedField int
-	status       string
-	askAnother   bool
-	askChoice    int // 0 = Yes, 1 = No
+const (
+	restoreFocusID = iota
+	restoreFocusPath
+	restoreFocusRestore
+	restoreFocusCancel
+	restoreFields
+)
+
+// defaultRestoreName is where the restore screen writes when no path is given.
+const defaultRestoreName = "restored"
+
+type restoreScreen struct {
+	env     *env
+	id      textinput.Model
+	path    textinput.Model
+	focus   int
+	run     running
+	target  string // the path being restored to
+	status  status
+	out     Outcome
+	replace prompt // the target exists: replace it?
+	another prompt // after a restore: restore another?
 }
 
-type restoreCompletedMsg struct {
-	err error
+func newRestoreScreen(e *env) *restoreScreen {
+	id := textinput.New()
+	id.Placeholder = "ID or hash of a stored object…"
+	id.Focus()
+	path := textinput.New()
+	path.Placeholder = "Path to restore to (default: " + defaultRestoreName + ")"
+	return &restoreScreen{env: e, id: id, path: path}
 }
 
-type restoreBackToMenuMsg struct {
-	status string
+func (s *restoreScreen) init() tea.Cmd { return textinput.Blink }
+func (s *restoreScreen) job() int      { return s.run.id }
+
+func (s *restoreScreen) resize() {
+	w := max(24, s.env.width-14)
+	s.id.SetWidth(w)
+	s.path.SetWidth(w)
 }
 
-type restoreContinueMsg struct{}
+func (s *restoreScreen) typing() bool {
+	return (s.focus == restoreFocusID || s.focus == restoreFocusPath) && !s.replace.open && !s.another.open
+}
 
-func NewRestoreModel(db *badger.DB, restoreFn func(hash string, restorePath string) error) *RestoreModel {
-	hashInput := textinput.New()
-	hashInput.Placeholder = "Enter file hash..."
-	hashInput.Focus()
+// escape answers No to the replace prompt.
+func (s *restoreScreen) escape() bool {
+	if s.replace.open {
+		s.replace.open = false
+		s.status = infoStatus("Not restored: " + clean(s.target) + " exists")
+		return true
+	}
+	return false
+}
 
-	pathInput := textinput.New()
-	pathInput.Placeholder = "Enter restore path... (default: restored)"
-
-	return &RestoreModel{
-		hashInput: hashInput,
-		pathInput: pathInput,
-		db:        db,
-		restoreFn: restoreFn,
-		width:     80,
-		height:    24,
+func (s *restoreScreen) setFocus(f int) {
+	s.focus = f
+	s.id.Blur()
+	s.path.Blur()
+	switch f {
+	case restoreFocusID:
+		s.id.Focus()
+	case restoreFocusPath:
+		s.path.Focus()
 	}
 }
 
-func (m *RestoreModel) Resize(width int, height int) {
-	m.width = width
-	m.height = height
-
-	inputWidth := width - 18
-	if inputWidth < 24 {
-		inputWidth = 24
-	}
-	m.hashInput.SetWidth(inputWidth)
-	m.pathInput.SetWidth(inputWidth)
-}
-
-func (m RestoreModel) Init() tea.Cmd {
-	return textinput.Blink
-}
-
-func (m RestoreModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
-	var cmd tea.Cmd
-
+func (s *restoreScreen) update(msg tea.Msg) tea.Cmd {
 	switch msg := msg.(type) {
-	case restoreCompletedMsg:
-		m.restoring = false
-		if msg.err != nil {
-			m.status = "Error: " + msg.err.Error()
-		} else {
-			m.status = "Restore completed successfully"
-			m.askAnother = true
-			m.askChoice = 0
-			m.hashInput.Blur()
-			m.pathInput.Blur()
+	case jobDoneMsg:
+		s.run = running{}
+		s.out, _ = msg.result.(Outcome)
+		switch {
+		case errors.Is(msg.err, ErrTargetExists):
+			s.status = status{}
+			s.replace.ask(clean(s.target)+" exists. Replace it?", "Yes, replace it", "No", false)
+			return nil
+		case msg.err != nil:
+			s.status = errStatus(msg.err)
+			return nil
+		case s.out.Warning:
+			s.status = status{statusWarn, "Restored, with warnings: see below"}
+		default:
+			s.status = status{statusOK, "Restored"}
 		}
-		return m, nil
-	case restoreContinueMsg:
-		m.askAnother = false
-		m.askChoice = 0
-		m.status = "Ready to restore another file"
-		m.hashInput.SetValue("")
-		m.pathInput.SetValue("")
-		m.focusedField = 0
-		m.hashInput.Focus()
-		m.pathInput.Blur()
-		return m, nil
-	case tea.KeyMsg:
-		if m.askAnother {
-			switch msg.String() {
-			case "left", "right", "tab":
-				m.askChoice = (m.askChoice + 1) % 2
-			case "y":
-				m.askChoice = 0
-				return m, continueRestoreFlow()
-			case "n":
-				m.askChoice = 1
-				return m, backToMenuAfterRestoreCmd(m.status)
-			case "enter":
-				if m.askChoice == 0 {
-					return m, continueRestoreFlow()
+		s.setFocus(-1)
+		s.another.ask("Restore another object?", "Yes", "No", true)
+		return nil
+	case tea.KeyPressMsg:
+		switch {
+		case s.replace.open:
+			if decided, yes := s.replace.key(msg); decided {
+				if yes {
+					return s.start(true)
 				}
-				return m, backToMenuAfterRestoreCmd(m.status)
+				s.status = infoStatus("Not restored: " + clean(s.target) + " exists")
 			}
-			return m, nil
+			return nil
+		case s.another.open:
+			decided, yes := s.another.key(msg)
+			switch {
+			case !decided:
+				return nil
+			case yes:
+				s.id.SetValue("")
+				s.path.SetValue("")
+				s.out = Outcome{}
+				s.status = infoStatus("Ready to restore another object")
+				s.setFocus(restoreFocusID)
+				return nil
+			}
+			return back
 		}
+		return s.key(msg)
+	}
+	return s.updateInput(msg)
+}
 
-		switch msg.String() {
-		case "ctrl+c", "esc":
-			return m, tea.Quit
-		case "tab":
-			m.focusedField = (m.focusedField + 1) % 3
-			switch m.focusedField {
-			case 0:
-				m.hashInput.Focus()
-				m.pathInput.Blur()
-			case 1:
-				m.hashInput.Blur()
-				m.pathInput.Focus()
-			default:
-				m.pathInput.Blur()
-			}
-		case "enter":
-			if m.focusedField == 2 && !m.restoring {
-				hash := strings.TrimSpace(m.hashInput.Value())
-				rpath := strings.TrimSpace(m.pathInput.Value())
-				if hash == "" {
-					m.status = "Error: file hash is required"
-					return m, nil
-				}
-				if rpath == "" {
-					rpath = "restored"
-				}
-				if m.restoreFn == nil {
-					m.status = "Error: restore action not configured"
-					return m, nil
-				}
-				m.restoring = true
-				m.status = "Restoring file... please wait"
-				return m, runRestoreCmd(m.restoreFn, hash, rpath)
-			}
+func (s *restoreScreen) updateInput(msg tea.Msg) tea.Cmd {
+	var cmd tea.Cmd
+	switch s.focus {
+	case restoreFocusID:
+		s.id, cmd = s.id.Update(msg)
+	case restoreFocusPath:
+		s.path, cmd = s.path.Update(msg)
+	}
+	return cmd
+}
+
+func (s *restoreScreen) key(msg tea.KeyPressMsg) tea.Cmd {
+	switch msg.String() {
+	case "tab", "down":
+		s.setFocus((s.focus + 1) % restoreFields)
+		return nil
+	case "shift+tab", "up":
+		s.setFocus((s.focus + restoreFields - 1) % restoreFields)
+		return nil
+	case "enter":
+		switch s.focus {
+		case restoreFocusID:
+			s.setFocus(restoreFocusPath)
+		case restoreFocusPath, restoreFocusRestore:
+			return s.start(false)
+		case restoreFocusCancel:
+			return back
 		}
+		return nil
 	}
-
-	switch m.focusedField {
-	case 0:
-		m.hashInput, cmd = m.hashInput.Update(msg)
-	case 1:
-		m.pathInput, cmd = m.pathInput.Update(msg)
-	}
-
-	return m, cmd
+	return s.updateInput(msg)
 }
 
-func runRestoreCmd(restoreFn func(hash string, restorePath string) error, hash string, restorePath string) tea.Cmd {
-	return func() tea.Msg {
-		return restoreCompletedMsg{err: restoreFn(hash, restorePath)}
+// start restores; replace is set once the user agreed to replace the target.
+func (s *restoreScreen) start(replace bool) tea.Cmd {
+	if s.run.active() {
+		return nil
 	}
+	id := strings.TrimSpace(s.id.Value())
+	if id == "" {
+		s.status = status{statusError, "Error: enter the ID or hash of a stored object"}
+		return nil
+	}
+	target := strings.TrimSpace(s.path.Value())
+	if target == "" {
+		target = defaultRestoreName
+	}
+	restore := s.env.actions.Restore
+	if restore == nil {
+		s.status = status{statusError, "Error: restoring is not available"}
+		return nil
+	}
+	jobID, cmd, err := s.env.run("restore "+truncate(id, 12), sharedJob, func(ctx context.Context) (any, error) {
+		return restore(ctx, id, target, replace)
+	})
+	if err != nil {
+		s.status = errStatus(err)
+		return nil
+	}
+	s.run = running{id: jobID, since: time.Now()}
+	s.target = target
+	s.out = Outcome{}
+	s.status = status{}
+	return cmd
 }
 
-func continueRestoreFlow() tea.Cmd {
-	return func() tea.Msg {
-		return restoreContinueMsg{}
+func (s *restoreScreen) view() string {
+	e := s.env
+	idLabel, pathLabel := "ID or hash:", "Restore to:"
+	if s.focus == restoreFocusID {
+		idLabel = SelectedItemStyle.Render(idLabel)
 	}
-}
-
-func backToMenuAfterRestoreCmd(status string) tea.Cmd {
-	return func() tea.Msg {
-		return restoreBackToMenuMsg{status: status}
-	}
-}
-
-func (m RestoreModel) View() tea.View {
-	title := TitleStyle.Render("Restore File from DUES")
-
-	hashLabel := "File Hash:"
-	if m.focusedField == 0 {
-		hashLabel = SelectedItemStyle.Render(hashLabel)
-	}
-
-	hashField := InputStyle.Render(hashLabel + "\n" + m.hashInput.View())
-
-	pathLabel := "Restore Path:"
-	if m.focusedField == 1 {
+	if s.focus == restoreFocusPath {
 		pathLabel = SelectedItemStyle.Render(pathLabel)
 	}
-
-	pathField := InputStyle.Render(pathLabel + "\n" + m.pathInput.View())
-
-	restoreBtn := ButtonStyle.Render("Restore")
-	if m.focusedField == 2 {
-		restoreBtn = ButtonSelectedStyle.Render("Restore")
+	buttons := lipgloss.JoinHorizontal(lipgloss.Left,
+		button("Restore", s.focus == restoreFocusRestore), button("Cancel", s.focus == restoreFocusCancel))
+	stat := s.status.render()
+	if s.run.active() {
+		stat = InfoStyle.Render(fmt.Sprintf("Restoring to %s… %s", clean(s.target), since(s.run.since)))
 	}
-
-	buttons := lipgloss.JoinHorizontal(lipgloss.Left, restoreBtn, ButtonStyle.Render("Cancel"))
-
-	status := ""
-	if m.status != "" {
-		status = InfoStyle.Render(m.status)
+	help := "Tab/↑/↓: Move | Enter: Select | esc: Back (a restore keeps running) | ctrl+x: Cancel the restore"
+	if s.replace.open || s.another.open {
+		help = ""
 	}
-
-	askPrompt := ""
-	if m.askAnother {
-		yesBtn := ButtonStyle.Render("Yes")
-		noBtn := ButtonStyle.Render("No")
-		if m.askChoice == 0 {
-			yesBtn = ButtonSelectedStyle.Render("Yes")
-		} else {
-			noBtn = ButtonSelectedStyle.Render("No")
-		}
-
-		askPrompt = lipgloss.JoinVertical(
-			lipgloss.Left,
-			InfoStyle.Render("Do you want to restore another file?"),
-			lipgloss.JoinHorizontal(lipgloss.Left, yesBtn, noBtn),
-		)
-	}
-
-	help := HelpStyle.Render("Tab: Navigate | Enter: Select | esc: Back")
-	if m.askAnother {
-		help = HelpStyle.Render("Left/Right/Tab: Choose | Enter: Confirm | y/n: Quick select")
-	}
-
-	content := lipgloss.JoinVertical(
-		lipgloss.Left,
-		title,
-		"",
-		hashField,
-		pathField,
-		"",
+	return frame(e.width, e.height, joinLines(
+		TitleStyle.Render("Restore a stored object"),
+		InputStyle.Render(idLabel+"\n"+s.id.View())+"\n"+InputStyle.Render(pathLabel+"\n"+s.path.View()),
+		DimStyle.Render("An existing file is replaced only after you confirm. Every chunk, and the whole content, is checked against its hash."),
 		buttons,
-		"",
-		status,
-		"",
-		askPrompt,
-		"",
-		help,
-	)
-
-	frame := BorderStyle
-	if m.width > 0 {
-		frame = frame.Width(max(40, m.width-4))
-	}
-	if m.height > 0 {
-		frame = frame.MaxHeight(max(12, m.height-2))
-	}
-
-	return tea.NewView(frame.Render(content))
+		stat,
+		s.replace.view(),
+		outcomeLines(s.out, e.width-8),
+		s.another.view(),
+		HelpStyle.Render(help),
+	))
 }

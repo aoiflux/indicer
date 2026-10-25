@@ -80,7 +80,7 @@ func reindexEvidence(ctx context.Context, db *badger.DB, ro ReindexOptions) erro
 		console.Printf("\nReindexing %s (%s)\n", termsafe.Line(t.name), base64.StdEncoding.EncodeToString(t.id))
 		res, err := ingest.Reindex(ctx, db, t.id, ingest.ReindexOptions{Source: ro.Source, FTS: ro.FTS, Enrich: ro.Enrich})
 		if res.Index != nil {
-			reportIngest(res, time.Since(start))
+			reportIngest(console.Out(), res, time.Since(start))
 		}
 		logging.GetLogger().Info("Reindex EVIDENCE",
 			zap.String("evidence_id", base64.StdEncoding.EncodeToString(t.id)),

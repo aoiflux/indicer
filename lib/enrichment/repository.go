@@ -58,6 +58,9 @@ type FileLevelArtefactNode struct {
 type IndexedFileArtefactView struct {
 	IndexedFileProjection
 	Artefacts []*FileLevelArtefactNode
+	// ArtefactCount is how many artefacts the file holds; Artefacts holds
+	// fewer when a bounded read cut them.
+	ArtefactCount int
 }
 
 // EnrichmentFileNode represents one indexed/file-level node in enrichment hierarchy output.

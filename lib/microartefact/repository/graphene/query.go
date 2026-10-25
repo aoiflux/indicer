@@ -1,6 +1,7 @@
 package graphene
 
 import (
+	"context"
 	"fmt"
 	"sort"
 
@@ -91,58 +92,12 @@ func (r *Repository) ReadHierarchy() (*EvidenceFileHierarchy, error) {
 				if !kinds.Is(fn.Node, schema.KindIndexedFile) {
 					continue
 				}
-				fProps, err := unpackProps(fn.Node)
+				ifile, err := r.indexedFile(fn.Node)
 				if err != nil {
 					return nil, err
 				}
-				ifile := &IndexedFileArtefactView{
-					IndexedFileProjection: enrichment.IndexedFileProjection{
-						ID:           strProp(fProps, "indexed_file_id"),
-						Name:         strProp(fProps, "name"),
-						Path:         strProp(fProps, "path"),
-						Size:         int64Prop(fProps, "size"),
-						Hash:         strProp(fProps, "hash"),
-						IsDeleted:    boolProp(fProps, "is_deleted"),
-						IsFragmented: boolProp(fProps, "is_fragmented"),
-						FileType:     strProp(fProps, "file_type"),
-						Entropy:      float64Prop(fProps, "entropy"),
-						HasEntropy:   boolProp(fProps, "has_entropy"),
-					},
-				}
-
-				artNeighbours, err := r.graph.Neighbours(fn.Node.ID, graphstore.DirectionOutbound, contEdges)
-				if err != nil {
-					return nil, err
-				}
-
-				for _, an := range artNeighbours {
-					if an.Node == nil || !an.Node.HasLabel(graphstore.NodeTypeMicroArtefact) {
-						continue
-					}
-					aProps, err := unpackProps(an.Node)
-					if err != nil {
-						return nil, err
-					}
-					ifile.Artefacts = append(ifile.Artefacts, &MicroArtefactNode{
-						MicroArtefactNodeFields: model.MicroArtefactNodeFields{
-							Kind:       strProp(aProps, "kind"),
-							Detector:   strProp(aProps, "detector"),
-							Value:      strProp(aProps, "value"),
-							Summary:    strProp(aProps, "summary"),
-							Confidence: float32Prop(aProps, "confidence"),
-							Start:      int64Prop(aProps, "start"),
-							End:        int64Prop(aProps, "end"),
-						},
-					})
-					tree.TotalArtefacts++
-				}
-
-				sort.Slice(ifile.Artefacts, func(i, j int) bool {
-					if ifile.Artefacts[i].Kind != ifile.Artefacts[j].Kind {
-						return ifile.Artefacts[i].Kind < ifile.Artefacts[j].Kind
-					}
-					return ifile.Artefacts[i].Start < ifile.Artefacts[j].Start
-				})
+				ifile.ArtefactCount = len(ifile.Artefacts)
+				tree.TotalArtefacts += ifile.ArtefactCount
 
 				partition.Files = append(partition.Files, ifile)
 			}
@@ -194,6 +149,211 @@ func (r *Repository) ReadHierarchy() (*EvidenceFileHierarchy, error) {
 	}
 
 	return tree, nil
+}
+
+// indexedFileView is an indexed file node's projection, without artefacts.
+func indexedFileView(fProps props.Map) *IndexedFileArtefactView {
+	return &IndexedFileArtefactView{
+		IndexedFileProjection: enrichment.IndexedFileProjection{
+			ID:           strProp(fProps, "indexed_file_id"),
+			Name:         strProp(fProps, "name"),
+			Path:         strProp(fProps, "path"),
+			Size:         int64Prop(fProps, "size"),
+			Hash:         strProp(fProps, "hash"),
+			IsDeleted:    boolProp(fProps, "is_deleted"),
+			IsFragmented: boolProp(fProps, "is_fragmented"),
+			FileType:     strProp(fProps, "file_type"),
+			Entropy:      float64Prop(fProps, "entropy"),
+			HasEntropy:   boolProp(fProps, "has_entropy"),
+		},
+	}
+}
+
+// indexedFile reads an indexed file node with the micro-artefacts it
+// contains, ordered by kind, then offset. Enrichment keeps a file's name and
+// path on the file node the indexed node contains, not on the indexed node
+// itself; they are taken from there.
+func (r *Repository) indexedFile(node *graphstore.Node) (*IndexedFileArtefactView, error) {
+	fProps, err := unpackProps(node)
+	if err != nil {
+		return nil, err
+	}
+	view := indexedFileView(fProps)
+	neighbours, err := r.graph.Neighbours(node.ID, graphstore.DirectionOutbound, []graphstore.EdgeType{graphstore.EdgeTypeContains})
+	if err != nil {
+		return nil, err
+	}
+	var out []*MicroArtefactNode
+	for _, an := range neighbours {
+		if an.Node == nil {
+			continue
+		}
+		if r.kinds().Is(an.Node, schema.KindFile) {
+			if view.Name != "" && view.Path != "" {
+				continue
+			}
+			nProps, err := unpackProps(an.Node)
+			if err != nil {
+				return nil, err
+			}
+			if view.Name == "" {
+				view.Name = strProp(nProps, "name")
+			}
+			if view.Path == "" {
+				view.Path = strProp(nProps, "path")
+			}
+			continue
+		}
+		if !an.Node.HasLabel(graphstore.NodeTypeMicroArtefact) {
+			continue
+		}
+		aProps, err := unpackProps(an.Node)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, &MicroArtefactNode{
+			MicroArtefactNodeFields: model.MicroArtefactNodeFields{
+				Kind:       strProp(aProps, "kind"),
+				Detector:   strProp(aProps, "detector"),
+				Value:      strProp(aProps, "value"),
+				Summary:    strProp(aProps, "summary"),
+				Confidence: float32Prop(aProps, "confidence"),
+				Start:      int64Prop(aProps, "start"),
+				End:        int64Prop(aProps, "end"),
+			},
+		})
+	}
+	sort.Slice(out, func(i, j int) bool {
+		if out[i].Kind != out[j].Kind {
+			return out[i].Kind < out[j].Kind
+		}
+		return out[i].Start < out[j].Start
+	})
+	view.Artefacts = out
+	return view, nil
+}
+
+// TopFiles is a bounded view of a store's micro-artefacts.
+type TopFiles struct {
+	// Tree holds the files shown, most artefacts first, under their
+	// partitions and evidence.
+	Tree *EvidenceFileHierarchy
+	// Files and Artefacts count every file with artefacts, and the
+	// artefacts they hold, shown or not; Shown is how many files Tree holds.
+	Files, Artefacts, Shown int
+}
+
+// TopFiles reads the limit files with the most micro-artefacts, at most
+// perFile artefacts of each, under their partitions and evidence.
+// ReadHierarchy reads every indexed file, with artefacts or without, and
+// every relation edge, which a screen cannot show (TUI-5).
+func (r *Repository) TopFiles(ctx context.Context, limit, perFile int) (*TopFiles, error) {
+	ranked, files, artefacts, err := r.rankArtefactFiles(ctx, limit)
+	if err != nil {
+		return nil, err
+	}
+	kinds := r.kinds()
+	contains := []graphstore.EdgeType{graphstore.EdgeTypeContains}
+	tree := &EvidenceFileHierarchy{TotalArtefacts: artefacts}
+	evidence := map[graphstore.NodeID]*EvidenceFileNode{}
+	partitions := map[graphstore.NodeID]*PartitionFileNode{}
+
+	// parentOf finds the node of the given kind holding child, if any.
+	parentOf := func(child graphstore.NodeID, kind schema.NodeKind) (*graphstore.Node, error) {
+		parents, err := r.graph.Neighbours(child, graphstore.DirectionInbound, contains)
+		if err != nil {
+			return nil, err
+		}
+		for _, p := range parents {
+			if p.Node != nil && kinds.Is(p.Node, kind) {
+				return p.Node, nil
+			}
+		}
+		return nil, nil
+	}
+	// evidenceOf is the tree's node for an evidence node; nil stands for a
+	// partition no evidence holds.
+	evidenceOf := func(node *graphstore.Node) (*EvidenceFileNode, error) {
+		var id graphstore.NodeID
+		if node != nil {
+			id = node.ID
+		}
+		if ev, ok := evidence[id]; ok {
+			return ev, nil
+		}
+		ev := &EvidenceFileNode{Name: "(no evidence)"}
+		if node != nil {
+			eProps, err := unpackProps(node)
+			if err != nil {
+				return nil, err
+			}
+			ev = &EvidenceFileNode{ID: strProp(eProps, "evidence_file_id"), Name: strProp(eProps, "name")}
+		}
+		evidence[id] = ev
+		tree.EvidenceFiles = append(tree.EvidenceFiles, ev)
+		return ev, nil
+	}
+	// partitionOf is the tree's node for the partition holding a file.
+	partitionOf := func(file graphstore.NodeID) (*PartitionFileNode, error) {
+		pnode, err := parentOf(file, schema.KindPartition)
+		if err != nil {
+			return nil, err
+		}
+		var id graphstore.NodeID
+		if pnode != nil {
+			id = pnode.ID
+		}
+		if part, ok := partitions[id]; ok {
+			return part, nil
+		}
+		part := &PartitionFileNode{Name: "(no partition)"}
+		var enode *graphstore.Node
+		if pnode != nil {
+			pProps, err := unpackProps(pnode)
+			if err != nil {
+				return nil, err
+			}
+			part = &PartitionFileNode{ID: strProp(pProps, "partition_id"), Name: strProp(pProps, "name")}
+			if enode, err = parentOf(pnode.ID, schema.KindEvidenceFile); err != nil {
+				return nil, err
+			}
+		}
+		ev, err := evidenceOf(enode)
+		if err != nil {
+			return nil, err
+		}
+		partitions[id] = part
+		ev.Partitions = append(ev.Partitions, part)
+		return part, nil
+	}
+
+	for _, rf := range ranked {
+		if err := ctx.Err(); err != nil {
+			return nil, err
+		}
+		node, err := r.graph.GetNode(rf.id)
+		if err != nil {
+			return nil, err
+		}
+		file, err := r.indexedFile(node)
+		if err != nil {
+			return nil, err
+		}
+		file.ArtefactCount = rf.count
+		if perFile > 0 && len(file.Artefacts) > perFile {
+			file.Artefacts = file.Artefacts[:perFile]
+		}
+		part, err := partitionOf(rf.id)
+		if err != nil {
+			return nil, err
+		}
+		part.Files = append(part.Files, file)
+	}
+	sort.SliceStable(tree.EvidenceFiles, func(i, j int) bool { return tree.EvidenceFiles[i].Name < tree.EvidenceFiles[j].Name })
+	for _, ev := range tree.EvidenceFiles {
+		sort.SliceStable(ev.Partitions, func(i, j int) bool { return ev.Partitions[i].Name < ev.Partitions[j].Name })
+	}
+	return &TopFiles{Tree: tree, Files: files, Artefacts: artefacts, Shown: len(ranked)}, nil
 }
 
 // ─── property helpers ────────────────────────────────────────────────────────

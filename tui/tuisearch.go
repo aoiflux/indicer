@@ -4,159 +4,97 @@ import (
 	"context"
 	"fmt"
 	"strings"
+	"time"
 
 	"charm.land/bubbles/v2/textinput"
 	tea "charm.land/bubbletea/v2"
-	"charm.land/lipgloss/v2"
-	"github.com/dgraph-io/badger/v4"
 )
 
-type SearchModel struct {
-	queryInput   textinput.Model
-	results      []string
-	db           *badger.DB
-	searchFn     func(ctx context.Context, query string) error
-	cancelSearch context.CancelFunc
-	width        int
-	height       int
-	searching    bool
-	focusedField int
+type searchScreen struct {
+	env    *env
+	query  textinput.Model
+	run    running
+	asked  string // the query searched for
+	status status
+	out    Outcome
 }
 
-type searchCompletedMsg struct {
-	err error
+func newSearchScreen(e *env) *searchScreen {
+	in := textinput.New()
+	in.Placeholder = `Words (ANDed), a | b, or "a phrase"…`
+	in.Focus()
+	return &searchScreen{env: e, query: in}
 }
 
-func NewSearchModel(db *badger.DB, searchFn func(ctx context.Context, query string) error) *SearchModel {
-	queryInput := textinput.New()
-	queryInput.Placeholder = "Enter search query..."
-	queryInput.Focus()
+func (s *searchScreen) init() tea.Cmd { return textinput.Blink }
+func (s *searchScreen) resize()       { s.query.SetWidth(max(24, s.env.width-14)) }
+func (s *searchScreen) typing() bool  { return true }
+func (s *searchScreen) job() int      { return s.run.id }
 
-	return &SearchModel{
-		queryInput: queryInput,
-		db:         db,
-		searchFn:   searchFn,
-		width:      80,
-		height:     24,
-	}
-}
-
-func (m *SearchModel) Resize(width int, height int) {
-	m.width = width
-	m.height = height
-
-	inputWidth := width - 18
-	if inputWidth < 24 {
-		inputWidth = 24
-	}
-	m.queryInput.SetWidth(inputWidth)
-}
-
-func (m SearchModel) Init() tea.Cmd {
-	return textinput.Blink
-}
-
-func (m SearchModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
-	var cmd tea.Cmd
-
+func (s *searchScreen) update(msg tea.Msg) tea.Cmd {
 	switch msg := msg.(type) {
-	case searchCompletedMsg:
-		m.searching = false
-		m.cancelSearch = nil
-		if msg.err != nil {
-			if msg.err == context.Canceled {
-				m.results = []string{"Search canceled"}
-				return m, nil
-			}
-			m.results = []string{"Error: " + msg.err.Error()}
-		} else {
-			m.results = []string{"Search complete", "Generated report.json in current directory"}
+	case jobDoneMsg:
+		s.run = running{}
+		s.out, _ = msg.result.(Outcome)
+		switch {
+		case msg.err != nil:
+			s.status = errStatus(msg.err)
+		case s.out.Warning:
+			s.status = status{statusWarn, "Searched, with warnings: see below"}
+		default:
+			s.status = status{statusOK, "Searched"}
 		}
-		return m, nil
-	case tea.KeyMsg:
-		switch msg.String() {
-		case "ctrl+c", "esc":
-			if m.searching && m.cancelSearch != nil {
-				m.cancelSearch()
-				m.results = []string{"Canceling search..."}
-				return m, nil
-			}
-			return m, tea.Quit
-		case "enter":
-			if m.focusedField == 0 && !m.searching {
-				query := strings.TrimSpace(m.queryInput.Value())
-				if query == "" {
-					m.results = []string{"Error: query is required"}
-					return m, nil
-				}
-				if m.searchFn == nil {
-					m.results = []string{"Error: search action not configured"}
-					return m, nil
-				}
-				m.searching = true
-				m.results = nil
-				ctx, cancel := context.WithCancel(context.Background())
-				m.cancelSearch = cancel
-				return m, runSearchCmd(m.searchFn, ctx, query)
-			}
+		return nil
+	case tea.KeyPressMsg:
+		if msg.String() == "enter" {
+			return s.start()
 		}
 	}
-
-	if m.focusedField == 0 {
-		m.queryInput, cmd = m.queryInput.Update(msg)
-	}
-
-	return m, cmd
+	var cmd tea.Cmd
+	s.query, cmd = s.query.Update(msg)
+	return cmd
 }
 
-func runSearchCmd(searchFn func(ctx context.Context, query string) error, ctx context.Context, query string) tea.Cmd {
-	return func() tea.Msg {
-		return searchCompletedMsg{err: searchFn(ctx, query)}
+func (s *searchScreen) start() tea.Cmd {
+	if s.run.active() {
+		return nil
 	}
+	query := strings.TrimSpace(s.query.Value())
+	if query == "" {
+		s.status = status{statusError, "Error: enter something to search for"}
+		return nil
+	}
+	search := s.env.actions.Search
+	if search == nil {
+		s.status = status{statusError, "Error: searching is not available"}
+		return nil
+	}
+	id, cmd, err := s.env.run("search "+truncate(query, 24), sharedJob, func(ctx context.Context) (any, error) {
+		return search(ctx, query)
+	})
+	if err != nil {
+		s.status = errStatus(err)
+		return nil
+	}
+	s.run = running{id: id, since: time.Now()}
+	s.asked = query
+	s.out = Outcome{}
+	s.status = status{}
+	return cmd
 }
 
-func (m SearchModel) View() tea.View {
-	title := TitleStyle.Render("Search DUES Database")
-
-	queryLabel := "Search Query:"
-	if m.focusedField == 0 {
-		queryLabel = SelectedItemStyle.Render(queryLabel)
+func (s *searchScreen) view() string {
+	e := s.env
+	stat := s.status.render()
+	if s.run.active() {
+		stat = InfoStyle.Render(fmt.Sprintf("Searching for %s… %s", clean(s.asked), since(s.run.since)))
 	}
-
-	queryField := InputStyle.Render(queryLabel + "\n" + m.queryInput.View())
-
-	var resultsView string
-	if m.searching {
-		resultsView = "🔍 Searching..."
-	} else if len(m.results) > 0 {
-		resultsView = "Results:\n"
-		for i, r := range m.results {
-			resultsView += fmt.Sprintf("%d. %s\n", i+1, r)
-		}
-	} else if m.queryInput.Value() != "" {
-		resultsView = InfoStyle.Render("No results found")
-	}
-
-	help := HelpStyle.Render("Enter: Search | esc: Back | ctrl+c: Exit")
-
-	content := lipgloss.JoinVertical(
-		lipgloss.Left,
-		title,
-		"",
-		queryField,
-		"",
-		resultsView,
-		"",
-		help,
-	)
-
-	frame := BorderStyle
-	if m.width > 0 {
-		frame = frame.Width(max(40, m.width-4))
-	}
-	if m.height > 0 {
-		frame = frame.MaxHeight(max(12, m.height-2))
-	}
-
-	return tea.NewView(frame.Render(content))
+	return frame(e.width, e.height, joinLines(
+		TitleStyle.Render("Search the stored content"),
+		InputStyle.Render(SelectedItemStyle.Render("Search for:")+"\n"+s.query.View()),
+		DimStyle.Render("Every stored object is searched. The report replaces report.json in the working directory."),
+		stat,
+		outcomeLines(s.out, e.width-8),
+		HelpStyle.Render("Enter: Search | esc: Back (a search keeps running) | ctrl+x: Cancel the search"),
+	))
 }

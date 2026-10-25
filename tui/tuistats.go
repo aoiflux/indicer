@@ -1,235 +1,161 @@
 package tui
 
 import (
+	"context"
 	"fmt"
-	"indicer/lib/cnst"
+	"time"
+
 	"indicer/lib/store"
 
 	"charm.land/bubbles/v2/viewport"
 	tea "charm.land/bubbletea/v2"
 	"charm.land/lipgloss/v2"
-	"github.com/dgraph-io/badger/v4"
 	"github.com/dustin/go-humanize"
 )
 
-type StatsModel struct {
-	db       *badger.DB
-	width    int
-	height   int
+type statsScreen struct {
+	env      *env
+	run      running
 	stats    *store.DBStats
-	err      error
-	loaded   bool
+	status   status
 	viewport viewport.Model
 }
 
-type statsLoadedMsg struct {
-	stats *store.DBStats
-	err   error
-}
-
-func NewStatsModel(db *badger.DB) *StatsModel {
+func newStatsScreen(e *env) *statsScreen {
 	vp := viewport.New(viewport.WithWidth(76), viewport.WithHeight(20))
 	vp.SoftWrap = true
-	return &StatsModel{
-		db:       db,
-		width:    80,
-		height:   24,
-		viewport: vp,
+	return &statsScreen{env: e, viewport: vp}
+}
+
+func (s *statsScreen) typing() bool { return false }
+func (s *statsScreen) job() int     { return s.run.id }
+
+func (s *statsScreen) resize() {
+	s.viewport.SetWidth(max(50, s.env.width-8))
+	s.viewport.SetHeight(max(6, s.env.height-10))
+}
+
+func (s *statsScreen) init() tea.Cmd {
+	gather := s.env.actions.Stats
+	if gather == nil {
+		s.status = status{statusError, "Error: statistics are not available"}
+		return nil
 	}
-}
-
-func (m *StatsModel) Resize(width, height int) {
-	m.width = width
-	m.height = height
-	vpWidth := max(50, width-8)
-	vpHeight := max(6, height-8) // leave room for title + help
-	m.viewport.SetWidth(vpWidth)
-	m.viewport.SetHeight(vpHeight)
-}
-
-func (m StatsModel) Init() tea.Cmd {
-	return func() tea.Msg {
-		s, err := store.GatherStats(m.db)
-		return statsLoadedMsg{stats: s, err: err}
+	id, cmd, err := s.env.run("statistics", loaderJob, func(ctx context.Context) (any, error) {
+		return gather(ctx)
+	})
+	if err != nil {
+		s.status = errStatus(err)
+		return nil
 	}
+	s.run = running{id: id, since: time.Now()}
+	return cmd
 }
 
-func (m StatsModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
-	switch msg := msg.(type) {
-	case statsLoadedMsg:
-		m.loaded = true
-		m.stats = msg.stats
-		m.err = msg.err
-		if m.err == nil {
-			m.viewport.SetContent(m.renderStats())
+func (s *statsScreen) update(msg tea.Msg) tea.Cmd {
+	if msg, ok := msg.(jobDoneMsg); ok {
+		s.run = running{}
+		if msg.err != nil {
+			s.status = errStatus(msg.err)
+			return nil
 		}
-		return m, nil
-	case tea.KeyMsg:
-		switch msg.String() {
-		case "esc", "q":
-			return m, backToMenuFromStatsCmd("")
+		s.stats, _ = msg.result.(*store.DBStats)
+		if s.stats != nil {
+			s.viewport.SetContent(s.render())
 		}
+		return nil
 	}
-	// Forward all other messages (arrow keys, page up/down, etc.) to viewport
 	var cmd tea.Cmd
-	m.viewport, cmd = m.viewport.Update(msg)
-	return m, cmd
+	s.viewport, cmd = s.viewport.Update(msg)
+	return cmd
 }
 
-type statsBackToMenuMsg struct {
-	status string
-}
-
-func backToMenuFromStatsCmd(status string) tea.Cmd {
-	return func() tea.Msg {
-		return statsBackToMenuMsg{status: status}
-	}
-}
-
-func (m StatsModel) View() tea.View {
-	title := TitleStyle.Render("📊 Database Statistics")
-
+func (s *statsScreen) view() string {
+	e := s.env
 	var body string
-	if !m.loaded {
-		body = InfoStyle.Render("Loading statistics…")
-	} else if m.err != nil {
-		body = ErrorStyle.Render("Error: " + m.err.Error())
-	} else {
-		pct := int(m.viewport.ScrollPercent() * 100)
-		scrollInfo := statDimStyle.Render(fmt.Sprintf(" %d%%", pct))
-		body = m.viewport.View() + "\n" + scrollInfo
+	switch {
+	case s.run.active():
+		body = InfoStyle.Render(fmt.Sprintf("Gathering statistics… %s (ctrl+x cancels)", since(s.run.since)))
+	case s.stats == nil:
+		body = s.status.render()
+	default:
+		body = s.viewport.View() + "\n" + DimStyle.Render(fmt.Sprintf(" %d%%", int(s.viewport.ScrollPercent()*100)))
 	}
-
-	help := HelpStyle.Render("↑/↓/PgUp/PgDn: Scroll | Esc/q: Back to menu")
-
-	content := lipgloss.JoinVertical(
-		lipgloss.Left,
-		title,
-		"",
+	return frame(e.width, e.height, joinLines(
+		TitleStyle.Render("📊 Database statistics"),
 		body,
-		"",
-		help,
-	)
-
-	frame := DialogBoxStyle
-	if m.width > 0 {
-		frame = frame.Width(max(50, m.width-6))
-	}
-
-	return tea.NewView(frame.Render(content))
+		HelpStyle.Render("↑/↓/PgUp/PgDn: Scroll | esc/q: Back"),
+	))
 }
 
 var (
-	statSectionStyle = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("205"))
+	statSectionStyle = lipgloss.NewStyle().Bold(true).Foreground(primaryColor)
 	statLabelStyle   = lipgloss.NewStyle().Foreground(lipgloss.Color("250")).Width(32)
-	statValStyle     = lipgloss.NewStyle().Foreground(lipgloss.Color("227")).Bold(true)
-	statGoodStyle    = lipgloss.NewStyle().Foreground(lipgloss.Color("42")).Bold(true)
-	statDimStyle     = lipgloss.NewStyle().Foreground(lipgloss.Color("240"))
+	statValStyle     = lipgloss.NewStyle().Foreground(accentColor).Bold(true)
+	statGoodStyle    = lipgloss.NewStyle().Foreground(successColor).Bold(true)
+	statBadStyle     = lipgloss.NewStyle().Foreground(errorColor).Bold(true)
 )
 
 func statRow(label, value string, valStyle lipgloss.Style) string {
 	return statLabelStyle.Render(label+":") + " " + valStyle.Render(value)
 }
 
-func (m StatsModel) renderStats() string {
-	s := m.stats
-	sep := statDimStyle.Render("  " + "─────────────────────────────────────────────")
-
-	lines := []string{}
-
-	// FILES
-	lines = append(lines, statSectionStyle.Render("  FILES"))
-	lines = append(lines, sep)
-	lines = append(lines, statRow("  Total files", humanize.Comma(s.TotalFiles), statValStyle))
-	lines = append(lines, statRow("  Completed", humanize.Comma(s.CompletedFiles), statGoodStyle))
-	if inc := s.TotalFiles - s.CompletedFiles; inc > 0 {
-		lines = append(lines, statRow("  Incomplete", humanize.Comma(inc), lipgloss.NewStyle().Foreground(lipgloss.Color("196")).Bold(true)))
-	}
-	lines = append(lines, statRow("  Total logical size", humanize.Bytes(uint64(s.TotalLogicalSize)), statValStyle))
-	if s.CompletedFiles > 0 {
-		avg := uint64(s.TotalLogicalSize) / uint64(s.CompletedFiles)
-		lines = append(lines, statRow("  Avg file size", humanize.Bytes(avg), statValStyle))
+func (s *statsScreen) render() string {
+	st, info := s.stats, s.env.info
+	sep := DimStyle.Render("  ─────────────────────────────────────────────")
+	pct := func(n, of int64) string {
+		return fmt.Sprintf("%s (%.1f%%)", humanize.Comma(n), float64(n)/float64(of)*100)
 	}
 
-	lines = append(lines, "")
-
-	// CHUNKS
-	lines = append(lines, statSectionStyle.Render("  CHUNKS"))
-	lines = append(lines, sep)
-	lines = append(lines, statRow("  Unique chunks stored", humanize.Comma(s.UniqueChunks), statValStyle))
-	lines = append(lines, statRow("  Total chunk references", humanize.Comma(s.TotalChunkRefs), statValStyle))
-	if s.CompletedFiles > 0 {
-		avgChunks := float64(s.TotalChunkRefs) / float64(s.CompletedFiles)
-		lines = append(lines, statRow("  Avg chunks per file", fmt.Sprintf("%.1f", avgChunks), statValStyle))
+	lines := []string{statSectionStyle.Render("  EVIDENCE"), sep,
+		statRow("  Evidence records", humanize.Comma(st.TotalFiles), statValStyle),
+		statRow("  Stored", humanize.Comma(st.CompletedFiles), statGoodStyle),
 	}
-	if s.TotalChunkRefs > 0 && s.TotalLogicalSize > 0 {
-		avgSize := uint64(s.TotalLogicalSize) / uint64(s.TotalChunkRefs)
-		lines = append(lines, statRow("  Avg chunk size", humanize.Bytes(avgSize), statValStyle))
+	if inc := st.TotalFiles - st.CompletedFiles; inc > 0 {
+		lines = append(lines, statRow("  Not stored (pending, failed)", humanize.Comma(inc), statBadStyle))
 	}
-	lines = append(lines, statRow("  Configured chunk size", humanize.Bytes(uint64(cnst.ChonkSize)), statDimStyle))
-
-	deduped := s.TotalChunkRefs - s.UniqueChunks
-	if deduped > 0 {
-		lines = append(lines, statRow("  Duplicate refs avoided", humanize.Comma(deduped), statGoodStyle))
-		if s.TotalChunkRefs > 0 {
-			pct := float64(deduped) / float64(s.TotalChunkRefs) * 100
-			lines = append(lines, statRow("  Dedup hit rate", fmt.Sprintf("%.1f%%", pct), statGoodStyle))
-		}
-	} else {
-		lines = append(lines, statRow("  Duplicate refs avoided", "0 (no shared chunks yet)", statDimStyle))
-	}
-	if s.SharedChunks > 0 {
-		lines = append(lines, statRow("  Chunks shared across files", humanize.Comma(s.SharedChunks), statGoodStyle))
+	lines = append(lines, statRow("  Logical size", humanize.IBytes(uint64(st.TotalLogicalSize)), statValStyle))
+	if st.CompletedFiles > 0 {
+		lines = append(lines, statRow("  Average size", humanize.IBytes(uint64(st.TotalLogicalSize/st.CompletedFiles)), statValStyle))
 	}
 
-	lines = append(lines, "")
+	lines = append(lines, "", statSectionStyle.Render("  CHUNKS"), sep,
+		statRow("  Chunk size", fmt.Sprintf("%d KiB", info.ChunkKiB), DimStyle),
+		statRow("  Chunk hash", clean(info.ChunkHash), DimStyle),
+		statRow("  Unique chunks stored", humanize.Comma(st.UniqueChunks), statValStyle),
+		statRow("  Chunk references", humanize.Comma(st.TotalChunkRefs), statValStyle),
+	)
+	if deduped := st.TotalChunkRefs - st.UniqueChunks; deduped > 0 && st.TotalChunkRefs > 0 {
+		lines = append(lines,
+			statRow("  References to a stored chunk", humanize.Comma(deduped), statGoodStyle),
+			statRow("  Deduplication rate", fmt.Sprintf("%.1f%%", float64(deduped)/float64(st.TotalChunkRefs)*100), statGoodStyle))
+	}
+	if st.SharedChunks > 0 {
+		lines = append(lines, statRow("  Chunks shared by objects", humanize.Comma(st.SharedChunks), statGoodStyle))
+	}
 
-	// STRUCTURE
-	lines = append(lines, statSectionStyle.Render("  STRUCTURE"))
-	lines = append(lines, sep)
-	lines = append(lines, statRow("  Partition files", humanize.Comma(s.TotalPartitions), statValStyle))
-	lines = append(lines, statRow("  Indexed FS objects", humanize.Comma(s.TotalIndexedFiles), statValStyle))
-	lines = append(lines, statRow("  Indexed names", humanize.Comma(s.TotalIndexedNames), statValStyle))
+	lines = append(lines, "", statSectionStyle.Render("  INDEX"), sep,
+		statRow("  Partitions", humanize.Comma(st.TotalPartitions), statValStyle),
+		statRow("  Indexed files", humanize.Comma(st.TotalIndexedFiles), statValStyle),
+	)
+	if st.TotalIndexedFiles > 0 {
+		lines = append(lines,
+			statRow("  Deleted", pct(st.DeletedIndexedFiles, st.TotalIndexedFiles), statValStyle),
+			statRow("  Fragmented", pct(st.FragmentedIndexedFiles, st.TotalIndexedFiles), statValStyle))
+	}
 
-	if s.TotalIndexedFiles > 0 {
-		deletedPct := float64(s.DeletedIndexedFiles) / float64(s.TotalIndexedFiles) * 100
-		fragmentedPct := float64(s.FragmentedIndexedFiles) / float64(s.TotalIndexedFiles) * 100
-		lines = append(lines, statRow("  Deleted indexed objects", fmt.Sprintf("%s (%.1f%%)", humanize.Comma(s.DeletedIndexedFiles), deletedPct), statValStyle))
-		if s.FragmentedIndexedFiles > 0 {
-			lines = append(lines, statRow("  Fragmented indexed objects", fmt.Sprintf("%s (%.1f%%)", humanize.Comma(s.FragmentedIndexedFiles), fragmentedPct), lipgloss.NewStyle().Foreground(lipgloss.Color("196")).Bold(true)))
+	lines = append(lines, "", statSectionStyle.Render("  STORAGE"), sep,
+		statRow("  On disk (blobs and containers)", humanize.IBytes(uint64(st.OnDiskBytes)), statValStyle))
+	if st.TotalLogicalSize > 0 && st.OnDiskBytes > 0 {
+		if st.OnDiskBytes < st.TotalLogicalSize {
+			saved := st.TotalLogicalSize - st.OnDiskBytes
+			lines = append(lines, statRow("  Space saved", fmt.Sprintf("%s (%.1f%%)", humanize.IBytes(uint64(saved)), float64(saved)/float64(st.TotalLogicalSize)*100), statGoodStyle))
 		} else {
-			lines = append(lines, statRow("  Fragmented indexed objects", "0 (currently skipped by parser)", statDimStyle))
+			lines = append(lines, statRow("  On disk / logical", fmt.Sprintf("%.2fx", float64(st.OnDiskBytes)/float64(st.TotalLogicalSize)), DimStyle))
 		}
 	}
-
-	if s.TotalIndexedNames > 0 {
-		deletedNamePct := float64(s.DeletedIndexedNames) / float64(s.TotalIndexedNames) * 100
-		fragmentedNamePct := float64(s.FragmentedIndexedNames) / float64(s.TotalIndexedNames) * 100
-		lines = append(lines, statRow("  Deleted indexed names", fmt.Sprintf("%s (%.1f%%)", humanize.Comma(s.DeletedIndexedNames), deletedNamePct), statValStyle))
-		if s.FragmentedIndexedNames > 0 {
-			lines = append(lines, statRow("  Fragmented indexed names", fmt.Sprintf("%s (%.1f%%)", humanize.Comma(s.FragmentedIndexedNames), fragmentedNamePct), lipgloss.NewStyle().Foreground(lipgloss.Color("196")).Bold(true)))
-		} else {
-			lines = append(lines, statRow("  Fragmented indexed names", "0 (currently skipped by parser)", statDimStyle))
-		}
+	if !info.Encrypted {
+		lines = append(lines, statRow("  Encryption", "none", statBadStyle))
 	}
-
-	lines = append(lines, "")
-
-	// STORAGE
-	lines = append(lines, statSectionStyle.Render("  STORAGE"))
-	lines = append(lines, sep)
-	lines = append(lines, statRow("  Logical size", humanize.Bytes(uint64(s.TotalLogicalSize)), statValStyle))
-	lines = append(lines, statRow("  On-disk size (blobs)", humanize.Bytes(uint64(s.OnDiskBytes)), statValStyle))
-	if s.TotalLogicalSize > 0 && s.OnDiskBytes > 0 {
-		if s.OnDiskBytes < s.TotalLogicalSize {
-			saved := s.TotalLogicalSize - s.OnDiskBytes
-			pct := float64(saved) / float64(s.TotalLogicalSize) * 100
-			lines = append(lines, statRow("  Space saved", fmt.Sprintf("%s (%.1f%%)", humanize.Bytes(uint64(saved)), pct), statGoodStyle))
-		} else {
-			ratio := float64(s.OnDiskBytes) / float64(s.TotalLogicalSize)
-			lines = append(lines, statRow("  Storage overhead", fmt.Sprintf("%.2fx (encrypted+compressed)", ratio), statDimStyle))
-		}
-	}
-
 	return lipgloss.JoinVertical(lipgloss.Left, lines...)
 }

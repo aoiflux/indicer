@@ -10,8 +10,8 @@
           "Files": [
             {
               "ID": "ce4668c24688e09d1d91553619ae0e5e9b689e6d4160118f6a6ccf9ae8807c76",
-              "Name": "",
-              "Path": "",
+              "Name": "History",
+              "Path": "/Users/jane/AppData/Local/Google/Chrome/History",
               "Size": 262144,
               "Hash": "aGlzdG9yeS1oYXNo",
               "IsDeleted": false,
@@ -49,27 +49,13 @@
                   "Start": 1024,
                   "End": 1060
                 }
-              ]
-            },
-            {
-              "ID": "fa7e9afe32c8a327a61f4a4473bd0968d7519a4f8ebd8d2a4531c338c61d54cb",
-              "Name": "",
-              "Path": "",
-              "Size": 55320,
-              "Hash": "c3ZjaG9zdC1oYXNo",
-              "IsDeleted": false,
-              "IsFragmented": false,
-              "FileType": "pe",
-              "MimeType": "",
-              "Tags": null,
-              "Entropy": 7.81,
-              "HasEntropy": true,
-              "Artefacts": null
+              ],
+              "ArtefactCount": 3
             },
             {
               "ID": "335a68992bfa91732229efb066f48e749d81ce0ee31e936c7111a2eaaa0360a4",
-              "Name": "",
-              "Path": "",
+              "Name": "deleted-notes.txt",
+              "Path": "/Users/jane/Documents/deleted-notes.txt",
               "Size": 1041,
               "Hash": "ZGVsZXRlZC1ub3Rlcw==",
               "IsDeleted": false,
@@ -79,7 +65,24 @@
               "Tags": null,
               "Entropy": 0,
               "HasEntropy": false,
-              "Artefacts": null
+              "Artefacts": null,
+              "ArtefactCount": 0
+            },
+            {
+              "ID": "fa7e9afe32c8a327a61f4a4473bd0968d7519a4f8ebd8d2a4531c338c61d54cb",
+              "Name": "svchost.exe",
+              "Path": "/Windows/System32/svchost.exe",
+              "Size": 55320,
+              "Hash": "c3ZjaG9zdC1oYXNo",
+              "IsDeleted": false,
+              "IsFragmented": false,
+              "FileType": "pe",
+              "MimeType": "",
+              "Tags": null,
+              "Entropy": 7.81,
+              "HasEntropy": true,
+              "Artefacts": null,
+              "ArtefactCount": 0
             }
           ]
         },

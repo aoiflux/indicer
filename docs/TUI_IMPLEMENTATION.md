@@ -1,110 +1,162 @@
-# DUES TUI Implementation (Bubble Tea v2)
+# DUES TUI: Implementation
 
-## Overview
+The TUI is a Bubble Tea v2 program (`charm.land/bubbletea/v2`, with
+`charm.land/bubbles/v2` and `charm.land/lipgloss/v2`). This document is for
+developers changing it: how it is wired to the database, how its jobs run and
+stop, and the rules its screens follow.
 
-DUES TUI is implemented on Bubble Tea v2 and organized as a state-driven app with one focused model per operation.
+## Wiring
 
-Current module versions in `go.mod`:
+`dues tui` runs `cli.TUICmd` (`cli/cmdtui.go`):
 
-- `charm.land/bubbletea/v2`
-- `charm.land/bubbles/v2`
-- `charm.land/lipgloss/v2`
+1. Opens the database for writing (`Common`, `dbopen.ReadWrite`), so recovery
+   runs and the root lock is held for the session.
+2. Silences terminal output once, for the whole session (`console.Quiet`):
+   anything the storage code prints would draw over the TUI. It used to be
+   silenced per action, which raced when actions ran side by side.
+3. Runs `tui.Run(ctx, tui.Config{Info, Actions})` with the command's context.
+4. When `Run` returns, restores output, compacts the value log if anything
+   was stored, and closes the database. If `Run` returned `tui.ErrJobsRunning`,
+   it does none of this: the database is left unclosed (and output silenced)
+   for the job still running, and badger recovers it at its next open.
 
-## Entry and Integration
+The `tui` package never touches the database. `tui.Actions` are functions
+`cli` supplies (`tuiActions` in `cmdtui.go`), each taking a context and
+returning what it did:
 
-- CLI command: `dues tui`
-- Entry path: `main.go` -> `cli.TUICmd(...)` -> `tui.RunTUI(...)`
-- `cli.TUICmd` creates action callbacks and opens a shared DB session.
-- Operational stdout/stderr noise is suppressed via `runQuiet(...)` so the TUI remains clean.
+| Action | Implemented with |
+|---|---|
+| `Store(ctx, path, StoreOptions) (Outcome, error)` | `storeFile`/`storeFolder`, the code `dues store` runs, writing its report to a buffer |
+| `Search(ctx, query)` | `search.SearchReport`, and the summary lines `dues search` prints |
+| `Restore(ctx, id, path, replace)` | `restoreToPath` (verified, atomic). An existing file without `replace` is `tui.ErrTargetExists` |
+| `NearIn`, `NearOut` | `near.In`, `near.Out`, and the summary `dues near` prints |
+| `Reset(ctx)` | `dbopen.Handle.Reset`, which also clears the graph and the full-text index |
+| `List(ctx, limit) (EvidenceList, error)` | Completed evidence records, at most `limit`, and the total |
+| `Stats(ctx)` | `store.GatherStats` |
+| `Micro(ctx) (MicroView, error)` | The graph opened read-only; `TopFiles` (500 files, 20 artefacts each) |
 
-## Bubble Tea v2 Architecture
+An `Outcome` is the action's report, line by line. `Warning` marks what the
+command line reports with exit code 2 (a `lifecycle.WarningError`): the action
+finished, but needs the examiner's attention.
 
-### Why v2 matters here
+`tui.Info` describes the database (root, chunk size, chunk hash, encryption).
+The TUI shows it and cannot change it: the layout belongs to the database.
 
-- Import path is `charm.land/.../v2` for Tea, Bubbles, and Lip Gloss.
-- Views are returned through `tea.View` and wrapped with `tea.NewView(...)` where needed.
-- The app runs in alternate screen mode (`AltScreen = true`) for full-screen TUI behavior.
-- Message-driven async commands are used for long-running operations to keep UI responsive.
+## Jobs (`tui/jobs.go`)
 
-### Root model
+Every action and every screen load is a job, run by the `runner`:
 
-`tui/app.go` defines a root `Model` with:
+- Each job runs on its own goroutine under `internal/safe`, so a panic in it
+  becomes an error naming a panic ID.
+- Each has its own context, derived from the command's. A job ends when it is
+  cancelled (`ctrl+x`: cause `errCanceled`), when the TUI stops (`errStopping`)
+  or when the command's context ends (a signal: its cause). A job that fails
+  because its context ended reports that cause, not "context canceled".
+- A reset (`exclusiveJob`) starts only when no job runs, and no job starts
+  while it runs (`busyError`). Other jobs (`sharedJob`, and `loaderJob` for
+  screen loads) run side by side.
+- `await(job)` is the Bubble Tea command that reports the job's end as a
+  `jobDoneMsg`.
 
-- Window size tracking (`tea.WindowSizeMsg` handling).
-- App states (`StateMenu`, `StateStore`, `StateList`, `StateSearch`, `StateRestore`, `StateNear`, `StateReset`).
-- One submodel instance per workflow.
-- Responsive layout via `applyWindowSize()`.
+### Why `Run` waits
 
-The root `View()` returns `tea.View` and sets `AltScreen = true`.
+Bubble Tea does not wait for the commands it runs when the program ends: their
+goroutines are abandoned, and messages sent to an ended program are dropped.
+The old TUI closed the database as soon as the program ended, under any store
+still running (TUI-3). `Run` therefore, after the program ends for any reason:
 
-### Submodels
+1. closes the runner, so a command Bubble Tea runs late starts nothing
+   (`errClosed`);
+2. cancels every job (`errStopping`);
+3. waits up to `drainTimeout` (30 s) for them.
 
-- `tui/store.go`: path input, sync/no-index toggles, "store another?" loop.
-- `tui/list.go`: async load with spinner, selection, restore shortcut, clipboard copy.
-- `tui/search.go`: query input and async search trigger.
-- `tui/restore.go`: hash/path input and "restore another?" loop.
-- `tui/near.go`: `in/out` mode selection, input, deep toggle.
-- `tui/reset.go`: destructive confirmation with completion state.
+If a job is still running, `Run` returns `ErrJobsRunning` naming it.
 
-All models use `Update(msg tea.Msg)` with command-returned completion messages (for example `storeCompletedMsg`, `searchCompletedMsg`) to keep long operations non-blocking.
+`Run` gives the program `tea.WithContext(ctx)` and `tea.WithoutSignalHandler()`:
+a signal cancels the command's context, which ends the program and every job
+with the signal as cause, and `Run` returns that cause (exit 130/143).
+Bubble Tea's own handler would quit without one.
 
-## Input and Navigation Behavior
+## Model (`tui/tuiapp.go`)
 
-Global behavior in root model:
+The root `model` holds the shared `env` (info, actions, runner, terminal
+size), the menu, the screen showing (nil on the menu), the last finished
+job's status line, and the quit dialog's state.
 
-- `ctrl+c`: quit immediately.
-- `q`: quit from menu; acts like back/escape on most child screens.
-- `esc`: return to menu and reinitialize submodels.
-- `enter` on menu: open selected flow.
+- **Messages.** A `jobDoneMsg` goes to the screen that started the job, if it
+  still shows, and always updates the menu's status line (`summarize`; a
+  loader reports only a failure). Leaving a screen never loses a job's outcome.
+- **Keys.** `ctrl+c` quits, or, while jobs run, opens the quit dialog with No
+  chosen; Yes cancels the jobs and quits when the last one ends; `ctrl+c`
+  while stopping quits at once. `ctrl+x` cancels the screen's job, or every
+  job on the menu. `esc` closes a screen's own question first (`escaper`),
+  else goes back. `q` goes back only when no text field has focus
+  (`screen.typing()`); otherwise it is text.
+- **Panics.** `Update` and `View` run under `internal/safe`. A panic in
+  `Update` records the error, cancels every job and quits; `Run` waits for
+  the jobs and returns a `lifecycle.InternalError` (exit 70). A panic in
+  `View` is drawn, and the next key quits.
 
-Per-screen highlights:
+### Screens
 
-- List screen supports `up/down` selection, `c` copy hash, `r`/`enter` restore selected item.
-- NeAR screen supports `d` deep toggle while focused on input step.
-- Store and Restore screens support continue-in-loop prompts after success.
+Each screen implements `screen`:
 
-## Styling System
+```go
+type screen interface {
+	init() tea.Cmd
+	update(msg tea.Msg) tea.Cmd
+	view() string
+	resize()
+	typing() bool // a text field has focus: q is text
+	job() int     // the job the screen waits for, or 0
+}
+```
 
-`tui/styles.go` centralizes Lip Gloss styles:
+| File | Screen |
+|---|---|
+| `tuistore.go` | Path, a skip-index checkbox, Store and Cancel; "store another?" |
+| `tuilist.go` | Evidence list (`listLimit` 5,000), copy, restore with a replace question |
+| `tuisearch.go` | Query; the field always has focus |
+| `tuirestore.go` | ID and path, Restore and Cancel; replace question (No chosen); "restore another?" |
+| `tuinear.go` | Mode list, input, a deep-mode checkbox (stored objects only), Analyse |
+| `tuireset.go` | Typed confirmation, No then Yes; Yes is disabled until the folder name is typed and nothing else runs |
+| `tuistats.go` | Statistics in a viewport |
+| `tuimicro.go` | Micro-artefact tree in a viewport |
 
-- Shared border/title/help/input/button styles.
-- Consistent color palette across screens.
-- `CenterBox` and `Section` helpers for composition.
+Shared pieces: `widgets.go` (the yes/no `prompt`, the `running` job), and
+`render.go` (status lines, error text, the list window, buttons).
 
-## Data/Action Wiring
+## Rules the screens follow
 
-`tui.Actions` (in `tui/app.go`) decouples UI from implementation:
+These are the defects the W11 rewrite fixed; keep them fixed.
 
-- `Store`
-- `Search`
-- `Restore`
-- `NearIn`
-- `NearOut`
-- `Reset`
+- **No type assertion on a list item without `ok`** (TUI-4). Lists are built
+  with `newList`, which turns off filtering, the quit keys and the help.
+- **Every string from the evidence goes through `clean`** (`termsafe.Line`)
+  before it is drawn: names, paths, artefact values, report lines, error
+  messages (TUI-5). `truncate` cuts by runes.
+- **Bounded drawing** (TUI-5). The evidence list loads at most 5,000 rows and
+  draws a window around the selection (`window`); the micro view reads a
+  bounded set (`TopFiles`).
+- **No blocking work in `Update`.** The clipboard is written by a command
+  (`copyCmd`, `writeClipboard`), not in `Update`. Database work is a job.
+- **Destructive actions default to No** (TUI-1). Reset needs the folder name
+  typed, and `Enter` in that field moves to No. A restore over an existing
+  file asks first (TUI-2).
+- **Cancel goes back; it never quits** (TUI-4).
 
-Each function is injected from `cli/cmdtui.go` and delegates to existing core logic (`store`, `search`, `near`, DB reset), so CLI and TUI share the same backend behavior.
+## Tests
 
-## Operational Notes
-
-- TUI inherits global flags (`--dbpath`, `--password`, `--chonksize`, `--low`, `--quick`, `--container`, `--hierarchical`).
-- Reset in TUI clears DB content and recreates the blobs directory.
-- Search from TUI runs the same search backend and emits `report.json` in working directory.
-- NeAR flows emit graph/report artifacts consistent with CLI usage.
-
-## Current Behavior Guarantees
-
-- Pressing `esc` from an active flow returns to the main menu and resets that flow model state.
-- The list screen only shows completed evidence entries.
-- The list screen restore action writes to auto-generated `restored_<hash>.bin` by default.
-- Reset flow recreates blob storage directory after DB drop, so the app can continue in the same session.
-
-## File Map
-
-- `tui/app.go`: root state machine and routing.
-- `tui/styles.go`: shared style primitives.
-- `tui/store.go`: store form and execution loop.
-- `tui/list.go`: DB list, hash copy, and restore shortcut.
-- `tui/search.go`: search form and execution.
-- `tui/restore.go`: restore form and execution loop.
-- `tui/near.go`: in/out mode and deep scan toggle.
-- `tui/reset.go`: reset confirmation flow.
+- `tui/harness_test.go`: a driver that runs the model as the program does
+  (each command on a goroutine, its message fed back), with fake actions that
+  block until released (`gate`).
+- `tui/tui_test.go`: one test per defect above, the quit dialog, outcomes after
+  leaving a screen, the reset rules, the layout shown read-only, panics.
+- `tui/jobs_test.go`: the runner (reset alone, causes, panics, closing,
+  waiting).
+- `tui/run_test.go`: `Run` as a program, with keys written to its input: it
+  waits for jobs after a signal, reports a stuck job, and quits through the
+  dialog.
+- `cli/cmdtui_test.go`: the actions on a real database, and that `TUICmd`
+  closes the database, or leaves it open to a stuck job (`runTUI` and
+  `leftOpen` seams).

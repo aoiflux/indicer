@@ -76,13 +76,27 @@ func nearData(ctx context.Context, opts DBOptions, cmd, query string, no NearOpt
 	for _, n := range o.Notes {
 		color.New(color.FgHiYellow, color.Bold).Fprintf(console.Err(), "[near] %s\n", n)
 	}
-	c := o.Coverage
-	console.Printf("Matched %d of %d distinct chunks (%d chunk positions); %d related objects. Report: %s\n",
-		c.MatchedChunks, c.DistinctChunks, c.QueryChunks, o.Matches, o.ReportPath)
+	console.Println(nearSummary(o))
 	console.Printf("Done.... %v\n", time.Since(start))
 	logging.GetLogger().Info("NearData COMPLETE", zap.Int64("duration_ms", time.Since(start).Milliseconds()), zap.Int("matches", o.Matches))
-	if c.WithoutReverseRelations > 0 {
-		return &lifecycle.WarningError{Err: fmt.Errorf("%d of %d stored evidence were not searched: they have no reverse relations", c.WithoutReverseRelations, c.StoredEvidence)}
+	if w := nearIncomplete(o); w != "" {
+		return &lifecycle.WarningError{Err: errors.New(w)}
 	}
 	return nil
+}
+
+// nearSummary says what a near search matched.
+func nearSummary(o near.Outcome) string {
+	c := o.Coverage
+	return fmt.Sprintf("Matched %d of %d distinct chunks (%d chunk positions); %d related objects. Report: %s",
+		c.MatchedChunks, c.DistinctChunks, c.QueryChunks, o.Matches, o.ReportPath)
+}
+
+// nearIncomplete is the warning for a near search that could not search some
+// evidence, or "".
+func nearIncomplete(o near.Outcome) string {
+	if c := o.Coverage; c.WithoutReverseRelations > 0 {
+		return fmt.Sprintf("%d of %d stored evidence were not searched: they have no reverse relations", c.WithoutReverseRelations, c.StoredEvidence)
+	}
+	return ""
 }

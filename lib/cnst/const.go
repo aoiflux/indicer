@@ -623,3 +623,40 @@ const GRAPH_END = `
 
 </html>
 `
+
+// MaxDecodedBlock bounds what the process decoder returns from one call. It
+// decodes chunks (at most 64 MiB) and record values, so four times the
+// largest chunk leaves room while a crafted few hundred bytes cannot decode
+// to gigabytes.
+const MaxDecodedBlock = 256 << 20
+
+// NewDecoder returns the decoder DECODER is set to.
+func NewDecoder() (*zstd.Decoder, error) {
+	return zstd.NewReader(nil, zstd.WithDecoderConcurrency(0), zstd.WithDecoderMaxMemory(MaxDecodedBlock))
+}
+
+// EncoderLevel returns the zstd level a --compress-level name selects:
+// fast, default or best (also the empty name and anything unknown).
+func EncoderLevel(name string) zstd.EncoderLevel {
+	switch strings.ToLower(name) {
+	case "fast":
+		return zstd.SpeedFastest
+	case "default":
+		return zstd.SpeedDefault
+	}
+	return zstd.SpeedBestCompression
+}
+
+// NewEncoder returns an encoder at the named level that encodes on at most
+// workers goroutines at once, and never more than one per CPU. Callers pass
+// the number of workers that encode at the same time; a worker beyond that
+// waits for a free state.
+//
+// An encoder allocates every state at its first use and keeps them until it
+// is dropped. A best-compression state is about 50 MB, so the default of one
+// per CPU took some 800 MB on a 16-CPU machine even for a single encode
+// (FFI-4).
+func NewEncoder(level string, workers int) (*zstd.Encoder, error) {
+	n := min(max(workers, 1), runtime.GOMAXPROCS(0))
+	return zstd.NewWriter(nil, zstd.WithEncoderLevel(EncoderLevel(level)), zstd.WithEncoderConcurrency(n))
+}

@@ -24,36 +24,65 @@ var openFile = func(path string) (io.WriteCloser, error) {
 // current file reaches maxBytes. The first write error disables it for the
 // rest of the process, with a single warning, so a full disk cannot turn every
 // log call into an error or a stderr flood.
+//
+// A lazy writer holds the directories it may use and opens its first file at
+// the first write.
 type rotatingWriter struct {
-	mu       sync.Mutex
-	dir      string
-	base     string // <component>-<timestamp>-<pid>
-	maxBytes int64
-	keep     int
-	stderr   io.Writer
-	f        io.WriteCloser
-	path     string
-	size     int64
-	seq      int
-	failed   bool
+	mu        sync.Mutex
+	component string
+	dir       string
+	base      string // <component>-<timestamp>-<pid>
+	maxBytes  int64
+	keep      int
+	stderr    io.Writer
+	f         io.WriteCloser
+	path      string
+	size      int64
+	seq       int
+	failed    bool
+	lazyDirs  []string // directories to try at the first write; nil once opened
 }
 
 // openRotating creates dir if needed, prunes old logs and opens a fresh file.
 func openRotating(dir, component string, maxBytes int64, keep int, stderr io.Writer) (*rotatingWriter, error) {
-	if err := os.MkdirAll(dir, 0o700); err != nil {
-		return nil, err
-	}
-	w := &rotatingWriter{
-		dir:      dir,
-		base:     fmt.Sprintf("%s-%s-%d", component, time.Now().UTC().Format("20060102T150405Z"), os.Getpid()),
-		maxBytes: maxBytes,
-		keep:     keep,
-		stderr:   stderr,
-	}
-	if err := w.openNext(); err != nil {
+	w := &rotatingWriter{component: component, maxBytes: maxBytes, keep: keep, stderr: stderr}
+	if err := w.openIn(dir); err != nil {
 		return nil, err
 	}
 	return w, nil
+}
+
+// lazyRotating returns a writer that opens a file in the first usable one of
+// dirs at its first write, and drops entries when none is usable.
+func lazyRotating(dirs []string, component string, maxBytes int64, keep int, stderr io.Writer) *rotatingWriter {
+	return &rotatingWriter{component: component, maxBytes: maxBytes, keep: keep, stderr: stderr, lazyDirs: dirs}
+}
+
+// openIn creates dir if needed and opens the first file there.
+func (w *rotatingWriter) openIn(dir string) error {
+	if err := os.MkdirAll(dir, 0o700); err != nil {
+		return err
+	}
+	w.dir = dir
+	w.base = fmt.Sprintf("%s-%s-%d", w.component, time.Now().UTC().Format("20060102T150405Z"), os.Getpid())
+	return w.openNext()
+}
+
+// openLazy opens the first file of a lazy writer. It is called with mu held.
+func (w *rotatingWriter) openLazy() bool {
+	dirs := w.lazyDirs
+	w.lazyDirs = nil
+	var errs []error
+	for _, dir := range dirs {
+		err := w.openIn(dir)
+		if err == nil {
+			return true
+		}
+		errs = append(errs, err)
+	}
+	w.failed = true
+	fmt.Fprintf(w.stderr, "dues: warning: logging disabled, no writable log directory: %v\n", errors.Join(errs...))
+	return false
 }
 
 // openNext opens the next file in the sequence, skipping names that already
@@ -79,17 +108,27 @@ func (w *rotatingWriter) openNext() error {
 	}
 }
 
-// Path returns the file currently written.
+// Path returns the file currently written; empty before a lazy writer opens.
 func (w *rotatingWriter) Path() string {
 	w.mu.Lock()
 	defer w.mu.Unlock()
 	return w.path
 }
 
+// Dir returns the directory written to; empty before a lazy writer opens.
+func (w *rotatingWriter) Dir() string {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	return w.dir
+}
+
 func (w *rotatingWriter) Write(p []byte) (int, error) {
 	w.mu.Lock()
 	defer w.mu.Unlock()
 	if w.failed {
+		return len(p), nil
+	}
+	if w.f == nil && (w.lazyDirs == nil || !w.openLazy()) {
 		return len(p), nil
 	}
 	if w.size > 0 && w.size+int64(len(p)) > w.maxBytes {
@@ -125,6 +164,10 @@ func (w *rotatingWriter) Sync() error {
 func (w *rotatingWriter) Close() error {
 	w.mu.Lock()
 	defer w.mu.Unlock()
+	w.lazyDirs = nil
+	if w.f == nil {
+		return nil
+	}
 	return w.f.Close()
 }
 

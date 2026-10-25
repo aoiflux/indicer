@@ -44,6 +44,19 @@ func (badgerLogger) Warningf(f string, a ...any) { logging.GetSugar().Warnf("bad
 func (badgerLogger) Infof(f string, a ...any)    { logging.GetSugar().Debugf("badger: "+f, a...) }
 func (badgerLogger) Debugf(f string, a ...any)   { logging.GetSugar().Debugf("badger: "+f, a...) }
 
+// BadgerZSTDLevel is the zstd level badger compresses table blocks with.
+//
+// badger builds one process-wide encoder from the level of the first table
+// it writes and keeps it for the life of the process, with one encoder state
+// per CPU. Level 10 and above select zstd's best-compression encoder, about
+// 50 MB a state, so level 15 held some 800 MB on a 16-CPU machine for as
+// long as a library host kept DUES loaded (FFI-4). Level 3 holds under 2 MB a
+// state. Table blocks are 4 KiB of keys and values DUES has mostly
+// compressed already: storing jean.e01 made 18.3 to 18.7 MB of tables at
+// either level, and level 3 stored it 4% faster. Decoding does not depend on
+// the level, so existing databases are unaffected.
+const BadgerZSTDLevel = 3
+
 // BadgerOptions builds the options a badger directory is opened with. key is
 // the encryption key (nil for none). Both key and table compression are fixed
 // when the database is created: badger decodes every table with the
@@ -75,7 +88,7 @@ func BadgerOptions(datadir string, key []byte, compression options.CompressionTy
 	opts.NumGoroutines = cnst.GetMaxThreadCount()
 	opts.Compression = compression
 	if compression == options.ZSTD {
-		opts.ZSTDCompressionLevel = 15
+		opts.ZSTDCompressionLevel = BadgerZSTDLevel
 	}
 	if len(key) > 0 {
 		opts.EncryptionKey = key

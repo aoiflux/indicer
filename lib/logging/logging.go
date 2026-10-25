@@ -24,6 +24,8 @@ import (
 
 	"go.uber.org/zap"
 	"go.uber.org/zap/zapcore"
+
+	"indicer/internal/safe"
 )
 
 const (
@@ -44,6 +46,12 @@ type Config struct {
 	MaxBytes  int64     // rotation size; DefaultMaxBytes when zero
 	Keep      int       // files kept; DefaultKeep when zero
 	Stderr    io.Writer // where warnings about logging itself go; os.Stderr when nil
+	// MinLevel is the least severe level written (info when zero); Debug
+	// lowers it to debug.
+	MinLevel zapcore.Level
+	// Lazy opens the log file at the first entry written instead of at Init,
+	// so a library host that logs nothing gets no file.
+	Lazy bool
 }
 
 // Info describes the log Init set up.
@@ -118,7 +126,13 @@ func Init(cfg Config) Info {
 		out  *rotatingWriter
 		errs []error
 	)
+	if cfg.Lazy {
+		out = lazyRotating(dirCandidates(cfg.Dir), cfg.Component, cfg.MaxBytes, cfg.Keep, cfg.Stderr)
+	}
 	for _, dir := range dirCandidates(cfg.Dir) {
+		if out != nil {
+			break
+		}
 		w, err := openRotating(dir, cfg.Component, cfg.MaxBytes, cfg.Keep, cfg.Stderr)
 		if err == nil {
 			out = w
@@ -132,10 +146,14 @@ func Init(cfg Config) Info {
 		fmt.Fprintf(cfg.Stderr, "dues: warning: logging disabled, no writable log directory: %v\n", errors.Join(errs...))
 		st.logger = zap.NewNop()
 	} else {
+		level := cfg.MinLevel
+		if cfg.Debug {
+			level = zapcore.DebugLevel
+		}
 		st.out = out
-		st.info.Dir = out.dir
+		st.info.Dir = out.Dir()
 		st.info.Path = out.Path()
-		st.logger = newLogger(out, cfg.Debug).With(
+		st.logger = newLogger(out, level).With(
 			zap.String("run_id", runID),
 			zap.Int("pid", os.Getpid()),
 			zap.String("component", cfg.Component),
@@ -154,11 +172,7 @@ func Init(cfg Config) Info {
 	return st.info
 }
 
-func newLogger(w zapcore.WriteSyncer, debug bool) *zap.Logger {
-	level := zapcore.InfoLevel
-	if debug {
-		level = zapcore.DebugLevel
-	}
+func newLogger(w zapcore.WriteSyncer, level zapcore.Level) *zap.Logger {
 	enc := zap.NewProductionEncoderConfig()
 	enc.TimeKey = "timestamp"
 	enc.EncodeTime = zapcore.ISO8601TimeEncoder
@@ -197,6 +211,7 @@ func Current() Info {
 	info := st.info
 	if st.out != nil {
 		info.Path = st.out.Path()
+		info.Dir = st.out.Dir()
 	}
 	return info
 }
@@ -250,4 +265,19 @@ func StartTrace(name string, fields ...zap.Field) *TraceContext {
 // End logs the end of the operation.
 func (tc *TraceContext) End() {
 	GetLogger().Debug("TRACE_END: " + tc.name)
+}
+
+// ReportPanics logs every panic internal/safe recovers: the first at each
+// site with its value and stack, later ones at the same site by their ID.
+func ReportPanics() {
+	safe.SetReporter(func(e *safe.PanicError, first bool) {
+		if first {
+			GetLogger().Error("recovered panic",
+				zap.String("panic_id", e.ID), zap.String("site", e.Site.String()),
+				zap.Any("value", e.Value), zap.ByteString("stack", e.Stack))
+			return
+		}
+		GetLogger().Warn("recovered panic (repeat)",
+			zap.String("panic_id", e.ID), zap.String("site", e.Site.String()))
+	})
 }

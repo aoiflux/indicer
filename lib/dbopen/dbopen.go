@@ -13,6 +13,7 @@ import (
 	"errors"
 	"fmt"
 	"io/fs"
+	"math"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -247,15 +248,26 @@ func (h *Handle) loadManifest(ctx context.Context, req Request, exists bool) (db
 
 func (h *Handle) keyError(err error, creds dbmeta.Credentials) error {
 	switch {
-	case errors.Is(err, dbmeta.ErrPasswordRequired):
-		return lifecycle.Usagef("database %s is encrypted; pass --password", h.Root)
-	case errors.Is(err, dbmeta.ErrWrongPassword) && !creds.IsSet():
-		return lifecycle.Usagef("database %s is encrypted; pass --password", h.Root)
+	case errors.Is(err, dbmeta.ErrPasswordRequired), errors.Is(err, dbmeta.ErrWrongPassword) && !creds.IsSet():
+		return &lifecycle.UsageError{Err: &credentialError{
+			msg: fmt.Sprintf("database %s is encrypted; pass --password", h.Root), cause: dbmeta.ErrPasswordRequired}}
 	case errors.Is(err, dbmeta.ErrWrongPassword):
-		return lifecycle.Usagef("wrong password for database %s", h.Root)
+		return &lifecycle.UsageError{Err: &credentialError{
+			msg: fmt.Sprintf("wrong password for database %s", h.Root), cause: dbmeta.ErrWrongPassword}}
 	}
 	return err
 }
+
+// credentialError is a usage message that still matches the dbmeta error it
+// stands for, so a caller other than the CLI can tell a missing password from
+// a wrong one.
+type credentialError struct {
+	msg   string
+	cause error
+}
+
+func (e *credentialError) Error() string { return e.msg }
+func (e *credentialError) Unwrap() error { return e.cause }
 
 // create makes the manifest for a new database and writes it before badger
 // exists: a database whose keys depend on a salt must never exist without it.
@@ -433,6 +445,10 @@ func (h *Handle) badgerOptions(l dbmeta.Layout, keys dbmeta.Keys, readOnly bool)
 		// badger has no read-only directory lock on Windows; the shared root
 		// lock keeps writers out instead.
 		opts.BypassLockGuard = runtime.GOOS == "windows"
+		// badger replaces a data key older than the rotation period and
+		// writes the new one to KEYREGISTRY. A read-only open cannot, and
+		// badger then ends the process (CFG-14). Writable opens rotate.
+		opts.EncryptionKeyRotationDuration = math.MaxInt64
 	}
 	return opts
 }

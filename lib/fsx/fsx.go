@@ -189,6 +189,10 @@ const busyRetryBudget = 2 * time.Second
 
 // retryBusy runs op until it succeeds, fails for a reason other than the file
 // being busy, or the retry budget is spent.
+// RetryBusy runs op, retrying it briefly on Windows while another process
+// (typically antivirus or an indexer) holds the file it needs.
+func RetryBusy(op func() error) error { return retryBusy(op) }
+
 func retryBusy(op func() error) error {
 	delay := 5 * time.Millisecond
 	deadline := time.Now().Add(busyRetryBudget)

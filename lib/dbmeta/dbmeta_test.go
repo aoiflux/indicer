@@ -3,6 +3,7 @@ package dbmeta
 import (
 	"bytes"
 	"errors"
+	"math"
 	"os"
 	"path/filepath"
 	"slices"
@@ -149,7 +150,9 @@ func openLegacy(t *testing.T, root string, key []byte, raw bool) *badger.DB {
 	opts := badger.DefaultOptions(filepath.Join(root, cnst.KVDBDIR)).WithLogger(nil).
 		WithReadOnly(true).WithBypassLockGuard(true).WithBlockCacheSize(16 << 20).WithIndexCacheSize(16 << 20)
 	if !raw {
-		opts = opts.WithEncryptionKey(key).WithCompression(options.ZSTD)
+		// A read-only open cannot store a new data key, so it must not
+		// rotate the fixtures' old ones (CFG-14).
+		opts = opts.WithEncryptionKey(key).WithCompression(options.ZSTD).WithEncryptionKeyRotationDuration(math.MaxInt64)
 	}
 	db, err := badger.Open(opts)
 	if err != nil {

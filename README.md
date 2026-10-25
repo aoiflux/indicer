@@ -198,10 +198,13 @@ FFI ABI for Flutter/native callers:
   - `dues_engine-windows-amd64.h`
 - Exported C functions from the generated header:
   - `char* DuesDispatchJSON(char* requestJSON)`
+  - `char* DuesShutdown(long long timeout_ms)`
   - `void DuesFreeString(char* ptr)`
 
-The caller must free response buffers returned by `DuesDispatchJSON` by calling
-`DuesFreeString`.
+The caller must free every response buffer returned by `DuesDispatchJSON` and
+`DuesShutdown` by calling `DuesFreeString`, and should call `DuesShutdown`
+before exiting. Requests, error codes, limits and the `.duesarc` format are
+described in [docs/COMPRESSION_ABI_REFERENCE.md](docs/COMPRESSION_ABI_REFERENCE.md).
 
 ## Quick start
 

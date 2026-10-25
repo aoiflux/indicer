@@ -8,7 +8,6 @@ import (
 	"indicer/cli"
 	"indicer/internal/crash"
 	"indicer/internal/lifecycle"
-	"indicer/internal/safe"
 	"indicer/lib/cnst"
 	"indicer/lib/logging"
 	"indicer/lib/store"
@@ -17,7 +16,6 @@ import (
 	"runtime/debug"
 	"strings"
 
-	"github.com/klauspost/compress/zstd"
 	"go.uber.org/zap"
 )
 
@@ -29,10 +27,10 @@ const (
 func init() {
 	var err error
 
-	cnst.DECODER, err = zstd.NewReader(nil, zstd.WithDecoderConcurrency(0))
+	cnst.DECODER, err = cnst.NewDecoder()
 	handle(err)
 
-	cnst.ENCODER, err = zstd.NewWriter(nil, zstd.WithEncoderLevel(zstd.SpeedBestCompression))
+	cnst.ENCODER, err = cnst.NewEncoder(cnst.CompressLevel, cnst.GetMaxThreadCount())
 	handle(err)
 }
 
@@ -64,16 +62,7 @@ func realMain(args []string) (code int) {
 	}
 	defer crash.Finish()
 
-	safe.SetReporter(func(e *safe.PanicError, first bool) {
-		if first {
-			logging.GetLogger().Error("recovered panic",
-				zap.String("panic_id", e.ID), zap.String("site", e.Site.String()),
-				zap.Any("value", e.Value), zap.ByteString("stack", e.Stack))
-			return
-		}
-		logging.GetLogger().Warn("recovered panic (repeat)",
-			zap.String("panic_id", e.ID), zap.String("site", e.Site.String()))
-	})
+	logging.ReportPanics()
 
 	defer func() {
 		if v := recover(); v != nil {
@@ -150,7 +139,7 @@ func run(args []string) error {
 		fmt.Fprintln(os.Stderr, "dues: warning:", issue)
 	}
 
-	if err := reconfigureEncoderForCompressionLevel(); err != nil {
+	if err := reconfigureEncoderForCompressionLevel(tuning.storeWorkers); err != nil {
 		return err
 	}
 

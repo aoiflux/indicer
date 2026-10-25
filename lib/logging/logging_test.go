@@ -127,6 +127,35 @@ func TestInitNeverTruncatesEarlierLogs(t *testing.T) {
 	}
 }
 
+// TestLazyWarnLogCreatesFileOnFirstEntry: a library host (the FFI) logs only
+// warnings and errors, and gets no log file until there is one to write.
+func TestLazyWarnLogCreatesFileOnFirstEntry(t *testing.T) {
+	dir := t.TempDir()
+	useDirs(t)
+	info := Init(Config{Dir: dir, Component: "lib", Stderr: io.Discard, MinLevel: zap.WarnLevel, Lazy: true})
+	if info.Path != "" || info.RunID == "" {
+		t.Fatalf("unexpected Info %+v", info)
+	}
+	GetLogger().Info("not kept")
+	_ = Sync()
+	if files := logFiles(t, dir); len(files) != 0 {
+		t.Fatalf("an info entry created %v", files)
+	}
+	GetLogger().Warn("kept")
+	_ = Sync()
+	files := logFiles(t, dir)
+	if len(files) != 1 {
+		t.Fatalf("after a warning: %v, want one log file", files)
+	}
+	if cur := Current(); cur.Path != files[0] || cur.Dir != dir {
+		t.Fatalf("Current() = %+v, want %s", cur, files[0])
+	}
+	recs := readRecords(t, files[0])
+	if len(recs) != 1 || recs[0]["msg"] != "kept" || recs[0]["component"] != "lib" {
+		t.Fatalf("records %v", recs)
+	}
+}
+
 func TestInitFallsBackAndNeverFails(t *testing.T) {
 	notADir := filepath.Join(t.TempDir(), "file")
 	if err := os.WriteFile(notADir, nil, 0o644); err != nil {

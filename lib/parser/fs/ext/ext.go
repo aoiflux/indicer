@@ -19,10 +19,11 @@ import (
 const direntSymlink = 7
 
 type extFS struct {
-	fs       *libext.FS
-	p        core.OpenParams
-	bs       int64
-	reported int // library warnings already passed to the sink
+	fs        *libext.FS
+	p         core.OpenParams
+	bs        int64
+	inlineMax uint64 // the most inline data an inode of this volume holds
+	reported  int    // library warnings already passed to the sink
 }
 
 var _ core.Filesystem = (*extFS)(nil)
@@ -45,7 +46,39 @@ func Open(p core.OpenParams) (core.Filesystem, error) {
 	if err != nil {
 		return nil, err
 	}
-	return &extFS{fs: efs, p: p, bs: int64(efs.Superblock().BlockSize)}, nil
+	sb := efs.Superblock()
+	return &extFS{fs: efs, p: p, bs: int64(sb.BlockSize), inlineMax: inlineDataInBlock + uint64(sb.InodeSize)}, nil
+}
+
+// inlineDataInBlock is how much inline data the block-pointer area holds; the
+// rest is an extended attribute inside the inode record.
+const inlineDataInBlock = 60
+
+// checkInline refuses an inline inode that claims more data than an inode
+// holds. libext v0.4.1 allocates the claimed size before it reads inline data
+// (contents, directory listings, link targets), so one forged size field ran
+// the process out of memory, which recover cannot contain (PAR-35).
+func (a *extFS) checkInline(ino libext.Inode) error {
+	if ino.HasInline && ino.Size > a.inlineMax {
+		return fmt.Errorf("%w: inode %d claims %d bytes of inline data, more than an inode holds (%d)",
+			core.ErrBadExtent, ino.Number, ino.Size, a.inlineMax)
+	}
+	return nil
+}
+
+// inlineData returns an inode's inline contents, after checkInline.
+func (a *extFS) inlineData(inum uint32) ([]byte, bool, error) {
+	ino, err := a.fs.ReadInode(inum)
+	if err != nil {
+		return nil, false, err
+	}
+	if !ino.HasInline {
+		return nil, false, nil
+	}
+	if err := a.checkInline(ino); err != nil {
+		return nil, true, err
+	}
+	return a.fs.InlineData(inum)
 }
 
 func (a *extFS) Type() core.FSType { return core.FSExt }
@@ -88,6 +121,13 @@ func (a *extFS) Walk(ctx context.Context, fn func(core.Node) error) error {
 }
 
 func (a *extFS) list(dir core.Node) ([]core.Node, error) {
+	ino, err := a.fs.ReadInode(uint32(dir.ID))
+	if err != nil {
+		return nil, err
+	}
+	if err := a.checkInline(ino); err != nil {
+		return nil, err
+	}
 	entries, err := a.fs.ListDir(uint32(dir.ID))
 	out := make([]core.Node, 0, len(entries))
 	for _, e := range entries {
@@ -166,6 +206,9 @@ func (a *extFS) Stat(n core.Node) (core.FileInfo, error) {
 	switch {
 	case ino.IsSymlink:
 		info.Kind = core.KindSymlink
+		if a.checkInline(ino) != nil {
+			break
+		}
 		if f, err := a.fs.Open(uint32(n.ID)); err == nil {
 			if target, err := f.ReadLink(); err == nil {
 				info.Target = target
@@ -212,6 +255,9 @@ func (a *extFS) Content(n core.Node) (core.Content, error) {
 	size := int64(ino.Size)
 	var c core.Content
 	if ino.HasInline {
+		if err := a.checkInline(ino); err != nil {
+			return core.Content{}, err
+		}
 		data, _, err := a.fs.InlineData(uint32(n.ID))
 		if err != nil && len(data) == 0 {
 			return core.Content{}, err
@@ -261,7 +307,7 @@ func (a *extFS) deletedContent(d libext.DeletedEntry) (core.Content, error) {
 	var ext []core.Extent
 	for _, x := range d.Extents {
 		if x.Inline() {
-			if data, ok, err := a.fs.InlineData(d.Inode); ok && err == nil {
+			if data, ok, err := a.inlineData(d.Inode); ok && err == nil {
 				c := core.InlineContent(size, data)
 				c.Confidence = core.ConfDeclared
 				return c, nil
@@ -319,6 +365,9 @@ func (a *extFS) Open(n core.Node) (io.ReadCloser, error) {
 		return nil, err
 	}
 	if ino.HasInline {
+		if err := a.checkInline(ino); err != nil {
+			return nil, err
+		}
 		data, _, err := a.fs.InlineData(uint32(n.ID))
 		if err != nil {
 			return nil, err

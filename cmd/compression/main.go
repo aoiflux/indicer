@@ -1,15 +1,27 @@
+// Command compression is the qwikpak command line: each command sends one
+// request to the same dispatcher the FFI library uses, prints the response
+// envelope on stdout, and exits with a code taken from it.
 package main
 
 import (
+	"bufio"
 	"context"
 	"encoding/base64"
 	"encoding/json"
+	"errors"
 	"flag"
 	"fmt"
+	"io"
 	"os"
+	"runtime/debug"
+	"strings"
+	"time"
 
 	"indicer/internal/console"
 	"indicer/internal/core/jsonbridge"
+	"indicer/internal/lifecycle"
+	"indicer/internal/products/compression_product"
+	"indicer/lib/logging"
 	platformapi "indicer/pkg/api"
 )
 
@@ -20,8 +32,6 @@ const (
 	cmdExtractArchive = "extract-archive"
 	cmdListArchive    = "list-archive"
 	cmdVerifyArchive  = "verify-archive"
-	cmdGetProgress    = "get-progress"
-	cmdCancelTask     = "cancel-task"
 	cmdCompress       = "compress"
 	cmdDecompress     = "decompress"
 	cmdCompressFile   = "compress-file"
@@ -32,8 +42,6 @@ const (
 	opExtractArchive  = "extract_archive"
 	opListArchive     = "list_archive"
 	opVerifyArchive   = "verify_archive"
-	opGetProgress     = "get_progress"
-	opCancelTask      = "cancel_task"
 	opCompressBytes   = "compress_bytes"
 	opDecompressBytes = "decompress_bytes"
 	opCompressFile    = "compress_file"
@@ -43,430 +51,381 @@ const (
 
 	defaultLevel       = "best"
 	defaultChunkSizeKB = 256
-	defaultSplitSizeMB = 0
 	defaultFormat      = "duesarc"
 
-	usageText = "usage: compression <dispatch|capabilities|create-archive|extract-archive|list-archive|verify-archive|get-progress|cancel-task|compress|decompress|compress-file|decompress-file> [flags]"
+	envPassword = "DUES_PASSWORD"
 
-	errUnknownCommandFmt   = "unknown command: %s\n"
-	errRequestRequired     = "--request is required"
-	errInputRequired       = "--input is required"
-	errCreateInputRequired = "--input or at least one --input-file is required"
-	errDataBase64Required  = "--data-base64 is required"
-	errTaskIDRequired      = "--task-id is required"
+	usageText = `usage: compression <command> [flags]
 
-	jsonVersionKey     = "version"
-	jsonProductKey     = "product"
-	jsonOperationKey   = "operation"
-	jsonParamsKey      = "params"
-	jsonDataBase64Key  = "data_base64"
-	jsonLevelKey       = "level"
-	jsonInputPathKey   = "input_path"
-	jsonInputPathsKey  = "input_paths"
-	jsonOutputPathKey  = "output_path"
-	jsonWorkDirKey     = "work_dir"
-	jsonChunkSizeKBKey = "chunk_size_kb"
-	jsonPasswordKey    = "password"
-	jsonSplitSizeMBKey = "split_size_mb"
-	jsonKeepWorkDirKey = "keep_work_dir"
-	jsonAsyncKey       = "async"
-	jsonFormatKey      = "format"
-	jsonTaskIDKey      = "task_id"
+commands:
+  create-archive    archive a file, a folder, or files (--input, --input-file)
+  extract-archive   extract an archive into a folder
+  list-archive      list an archive's entries and files
+  verify-archive    read back every entry and stored chunk of an archive
+  compress-file     archive one file as <file>.duesarc
+  decompress-file   restore the file of a one-file .duesarc, or a zstd file
+  compress          compress --text, printing base64
+  decompress        decompress --data-base64
+  capabilities      list operations and formats
+  dispatch          send a full request envelope (--request or --request-file)
+
+The response envelope is printed on stdout. Exit codes: 0 ok; 2 invalid
+request; 1 failed; 70 internal error; 130/143 interrupted. Passwords are read
+from --password-file, --password-stdin or DUES_PASSWORD (--password is
+visible to other users).`
 )
 
-type command struct {
-	name string
-	run  func(args []string) int
+func main() {
+	os.Exit(realMain(os.Args[1:]))
 }
 
-func main() {
+func realMain(args []string) (code int) {
 	// Stdout carries the JSON result; library output goes to stderr (FFI-3).
 	console.Configure(os.Stderr, os.Stderr)
-	commands := map[string]command{
-		cmdDispatch:       {name: cmdDispatch, run: runDispatch},
-		cmdCapabilities:   {name: cmdCapabilities, run: runCapabilities},
-		cmdCreateArchive:  {name: cmdCreateArchive, run: runCreateArchive},
-		cmdExtractArchive: {name: cmdExtractArchive, run: runExtractArchive},
-		cmdListArchive:    {name: cmdListArchive, run: runListArchive},
-		cmdVerifyArchive:  {name: cmdVerifyArchive, run: runVerifyArchive},
-		cmdGetProgress:    {name: cmdGetProgress, run: runGetProgress},
-		cmdCancelTask:     {name: cmdCancelTask, run: runCancelTask},
-		cmdCompress:       {name: cmdCompress, run: runCompress},
-		cmdDecompress:     {name: cmdDecompress, run: runDecompress},
-		cmdCompressFile:   {name: cmdCompressFile, run: runCompressFile},
-		cmdDecompressFile: {name: cmdDecompressFile, run: runDecompressFile},
-	}
+	logging.Init(logging.Config{Component: "qwikpak"})
+	defer logging.Close()
+	logging.ReportPanics()
+	defer func() {
+		if v := recover(); v != nil {
+			logging.GetLogger().Error("unrecovered panic")
+			fmt.Fprintf(os.Stderr, "compression: internal error: %v\n%s", v, debug.Stack())
+			code = lifecycle.ExitInternal
+		}
+	}()
+	ctx, stop := lifecycle.Context(context.Background())
+	defer stop()
+	_, _ = compression_product.SweepStaleWorkDirs(os.TempDir(), 24*time.Hour)
+	return run(ctx, args, os.Stdout, os.Stderr, os.Stdin)
+}
 
-	if len(os.Args) < 2 {
-		fmt.Fprintln(os.Stderr, usageText)
-		os.Exit(2)
+type runner struct {
+	ctx    context.Context
+	stdout io.Writer
+	stderr io.Writer
+	stdin  io.Reader
+}
+
+// run executes one command and returns the exit code.
+func run(ctx context.Context, args []string, stdout, stderr io.Writer, stdin io.Reader) int {
+	r := &runner{ctx: ctx, stdout: stdout, stderr: stderr, stdin: stdin}
+	if len(args) == 0 {
+		fmt.Fprintln(stderr, usageText)
+		return lifecycle.ExitUsage
 	}
-	cmd, ok := commands[os.Args[1]]
+	commands := map[string]func([]string) int{
+		cmdDispatch:       r.dispatch,
+		cmdCapabilities:   r.capabilities,
+		cmdCreateArchive:  r.createArchive,
+		cmdExtractArchive: r.extractArchive,
+		cmdListArchive:    r.readArchive(cmdListArchive, opListArchive),
+		cmdVerifyArchive:  r.readArchive(cmdVerifyArchive, opVerifyArchive),
+		cmdCompress:       r.compress,
+		cmdDecompress:     r.decompress,
+		cmdCompressFile:   r.compressFile,
+		cmdDecompressFile: r.decompressFile,
+	}
+	cmd, ok := commands[args[0]]
 	if !ok {
-		fmt.Fprintf(os.Stderr, errUnknownCommandFmt, os.Args[1])
-		os.Exit(2)
+		if args[0] == "-h" || args[0] == "--help" || args[0] == "help" {
+			fmt.Fprintln(stdout, usageText)
+			return lifecycle.ExitOK
+		}
+		fmt.Fprintf(stderr, "unknown command: %s\n%s\n", args[0], usageText)
+		return lifecycle.ExitUsage
 	}
-	os.Exit(cmd.run(os.Args[2:]))
+	return cmd(args[1:])
 }
 
-func runDispatch(args []string) int {
-	fs := flag.NewFlagSet(cmdDispatch, flag.ContinueOnError)
+func (r *runner) flags(name string) *flag.FlagSet {
+	fs := flag.NewFlagSet(name, flag.ContinueOnError)
+	fs.SetOutput(r.stderr)
+	return fs
+}
+
+func (r *runner) usage(msg string) int {
+	fmt.Fprintln(r.stderr, msg)
+	return lifecycle.ExitUsage
+}
+
+// passwordFlags are the ways a password can be given.
+type passwordFlags struct {
+	file  *string
+	stdin *bool
+	value *string
+}
+
+func addPasswordFlags(fs *flag.FlagSet) passwordFlags {
+	return passwordFlags{
+		file:  fs.String("password-file", "", "read the archive password from the first line of this file"),
+		stdin: fs.Bool("password-stdin", false, "read the archive password from the first line of standard input"),
+		value: fs.String("password", "", "archive password (visible to other users; prefer --password-file or DUES_PASSWORD)"),
+	}
+}
+
+// password resolves the password: --password-file, then --password-stdin,
+// then DUES_PASSWORD, then --password (with a warning).
+func (r *runner) password(p passwordFlags) (string, error) {
+	switch {
+	case *p.file != "":
+		f, err := os.Open(*p.file)
+		if err != nil {
+			return "", fmt.Errorf("--password-file: %w", err)
+		}
+		defer f.Close()
+		return firstLine(f)
+	case *p.stdin:
+		return firstLine(r.stdin)
+	case os.Getenv(envPassword) != "":
+		return os.Getenv(envPassword), nil
+	case *p.value != "":
+		fmt.Fprintln(r.stderr, "warning: --password is visible to other users of this machine; use --password-file, --password-stdin or "+envPassword)
+		return *p.value, nil
+	}
+	return "", nil
+}
+
+func firstLine(rd io.Reader) (string, error) {
+	line, err := bufio.NewReader(rd).ReadString('\n')
+	if err != nil && !errors.Is(err, io.EOF) {
+		return "", err
+	}
+	return strings.TrimRight(line, "\r\n"), nil
+}
+
+// limitFlags are the extraction limits.
+type limitFlags struct {
+	total, entries, ratio *int64
+}
+
+func addLimitFlags(fs *flag.FlagSet) limitFlags {
+	return limitFlags{
+		total:   fs.Int64("max-total-bytes", 0, "refuse to write more than this many bytes (default 1 TiB)"),
+		entries: fs.Int64("max-entries", 0, "refuse archives with more entries (default 1048576)"),
+		ratio:   fs.Int64("max-ratio", 0, "refuse output more than this many times the archive's bytes, past the first GiB (default 10000)"),
+	}
+}
+
+func (l limitFlags) params() map[string]any {
+	return map[string]any{"max_total_bytes": *l.total, "max_entries": *l.entries, "max_ratio": *l.ratio}
+}
+
+func (r *runner) dispatch(args []string) int {
+	fs := r.flags(cmdDispatch)
 	request := fs.String("request", "", "full JSON request envelope")
+	requestFile := fs.String("request-file", "", "read the request envelope from this file (- for standard input)")
 	if err := fs.Parse(args); err != nil {
-		return 2
+		return lifecycle.ExitUsage
 	}
-	if *request == "" {
-		fmt.Fprintln(os.Stderr, errRequestRequired)
-		return 2
+	body := *request
+	switch {
+	case *requestFile == "-":
+		data, err := io.ReadAll(io.LimitReader(r.stdin, jsonbridge.MaxRequestBytes+1))
+		if err != nil {
+			return r.usage(err.Error())
+		}
+		body = string(data)
+	case *requestFile != "":
+		data, err := os.ReadFile(*requestFile)
+		if err != nil {
+			return r.usage(err.Error())
+		}
+		body = string(data)
 	}
-	out := platformapi.DefaultDispatcher().DispatchJSON(context.Background(), *request)
-	fmt.Println(out)
-	return 0
+	if body == "" {
+		return r.usage("--request or --request-file is required")
+	}
+	return r.emit(platformapi.DefaultDispatcher().DispatchJSON(r.ctx, body))
 }
 
-func runCapabilities(_ []string) int {
-	request := map[string]any{
-		jsonVersionKey:   jsonbridge.CurrentVersion,
-		jsonProductKey:   productCompression,
-		jsonOperationKey: opCapabilities,
-		jsonParamsKey:    map[string]any{},
-	}
-	out, err := dispatchRequest(request)
+func (r *runner) send(operation string, params map[string]any) int {
+	body, err := json.Marshal(map[string]any{
+		"version": jsonbridge.CurrentVersion, "product": productCompression, "operation": operation, "params": params,
+	})
 	if err != nil {
-		fmt.Fprintln(os.Stderr, err.Error())
-		return 2
+		fmt.Fprintln(r.stderr, err)
+		return lifecycle.ExitInternal
 	}
-	fmt.Println(out)
-	return 0
+	return r.emit(platformapi.DefaultDispatcher().DispatchJSON(r.ctx, string(body)))
 }
 
-func runCreateArchive(args []string) int {
-	fs := flag.NewFlagSet(cmdCreateArchive, flag.ContinueOnError)
-	input := fs.String("input", "", "input file or folder path")
+// emit prints the response envelope and returns its exit code.
+func (r *runner) emit(out string) int {
+	fmt.Fprintln(r.stdout, out)
+	return exitCode(r.ctx, out)
+}
+
+// exitCode maps a response envelope to the process exit code.
+func exitCode(ctx context.Context, out string) int {
+	var env struct {
+		Status string `json:"status"`
+		Error  *struct {
+			Code    string            `json:"code"`
+			Details map[string]string `json:"details"`
+		} `json:"error"`
+	}
+	if err := json.Unmarshal([]byte(out), &env); err != nil {
+		return lifecycle.ExitInternal
+	}
+	if env.Status == "ok" {
+		return lifecycle.ExitOK
+	}
+	if env.Error == nil {
+		return lifecycle.ExitInternal
+	}
+	switch env.Error.Code {
+	case "invalid_request", "unknown_product", "unknown_operation":
+		return lifecycle.ExitUsage
+	case "canceled":
+		var sig *lifecycle.SignalError
+		if errors.As(context.Cause(ctx), &sig) {
+			return lifecycle.ExitCode(sig)
+		}
+	case "internal_error":
+		if env.Error.Details["panic_id"] != "" {
+			return lifecycle.ExitInternal
+		}
+	}
+	return lifecycle.ExitFailure
+}
+
+func (r *runner) capabilities(args []string) int {
+	if err := r.flags(cmdCapabilities).Parse(args); err != nil {
+		return lifecycle.ExitUsage
+	}
+	return r.send(opCapabilities, map[string]any{})
+}
+
+func (r *runner) createArchive(args []string) int {
+	fs := r.flags(cmdCreateArchive)
+	input := fs.String("input", "", "input file or folder")
 	var inputFiles stringSliceFlag
-	fs.Var(&inputFiles, "input-file", "add input file (repeat flag for multiple files)")
-	output := fs.String("output", "", "output archive path (optional)")
-	workDir := fs.String("work-dir", "", "working directory for generated pipeline data")
-	chunkSize := fs.Int("chunk-size-kb", defaultChunkSizeKB, "chunk size in KB")
-	password := fs.String("password", "", "optional archive password for db key derivation")
-	splitSizeMB := fs.Int("split-size-mb", defaultSplitSizeMB, "optional split volume size in MB")
-	keepWorkDir := fs.Bool("keep-work-dir", false, "keep generated working directory")
+	fs.Var(&inputFiles, "input-file", "add an input file (repeat for several)")
+	output := fs.String("output", "", "output archive path (default: beside the input)")
+	workDir := fs.String("work-dir", "", "empty directory to build the archive's database in")
+	chunkSize := fs.Int("chunk-size-kb", defaultChunkSizeKB, "chunk size in KiB (4 to 65536, a multiple of 4)")
+	splitSizeMB := fs.Int("split-size-mb", 0, "write parts of this many MiB with a .split.json sidecar")
+	keepWorkDir := fs.Bool("keep-work-dir", false, "keep the generated work directory")
 	format := fs.String("format", defaultFormat, "archive format: duesarc|zip|tar|tar.gz|tar.xz")
-	async := fs.Bool("async", false, "run operation asynchronously and return task_id")
+	pw := addPasswordFlags(fs)
 	if err := fs.Parse(args); err != nil {
-		return 2
+		return lifecycle.ExitUsage
 	}
 	if *input == "" && len(inputFiles) == 0 {
-		fmt.Fprintln(os.Stderr, errCreateInputRequired)
-		return 2
+		return r.usage("--input or at least one --input-file is required")
 	}
-
-	request := map[string]any{
-		jsonVersionKey:   jsonbridge.CurrentVersion,
-		jsonProductKey:   productCompression,
-		jsonOperationKey: opCreateArchive,
-		jsonParamsKey: map[string]any{
-			jsonInputPathKey:   *input,
-			jsonInputPathsKey:  []string(inputFiles),
-			jsonOutputPathKey:  *output,
-			jsonWorkDirKey:     *workDir,
-			jsonChunkSizeKBKey: *chunkSize,
-			jsonPasswordKey:    *password,
-			jsonSplitSizeMBKey: *splitSizeMB,
-			jsonKeepWorkDirKey: *keepWorkDir,
-			jsonFormatKey:      *format,
-			jsonAsyncKey:       *async,
-		},
-	}
-	out, err := dispatchRequest(request)
+	password, err := r.password(pw)
 	if err != nil {
-		fmt.Fprintln(os.Stderr, err.Error())
-		return 2
+		return r.usage(err.Error())
 	}
-	fmt.Println(out)
-	return 0
+	return r.send(opCreateArchive, map[string]any{
+		"input_path": *input, "input_paths": []string(inputFiles), "output_path": *output,
+		"work_dir": *workDir, "chunk_size_kb": *chunkSize, "password": password,
+		"split_size_mb": *splitSizeMB, "keep_work_dir": *keepWorkDir, "format": *format,
+	})
 }
 
-func runExtractArchive(args []string) int {
-	fs := flag.NewFlagSet(cmdExtractArchive, flag.ContinueOnError)
-	input := fs.String("input", "", "input archive path")
-	output := fs.String("output", "", "output directory path (optional)")
-	password := fs.String("password", "", "optional archive password for db key derivation")
+func (r *runner) extractArchive(args []string) int {
+	fs := r.flags(cmdExtractArchive)
+	input := fs.String("input", "", "input archive (a split archive's .001 part or .split.json)")
+	output := fs.String("output", "", "output folder (default: the archive's name without its extension)")
 	format := fs.String("format", "", "archive format override: duesarc|zip|tar|tar.gz|tar.xz")
-	async := fs.Bool("async", false, "run operation asynchronously and return task_id")
+	onConflict := fs.String("on-conflict", "overwrite", "what an entry does to an existing file: overwrite|skip|error")
+	pw := addPasswordFlags(fs)
+	limits := addLimitFlags(fs)
 	if err := fs.Parse(args); err != nil {
-		return 2
+		return lifecycle.ExitUsage
 	}
 	if *input == "" {
-		fmt.Fprintln(os.Stderr, errInputRequired)
-		return 2
+		return r.usage("--input is required")
 	}
-
-	request := map[string]any{
-		jsonVersionKey:   jsonbridge.CurrentVersion,
-		jsonProductKey:   productCompression,
-		jsonOperationKey: opExtractArchive,
-		jsonParamsKey: map[string]any{
-			jsonInputPathKey:  *input,
-			jsonOutputPathKey: *output,
-			jsonPasswordKey:   *password,
-			jsonFormatKey:     *format,
-			jsonAsyncKey:      *async,
-		},
-	}
-	out, err := dispatchRequest(request)
+	password, err := r.password(pw)
 	if err != nil {
-		fmt.Fprintln(os.Stderr, err.Error())
-		return 2
+		return r.usage(err.Error())
 	}
-	fmt.Println(out)
-	return 0
+	return r.send(opExtractArchive, map[string]any{
+		"input_path": *input, "output_path": *output, "password": password, "format": *format,
+		"on_conflict": *onConflict, "limits": limits.params(),
+	})
 }
 
-func runListArchive(args []string) int {
-	fs := flag.NewFlagSet(cmdListArchive, flag.ContinueOnError)
-	input := fs.String("input", "", "input archive path")
-	password := fs.String("password", "", "optional archive password for db key derivation")
-	format := fs.String("format", "", "archive format override: duesarc|zip|tar|tar.gz|tar.xz")
-	async := fs.Bool("async", false, "run operation asynchronously and return task_id")
-	if err := fs.Parse(args); err != nil {
-		return 2
+func (r *runner) readArchive(name, operation string) func([]string) int {
+	return func(args []string) int {
+		fs := r.flags(name)
+		input := fs.String("input", "", "input archive")
+		format := fs.String("format", "", "archive format override: duesarc|zip|tar|tar.gz|tar.xz")
+		pw := addPasswordFlags(fs)
+		if err := fs.Parse(args); err != nil {
+			return lifecycle.ExitUsage
+		}
+		if *input == "" {
+			return r.usage("--input is required")
+		}
+		password, err := r.password(pw)
+		if err != nil {
+			return r.usage(err.Error())
+		}
+		return r.send(operation, map[string]any{"input_path": *input, "password": password, "format": *format})
 	}
-	if *input == "" {
-		fmt.Fprintln(os.Stderr, errInputRequired)
-		return 2
-	}
-
-	request := map[string]any{
-		jsonVersionKey:   jsonbridge.CurrentVersion,
-		jsonProductKey:   productCompression,
-		jsonOperationKey: opListArchive,
-		jsonParamsKey: map[string]any{
-			jsonInputPathKey: *input,
-			jsonPasswordKey:  *password,
-			jsonFormatKey:    *format,
-			jsonAsyncKey:     *async,
-		},
-	}
-	out, err := dispatchRequest(request)
-	if err != nil {
-		fmt.Fprintln(os.Stderr, err.Error())
-		return 2
-	}
-	fmt.Println(out)
-	return 0
 }
 
-func runVerifyArchive(args []string) int {
-	fs := flag.NewFlagSet(cmdVerifyArchive, flag.ContinueOnError)
-	input := fs.String("input", "", "input archive path")
-	format := fs.String("format", "", "archive format override: duesarc|zip|tar|tar.gz|tar.xz")
-	async := fs.Bool("async", false, "run operation asynchronously and return task_id")
-	if err := fs.Parse(args); err != nil {
-		return 2
-	}
-	if *input == "" {
-		fmt.Fprintln(os.Stderr, errInputRequired)
-		return 2
-	}
-
-	request := map[string]any{
-		jsonVersionKey:   jsonbridge.CurrentVersion,
-		jsonProductKey:   productCompression,
-		jsonOperationKey: opVerifyArchive,
-		jsonParamsKey: map[string]any{
-			jsonInputPathKey: *input,
-			jsonFormatKey:    *format,
-			jsonAsyncKey:     *async,
-		},
-	}
-	out, err := dispatchRequest(request)
-	if err != nil {
-		fmt.Fprintln(os.Stderr, err.Error())
-		return 2
-	}
-	fmt.Println(out)
-	return 0
-}
-
-func runGetProgress(args []string) int {
-	fs := flag.NewFlagSet(cmdGetProgress, flag.ContinueOnError)
-	taskID := fs.String("task-id", "", "async task id")
-	if err := fs.Parse(args); err != nil {
-		return 2
-	}
-	if *taskID == "" {
-		fmt.Fprintln(os.Stderr, errTaskIDRequired)
-		return 2
-	}
-
-	request := map[string]any{
-		jsonVersionKey:   jsonbridge.CurrentVersion,
-		jsonProductKey:   productCompression,
-		jsonOperationKey: opGetProgress,
-		jsonParamsKey: map[string]any{
-			jsonTaskIDKey: *taskID,
-		},
-	}
-	out, err := dispatchRequest(request)
-	if err != nil {
-		fmt.Fprintln(os.Stderr, err.Error())
-		return 2
-	}
-	fmt.Println(out)
-	return 0
-}
-
-func runCancelTask(args []string) int {
-	fs := flag.NewFlagSet(cmdCancelTask, flag.ContinueOnError)
-	taskID := fs.String("task-id", "", "async task id")
-	if err := fs.Parse(args); err != nil {
-		return 2
-	}
-	if *taskID == "" {
-		fmt.Fprintln(os.Stderr, errTaskIDRequired)
-		return 2
-	}
-
-	request := map[string]any{
-		jsonVersionKey:   jsonbridge.CurrentVersion,
-		jsonProductKey:   productCompression,
-		jsonOperationKey: opCancelTask,
-		jsonParamsKey: map[string]any{
-			jsonTaskIDKey: *taskID,
-		},
-	}
-	out, err := dispatchRequest(request)
-	if err != nil {
-		fmt.Fprintln(os.Stderr, err.Error())
-		return 2
-	}
-	fmt.Println(out)
-	return 0
-}
-
-func runCompress(args []string) int {
-	fs := flag.NewFlagSet(cmdCompress, flag.ContinueOnError)
+func (r *runner) compress(args []string) int {
+	fs := r.flags(cmdCompress)
 	text := fs.String("text", "", "input text")
 	level := fs.String("level", defaultLevel, "compression level: fast|default|best")
 	if err := fs.Parse(args); err != nil {
-		return 2
+		return lifecycle.ExitUsage
 	}
-	request := map[string]any{
-		jsonVersionKey:   jsonbridge.CurrentVersion,
-		jsonProductKey:   productCompression,
-		jsonOperationKey: opCompressBytes,
-		jsonParamsKey: map[string]any{
-			jsonDataBase64Key: base64.StdEncoding.EncodeToString([]byte(*text)),
-			jsonLevelKey:      *level,
-		},
-	}
-	out, err := dispatchRequest(request)
-	if err != nil {
-		fmt.Fprintln(os.Stderr, err.Error())
-		return 2
-	}
-	fmt.Println(out)
-	return 0
+	return r.send(opCompressBytes, map[string]any{"data_base64": base64.StdEncoding.EncodeToString([]byte(*text)), "level": *level})
 }
 
-func runDecompress(args []string) int {
-	fs := flag.NewFlagSet(cmdDecompress, flag.ContinueOnError)
-	dataBase64 := fs.String("data-base64", "", "compressed data in base64")
+func (r *runner) decompress(args []string) int {
+	fs := r.flags(cmdDecompress)
+	data := fs.String("data-base64", "", "compressed data in base64")
+	maxOutput := fs.Int64("max-output-bytes", 0, "refuse output larger than this (default 64 MiB, at most 256 MiB)")
 	if err := fs.Parse(args); err != nil {
-		return 2
+		return lifecycle.ExitUsage
 	}
-	if *dataBase64 == "" {
-		fmt.Fprintln(os.Stderr, errDataBase64Required)
-		return 2
+	if *data == "" {
+		return r.usage("--data-base64 is required")
 	}
-	request := map[string]any{
-		jsonVersionKey:   jsonbridge.CurrentVersion,
-		jsonProductKey:   productCompression,
-		jsonOperationKey: opDecompressBytes,
-		jsonParamsKey: map[string]any{
-			jsonDataBase64Key: *dataBase64,
-		},
-	}
-	out, err := dispatchRequest(request)
-	if err != nil {
-		fmt.Fprintln(os.Stderr, err.Error())
-		return 2
-	}
-	fmt.Println(out)
-	return 0
+	return r.send(opDecompressBytes, map[string]any{"data_base64": *data, "max_output_bytes": *maxOutput})
 }
 
-func runCompressFile(args []string) int {
-	fs := flag.NewFlagSet(cmdCompressFile, flag.ContinueOnError)
-	input := fs.String("input", "", "input file path")
-	output := fs.String("output", "", "output archive path (optional, .duesarc)")
-	level := fs.String("level", defaultLevel, "compression level hint (currently ignored for store pipeline)")
-	async := fs.Bool("async", false, "run operation asynchronously and return task_id")
+func (r *runner) compressFile(args []string) int {
+	fs := r.flags(cmdCompressFile)
+	input := fs.String("input", "", "input file")
+	output := fs.String("output", "", "output archive (default: <input>.duesarc)")
+	pw := addPasswordFlags(fs)
 	if err := fs.Parse(args); err != nil {
-		return 2
+		return lifecycle.ExitUsage
 	}
 	if *input == "" {
-		fmt.Fprintln(os.Stderr, errInputRequired)
-		return 2
+		return r.usage("--input is required")
 	}
-	request := map[string]any{
-		jsonVersionKey:   jsonbridge.CurrentVersion,
-		jsonProductKey:   productCompression,
-		jsonOperationKey: opCompressFile,
-		jsonParamsKey: map[string]any{
-			jsonInputPathKey:  *input,
-			jsonOutputPathKey: *output,
-			jsonLevelKey:      *level,
-			jsonAsyncKey:      *async,
-		},
-	}
-	out, err := dispatchRequest(request)
+	password, err := r.password(pw)
 	if err != nil {
-		fmt.Fprintln(os.Stderr, err.Error())
-		return 2
+		return r.usage(err.Error())
 	}
-	fmt.Println(out)
-	return 0
+	return r.send(opCompressFile, map[string]any{"input_path": *input, "output_path": *output, "password": password})
 }
 
-func runDecompressFile(args []string) int {
-	fs := flag.NewFlagSet(cmdDecompressFile, flag.ContinueOnError)
-	input := fs.String("input", "", "input compressed file path")
-	output := fs.String("output", "", "output file path (optional)")
-	async := fs.Bool("async", false, "run operation asynchronously and return task_id")
+func (r *runner) decompressFile(args []string) int {
+	fs := r.flags(cmdDecompressFile)
+	input := fs.String("input", "", "input .duesarc of one file, or zstd file")
+	output := fs.String("output", "", "output file (default: the input without .duesarc, .dues.zst or .zst)")
+	pw := addPasswordFlags(fs)
+	limits := addLimitFlags(fs)
 	if err := fs.Parse(args); err != nil {
-		return 2
+		return lifecycle.ExitUsage
 	}
 	if *input == "" {
-		fmt.Fprintln(os.Stderr, errInputRequired)
-		return 2
+		return r.usage("--input is required")
 	}
-	request := map[string]any{
-		jsonVersionKey:   jsonbridge.CurrentVersion,
-		jsonProductKey:   productCompression,
-		jsonOperationKey: opDecompressFile,
-		jsonParamsKey: map[string]any{
-			jsonInputPathKey:  *input,
-			jsonOutputPathKey: *output,
-			jsonAsyncKey:      *async,
-		},
-	}
-	out, err := dispatchRequest(request)
+	password, err := r.password(pw)
 	if err != nil {
-		fmt.Fprintln(os.Stderr, err.Error())
-		return 2
+		return r.usage(err.Error())
 	}
-	fmt.Println(out)
-	return 0
-}
-
-func dispatchRequest(req map[string]any) (string, error) {
-	body, err := json.Marshal(req)
-	if err != nil {
-		return "", err
-	}
-	return platformapi.DefaultDispatcher().DispatchJSON(context.Background(), string(body)), nil
+	return r.send(opDecompressFile, map[string]any{"input_path": *input, "output_path": *output, "password": password, "limits": limits.params()})
 }
 
 type stringSliceFlag []string

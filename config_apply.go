@@ -17,7 +17,6 @@ import (
 
 	"github.com/alecthomas/kingpin/v2"
 	"github.com/fatih/color"
-	"github.com/klauspost/compress/zstd"
 )
 
 type pipelineTuning struct {
@@ -266,23 +265,14 @@ func flagsSetByUser(app *kingpin.Application, args []string) (map[string]bool, e
 	return set, nil
 }
 
-func reconfigureEncoderForCompressionLevel() error {
+// reconfigureEncoderForCompressionLevel replaces the process encoder with one
+// at --compress-level, sized for the store workers that encode at once.
+func reconfigureEncoderForCompressionLevel(workers int) error {
 	if err := cnst.ENCODER.Close(); err != nil {
 		return err
 	}
-
-	encLevel := zstd.SpeedBestCompression
-	switch cnst.CompressLevel {
-	case "fast":
-		encLevel = zstd.SpeedFastest
-	case "default":
-		encLevel = zstd.SpeedDefault
-	case "best":
-		encLevel = zstd.SpeedBestCompression
-	}
-
 	var err error
-	cnst.ENCODER, err = zstd.NewWriter(nil, zstd.WithEncoderLevel(encLevel))
+	cnst.ENCODER, err = cnst.NewEncoder(cnst.CompressLevel, workers)
 	return err
 }
 

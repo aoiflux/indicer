@@ -128,7 +128,7 @@ func Isolate(tb testing.TB) {
 func EnsureCodecs(tb testing.TB) {
 	tb.Helper()
 	if cnst.DECODER == nil {
-		d, err := zstd.NewReader(nil, zstd.WithDecoderConcurrency(0))
+		d, err := cnst.NewDecoder()
 		if err != nil {
 			tb.Fatalf("zstd.NewReader: %v", err)
 		}

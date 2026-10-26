@@ -15,7 +15,7 @@ import (
 
 // ensureCodecs sets up the process-wide zstd codecs. testdb cannot be used:
 // it imports dbio, which imports this package.
-func ensureCodecs(t *testing.T) {
+func ensureCodecs(t testing.TB) {
 	t.Helper()
 	if cnst.DECODER == nil {
 		d, err := zstd.NewReader(nil)
@@ -47,7 +47,7 @@ func sha3Key(data []byte) []byte {
 
 var blobKey = bytes.Repeat([]byte{7}, 32)
 
-func codecs(t *testing.T) map[string]Codec {
+func codecs(t testing.TB) map[string]Codec {
 	t.Helper()
 	ensureCodecs(t)
 	plain, err := NewV2(nil)

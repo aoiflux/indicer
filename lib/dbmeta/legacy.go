@@ -12,12 +12,12 @@ import (
 	"strconv"
 	"time"
 
+	"indicer/internal/msgpackx"
 	"indicer/lib/blobcodec"
 	"indicer/lib/cnst"
 	"indicer/lib/structs"
 
 	"github.com/dgraph-io/badger/v4"
-	"github.com/vmihailenco/msgpack/v5"
 )
 
 // badger's key registry starts with an AES IV and a sanity text, encrypted
@@ -250,7 +250,7 @@ func inferStorage(db *badger.DB, root string, decode func([]byte) ([]byte, error
 				continue
 			}
 			var meta structs.ChonkMetadata
-			if msgpack.Unmarshal(v, &meta) == nil && meta.Container {
+			if msgpackx.Unmarshal(v, &meta) == nil && meta.Container {
 				storage = StorageContainer
 				return nil
 			}

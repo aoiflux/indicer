@@ -6,6 +6,7 @@ import (
 	"strconv"
 	"time"
 
+	"indicer/internal/msgpackx"
 	"indicer/lib/cnst"
 	"indicer/lib/structs"
 	"indicer/lib/util"
@@ -116,7 +117,7 @@ func DecodeRecord(data []byte, v any) error {
 	if decoded, err := cnst.DECODER.DecodeAll(data, nil); err == nil {
 		data = decoded
 	}
-	return msgpack.Unmarshal(data, v)
+	return msgpackx.Unmarshal(data, v)
 }
 
 // GetEvidenceTxn reads the evidence record eid inside txn.

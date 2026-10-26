@@ -16,7 +16,7 @@ func TestInspectEvidenceRepairsDoesNotMutateWithoutFix(t *testing.T) {
 		t.Fatalf("seed evidence file: %v", err)
 	}
 
-	report, err := InspectEvidenceRepairs(db, false)
+	report, err := InspectEvidenceRepairs(t.Context(), db, false)
 	if err != nil {
 		t.Fatalf("InspectEvidenceRepairs: %v", err)
 	}
@@ -50,7 +50,7 @@ func TestInspectEvidenceRepairsFixMarksPendingEvidenceFailed(t *testing.T) {
 		t.Fatalf("seed evidence file: %v", err)
 	}
 
-	report, err := InspectEvidenceRepairs(db, true)
+	report, err := InspectEvidenceRepairs(t.Context(), db, true)
 	if err != nil {
 		t.Fatalf("InspectEvidenceRepairs: %v", err)
 	}
@@ -80,7 +80,7 @@ func TestInspectEvidenceRepairsFixAutoCompletesFlushed(t *testing.T) {
 	db := openTestDB(t)
 	infile := seedFlushedEvidenceWithChunk(t, db, "flushed-repair.dd", 0xAA)
 
-	report, err := InspectEvidenceRepairs(db, true)
+	report, err := InspectEvidenceRepairs(t.Context(), db, true)
 	if err != nil {
 		t.Fatalf("InspectEvidenceRepairs: %v", err)
 	}
@@ -118,7 +118,7 @@ func TestInspectEvidenceRepairsFixMarksInvalidFlushedFailed(t *testing.T) {
 		t.Fatalf("seed invalid flushed evidence: %v", err)
 	}
 
-	report, err := InspectEvidenceRepairs(db, true)
+	report, err := InspectEvidenceRepairs(t.Context(), db, true)
 	if err != nil {
 		t.Fatalf("InspectEvidenceRepairs: %v", err)
 	}

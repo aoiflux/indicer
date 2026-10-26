@@ -9,11 +9,9 @@ import (
 	"indicer/internal/testutil/testdb"
 	"indicer/lib/cnst"
 	"indicer/lib/dbio"
-	"indicer/lib/structs"
 	"indicer/lib/util"
 
 	"github.com/dgraph-io/badger/v4"
-	"github.com/edsrzf/mmap-go"
 )
 
 // TestRevrelConcurrentIngestsKeepEveryRelation is the STO-14 regression.
@@ -39,10 +37,10 @@ func TestRevrelConcurrentIngestsKeepEveryRelation(t *testing.T) {
 			var wg sync.WaitGroup
 			errs := make(chan error, ingests)
 			for i := range ingests {
-				infile := structs.NewInputFile(db.DB, nil, mmap.MMap(content), fmt.Sprintf("e%d", i), cnst.EviFileNamespace, []byte(fmt.Sprintf("e%d", i)), int64(len(content)), 0)
-				ids[i] = infile.GetHash()
+				ids[i] = []byte(fmt.Sprintf("e%d", i))
+				p := ChunkPass{DB: db.DB, ID: ids[i], Source: byteReaderAt(content), Size: int64(len(content)), Quiet: true}
 				wg.Go(func() {
-					if _, err := pass(t.Context(), infile); err != nil {
+					if _, err := pass(t.Context(), p); err != nil {
 						errs <- err
 					}
 				})

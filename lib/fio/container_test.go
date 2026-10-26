@@ -19,7 +19,7 @@ type containerChunk struct {
 	offset, size int64
 }
 
-func newContainerDB(t *testing.T) string {
+func newContainerDB(t testing.TB) string {
 	t.Helper()
 	dir := t.TempDir()
 	if err := os.MkdirAll(filepath.Join(dir, "blob"), 0o755); err != nil {
@@ -33,7 +33,7 @@ func chunkKey(seed int) []byte {
 }
 
 // writeChunks writes n chunks through cm, seeded from seed, and returns them.
-func writeChunks(t *testing.T, cm *ContainerManager, seed, n int) []containerChunk {
+func writeChunks(t testing.TB, cm *ContainerManager, seed, n int) []containerChunk {
 	t.Helper()
 	var out []containerChunk
 	for i := range n {
@@ -61,7 +61,7 @@ func assertChunksReadable(t *testing.T, chunks []containerChunk) {
 	}
 }
 
-func closeManager(t *testing.T, cm *ContainerManager) {
+func closeManager(t testing.TB, cm *ContainerManager) {
 	t.Helper()
 	if err := cm.Close(); err != nil {
 		t.Fatal(err)

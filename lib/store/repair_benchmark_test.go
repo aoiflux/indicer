@@ -30,7 +30,7 @@ func BenchmarkInspectEvidenceRepairs(b *testing.B) {
 			b.ReportAllocs()
 			b.ResetTimer()
 			for i := 0; i < b.N; i++ {
-				report, err := InspectEvidenceRepairs(db, false)
+				report, err := InspectEvidenceRepairs(b.Context(), db, false)
 				if err != nil {
 					b.Fatalf("InspectEvidenceRepairs: %v", err)
 				}

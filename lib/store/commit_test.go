@@ -272,7 +272,7 @@ func TestBeginAttemptResumes(t *testing.T) {
 	if err != nil || resumed {
 		t.Fatalf("first: resumed %v, %v", resumed, err)
 	}
-	if err := MarkEvidenceFileFailed(a, db.DB); err != nil {
+	if err := failAttempt(db.DB, a, "the store failed"); err != nil {
 		t.Fatal(err)
 	}
 	b, resumed, err := BeginAttempt(db.DB, "/case/e.dd", rec)

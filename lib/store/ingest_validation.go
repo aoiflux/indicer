@@ -59,14 +59,14 @@ var validateFlushed = ValidateFlushedEvidenceMaterialized
 // relation, chunk location and chunk byte it needs (ValidateMaterial), so
 // recovery completes only evidence that can be restored. Missing or short
 // material is ErrMaterialMissing (ING-10).
-func ValidateFlushedEvidenceMaterialized(fileID []byte, evidenceFile structs.EvidenceFile, db *badger.DB) error {
+func ValidateFlushedEvidenceMaterialized(ctx context.Context, fileID []byte, evidenceFile structs.EvidenceFile, db *badger.DB) error {
 	if evidenceFile.Completed {
 		return nil
 	}
 	if evidenceFile.IngestState != structs.IngestStateFlushed {
 		return fmt.Errorf("invalid state for flushed validation: %s", evidenceFile.IngestState)
 	}
-	return ValidateEvidence(context.Background(), db, fileID, evidenceFile, ValidateMaterial)
+	return ValidateEvidence(ctx, db, fileID, evidenceFile, ValidateMaterial)
 }
 
 // ValidateEvidence checks the stored chunks of the evidence fileID at level,
@@ -152,7 +152,7 @@ func validateChunk(db *badger.DB, ckey []byte, level ValidationLevel) error {
 		return nil
 	}
 
-	path := dbio.ResolveBlobPath(db.Opts().Dir, loc.Path)
+	path := dbio.ResolveBlobPath(dbio.KVDir(db), loc.Path)
 	fi, err := os.Stat(path)
 	if errors.Is(err, fs.ErrNotExist) {
 		return fmt.Errorf("%w: %s does not exist", ErrMaterialMissing, path)

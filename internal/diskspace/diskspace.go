@@ -11,6 +11,9 @@ func IsNoSpace(err error) bool {
 	if err == nil {
 		return false
 	}
+	if errors.Is(err, ErrLow) {
+		return true
+	}
 	for _, target := range noSpaceErrors {
 		if errors.Is(err, target) {
 			return true

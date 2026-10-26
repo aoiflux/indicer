@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/binary"
 	"hash"
+	"indicer/internal/diskspace"
 	"indicer/lib/cnst"
 	"indicer/lib/dbio"
 	"indicer/lib/fio"
@@ -83,7 +84,7 @@ func ingestChunksStaged(parentCtx context.Context, p ChunkPass) (res ChunkResult
 
 	var containerMgr *fio.ContainerManager
 	if cnst.CONTAINERMODE {
-		containerMgr = fio.NewContainerManager(p.DB.Opts().Dir)
+		containerMgr = fio.NewContainerManager(dbio.KVDir(p.DB))
 		defer closeContainerManager(&err, containerMgr)
 	}
 
@@ -316,7 +317,7 @@ func stagedDiskWriterLoop(
 		return nil, err
 	}
 
-	barrier := newChunkMetaBarrier(db.Opts().Dir, containerMgr, batch)
+	barrier := newChunkMetaBarrier(dbio.KVDir(db), containerMgr, batch)
 	hocho := newHochoAccumulator(shape.fileHash, shape.chunk, 0)
 	pending := make([]stagedWriteChunk, 0, batchSize)
 
@@ -405,6 +406,11 @@ func materializeChunkMeta(
 	stored, err := dbio.ChunkStored(ckey, db)
 	if err != nil || stored {
 		return nil, err
+	}
+	if dir := dbio.KVDir(db); dir != "" {
+		if err := diskspace.GuardFor(dir).Add(len(cdata)); err != nil {
+			return nil, err
+		}
 	}
 	return materializeChunk(ckey, cdata, db, containerMgr)
 }

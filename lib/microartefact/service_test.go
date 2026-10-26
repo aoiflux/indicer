@@ -243,34 +243,3 @@ func TestGrapheneRepositoryStoresNodesAndEdges(t *testing.T) {
 		t.Fatalf("expected 1 url artefact hit, got %d", len(kindHits))
 	}
 }
-
-func asInt(value any) int {
-	switch num := value.(type) {
-	case int:
-		return num
-	case int8:
-		return int(num)
-	case int16:
-		return int(num)
-	case int32:
-		return int(num)
-	case int64:
-		return int(num)
-	case uint:
-		return int(num)
-	case uint8:
-		return int(num)
-	case uint16:
-		return int(num)
-	case uint32:
-		return int(num)
-	case uint64:
-		return int(num)
-	case float32:
-		return int(num)
-	case float64:
-		return int(num)
-	default:
-		return 0
-	}
-}

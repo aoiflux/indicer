@@ -59,7 +59,7 @@ const (
 )
 
 func indexPath(db *badger.DB) string {
-	return util.FTSPath(db.Opts().Dir)
+	return util.FTSPath(dbio.KVDir(db))
 }
 
 // handle is one open of a database's full-text index, shared by everyone in

@@ -237,14 +237,6 @@ func validateStoreHierarchy(file model.FileRecord) error {
 	return nil
 }
 
-func (r *Repository) hasIndexedFile(indexedFileID string) (bool, error) {
-	_, exists, err := r.findIndexedFileNode(indexedFileID)
-	if err != nil {
-		return false, err
-	}
-	return exists, nil
-}
-
 func (r *Repository) findIndexedFileNode(indexedFileID string) (graphstore.NodeID, bool, error) {
 	hits, err := r.graph.NodesByProperty("indexed_file_id", []byte(indexedFileID))
 	if err != nil {

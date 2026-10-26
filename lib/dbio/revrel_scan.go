@@ -7,11 +7,11 @@ import (
 	"fmt"
 	"strconv"
 
+	"indicer/internal/msgpackx"
 	"indicer/lib/cnst"
 	"indicer/lib/util"
 
 	"github.com/dgraph-io/badger/v4"
-	"github.com/vmihailenco/msgpack/v5"
 )
 
 // ForEachChunkOccurrence calls fn with each recorded occurrence of the chunk
@@ -72,7 +72,7 @@ func ForEachChunkOccurrence(db *badger.DB, chash []byte, limit int, fn func(owne
 				return err
 			}
 			var owners map[string]struct{}
-			if err := msgpack.Unmarshal(data, &owners); err != nil {
+			if err := msgpackx.Unmarshal(data, &owners); err != nil {
 				return fmt.Errorf("reverse relation map %q: %w", it.Item().Key(), err)
 			}
 			for owner := range owners {
@@ -273,7 +273,7 @@ func mapOwners(item *badger.Item, fn func(string) bool) error {
 		return err
 	}
 	var owners map[string]struct{}
-	if err := msgpack.Unmarshal(data, &owners); err != nil {
+	if err := msgpackx.Unmarshal(data, &owners); err != nil {
 		return fmt.Errorf("reverse relation map %q: %w", item.Key(), err)
 	}
 	for owner := range owners {

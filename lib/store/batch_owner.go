@@ -28,6 +28,7 @@ import (
 	"fmt"
 	"hash"
 	"indicer/lib/cnst"
+	"indicer/lib/dbio"
 	"indicer/lib/fio"
 	"indicer/lib/util"
 	"sync"
@@ -119,7 +120,7 @@ func ingestChunksBatchOwner(parentCtx context.Context, p ChunkPass) (res ChunkRe
 
 	var containerMgr *fio.ContainerManager
 	if cnst.CONTAINERMODE {
-		containerMgr = fio.NewContainerManager(p.DB.Opts().Dir)
+		containerMgr = fio.NewContainerManager(dbio.KVDir(p.DB))
 		defer closeContainerManager(&err, containerMgr)
 	}
 
@@ -268,7 +269,7 @@ func batchOwnerWriteLoop(
 		return nil, err
 	}
 
-	barrier := newChunkMetaBarrier(db.Opts().Dir, containerMgr, batch)
+	barrier := newChunkMetaBarrier(dbio.KVDir(db), containerMgr, batch)
 	hocho := newHochoAccumulator(shape.fileHash, shape.chunk, 0)
 
 	// On failure the writer returns at once; its caller cancels the pass,

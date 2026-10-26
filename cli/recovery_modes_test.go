@@ -46,7 +46,7 @@ func TestRecoveryCompletesFlushedEvidenceInEveryMode(t *testing.T) {
 			t.Fatal(err)
 		}
 
-		report, err := store.RecoverIncompleteIngests(h.DB)
+		report, err := store.RecoverIncompleteIngests(t.Context(), h.DB)
 		if err != nil {
 			t.Fatalf("recovery: %v", err)
 		}

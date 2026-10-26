@@ -70,6 +70,28 @@ func StartChild(tb testing.TB, scenario string, env ...string) *Child {
 	cmd := exec.Command(exe, "-test.run=^$")
 	cmd.Env = append(os.Environ(), EnvChildScenario+"="+scenario, EnvFaultsNotify+"="+notify)
 	cmd.Env = append(cmd.Env, env...)
+	return startChild(tb, cmd, notify)
+}
+
+// StartDues starts the dues binary bin in dir with args and the given extra
+// environment ("K=V"), as StartChild starts a scenario: output captured, a
+// fresh notification file in DUES_FAULTS_NOTIFY, killed at the end of the
+// test if still running.
+func StartDues(tb testing.TB, bin, dir string, env []string, args ...string) *Child {
+	tb.Helper()
+	notify := filepath.Join(tb.TempDir(), "points.log")
+	if err := os.WriteFile(notify, nil, 0o644); err != nil {
+		tb.Fatal(err)
+	}
+	cmd := exec.Command(bin, args...)
+	cmd.Dir = dir
+	cmd.Env = append(os.Environ(), EnvFaultsNotify+"="+notify)
+	cmd.Env = append(cmd.Env, env...)
+	return startChild(tb, cmd, notify)
+}
+
+func startChild(tb testing.TB, cmd *exec.Cmd, notify string) *Child {
+	tb.Helper()
 	out := &syncBuffer{}
 	cmd.Stdout = out
 	cmd.Stderr = out

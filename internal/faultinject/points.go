@@ -54,6 +54,13 @@ const (
 	UploadBeforeIngest        = "upload.before_ingest"
 	UploadAfterIngest         = "upload.after_ingest"
 	QwikpakArchiveBeforeClose = "qwikpak.archive.before_close"
+	// Points inside read and maintenance commands, where tests interrupt
+	// them.
+	SearchMid   = "search.mid"
+	NearMid     = "near.mid"
+	EnrichMid   = "enrich.mid"
+	MicroMid    = "micro.mid"
+	RecoveryMid = "recovery.mid"
 	// SelfTest is used only by this package's tests.
 	SelfTest = "faultinject.selftest"
 )
@@ -74,6 +81,11 @@ var known = map[string]bool{
 	UploadBeforeIngest:        true,
 	UploadAfterIngest:         true,
 	QwikpakArchiveBeforeClose: true,
+	SearchMid:                 true,
+	NearMid:                   true,
+	EnrichMid:                 true,
+	MicroMid:                  true,
+	RecoveryMid:               true,
 	SelfTest:                  true,
 }
 

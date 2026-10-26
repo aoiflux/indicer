@@ -5,9 +5,9 @@ import (
 	"encoding/base64"
 	"encoding/binary"
 	"io"
-	"os"
 	"testing"
 
+	"indicer/internal/console"
 	"indicer/internal/testutil/testdb"
 	"indicer/lib/cnst"
 	"indicer/lib/dbio"
@@ -26,20 +26,9 @@ func BenchmarkRestoreDataPath(b *testing.B) {
 		{name: "start_mid/chunks_64", chunks: 64, start: cnst.ChonkSize / 2},
 	}
 
-	devNull, err := os.OpenFile(os.DevNull, os.O_WRONLY, 0)
-	if err != nil {
-		b.Fatalf("open os.DevNull: %v", err)
-	}
-	defer devNull.Close()
-
-	oldStderr := os.Stderr
-	oldStdout := os.Stdout
-	os.Stderr = devNull
-	os.Stdout = devNull
-	defer func() {
-		os.Stderr = oldStderr
-		os.Stdout = oldStdout
-	}()
+	// Restore's progress bar would land on the benchmark's result lines,
+	// which benchstat then cannot read.
+	defer console.Quiet()()
 
 	for _, bm := range benchmarks {
 		b.Run(bm.name, func(b *testing.B) {

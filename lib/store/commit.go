@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"time"
 
+	"indicer/internal/faultinject"
 	"indicer/lib/cnst"
 	"indicer/lib/dbio"
 	"indicer/lib/structs"
@@ -94,6 +95,9 @@ func CommitEvidence(db *badger.DB, eid []byte) (CommitResult, error) {
 			if err := dbio.AppendHashLookupUUIDByKeyTxn(txn, dbio.QuickLookupKey(e.Size, e.Fingerprint), member); err != nil {
 				return err
 			}
+		}
+		if err := faultinject.Hit(faultinject.IngestInCommit); err != nil {
+			return err
 		}
 		res = CommitResult{Outcome: CommitStored, Winner: eid}
 		return dbio.SetEvidenceTxn(txn, eid, e)

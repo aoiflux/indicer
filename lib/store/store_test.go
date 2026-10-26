@@ -11,110 +11,9 @@ import (
 	"indicer/lib/util"
 
 	"github.com/dgraph-io/badger/v4"
-	"github.com/edsrzf/mmap-go"
+	"github.com/google/uuid"
 	"github.com/klauspost/compress/zstd"
 )
-
-func TestMarkEvidenceFileFailedSetsFailedFlag(t *testing.T) {
-	db := openTestDB(t)
-
-	infile := newTestInputFile(db, "failed-retry.dd", bytes.Repeat([]byte{1}, 32))
-	evidenceFile := structs.NewEvidenceFile(infile.GetName(), infile.GetStartIndex(), infile.GetSize(), infile.GetInternalObjects(), "dd", "")
-	if err := dbio.SetFile(infile.GetID(), evidenceFile, db); err != nil {
-		t.Fatalf("seed evidence file: %v", err)
-	}
-
-	if err := MarkEvidenceFileFailed(infile.GetID(), db); err != nil {
-		t.Fatalf("MarkEvidenceFileFailed: %v", err)
-	}
-
-	updated, err := dbio.GetEvidenceFile(infile.GetID(), db)
-	if err != nil {
-		t.Fatalf("GetEvidenceFile: %v", err)
-	}
-	if !updated.Failed {
-		t.Fatal("expected failed flag to be set")
-	}
-	if updated.Completed {
-		t.Fatal("expected completed flag to remain false")
-	}
-}
-
-func TestMarkEvidenceFileFailedUnlessFlushedMarksPending(t *testing.T) {
-	db := openTestDB(t)
-
-	infile := newTestInputFile(db, "pending-fail.dd", bytes.Repeat([]byte{0x11}, 32))
-	evidenceFile := structs.NewEvidenceFile(infile.GetName(), infile.GetStartIndex(), infile.GetSize(), infile.GetInternalObjects(), "dd", "")
-	evidenceFile.IngestState = structs.IngestStatePending
-	if err := dbio.SetFile(infile.GetID(), evidenceFile, db); err != nil {
-		t.Fatalf("seed evidence file: %v", err)
-	}
-
-	if err := MarkEvidenceFileFailedUnlessFlushed(infile.GetID(), db); err != nil {
-		t.Fatalf("MarkEvidenceFileFailedUnlessFlushed: %v", err)
-	}
-
-	updated, err := dbio.GetEvidenceFile(infile.GetID(), db)
-	if err != nil {
-		t.Fatalf("GetEvidenceFile: %v", err)
-	}
-	if !updated.Failed {
-		t.Fatal("expected pending ingest to be marked failed")
-	}
-}
-
-func TestMarkEvidenceFileFailedUnlessFlushedSkipsFlushed(t *testing.T) {
-	db := openTestDB(t)
-
-	infile := newTestInputFile(db, "flushed-preserve.dd", bytes.Repeat([]byte{0x22}, 32))
-	evidenceFile := structs.NewEvidenceFile(infile.GetName(), infile.GetStartIndex(), infile.GetSize(), infile.GetInternalObjects(), "dd", "")
-	evidenceFile.IngestState = structs.IngestStateFlushed
-	if err := dbio.SetFile(infile.GetID(), evidenceFile, db); err != nil {
-		t.Fatalf("seed evidence file: %v", err)
-	}
-
-	if err := MarkEvidenceFileFailedUnlessFlushed(infile.GetID(), db); err != nil {
-		t.Fatalf("MarkEvidenceFileFailedUnlessFlushed: %v", err)
-	}
-
-	updated, err := dbio.GetEvidenceFile(infile.GetID(), db)
-	if err != nil {
-		t.Fatalf("GetEvidenceFile: %v", err)
-	}
-	if updated.Failed {
-		t.Fatal("expected flushed ingest to remain recoverable (not failed)")
-	}
-	if updated.IngestState != structs.IngestStateFlushed {
-		t.Fatalf("expected ingest state to remain flushed, got %q", updated.IngestState)
-	}
-}
-
-func TestEvidenceFilePreflightClearsFailedFlagOnRetry(t *testing.T) {
-	db := openTestDB(t)
-
-	infile := newTestInputFile(db, "retry.dd", bytes.Repeat([]byte{2}, 32))
-	evidenceFile := structs.NewEvidenceFile(infile.GetName(), infile.GetStartIndex(), infile.GetSize(), infile.GetInternalObjects(), "dd", "")
-	evidenceFile.Failed = true
-	if err := dbio.SetFile(infile.GetID(), evidenceFile, db); err != nil {
-		t.Fatalf("seed evidence file: %v", err)
-	}
-
-	updated, err := evidenceFilePreflight(infile)
-	if err != nil {
-		t.Fatalf("evidenceFilePreflight: %v", err)
-	}
-	if updated.Failed {
-		t.Fatal("expected retry preflight to clear failed flag")
-	}
-
-	persisted, err := dbio.GetEvidenceFile(infile.GetID(), db)
-	if err != nil {
-		t.Fatalf("GetEvidenceFile: %v", err)
-	}
-	if persisted.Failed {
-		t.Fatal("expected persisted failed flag to be cleared")
-	}
-}
 
 func TestProcessRevRelSkippedWhenDisabled(t *testing.T) {
 	db := openTestDB(t)
@@ -211,7 +110,27 @@ func openTestDB(t testing.TB) *badger.DB {
 	return db
 }
 
-func newTestInputFile(db *badger.DB, name string, hash []byte) structs.InputFile {
-	var mapped mmap.MMap
-	return structs.NewInputFile(db, nil, mapped, name, cnst.EviFileNamespace, hash, 128, 0)
+// testEvidence names an evidence record a test writes by hand: a fresh ID,
+// by which its record and relations are keyed, and a 128-byte size. The
+// hash argument is ignored, as InputFile ignored it for keys.
+type testEvidence struct {
+	id   []byte
+	name string
+}
+
+func newTestInputFile(_ *badger.DB, name string, _ []byte) testEvidence {
+	id, err := uuid.NewV7()
+	if err != nil {
+		panic(err)
+	}
+	return testEvidence{id: id[:], name: name}
+}
+
+func (e testEvidence) GetID() []byte        { return e.id }
+func (e testEvidence) GetHash() []byte      { return e.id }
+func (e testEvidence) GetName() string      { return e.name }
+func (e testEvidence) GetStartIndex() int64 { return 0 }
+func (e testEvidence) GetSize() int64       { return 128 }
+func (e testEvidence) GetInternalObjects() map[string]structs.InternalOffset {
+	return map[string]structs.InternalOffset{}
 }

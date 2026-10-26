@@ -79,6 +79,15 @@ func TestQuarantineRawContainerIndexes(t *testing.T) {
 	if len(q) != 3 {
 		t.Fatalf("quarantined %d indexes, want 3: %+v", len(q), q)
 	}
+	// What `dues list` shows: the listing the command prints.
+	out, err := listOutput(db.DB, "all")
+	if err != nil {
+		t.Fatal(err)
+	}
+	listedByID := map[string]map[string]interface{}{}
+	for _, e := range out["evidence"].([]map[string]interface{}) {
+		listedByID[e["id"].(string)] = e
+	}
 	for _, c := range []struct {
 		name    string
 		id      []byte
@@ -92,12 +101,15 @@ func TestQuarantineRawContainerIndexes(t *testing.T) {
 		if got != c.invalid {
 			t.Errorf("%s: quarantined %v, want %v", c.name, got, c.invalid)
 		}
-		listed, found, err := buildCompletedEvidenceFromKV(base64.StdEncoding.EncodeToString(c.id), db.DB)
-		if err != nil || !found {
-			t.Fatalf("%s: list: %v, found %v", c.name, err, found)
+		listed, found := listedByID[base64.StdEncoding.EncodeToString(c.id)]
+		if !found {
+			t.Fatalf("%s: not listed", c.name)
 		}
 		if n := listed["partitionCount"].(int); (n == 0) != c.invalid {
 			t.Errorf("%s: listed with %d partitions", c.name, n)
+		}
+		if st, _ := listed["indexState"].(string); (st == string(structs.IndexInvalid)) != c.invalid {
+			t.Errorf("%s: listed with index state %q", c.name, st)
 		}
 	}
 	if again, err := QuarantineRawContainerIndexes(t.Context(), db.DB); err != nil || len(again) != 0 {

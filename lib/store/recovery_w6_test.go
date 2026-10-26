@@ -2,6 +2,7 @@ package store
 
 import (
 	"bytes"
+	"context"
 	"errors"
 	"testing"
 
@@ -39,7 +40,7 @@ func TestRecoveryCommitsFlushedAttempts(t *testing.T) {
 	setIndexState(t, db.DB, first, structs.IndexRunning)
 	setIndexState(t, db.DB, second, structs.IndexRunning)
 
-	report, err := RecoverIncompleteIngests(db.DB)
+	report, err := RecoverIncompleteIngests(t.Context(), db.DB)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -67,7 +68,7 @@ func TestRecoveryCommitsFlushedAttempts(t *testing.T) {
 		t.Fatalf("%d aliases, want 1", len(aliases))
 	}
 	// Recovering again changes nothing.
-	again, err := RecoverIncompleteIngests(db.DB)
+	again, err := RecoverIncompleteIngests(t.Context(), db.DB)
 	if err != nil || again.CompletedFlushed+again.Aliased+again.MarkedFailed+again.IndexInterrupted+again.DuplicatesCleaned != 0 {
 		t.Fatalf("second recovery: %+v, %v", again, err)
 	}
@@ -87,7 +88,7 @@ func TestRecoveryFinishesDuplicateCleanup(t *testing.T) {
 	if res, err := CommitEvidence(db.DB, dup); err != nil || res.Outcome != CommitAliased {
 		t.Fatalf("commit: %+v, %v", res, err)
 	}
-	report, err := RecoverIncompleteIngests(db.DB)
+	report, err := RecoverIncompleteIngests(t.Context(), db.DB)
 	if err != nil || report.DuplicatesCleaned != 1 {
 		t.Fatalf("report %+v, %v", report, err)
 	}
@@ -118,7 +119,7 @@ func TestRecoveryInterruptsIndexPass(t *testing.T) {
 	}
 	setIndexState(t, db.DB, done, structs.IndexRunning)
 
-	report, err := RecoverIncompleteIngests(db.DB)
+	report, err := RecoverIncompleteIngests(t.Context(), db.DB)
 	if err != nil || report.MarkedFailed != 1 || report.IndexInterrupted != 1 {
 		t.Fatalf("report %+v, %v", report, err)
 	}
@@ -132,8 +133,31 @@ func TestRecoveryInterruptsIndexPass(t *testing.T) {
 	}
 
 	// repair reports and fixes the same way.
-	rep, err := InspectEvidenceRepairs(db.DB, false)
+	rep, err := InspectEvidenceRepairs(t.Context(), db.DB, false)
 	if err != nil || rep.TotalProblematic != 1 || rep.FailedCount != 1 {
 		t.Fatalf("inspection after recovery: %+v, %v", rep, err)
+	}
+}
+
+// TestRecoveryStopsWhenCancelled: recovery stops at a cancelled context (an
+// examiner's Ctrl-C while a store opens the database) and leaves the attempt
+// FLUSHED for the next writable open. It used to validate the attempt
+// whatever the context said, so Ctrl-C waited for every chunk to be checked.
+func TestRecoveryStopsWhenCancelled(t *testing.T) {
+	db := testdb.Open(t, testdb.Default)
+	util.SetChonkSize(4)
+	eid := flushedEvidence(t, db.DB, "/case/a.img", bytes.Repeat([]byte("cancel me "), 3000))
+	ctx, cancel := context.WithCancelCause(t.Context())
+	stop := errors.New("examiner pressed Ctrl-C")
+	cancel(stop)
+	if _, err := RecoverIncompleteIngests(ctx, db.DB); !errors.Is(err, stop) {
+		t.Fatalf("recovery: %v, want the cancel cause", err)
+	}
+	e, err := dbio.GetEvidenceFile(eid, db.DB)
+	if err != nil || e.IngestState != structs.IngestStateFlushed || e.Completed || e.Failed {
+		t.Fatalf("attempt after a cancelled recovery: %+v, %v", e.IngestState, err)
+	}
+	if _, err := RecoverEvidence(ctx, db.DB, eid, e); !errors.Is(err, stop) {
+		t.Fatalf("RecoverEvidence: %v, want the cancel cause", err)
 	}
 }

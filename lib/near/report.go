@@ -191,7 +191,7 @@ func (r *run) finish(ctx context.Context, out Outcome, input nearReportInput, vc
 	if err != nil {
 		return out, err
 	}
-	err = fsx.WriteAtomic(out.ReportPath, cnst.FilePerm, fsx.Options{NoOverwrite: !r.opts.Force}, func(f *os.File) error {
+	err = fsx.WriteAtomic(out.ReportPath, cnst.FilePerm, fsx.Options{NoOverwrite: !r.opts.Force, RemoveStale: true}, func(f *os.File) error {
 		_, err := f.Write(body)
 		return err
 	})

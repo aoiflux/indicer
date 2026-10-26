@@ -29,6 +29,10 @@ type Options struct {
 	// the target already exists, instead of replacing it. The check and the
 	// rename are one atomic step where the platform allows it.
 	NoOverwrite bool
+	// RemoveStale first removes the temporary files earlier writes to the
+	// same path left, which only a killed process leaves (RemoveStaleTemps).
+	// Use it only for a path one writer owns at a time.
+	RemoveStale bool
 }
 
 // WriteFileAtomic writes data to path so that a crash leaves either the old
@@ -49,6 +53,9 @@ func WriteAtomic(path string, perm fs.FileMode, opts Options, write func(f *os.F
 	dir, base := filepath.Split(path)
 	if dir == "" {
 		dir = "."
+	}
+	if opts.RemoveStale {
+		RemoveStaleTemps(path)
 	}
 	f, err := os.CreateTemp(dir, "."+base+tempMarker+"*")
 	if err != nil {
@@ -144,6 +151,33 @@ func Remove(path string) error {
 		return nil
 	}
 	return err
+}
+
+// TempPattern is the os.CreateTemp pattern of the temporary files this
+// package creates beside path, for writers that manage the file themselves.
+func TempPattern(path string) string {
+	return "." + filepath.Base(path) + tempMarker + "*"
+}
+
+// RemoveStaleTemps removes the temporary files that writes to path left
+// beside it: a process killed while writing path leaves one. A write still in
+// progress would lose its file, so only a writer that owns path calls this.
+// Failures are ignored: a file another process holds open stays.
+func RemoveStaleTemps(path string) {
+	dir, base := filepath.Split(path)
+	if dir == "" {
+		dir = "."
+	}
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		return
+	}
+	prefix := "." + base + tempMarker
+	for _, e := range entries {
+		if e.Type().IsRegular() && strings.HasPrefix(e.Name(), prefix) {
+			_ = os.Remove(filepath.Join(dir, e.Name()))
+		}
+	}
 }
 
 // IsTempName reports whether name (a base name) is a temporary file created by

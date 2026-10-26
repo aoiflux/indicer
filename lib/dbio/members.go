@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"fmt"
 
+	"indicer/internal/msgpackx"
 	"indicer/lib/cnst"
 	"indicer/lib/structs"
 	"indicer/lib/util"
@@ -51,7 +52,7 @@ func HashLookupMembersTxn(txn *badger.Txn, lookupKey []byte) ([][]byte, error) {
 	switch {
 	case err == nil:
 		var legacy [][]byte
-		if err := item.Value(func(val []byte) error { return msgpack.Unmarshal(val, &legacy) }); err != nil {
+		if err := item.Value(func(val []byte) error { return msgpackx.Unmarshal(val, &legacy) }); err != nil {
 			return nil, err
 		}
 		for _, id := range legacy {
@@ -154,7 +155,7 @@ func ForEachPartitionMemberTxn(txn *badger.Txn, pid []byte, pfile structs.Partit
 			continue
 		}
 		var off structs.InternalOffset
-		if err := it.Item().Value(func(val []byte) error { return msgpack.Unmarshal(val, &off) }); err != nil {
+		if err := it.Item().Value(func(val []byte) error { return msgpackx.Unmarshal(val, &off) }); err != nil {
 			return fmt.Errorf("partition member %s: %w", ihash, err)
 		}
 		if err := fn(ihash, off); err != nil {

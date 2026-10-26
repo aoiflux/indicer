@@ -6,14 +6,15 @@ import (
 	"errors"
 	"sort"
 	"strings"
+	"sync/atomic"
 
+	"indicer/internal/msgpackx"
 	"indicer/lib/cnst"
 	"indicer/lib/dbio"
 	"indicer/lib/structs"
 	"indicer/lib/util"
 
 	"github.com/dgraph-io/badger/v4"
-	"github.com/vmihailenco/msgpack/v5"
 )
 
 func buildPartitionData(phash string, txn *badger.Txn) (map[string]interface{}, error) {
@@ -108,7 +109,7 @@ func getPartitionByHash(txn *badger.Txn, partitionHash string) (structs.Partitio
 			v = decoded
 		}
 
-		if unmarshalErr := msgpack.Unmarshal(v, &pdata); unmarshalErr != nil {
+		if unmarshalErr := msgpackx.Unmarshal(v, &pdata); unmarshalErr != nil {
 			continue
 		}
 		return pdata, nil
@@ -150,7 +151,7 @@ func buildIndexedFileData(ihash string, txn *badger.Txn) ([]map[string]interface
 			v = decoded
 		}
 
-		if unmarshalErr := msgpack.Unmarshal(v, &idata); unmarshalErr != nil {
+		if unmarshalErr := msgpackx.Unmarshal(v, &idata); unmarshalErr != nil {
 			continue
 		}
 		found = true
@@ -184,93 +185,31 @@ func buildIndexedFileData(ihash string, txn *badger.Txn) ([]map[string]interface
 	return entries, nil
 }
 
-func buildCompletedEvidenceFromKV(evidenceHash string, db *badger.DB) (map[string]interface{}, bool, error) {
-	result := map[string]interface{}{}
-	err := db.View(func(txn *badger.Txn) error {
-		evidata, evidenceID, found, err := getEvidenceByHash(txn, evidenceHash)
-		if err != nil {
-			return err
-		}
-		if !found || !evidata.Completed {
-			return nil
-		}
-		if evidenceID == "" {
-			evidenceID = evidenceHash
-		}
+// partitionScans counts the scans for partitions named after their evidence.
+var partitionScans atomic.Int64
 
-		partitionHashes, err := getEvidencePartitionHashes(txn, evidenceID, evidata)
-		if err != nil {
-			return err
-		}
-		if evidata.Index != nil {
-			result["indexState"] = string(evidata.Index.State)
-			if evidata.Index.Reason != "" {
-				result["indexReason"] = evidata.Index.Reason
-			}
-			// A quarantined index is known wrong: it is not listed.
-			if evidata.Index.State == structs.IndexInvalid {
-				partitionHashes = nil
-			}
-		}
-
-		partitions := make([]map[string]interface{}, 0, len(partitionHashes))
-		totalIndexed := 0
-		totalDeletedIndexed := 0
-		totalFragmentedIndexed := 0
-
-		for _, phash := range partitionHashes {
-			partData, err := buildPartitionData(phash, txn)
-			if err != nil {
-				return err
-			}
-			partitions = append(partitions, partData)
-			if count, ok := partData["indexedCount"].(int); ok {
-				totalIndexed += count
-			}
-			if indexedFiles, ok := partData["indexedFiles"].([]map[string]interface{}); ok {
-				for _, indexed := range indexedFiles {
-					if deleted, ok := indexed["isDeleted"].(bool); ok && deleted {
-						totalDeletedIndexed++
-					}
-					if fragmented, ok := indexed["isFragmented"].(bool); ok && fragmented {
-						totalFragmentedIndexed++
-					}
-				}
-			}
-		}
-
-		result["name"] = normalizeEvidenceFileName(firstCleanName(evidata.Name))
-		result["id"] = evidenceID
-		result["hash"] = evidata.FileHash
-		result["type"] = evidata.EvidenceType
-		result["size"] = evidata.Size
-		result["fileCount"] = 1
-		result["partitions"] = partitions
-		result["partitionCount"] = len(partitions)
-		result["indexedCount"] = totalIndexed
-		result["deletedIndexedCount"] = totalDeletedIndexed
-		result["fragmentedIndexedCount"] = totalFragmentedIndexed
-		if result["hash"] == "" {
-			result["hash"] = evidenceID
-		}
-
-		return nil
-	})
-	if err != nil {
-		return nil, false, err
-	}
-
-	if len(result) == 0 {
-		return nil, false, nil
-	}
-	return result, true, nil
+// partitionLookup finds the partitions of the evidence a listing shows.
+// Evidence records link their partitions (InternalObjects). Records of the
+// oldest layout may not, and their partitions are found by name, which needs
+// a scan of the whole database: it is made once per lookup, when the first
+// such record turns up. Records written since W6 link every partition, so an
+// evidence of that kind without links has none.
+type partitionLookup struct {
+	txn *badger.Txn
+	// byName maps an evidence hash to the partitions named after it; nil
+	// until the scan.
+	byName map[string][]string
 }
 
-func getEvidencePartitionHashes(txn *badger.Txn, evidenceHash string, evidata structs.EvidenceFile) ([]string, error) {
+func newPartitionLookup(txn *badger.Txn) *partitionLookup {
+	return &partitionLookup{txn: txn}
+}
+
+func (l *partitionLookup) hashes(evidenceHash string, evidata structs.EvidenceFile) ([]string, error) {
 	if len(evidata.InternalObjects) > 0 {
 		partitionHashes := make([]string, 0, len(evidata.InternalObjects))
 		for phash := range evidata.InternalObjects {
-			if _, err := getPartitionByHash(txn, phash); err != nil {
+			if _, err := getPartitionByHash(l.txn, phash); err != nil {
 				if errors.Is(err, badger.ErrKeyNotFound) {
 					continue
 				}
@@ -281,39 +220,44 @@ func getEvidencePartitionHashes(txn *badger.Txn, evidenceHash string, evidata st
 		sort.Strings(partitionHashes)
 		return partitionHashes, nil
 	}
-
-	partitionHashes := make([]string, 0)
-	iter := txn.NewIterator(badger.DefaultIteratorOptions)
-	defer iter.Close()
-
-	for iter.Rewind(); iter.Valid(); iter.Next() {
-		item := iter.Item()
-		key := item.KeyCopy(nil)
-		value, err := item.ValueCopy(nil)
-		if err != nil {
+	if evidata.ContentModel == structs.ContentModelV2 {
+		return nil, nil
+	}
+	if l.byName == nil {
+		if err := l.scan(); err != nil {
 			return nil, err
 		}
+	}
+	return l.byName[evidenceHash], nil
+}
 
+// scan collects every partition record by the evidence its name starts with.
+func (l *partitionLookup) scan() error {
+	partitionScans.Add(1)
+	l.byName = map[string][]string{}
+	iter := l.txn.NewIterator(badger.DefaultIteratorOptions)
+	defer iter.Close()
+	for iter.Rewind(); iter.Valid(); iter.Next() {
+		item := iter.Item()
+		value, err := item.ValueCopy(nil)
+		if err != nil {
+			return err
+		}
 		pdata, ok, err := decodePartitionRecord(value)
 		if err != nil {
-			return nil, err
+			return err
 		}
 		if !ok {
 			continue
 		}
-		if !partitionBelongsToEvidence(evidenceHash, pdata) {
-			continue
-		}
-
-		rawID := key
-		if bytes.HasPrefix(rawID, []byte(cnst.PartiFileNamespace)) {
-			rawID = bytes.TrimPrefix(rawID, []byte(cnst.PartiFileNamespace))
-		}
-		partitionHashes = append(partitionHashes, base64.StdEncoding.EncodeToString(rawID))
+		owner, _, _ := strings.Cut(pdata.Name, cnst.DataSeperator)
+		rawID := bytes.TrimPrefix(item.KeyCopy(nil), []byte(cnst.PartiFileNamespace))
+		l.byName[owner] = append(l.byName[owner], base64.StdEncoding.EncodeToString(rawID))
 	}
-
-	sort.Strings(partitionHashes)
-	return partitionHashes, nil
+	for _, hashes := range l.byName {
+		sort.Strings(hashes)
+	}
+	return nil
 }
 
 func decodePartitionRecord(value []byte) (structs.PartitionFile, bool, error) {
@@ -324,7 +268,7 @@ func decodePartitionRecord(value []byte) (structs.PartitionFile, bool, error) {
 		value = decoded
 	}
 
-	if err := msgpack.Unmarshal(value, &pdata); err != nil {
+	if err := msgpackx.Unmarshal(value, &pdata); err != nil {
 		return pdata, false, nil
 	}
 
@@ -333,78 +277,4 @@ func decodePartitionRecord(value []byte) (structs.PartitionFile, bool, error) {
 	}
 
 	return pdata, true, nil
-}
-
-func partitionBelongsToEvidence(evidenceHash string, pdata structs.PartitionFile) bool {
-	parts := strings.SplitN(pdata.Name, cnst.DataSeperator, 2)
-	return len(parts) > 0 && parts[0] == evidenceHash
-}
-
-func getEvidenceByHash(txn *badger.Txn, evidenceHash string) (structs.EvidenceFile, string, bool, error) {
-	var evidata structs.EvidenceFile
-	rawHash, decodeErr := base64.StdEncoding.DecodeString(evidenceHash)
-	if decodeErr != nil {
-		rawHash = []byte(evidenceHash)
-	}
-
-	candidateKeys := [][]byte{dbio.CanonicalEvidenceKey(rawHash)}
-
-	for _, candidate := range candidateKeys {
-		item, err := txn.Get(candidate)
-		if err == badger.ErrKeyNotFound {
-			continue
-		}
-		if err != nil {
-			return evidata, "", false, err
-		}
-
-		v, err := item.ValueCopy(nil)
-		if err != nil {
-			return evidata, "", false, err
-		}
-
-		decoded, err := cnst.DECODER.DecodeAll(v, nil)
-		if err == nil {
-			v = decoded
-		}
-
-		if err := msgpack.Unmarshal(v, &evidata); err != nil {
-			continue
-		}
-		evidenceID := base64.StdEncoding.EncodeToString(dbio.EvidenceRawID(candidate))
-		return evidata, evidenceID, true, nil
-	}
-
-	// evidenceHash may be a content hash; resolve to UUID key via EH reverse index.
-	lookupKey := util.AppendToBytesSlice(cnst.EviFileHashLookupNamespace, evidenceHash)
-	resolvedIDs, err := dbio.HashLookupMembersTxn(txn, lookupKey)
-	if err == badger.ErrKeyNotFound {
-		return evidata, "", false, nil
-	}
-	if err != nil {
-		return evidata, "", false, err
-	}
-	resolvedID := resolvedIDs[len(resolvedIDs)-1]
-
-	item, err := txn.Get(resolvedID)
-	if err == badger.ErrKeyNotFound {
-		return evidata, "", false, nil
-	}
-	if err != nil {
-		return evidata, "", false, err
-	}
-	v, err := item.ValueCopy(nil)
-	if err != nil {
-		return evidata, "", false, err
-	}
-	decoded, err := cnst.DECODER.DecodeAll(v, nil)
-	if err == nil {
-		v = decoded
-	}
-	if err := msgpack.Unmarshal(v, &evidata); err != nil {
-		return evidata, "", false, err
-	}
-
-	evidenceID := base64.StdEncoding.EncodeToString(dbio.EvidenceRawID(resolvedID))
-	return evidata, evidenceID, true, nil
 }

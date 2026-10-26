@@ -53,6 +53,7 @@ import (
 	"errors"
 	"fmt"
 	"hash/crc32"
+	"indicer/internal/faultinject"
 	"indicer/lib/cnst"
 	"indicer/lib/util"
 	"io"
@@ -230,6 +231,9 @@ func (cm *ContainerManager) doWrite(hash, payload []byte) (containerPath string,
 
 	start := cm.currentOffset
 	if err := cm.writeAt(frame, start); err != nil {
+		return "", 0, 0, cm.abandonFrame(start, err)
+	}
+	if err := faultinject.Hit(faultinject.ContainerMidRecord); err != nil {
 		return "", 0, 0, cm.abandonFrame(start, err)
 	}
 	if err := cm.writeAt(payload, start+int64(len(frame))); err != nil {

@@ -171,7 +171,7 @@ func (e *EvidenceChunks) Spans(ctx context.Context, start, end int64, batch int,
 		return fmt.Errorf("%w: [%d, %d) is outside evidence %x [%d, %d)", ErrChunkRange, start, end, e.id, e.start, e.end)
 	}
 	batch = max(batch, 1)
-	root := e.db.Opts().Dir
+	root := KVDir(e.db)
 	off := start / e.stride * e.stride
 	for off < end {
 		if err := ctx.Err(); err != nil {
@@ -256,7 +256,7 @@ func (e *EvidenceChunks) chunk(s ChunkSpan) ([]byte, error) {
 	if data, ok := e.cache.get(s.Hash); ok {
 		return data, nil
 	}
-	path := ResolveBlobPath(e.db.Opts().Dir, s.Loc.Path)
+	path := ResolveBlobPath(KVDir(e.db), s.Loc.Path)
 	var stored []byte
 	var err error
 	if s.Loc.Container {
@@ -723,7 +723,7 @@ func EvidenceChunkSize(db *badger.DB, rid []byte, end int64) (int64, error) {
 	if dbmeta.UniformChunkSize(db) {
 		return cs, nil
 	}
-	key := chunkSizeKey{dir: db.Opts().Dir, id: string(rid)}
+	key := chunkSizeKey{dir: KVDir(db), id: string(rid)}
 	if v, ok := chunkSizes.Load(key); ok {
 		return v.(int64), nil
 	}

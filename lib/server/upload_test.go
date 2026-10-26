@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/base64"
 	"encoding/json"
+	"fmt"
 	"io"
 	"net/http"
 	"os"
@@ -685,5 +686,76 @@ func TestUploadOfStoredContent(t *testing.T) {
 	}
 	if n := evidenceCount(t, db); n != 1 {
 		t.Errorf("%d evidence", n)
+	}
+}
+
+// TestConcurrentUploads: clients upload at once, three of one content and
+// three of others. Every upload is stored or aliased, each content is
+// stored once, and the clients of one content get the same evidence.
+func TestConcurrentUploads(t *testing.T) {
+	ls := uploadServer(t, nil, nil)
+	db := ls.deps.DB
+	shared := bytes.Repeat([]byte("shared content "), 20_000)
+	contents := [][]byte{shared, shared, shared}
+	for i := range 3 {
+		contents = append(contents, bytes.Repeat([]byte(fmt.Sprintf("distinct %d ", i)), 20_000))
+	}
+	ids := make([]string, len(contents))
+	errs := make([]error, len(contents))
+	var wg sync.WaitGroup
+	for i, data := range contents {
+		wg.Go(func() {
+			path := fmt.Sprintf("/client-%d/file.bin", i)
+			b, _ := json.Marshal(map[string]any{"file_path": path, "file_hash": plainHash(db, data), "size": len(data)})
+			resp, err := http.Post(ls.url+"/web/upload/start", "application/json", bytes.NewReader(b))
+			if err != nil {
+				errs[i] = err
+				return
+			}
+			var started map[string]any
+			_ = json.NewDecoder(resp.Body).Decode(&started)
+			resp.Body.Close()
+			id, _ := started["upload_id"].(string)
+			req, _ := http.NewRequest(http.MethodPost, ls.url+"/web/upload/chunk", bytes.NewReader(data))
+			req.Header.Set("Upload-Id", id)
+			req.Header.Set("Upload-Offset", "0")
+			if resp, err = http.DefaultClient.Do(req); err != nil {
+				errs[i] = err
+				return
+			}
+			resp.Body.Close()
+			b, _ = json.Marshal(map[string]string{"upload_id": id})
+			if resp, err = http.Post(ls.url+"/web/upload/finalize", "application/json", bytes.NewReader(b)); err != nil {
+				errs[i] = err
+				return
+			}
+			defer resp.Body.Close()
+			var body map[string]any
+			_ = json.NewDecoder(resp.Body).Decode(&body)
+			ef, _ := body["evi_file"].(map[string]any)
+			if resp.StatusCode != http.StatusOK || ef == nil {
+				errs[i] = fmt.Errorf("finalize: %d %v", resp.StatusCode, body)
+				return
+			}
+			ids[i], _ = ef["file_id"].(string)
+		})
+	}
+	wg.Wait()
+	for i, err := range errs {
+		if err != nil {
+			t.Fatalf("upload %d: %v", i, err)
+		}
+	}
+	if ids[0] == "" || ids[1] != ids[0] || ids[2] != ids[0] {
+		t.Fatalf("the uploads of one content got evidence %q", ids[:3])
+	}
+	if ids[3] == ids[4] || ids[4] == ids[5] || ids[3] == ids[0] {
+		t.Fatalf("distinct contents share evidence: %q", ids)
+	}
+	if n := evidenceCount(t, db); n != 4 {
+		t.Fatalf("%d evidence records, want 4", n)
+	}
+	if parts := partFiles(t, ls); len(parts) != 0 {
+		t.Fatalf("part files left: %v", parts)
 	}
 }

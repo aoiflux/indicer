@@ -7,6 +7,7 @@ import (
 	"encoding/binary"
 	"errors"
 	"fmt"
+	"indicer/internal/msgpackx"
 	"indicer/lib/blobcodec"
 	"indicer/lib/cnst"
 	"indicer/lib/fio"
@@ -152,7 +153,7 @@ func GetEvidenceFile(key []byte, db *badger.DB) (structs.EvidenceFile, error) {
 		return evidenceFile, err
 	}
 
-	err = msgpack.Unmarshal(data, &evidenceFile)
+	err = msgpackx.Unmarshal(data, &evidenceFile)
 	if err != nil {
 		logging.GetLogger().Error("GetEvidenceFile UNMARSHAL_ERROR", zap.Error(err), zap.Int("key_length", len(key)))
 		return evidenceFile, err
@@ -197,7 +198,7 @@ func GetPartitionFile(key []byte, db *badger.DB) (structs.PartitionFile, error) 
 		return partitionFile, err
 	}
 
-	err = msgpack.Unmarshal(data, &partitionFile)
+	err = msgpackx.Unmarshal(data, &partitionFile)
 	return partitionFile, err
 }
 func GetIndexedFile(key []byte, db *badger.DB) (structs.IndexedFile, error) {
@@ -209,7 +210,7 @@ func GetIndexedFile(key []byte, db *badger.DB) (structs.IndexedFile, error) {
 		return indexedFile, err
 	}
 
-	err = msgpack.Unmarshal(data, &indexedFile)
+	err = msgpackx.Unmarshal(data, &indexedFile)
 	return indexedFile, err
 }
 
@@ -477,7 +478,7 @@ func materializeContainerChonkNode(key, data []byte, originalSize int64, db *bad
 	}
 
 	metadata := structs.ChonkMetadata{
-		Path:         StoredBlobPath(db.Opts().Dir, containerPath),
+		Path:         StoredBlobPath(KVDir(db), containerPath),
 		Offset:       offset,
 		OriginalSize: originalSize,
 		StoredSize:   size,
@@ -497,14 +498,14 @@ func materializeFileChonkNode(key, data []byte, originalSize int64, db *badger.D
 		return nil, err
 	}
 
-	cfpath, err := fio.WriteChonk(db.Opts().Dir, data, key, db.Opts().EncryptionKey)
+	cfpath, err := fio.WriteChonk(KVDir(db), data, key, db.Opts().EncryptionKey)
 	if err != nil {
 		return nil, err
 	}
 	dataLen := int64(len(data))
 
 	metadata := structs.ChonkMetadata{
-		Path:         StoredBlobPath(db.Opts().Dir, string(cfpath)),
+		Path:         StoredBlobPath(KVDir(db), string(cfpath)),
 		Offset:       0,
 		OriginalSize: originalSize,
 		StoredSize:   dataLen,
@@ -516,14 +517,6 @@ func materializeFileChonkNode(key, data []byte, originalSize int64, db *badger.D
 		return nil, err
 	}
 	return encodedMetadata, nil
-}
-
-func setBatchChonkMetadata(key []byte, metadata structs.ChonkMetadata, batch *badger.WriteBatch) error {
-	encodedMetadata, err := msgpack.Marshal(metadata)
-	if err != nil {
-		return err
-	}
-	return SetBatchNode(key, encodedMetadata, batch)
 }
 
 func SetBatchNode(key, data []byte, batch *badger.WriteBatch) error {
@@ -570,9 +563,9 @@ func readChonk(key []byte, parsed structs.ChonkMetadata, db *badger.DB) ([]byte,
 	var err error
 	var stored []byte
 	if parsed.Container {
-		stored, err = fio.ReadChunkFromContainer(ResolveBlobPath(db.Opts().Dir, parsed.Path), parsed.Offset, parsed.EncodedSize)
+		stored, err = fio.ReadChunkFromContainer(ResolveBlobPath(KVDir(db), parsed.Path), parsed.Offset, parsed.EncodedSize)
 	} else {
-		stored, err = fio.ReadChonk(ResolveBlobPath(db.Opts().Dir, parsed.Path))
+		stored, err = fio.ReadChonk(ResolveBlobPath(KVDir(db), parsed.Path))
 	}
 	if err != nil {
 		return nil, err
@@ -582,7 +575,7 @@ func readChonk(key []byte, parsed structs.ChonkMetadata, db *badger.DB) ([]byte,
 
 func parseChonkMetadata(metadata []byte) (structs.ChonkMetadata, error) {
 	var parsed structs.ChonkMetadata
-	if err := msgpack.Unmarshal(metadata, &parsed); err != nil {
+	if err := msgpackx.Unmarshal(metadata, &parsed); err != nil {
 		return parsed, fmt.Errorf("%w: %v", ErrChunkMetaInvalid, err)
 	}
 	if parsed.Path == "" {

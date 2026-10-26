@@ -5,8 +5,6 @@ import (
 	graphrepo "indicer/lib/microartefact/repository/graphene"
 )
 
-const grapheneStoreDir = graphrepo.StoreDirName
-
 // Type aliases so callers don't need to import the inner package.
 type GrapheneRepository = graphrepo.Repository
 type EvidenceFileHierarchy = graphrepo.EvidenceFileHierarchy

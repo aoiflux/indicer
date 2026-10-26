@@ -5,6 +5,7 @@ import (
 	"math/rand/v2"
 	"time"
 
+	"indicer/internal/msgpackx"
 	"indicer/lib/cnst"
 	"indicer/lib/structs"
 
@@ -93,7 +94,7 @@ func getEvidenceTxn(txn *badger.Txn, key []byte) (structs.EvidenceFile, error) {
 	if decoded, err := cnst.DECODER.DecodeAll(data, nil); err == nil {
 		data = decoded
 	}
-	return e, msgpack.Unmarshal(data, &e)
+	return e, msgpackx.Unmarshal(data, &e)
 }
 
 // setEvidenceTxn encodes the record the way SetFile does.

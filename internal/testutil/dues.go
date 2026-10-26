@@ -13,44 +13,72 @@ import (
 )
 
 var (
-	buildOnce sync.Once
-	buildPath string
-	buildErr  string
+	buildMu sync.Mutex
+	builds  = map[string]*build{}
 )
 
+type build struct {
+	once sync.Once
+	path string
+	err  string
+}
+
 // BuildDues builds the dues binary from the current module once per test
-// process and returns its path. Black-box tests use it so they keep working
-// across internal rewrites.
-func BuildDues(tb testing.TB) string {
+// process and set of build tags, and returns its path. Black-box tests use it
+// so they keep working across internal rewrites; fault-injection tests pass
+// "faultinject".
+func BuildDues(tb testing.TB, tags ...string) string {
 	tb.Helper()
-	buildOnce.Do(func() {
-		gomod, err := exec.Command("go", "env", "GOMOD").Output()
-		if err != nil {
-			buildErr = "go env GOMOD: " + err.Error()
-			return
-		}
-		root := filepath.Dir(strings.TrimSpace(string(gomod)))
-		dir, err := os.MkdirTemp("", "dues-bin-")
-		if err != nil {
-			buildErr = err.Error()
-			return
-		}
-		bin := filepath.Join(dir, "dues")
-		if runtime.GOOS == "windows" {
-			bin += ".exe"
-		}
-		cmd := exec.Command("go", "build", "-o", bin, ".")
-		cmd.Dir = root
-		if out, err := cmd.CombinedOutput(); err != nil {
-			buildErr = "build dues: " + err.Error() + "\n" + string(out)
-			return
-		}
-		buildPath = bin
-	})
-	if buildErr != "" {
-		tb.Fatal(buildErr)
+	return BuildBinary(tb, ".", tags...)
+}
+
+// BuildBinary builds the main package pkg (a path relative to the module
+// root, such as "./cmd/compression") as BuildDues builds dues.
+func BuildBinary(tb testing.TB, pkg string, tags ...string) string {
+	tb.Helper()
+	key := pkg + "|" + strings.Join(tags, ",")
+	buildMu.Lock()
+	b := builds[key]
+	if b == nil {
+		b = &build{}
+		builds[key] = b
 	}
-	return buildPath
+	buildMu.Unlock()
+	b.once.Do(func() { b.path, b.err = buildBinary(pkg, tags) })
+	if b.err != "" {
+		tb.Fatal(b.err)
+	}
+	return b.path
+}
+
+func buildBinary(pkg string, tags []string) (string, string) {
+	gomod, err := exec.Command("go", "env", "GOMOD").Output()
+	if err != nil {
+		return "", "go env GOMOD: " + err.Error()
+	}
+	root := filepath.Dir(strings.TrimSpace(string(gomod)))
+	dir, err := os.MkdirTemp("", "dues-bin-")
+	if err != nil {
+		return "", err.Error()
+	}
+	name := "dues"
+	if pkg != "." {
+		name = filepath.Base(pkg)
+	}
+	bin := filepath.Join(dir, name)
+	if runtime.GOOS == "windows" {
+		bin += ".exe"
+	}
+	args := []string{"build", "-o", bin}
+	if len(tags) > 0 {
+		args = append(args, "-tags", strings.Join(tags, ","))
+	}
+	cmd := exec.Command("go", append(args, pkg)...)
+	cmd.Dir = root
+	if out, err := cmd.CombinedOutput(); err != nil {
+		return "", "build dues: " + err.Error() + "\n" + string(out)
+	}
+	return bin, ""
 }
 
 // Result is the outcome of one CLI run.
@@ -79,8 +107,17 @@ func (r Result) LastLine() string {
 // RunDues runs the binary in dir with args, killing it after timeout.
 func RunDues(tb testing.TB, bin, dir string, timeout time.Duration, args ...string) Result {
 	tb.Helper()
+	return RunDuesEnv(tb, bin, dir, timeout, nil, args...)
+}
+
+// RunDuesEnv is RunDues with extra environment ("K=V") for the child only.
+func RunDuesEnv(tb testing.TB, bin, dir string, timeout time.Duration, env []string, args ...string) Result {
+	tb.Helper()
 	cmd := exec.Command(bin, args...)
 	cmd.Dir = dir
+	if len(env) > 0 {
+		cmd.Env = append(os.Environ(), env...)
+	}
 	var stdout, stderr bytes.Buffer
 	cmd.Stdout = &stdout
 	cmd.Stderr = &stderr

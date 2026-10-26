@@ -25,7 +25,7 @@ func legacyBlockIndexDB(t *testing.T, chunks int) (*testdb.DB, []byte, [][]byte)
 	util.SetChonkSize(4)
 	cs := int(cnst.ChonkSize)
 	content := testutil.RandomBytes(21, chunks*cs)
-	runChunkPass(t, storeEvidenceDataBatchOwner, db.DB, "legacy", content)
+	runChunkPass(t, ingestChunksBatchOwner, db.DB, "legacy", content)
 	testdb.MoveChunkMetaToBlockIndex(t, db.DB)
 	cnst.LegacyBlockIndex = true
 

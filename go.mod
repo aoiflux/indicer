@@ -26,7 +26,6 @@ require (
 	github.com/dgraph-io/badger/v4 v4.9.1
 	github.com/diskfs/go-diskfs v1.9.3
 	github.com/dustin/go-humanize v1.0.1
-	github.com/edsrzf/mmap-go v1.2.0
 	github.com/fatih/color v1.19.0
 	github.com/google/uuid v1.6.0
 	github.com/klauspost/compress v1.20.3
@@ -88,6 +87,7 @@ require (
 	github.com/davecgh/go-spew v1.1.1 // indirect
 	github.com/dgraph-io/ristretto/v2 v2.4.0 // indirect
 	github.com/djherbis/times v1.6.0 // indirect
+	github.com/edsrzf/mmap-go v1.2.0 // indirect
 	github.com/elliotwutingfeng/asciiset v0.0.0-20260129054604-cfde2086bc57 // indirect
 	github.com/go-logr/logr v1.4.3 // indirect
 	github.com/go-logr/stdr v1.2.2 // indirect

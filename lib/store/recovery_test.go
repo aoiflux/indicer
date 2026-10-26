@@ -17,7 +17,7 @@ func TestRecoverIncompleteIngestsMarksPendingAsFailed(t *testing.T) {
 		t.Fatalf("seed pending evidence: %v", err)
 	}
 
-	report, err := RecoverIncompleteIngests(db)
+	report, err := RecoverIncompleteIngests(t.Context(), db)
 	if err != nil {
 		t.Fatalf("RecoverIncompleteIngests: %v", err)
 	}
@@ -45,7 +45,7 @@ func TestRecoverIncompleteIngestsAutoCompletesFlushed(t *testing.T) {
 
 	flushedInput := seedFlushedEvidenceWithChunk(t, db, "flushed-recovery.dd", 7)
 
-	report, err := RecoverIncompleteIngests(db)
+	report, err := RecoverIncompleteIngests(t.Context(), db)
 	if err != nil {
 		t.Fatalf("RecoverIncompleteIngests: %v", err)
 	}
@@ -84,7 +84,7 @@ func TestRecoverIncompleteIngestsMarksInvalidFlushedAsFailed(t *testing.T) {
 		t.Fatalf("seed invalid flushed evidence: %v", err)
 	}
 
-	report, err := RecoverIncompleteIngests(db)
+	report, err := RecoverIncompleteIngests(t.Context(), db)
 	if err != nil {
 		t.Fatalf("RecoverIncompleteIngests: %v", err)
 	}
@@ -128,7 +128,7 @@ func TestRecoverIncompleteIngestsSkipsCompletedAndAlreadyFailed(t *testing.T) {
 		t.Fatalf("seed failed evidence: %v", err)
 	}
 
-	report, err := RecoverIncompleteIngests(db)
+	report, err := RecoverIncompleteIngests(t.Context(), db)
 	if err != nil {
 		t.Fatalf("RecoverIncompleteIngests: %v", err)
 	}

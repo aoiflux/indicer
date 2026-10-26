@@ -62,3 +62,6 @@ func FuzzScanExFAT(f *testing.F) { fuzzPatched(f, "exfat/exfat") }
 func FuzzScanNTFS(f *testing.F)  { fuzzPatched(f, "ntfs/ntfs_compressed") }
 func FuzzScanExt(f *testing.F)   { fuzzPatched(f, "ext/ext4") }
 func FuzzScanHFS(f *testing.F)   { fuzzPatched(f, "hfs/hfs_classic") }
+func FuzzScanXFS(f *testing.F)   { fuzzPatched(f, "xfs/xfs") }
+func FuzzScanGPT(f *testing.F)   { fuzzPatched(f, "part/gpt_multi") }
+func FuzzScanMBR(f *testing.F)   { fuzzPatched(f, "part/mbr_two") }

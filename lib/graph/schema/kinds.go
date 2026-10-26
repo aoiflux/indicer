@@ -70,10 +70,8 @@ const (
 	KindHypothesis NodeKind = 130
 
 	// 256-1023 reserved for future core kinds; never assigned dynamically.
-
-	// dynamicNodeBase starts band E, allocated at runtime for rule-defined
-	// taxonomy and persisted in the schema marker.
-	dynamicNodeBase NodeKind = 1024
+	// 1024 and up (band E) are for kinds allocated at runtime for
+	// rule-defined taxonomy and persisted in the schema marker.
 )
 
 // Edge kinds.
@@ -102,8 +100,7 @@ const (
 	EdgeKindMovedTo         EdgeKind = 26
 	EdgeKindTemporalNext    EdgeKind = 27
 	EdgeKindAttackStep      EdgeKind = 28
-
-	dynamicEdgeBase EdgeKind = 1024
+	// 1024 and up are for kinds allocated at runtime, as for nodes.
 )
 
 // Legacy encodings. These are facts about bytes already written, not values to

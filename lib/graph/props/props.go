@@ -24,6 +24,8 @@ import (
 	"strconv"
 	"time"
 
+	"indicer/internal/msgpackx"
+
 	"github.com/vmihailenco/msgpack/v5"
 )
 
@@ -53,7 +55,7 @@ func Unpack(packed []byte) (Map, error) {
 		return Map{}, nil
 	}
 	var decoded map[string]any
-	if err := msgpack.Unmarshal(packed, &decoded); err != nil {
+	if err := msgpackx.Unmarshal(packed, &decoded); err != nil {
 		return Map{}, fmt.Errorf("props: undecodable property blob: %w", err)
 	}
 	if decoded == nil {

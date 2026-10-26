@@ -1,7 +1,6 @@
 package fio
 
 import (
-	"errors"
 	"fmt"
 	"indicer/internal/console"
 	"indicer/lib/cnst"
@@ -39,49 +38,8 @@ func (stdlibWriteBackend) WriteAt(file *os.File, data []byte, off int64) (int, e
 	return total, nil
 }
 
-type ioUringWriteBackend struct {
-	delegate stdlibWriteBackend
-	handleMu sync.Mutex
-	handle   ioUringHandle
-	initErr  error
-	initOnce sync.Once
-}
-
-type ioUringHandle interface {
-	Close() error
-	// SubmitWriteAt writes data at off and returns the bytes written. An
-	// error wrapping errNotSubmitted means the kernel never saw the write;
-	// after any other error a write may still be in flight.
-	SubmitWriteAt(fd int, data []byte, off int64) (int, error)
-}
-
 func (*ioUringWriteBackend) Name() string {
 	return cnst.StoreIOEngineUring
-}
-
-func (b *ioUringWriteBackend) ensureHandle() (ioUringHandle, error) {
-	b.initOnce.Do(func() {
-		h, err := openIoUringHandle()
-		if err != nil {
-			b.initErr = err
-			return
-		}
-		b.handleMu.Lock()
-		b.handle = h
-		b.handleMu.Unlock()
-	})
-
-	if b.initErr != nil {
-		return nil, b.initErr
-	}
-
-	b.handleMu.Lock()
-	h := b.handle
-	b.handleMu.Unlock()
-	if h == nil {
-		return nil, errors.New("io-uring handle unavailable")
-	}
-	return h, nil
 }
 
 var (
@@ -140,26 +98,6 @@ func warnBackendFallback(requested, reason string) {
 	backendWarningOnce.Do(func() {
 		_, _ = fmt.Fprintf(console.Err(), "[fio] store io engine %q fallback to %q: %s\n", requested, cnst.StoreIOEngineStdlib, reason)
 	})
-}
-
-func recordIoUringSubmitAttempt() {
-	atomic.AddUint64(&ioUringSubmitAttempts, 1)
-}
-
-func recordIoUringSubmitWait() {
-	atomic.AddUint64(&ioUringSubmitWaits, 1)
-}
-
-func recordIoUringQueueFull() {
-	atomic.AddUint64(&ioUringQueueFullHits, 1)
-}
-
-func recordIoUringSubmitError() {
-	atomic.AddUint64(&ioUringSubmitErrors, 1)
-}
-
-func recordIoUringCompletion() {
-	atomic.AddUint64(&ioUringCompletions, 1)
 }
 
 func GetWriteBackendStats() WriteBackendStats {

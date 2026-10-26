@@ -2,7 +2,6 @@ package store
 
 import (
 	"context"
-	"encoding/base64"
 	"fmt"
 	"hash"
 	"io"
@@ -11,7 +10,6 @@ import (
 	"indicer/lib/cnst"
 	"indicer/lib/dbmeta"
 	"indicer/lib/parser/image"
-	"indicer/lib/structs"
 
 	"github.com/dgraph-io/badger/v4"
 	"github.com/schollz/progressbar/v3"
@@ -135,30 +133,6 @@ func passErr(parent context.Context, feedErr, pipeErr error) error {
 		return parent.Err()
 	}
 	return pipeErr
-}
-
-// storeEvidenceDataBatchOwner and storeEvidenceDataStaged store an
-// InputFile's mapped bytes through one pipeline and return its hocho root;
-// the legacy store path and the pipeline tests use them.
-func storeEvidenceDataBatchOwner(ctx context.Context, infile structs.InputFile) (string, error) {
-	res, err := ingestChunksBatchOwner(ctx, inputFilePass(infile))
-	return encodedRoot(res, err)
-}
-
-func storeEvidenceDataStaged(ctx context.Context, infile structs.InputFile) (string, error) {
-	res, err := ingestChunksStaged(ctx, inputFilePass(infile))
-	return encodedRoot(res, err)
-}
-
-func inputFilePass(infile structs.InputFile) ChunkPass {
-	return ChunkPass{DB: infile.GetDB(), ID: infile.GetHash(), Source: byteReaderAt(infile.GetMappedFile()), Size: infile.GetSize()}
-}
-
-func encodedRoot(res ChunkResult, err error) (string, error) {
-	if err != nil {
-		return "", err
-	}
-	return base64.StdEncoding.EncodeToString(res.Root), nil
 }
 
 // byteReaderAt reads a byte slice; a nil slice is an empty source.

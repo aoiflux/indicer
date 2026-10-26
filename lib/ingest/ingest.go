@@ -18,6 +18,7 @@ import (
 	"sync"
 	"time"
 
+	"indicer/internal/faultinject"
 	"indicer/lib/cnst"
 	"indicer/lib/dbio"
 	"indicer/lib/dbmeta"
@@ -170,6 +171,9 @@ func Run(ctx context.Context, db *badger.DB, req Request) (Result, error) {
 		return res, err
 	}
 	res.Attempt, res.Resumed = eid, resumed
+	if err := faultinject.Hit(faultinject.IngestAfterPending); err != nil {
+		return res, fail(db, eid, err)
+	}
 	return run(ctx, db, src, eid, name, req, res)
 }
 
@@ -312,6 +316,11 @@ func run(ctx context.Context, db *badger.DB, src *evidence.Source, eid []byte, n
 		mis := &DigestMismatchError{EvidenceID: eid, Check: *check}
 		return res, fail(db, eid, mis)
 	}
+	if err := faultinject.Hit(faultinject.IngestBeforeFlushed); err != nil {
+		stopIndex(err)
+		wg.Wait()
+		return res, fail(db, eid, err)
+	}
 	if err := flush(db, eid, chunks, check); err != nil {
 		stopIndex(err)
 		wg.Wait()
@@ -319,6 +328,11 @@ func run(ctx context.Context, db *badger.DB, src *evidence.Source, eid []byte, n
 	}
 	wg.Wait()
 
+	// A failure here leaves the attempt FLUSHED, as a crash would: recovery
+	// commits it.
+	if err := faultinject.Hit(faultinject.IngestBeforeCommit); err != nil {
+		return res, err
+	}
 	commit, err := store.CommitEvidence(db, eid)
 	if err != nil {
 		return res, err

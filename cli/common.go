@@ -65,7 +65,7 @@ func Common(ctx context.Context, opts DBOptions, mode dbopen.Mode, recover bool)
 	if h.ReadOnly || !recover {
 		return h, nil
 	}
-	recoveryReport, err := store.RecoverIncompleteIngests(h.DB)
+	recoveryReport, err := store.RecoverIncompleteIngests(ctx, h.DB)
 	if err != nil {
 		return nil, errors.Join(err, h.Close())
 	}

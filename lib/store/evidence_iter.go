@@ -1,12 +1,12 @@
 package store
 
 import (
+	"indicer/internal/msgpackx"
 	"indicer/lib/cnst"
 	"indicer/lib/dbio"
 	"indicer/lib/structs"
 
 	"github.com/dgraph-io/badger/v4"
-	"github.com/vmihailenco/msgpack/v5"
 )
 
 // forEachEvidenceRecord iterates evidence records via strict E-prefix keys.
@@ -47,7 +47,7 @@ func decodeEvidenceRecord(value []byte) (structs.EvidenceFile, bool, error) {
 		value = decoded
 	}
 
-	if err := msgpack.Unmarshal(value, &evidenceFile); err != nil {
+	if err := msgpackx.Unmarshal(value, &evidenceFile); err != nil {
 		return evidenceFile, false, nil
 	}
 

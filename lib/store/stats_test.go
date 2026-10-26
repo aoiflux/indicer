@@ -21,8 +21,8 @@ func TestStatsWithReverseRelations(t *testing.T) {
 	cs := int(cnst.ChonkSize)
 	a := testutil.RandomBytes(51, 6*cs)
 	b := append(append([]byte{}, a[:3*cs]...), testutil.RandomBytes(52, 3*cs)...)
-	runChunkPass(t, storeEvidenceDataBatchOwner, db.DB, "a", a)
-	runChunkPass(t, storeEvidenceDataBatchOwner, db.DB, "b", b)
+	runChunkPass(t, ingestChunksBatchOwner, db.DB, "a", a)
+	runChunkPass(t, ingestChunksBatchOwner, db.DB, "b", b)
 
 	s, err := GatherStats(t.Context(), db.DB)
 	if err != nil {

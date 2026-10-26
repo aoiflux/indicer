@@ -10,6 +10,7 @@ import (
 	"sync"
 	"sync/atomic"
 
+	"indicer/internal/faultinject"
 	"indicer/internal/safe"
 	"indicer/lib/cnst"
 	"indicer/lib/dbio"
@@ -147,6 +148,9 @@ func Run(ctx context.Context, db *badger.DB, terms []string, opts Options) (*Res
 	}
 	s.total = s.plannedObjects(evidence)
 	for _, ev := range evidence {
+		if err := faultinject.Hit(faultinject.SearchMid); err != nil {
+			return nil, err
+		}
 		if err := s.searchEvidence(ctx, ev); err != nil {
 			return nil, err
 		}

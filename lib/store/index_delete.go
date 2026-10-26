@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"strconv"
 
+	"indicer/internal/faultinject"
 	"indicer/lib/cnst"
 	"indicer/lib/dbio"
 	"indicer/lib/structs"
@@ -40,6 +41,9 @@ func CleanupDuplicate(ctx context.Context, db *badger.DB, eid []byte) error {
 	}
 	if err := DeleteEvidenceIndex(ctx, db, eid, nil); err != nil {
 		return fmt.Errorf("cleanup of evidence %x: index: %w", eid, err)
+	}
+	if err := faultinject.Hit(faultinject.IngestDuplicateCleanup); err != nil {
+		return err
 	}
 	if err := deleteObjectRelations(ctx, db, eid); err != nil {
 		return fmt.Errorf("cleanup of evidence %x: relations: %w", eid, err)

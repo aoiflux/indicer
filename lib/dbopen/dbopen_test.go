@@ -7,11 +7,13 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"runtime"
 	"slices"
 	"strings"
 	"testing"
 
 	"indicer/internal/lifecycle"
+	"indicer/internal/testutil"
 	"indicer/internal/testutil/legacyfixture"
 	"indicer/internal/testutil/testdb"
 	"indicer/lib/blobcodec"
@@ -431,5 +433,138 @@ func TestReadOnlyOpenRecoversUncleanDatabase(t *testing.T) {
 	})
 	if err != nil {
 		t.Fatalf("reading the recovered database: %v", err)
+	}
+}
+
+// TestReadOnlyOpenOfUnfinishedDatabase: a manifest without badger's files
+// (creating or resetting the database stopped part way) is no database to a
+// reader, and a writer finishes creating it.
+func TestReadOnlyOpenOfUnfinishedDatabase(t *testing.T) {
+	root := setup(t)
+	h := open(t, Request{Path: root, Mode: ReadWrite})
+	if err := h.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.RemoveAll(filepath.Join(root, cnst.KVDBDIR)); err != nil {
+		t.Fatal(err)
+	}
+	if err := openErr(t, Request{Path: root, Mode: ReadOnly}); !errors.Is(err, ErrNoDatabase) || !strings.Contains(err.Error(), "did not finish") {
+		t.Fatalf("read-only open: %v, want ErrNoDatabase naming why", err)
+	}
+	w := open(t, Request{Path: root, Mode: ReadWrite})
+	ckey := storeChunk(t, w.DB, secret)
+	if got, err := dbio.GetChonkNode(ckey, w.DB); err != nil || !bytes.Equal(got, secret) {
+		t.Fatalf("read back %d bytes, %v", len(got), err)
+	}
+}
+
+// TestWritableOpenSweepsTemps: a writable open holds the root lock alone, so
+// every temporary file a killed process left in the root is removed, however
+// young, with the part files of uploads; a read-only open removes nothing.
+func TestWritableOpenSweepsTemps(t *testing.T) {
+	root := setup(t)
+	h := open(t, Request{Path: root, Mode: ReadWrite})
+	if err := h.Close(); err != nil {
+		t.Fatal(err)
+	}
+	var left []string
+	for _, p := range []string{
+		filepath.Join(root, "."+dbmeta.ManifestName+".dues-tmp-1"),
+		filepath.Join(root, cnst.KVDBDIR, ".mirror.dues-tmp-2"),
+		filepath.Join(root, cnst.BLOBSDIR, ".x.blob.dues-tmp-3"),
+		filepath.Join(root, cnst.UploadsDir, "0190c0de-0000-7000-8000-000000000000.part"),
+	} {
+		if err := os.MkdirAll(filepath.Dir(p), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(p, []byte("partial"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		left = append(left, p)
+	}
+	keep := filepath.Join(root, "notes.txt")
+	if err := os.WriteFile(keep, []byte("the examiner's"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	ro := open(t, Request{Path: root, Mode: ReadOnly})
+	if err := ro.Close(); err != nil {
+		t.Fatal(err)
+	}
+	for _, p := range left {
+		if _, err := os.Stat(p); err != nil {
+			t.Fatalf("a read-only open removed %s", p)
+		}
+	}
+	open(t, Request{Path: root, Mode: ReadWrite})
+	for _, p := range left {
+		if _, err := os.Stat(p); !errors.Is(err, os.ErrNotExist) {
+			t.Errorf("%s was left: %v", p, err)
+		}
+	}
+	if _, err := os.Stat(keep); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// TestReadOnlyOpenOfUnwritableDatabase: badger opens its DISCARD file for
+// writing even to read, and ends the process when it cannot (on
+// write-protected media, or files the user may only read). A read-only open
+// of such a database goes through a temporary badger directory, reads the
+// data in place, changes nothing, and removes the temporary directory at
+// close.
+func TestReadOnlyOpenOfUnwritableDatabase(t *testing.T) {
+	if runtime.GOOS != "windows" {
+		testutil.RequireLinuxNonRoot(t)
+	}
+	root := setup(t)
+	w := open(t, Request{Path: root, Mode: ReadWrite})
+	ckey := storeChunk(t, w.DB, secret)
+	if err := w.Close(); err != nil {
+		t.Fatal(err)
+	}
+	kv := filepath.Join(root, cnst.KVDBDIR)
+	setModes := func(file, dir os.FileMode) {
+		entries, err := os.ReadDir(kv)
+		if err != nil {
+			t.Fatal(err)
+		}
+		for _, e := range entries {
+			if err := os.Chmod(filepath.Join(kv, e.Name()), file); err != nil {
+				t.Fatal(err)
+			}
+		}
+		if runtime.GOOS != "windows" {
+			if err := os.Chmod(kv, dir); err != nil {
+				t.Fatal(err)
+			}
+		}
+	}
+	setModes(0o444, 0o555)
+	t.Cleanup(func() { setModes(0o644, 0o755) })
+	if discardWritable(kv) {
+		t.Skip("the platform lets this user write a read-only file")
+	}
+	before := testutil.TreeHash(t, kv)
+
+	h := open(t, Request{Path: root, Mode: ReadOnly})
+	shadow := h.shadow
+	if shadow == "" {
+		t.Fatal("the read-only open did not use a temporary badger directory")
+	}
+	if got, err := dbio.GetChonkNode(ckey, h.DB); err != nil || !bytes.Equal(got, secret) {
+		t.Fatalf("read back %d bytes, %v", len(got), err)
+	}
+	if got := dbio.KVDir(h.DB); got != kv {
+		t.Fatalf("KVDir = %s, want the data root's %s", got, kv)
+	}
+	if err := h.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(shadow); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("the temporary badger directory was left: %v", err)
+	}
+	if testutil.TreeHash(t, kv) != before {
+		t.Fatal("the read-only open changed the badger directory")
 	}
 }

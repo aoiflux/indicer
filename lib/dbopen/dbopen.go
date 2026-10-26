@@ -12,6 +12,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"io/fs"
 	"math"
 	"os"
@@ -21,6 +22,7 @@ import (
 	"strings"
 	"time"
 
+	"indicer/internal/diskspace"
 	"indicer/internal/lifecycle"
 	"indicer/lib/blobcodec"
 	"indicer/lib/cnst"
@@ -31,6 +33,7 @@ import (
 
 	"github.com/dgraph-io/badger/v4"
 	"github.com/dgraph-io/badger/v4/options"
+	"github.com/dustin/go-humanize"
 	"go.uber.org/zap"
 )
 
@@ -89,6 +92,9 @@ type Handle struct {
 	Notices []string
 
 	lock *fsx.Lock
+	// shadow is the temporary badger directory a read-only open of
+	// write-protected media used (newShadow), removed at close.
+	shadow string
 }
 
 // Errors.
@@ -154,6 +160,11 @@ func (h *Handle) open(ctx context.Context, req Request) error {
 	if !exists && req.Mode == ReadOnly {
 		return fmt.Errorf("%w at %s", ErrNoDatabase, h.Root)
 	}
+	if exists && req.Mode == ReadOnly && !hasRecords(h.Root) {
+		// A manifest without badger's files: creating the database, or
+		// resetting it, stopped part way. A writable open finishes creating it.
+		return fmt.Errorf("%w at %s: it holds no stored data (creating or resetting it did not finish)", ErrNoDatabase, h.Root)
+	}
 	if !exists {
 		for _, dir := range []string{h.Root, filepath.Join(h.Root, cnst.KVDBDIR), filepath.Join(h.Root, cnst.BLOBSDIR)} {
 			if err := os.MkdirAll(dir, cnst.DirPerm); err != nil {
@@ -163,6 +174,13 @@ func (h *Handle) open(ctx context.Context, req Request) error {
 	}
 	if err := h.takeLock(); err != nil {
 		return err
+	}
+	if !h.ReadOnly {
+		// Before anything is written: badger crashes the process when the
+		// disk fills under it (diskspace.Reserve).
+		if err := diskspace.Check(h.Root, 0); err != nil {
+			return err
+		}
 	}
 	// Another process may have created the database while we waited.
 	exists = dbmeta.HasDatabase(h.Root)
@@ -191,13 +209,36 @@ func (h *Handle) open(ctx context.Context, req Request) error {
 	h.keepBlockIndexLookup()
 
 	if !h.ReadOnly {
-		if n, err := fsx.SweepTemps(filepath.Join(h.Root, cnst.BLOBSDIR), time.Hour); err != nil {
-			logging.GetLogger().Warn("dbopen temp sweep failed", zap.Error(err))
-		} else if n > 0 {
-			logging.GetLogger().Info("dbopen removed stale temp files", zap.Int("count", n))
-		}
+		h.sweepTemps()
 	}
 	return nil
+}
+
+// hasRecords reports whether the root's badger directory holds a database.
+func hasRecords(root string) bool {
+	_, err := os.Stat(filepath.Join(root, cnst.KVDBDIR, "MANIFEST"))
+	return err == nil
+}
+
+// sweepTemps removes the temporary files a DUES process killed while writing
+// in the root left there: the manifest's, its mirror's, the graph marker's,
+// replaced blobs', and the part files of uploads a server was receiving. A
+// writable open holds the root lock exclusively, so no other DUES process is
+// writing them, whatever their age.
+func (h *Handle) sweepTemps() {
+	for _, dir := range []string{h.Root, filepath.Join(h.Root, cnst.KVDBDIR), filepath.Join(h.Root, cnst.BLOBSDIR), filepath.Join(h.Root, cnst.GRAPHDIR)} {
+		if n, err := fsx.SweepTemps(dir, 0); err != nil {
+			logging.GetLogger().Warn("dbopen temp sweep failed", zap.String("dir", dir), zap.Error(err))
+		} else if n > 0 {
+			logging.GetLogger().Info("dbopen removed stale temp files", zap.String("dir", dir), zap.Int("count", n))
+		}
+	}
+	parts, _ := filepath.Glob(filepath.Join(h.Root, cnst.UploadsDir, "*.part"))
+	for _, p := range parts {
+		if err := fsx.Remove(p); err != nil {
+			logging.GetLogger().Warn("dbopen could not remove an upload part file", zap.String("path", p), zap.Error(err))
+		}
+	}
 }
 
 func (h *Handle) notice(format string, args ...any) {
@@ -481,6 +522,18 @@ func (h *Handle) openBadger(m dbmeta.Manifest, keys dbmeta.Keys) error {
 		h.ReadOnly = false
 		opts = h.badgerOptions(m.Layout, keys, false)
 	}
+	realDir := opts.Dir
+	if h.ReadOnly && !discardWritable(opts.Dir) {
+		shadow, copied, err := newShadow(opts.Dir)
+		if err != nil {
+			return fmt.Errorf("opening %s from read-only media: %w", h.Root, err)
+		}
+		h.shadow = shadow
+		opts.Dir, opts.ValueDir = shadow, shadow
+		if copied > 0 {
+			h.notice("database %s is on read-only media; %s of its index was copied to a temporary directory to open it", h.Root, humanize.IBytes(uint64(copied)))
+		}
+	}
 	db, err := badger.Open(opts)
 	if err != nil && h.ReadOnly && truncateNeeded(err) {
 		if !h.upgradeLock() {
@@ -494,7 +547,85 @@ func (h *Handle) openBadger(m dbmeta.Manifest, keys dbmeta.Keys) error {
 		return h.badgerError(err)
 	}
 	h.DB = db
+	if h.shadow != "" {
+		dbio.RegisterKVDir(db, realDir)
+	}
 	return nil
+}
+
+// discardWritable reports whether badger can open its DISCARD file for
+// writing, which it does even for a read-only open: on write-protected media,
+// or in a directory the user may only read, it cannot, and badger then ends
+// the process (log.Fatalf) instead of returning an error. Opening the file
+// for writing changes nothing in it.
+func discardWritable(dir string) bool {
+	f, err := os.OpenFile(filepath.Join(dir, "DISCARD"), os.O_RDWR, 0)
+	if errors.Is(err, fs.ErrNotExist) {
+		// Every database badger has opened has one; without it badger
+		// creates one, which needs the directory writable, and says so.
+		return true
+	}
+	if err != nil {
+		return false
+	}
+	_ = f.Close()
+	return true
+}
+
+// newShadow makes a temporary badger directory holding every file of dir
+// but DISCARD, so badger can open a read-only database whose own directory
+// it cannot write: it gets a DISCARD of its own there. badger also opens
+// every value log for writing, read-only or not, so those are copied (DUES
+// keeps its values small, so they are too); the other files are linked
+// where the platform allows it and copied otherwise. copied counts the bytes
+// copied. Removing the directory removes only the links and copies.
+func newShadow(dir string) (shadow string, copied int64, err error) {
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		return "", 0, err
+	}
+	shadow, err = os.MkdirTemp("", "dues-readonly-")
+	if err != nil {
+		return "", 0, err
+	}
+	defer func() {
+		if err != nil {
+			_ = os.RemoveAll(shadow)
+		}
+	}()
+	for _, e := range entries {
+		name := e.Name()
+		if !e.Type().IsRegular() || name == "DISCARD" || name == "LOCK" {
+			continue
+		}
+		src, dst := filepath.Join(dir, name), filepath.Join(shadow, name)
+		if !strings.HasSuffix(name, ".vlog") && os.Symlink(src, dst) == nil {
+			continue
+		}
+		n, err := copyFile(src, dst)
+		if err != nil {
+			return "", 0, err
+		}
+		copied += n
+	}
+	return shadow, copied, nil
+}
+
+func copyFile(src, dst string) (int64, error) {
+	in, err := os.Open(src)
+	if err != nil {
+		return 0, err
+	}
+	defer in.Close()
+	out, err := os.OpenFile(dst, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0o600)
+	if err != nil {
+		return 0, err
+	}
+	n, err := io.Copy(out, in)
+	if cerr := out.Close(); err == nil {
+		err = cerr
+	}
+	return n, err
 }
 
 // truncateNeeded reports whether badger refused an open because its log must
@@ -611,12 +742,21 @@ func (h *Handle) release() {
 	if h.DB != nil {
 		blobcodec.Unregister(h.DB)
 		dbmeta.UnregisterLayout(h.DB)
+		dbio.UnregisterKVDir(h.DB)
 		h.DB.Close()
 		h.DB = nil
 	}
+	h.removeShadow()
 	if h.lock != nil {
 		h.lock.Unlock()
 		h.lock = nil
+	}
+}
+
+func (h *Handle) removeShadow() {
+	if h.shadow != "" {
+		_ = os.RemoveAll(h.shadow)
+		h.shadow = ""
 	}
 }
 
@@ -628,7 +768,9 @@ func (h *Handle) Close() error {
 	db := h.DB
 	h.DB = nil
 	blobcodec.Unregister(db)
+	dbio.UnregisterKVDir(db)
 	err := db.Close()
+	h.removeShadow()
 	if h.lock != nil {
 		err = errors.Join(err, h.lock.Unlock())
 		h.lock = nil

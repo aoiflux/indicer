@@ -1,6 +1,7 @@
 package store
 
 import (
+	"indicer/internal/faultinject"
 	"time"
 
 	"indicer/lib/dbio"
@@ -108,6 +109,9 @@ func (b *chunkMetaBarrier) fire() error {
 	if len(b.pending) == 0 {
 		return nil
 	}
+	if err := faultinject.Hit(faultinject.StoreChunkBeforeBarrier); err != nil {
+		return err
+	}
 	if err := b.sync(); err != nil {
 		return err
 	}
@@ -115,6 +119,9 @@ func (b *chunkMetaBarrier) fire() error {
 		if err := b.set(p.key, p.val); err != nil {
 			return err
 		}
+	}
+	if err := faultinject.Hit(faultinject.StoreChunkAfterBarrier); err != nil {
+		return err
 	}
 	clear(b.pending)
 	b.pending = b.pending[:0]

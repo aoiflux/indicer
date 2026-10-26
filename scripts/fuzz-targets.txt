@@ -3,6 +3,7 @@
 ./internal/faultinject FuzzParseSpec
 ./internal/appconfig FuzzResolve
 ./internal/termsafe FuzzString
+./internal/msgpackx FuzzCheck
 ./lib/logging FuzzRedactJSON
 ./lib/logging FuzzRedactArgs
 ./lib/parser/fs/ntfs FuzzLZNT1
@@ -15,3 +16,19 @@
 ./lib/parser/fs/fsutil FuzzEscapeName
 ./lib/parser/fs FuzzDetect
 ./lib/search FuzzStreamCount
+./lib/parser/scan FuzzScanXFS
+./lib/parser/scan FuzzScanGPT
+./lib/parser/scan FuzzScanMBR
+./lib/parser/image FuzzOpenVHD
+./lib/parser/image FuzzOpenVHDX
+./lib/blobcodec FuzzDecode
+./lib/fio FuzzScanContainer
+./lib/fio FuzzLookupBlockIndex
+./lib/dbio FuzzDecodeRecord
+./lib/microartefact FuzzExtract
+./lib/microartefact FuzzTextDetectors
+./lib/server FuzzOriginCheck
+./lib/server FuzzUploadRequests
+./pkg/api FuzzDispatchJSON
+./internal/products/compression_product FuzzLocalName
+./internal/products/compression_product FuzzParseManifest

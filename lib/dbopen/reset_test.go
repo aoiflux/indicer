@@ -174,3 +174,23 @@ func TestHandleResetEmptiesAndStaysUsable(t *testing.T) {
 	}
 	h2.Close()
 }
+
+// TestResetRemovesRecordsFirst: a reset cut short must never leave records
+// whose blobs are gone, or blobs and records without the manifest that says
+// the root is a database. The records go first and the manifest last, with
+// DUES temporary files just before it.
+func TestResetRemovesRecordsFirst(t *testing.T) {
+	root := newRoot(t)
+	tmp := "." + dbmeta.ManifestName + ".dues-tmp-1"
+	if err := os.WriteFile(filepath.Join(root, tmp), []byte("partial"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	_, removed, err := Reset(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := []string{cnst.KVDBDIR, cnst.BLOBSDIR, cnst.GRAPHDIR, cnst.FTSDIR, tmp, dbmeta.ManifestName, LockName}
+	if !slices.Equal(removed, want) {
+		t.Fatalf("removed %v, want in the order %v", removed, want)
+	}
+}

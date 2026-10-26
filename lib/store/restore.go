@@ -13,6 +13,7 @@ import (
 	"fmt"
 	"hash"
 	"indicer/internal/console"
+	"indicer/internal/faultinject"
 	"indicer/lib/cnst"
 	"indicer/lib/dbio"
 	"indicer/lib/fio"
@@ -283,7 +284,7 @@ func restoreLogical(ctx context.Context, l *dbio.Logical, dst io.Writer, opts Re
 		pendingProgress += int64(len(r.data))
 		restored += int64(len(r.data))
 		nextSeq++
-		return nil
+		return faultinject.Hit(faultinject.RestoreMid)
 	}
 
 	for result := range results {

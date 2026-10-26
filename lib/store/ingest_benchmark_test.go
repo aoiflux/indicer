@@ -9,6 +9,7 @@ import (
 	"sync"
 	"testing"
 
+	"indicer/internal/console"
 	"indicer/lib/cnst"
 	"indicer/lib/dbio"
 	"indicer/lib/util"
@@ -37,20 +38,7 @@ func BenchmarkIngestDataPath(b *testing.B) {
 		{name: "half_duplicate/chunks_64", chunks: 64, uniqueChunks: 0.5, description: "~50% unique chunks"},
 	}
 
-	devNull, err := os.OpenFile(os.DevNull, os.O_WRONLY, 0)
-	if err != nil {
-		b.Fatalf("open os.DevNull: %v", err)
-	}
-	defer devNull.Close()
-
-	oldStderr := os.Stderr
-	oldStdout := os.Stdout
-	os.Stderr = devNull
-	os.Stdout = devNull
-	defer func() {
-		os.Stderr = oldStderr
-		os.Stdout = oldStdout
-	}()
+	defer console.Quiet()()
 
 	for _, bm := range benchmarks {
 		bm := bm
@@ -398,49 +386,6 @@ func simulateIngestProbes(db *badger.DB, chunkData [][]byte) error {
 	}
 
 	return nil
-}
-
-// processChonkHotpath is a write-path simulation helper retained for hotspot
-// attribution. The active benchmark path uses probe-only helpers below.
-func processChonkHotpath(chash []byte, db *badger.DB, batch *badger.WriteBatch) error {
-	// First PingNode: check simhash namespace.
-	sigKey := util.AppendToBytesSlice(cnst.ChonkSimhashNamespace, chash)
-	err := dbio.PingNode(sigKey, db)
-	if err == badger.ErrKeyNotFound {
-		// Skip simhash enqueue for benchmark; focus on chunk write.
-	} else if err != nil {
-		return err
-	}
-
-	// Second PingNode: check chunk namespace (hot-path probe to measure).
-	ckey := util.AppendToBytesSlice(cnst.ChonkNamespace, chash)
-	err = dbio.PingNode(ckey, db)
-	if err == badger.ErrKeyNotFound {
-		// Instead of calling SetBatchChonkNode (which requires full encryption setup),
-		// directly write the chunk hash to batch to measure just the DB write cost.
-		return dbio.SetBatchNode(ckey, chash, batch)
-	}
-
-	return err
-}
-
-// processRelHotpath is a write-path simulation helper retained for attribution.
-func processRelHotpath(index int64, fhash, chash []byte, db *badger.DB, batch *badger.WriteBatch) error {
-	relKey := util.AppendToBytesSlice(cnst.RelationNamespace, fhash, cnst.DataSeperator, index)
-
-	err := dbio.PingNode(relKey, db)
-	if err == badger.ErrKeyNotFound {
-		return dbio.SetBatchNode(relKey, chash, batch)
-	}
-
-	return err
-}
-
-// processRevRelHotpath is a write-path simulation helper retained for
-// append-member write attribution.
-func processRevRelHotpath(index int64, fhash, chash []byte, db *badger.DB, batch *badger.WriteBatch) error {
-	_ = db
-	return dbio.SetReverseRelationAppendMember(chash, index, fhash, batch)
 }
 
 // Probe-only versions (no writes) to measure just the read cost.

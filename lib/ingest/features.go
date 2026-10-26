@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 
+	"indicer/lib/dbio"
 	"indicer/lib/enrichment"
 	"indicer/lib/fts"
 	duesgraph "indicer/lib/graph"
@@ -44,7 +45,7 @@ func features(ctx context.Context, db *badger.DB, eid []byte, req Request) error
 // enrich writes the evidence's hierarchy to the graph. The evidence node is
 // named from the record, which carries the path it was stored from.
 func enrich(ctx context.Context, db *badger.DB, eid []byte) (err error) {
-	repo, err := enrichment.OpenGrapheneRepository(db.Opts().Dir)
+	repo, err := enrichment.OpenGrapheneRepository(dbio.KVDir(db))
 	if err != nil {
 		return err
 	}
@@ -63,7 +64,7 @@ func enrich(ctx context.Context, db *badger.DB, eid []byte) (err error) {
 // index does not sit beside the old one there. A database without a graph is
 // left without one. keepEvidence keeps the evidence's own node.
 func deleteGraphIndex(db *badger.DB, eid []byte, keepEvidence bool) (err error) {
-	root := db.Opts().Dir
+	root := dbio.KVDir(db)
 	if !duesgraph.Exists(root) {
 		return nil
 	}

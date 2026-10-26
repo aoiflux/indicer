@@ -14,6 +14,7 @@ import (
 	"regexp"
 	"sort"
 
+	"indicer/internal/faultinject"
 	"indicer/lib/fsx"
 )
 
@@ -56,8 +57,11 @@ var archiveSink = func(f *os.File) io.Writer { return f }
 // a failure leaves it as it was.
 func writeArchiveOutput(ctx context.Context, outputPath string, partSize int64, fill func(w io.Writer) error) ([]string, error) {
 	if partSize <= 0 {
-		err := fsx.WriteAtomic(outputPath, defaultFilePerm, fsx.Options{}, func(f *os.File) error {
-			return fill(archiveSink(f))
+		err := fsx.WriteAtomic(outputPath, defaultFilePerm, fsx.Options{RemoveStale: true}, func(f *os.File) error {
+			if err := fill(archiveSink(f)); err != nil {
+				return err
+			}
+			return faultinject.Hit(faultinject.QwikpakArchiveBeforeClose)
 		})
 		if err != nil {
 			return nil, err
@@ -66,13 +70,17 @@ func writeArchiveOutput(ctx context.Context, outputPath string, partSize int64, 
 		return []string{outputPath}, nil
 	}
 
-	tmp, err := os.CreateTemp(filepath.Dir(outputPath), "."+filepath.Base(outputPath)+".dues-tmp-*")
+	fsx.RemoveStaleTemps(outputPath)
+	tmp, err := os.CreateTemp(filepath.Dir(outputPath), fsx.TempPattern(outputPath))
 	if err != nil {
 		return nil, err
 	}
 	tmpPath := tmp.Name()
 	defer func() { _ = fsx.Remove(tmpPath) }()
 	err = fill(archiveSink(tmp))
+	if err == nil {
+		err = faultinject.Hit(faultinject.QwikpakArchiveBeforeClose)
+	}
 	if cerr := tmp.Close(); err == nil {
 		err = cerr
 	}
@@ -111,7 +119,7 @@ func writeSplit(ctx context.Context, src, archivePath string, partSize int64) ([
 		}
 		p := partPath(archivePath, i)
 		sum := sha256.New()
-		if err := fsx.WriteAtomic(p, defaultFilePerm, fsx.Options{}, func(f *os.File) error {
+		if err := fsx.WriteAtomic(p, defaultFilePerm, fsx.Options{RemoveStale: true}, func(f *os.File) error {
 			_, err := io.CopyN(io.MultiWriter(archiveSink(f), sum), r, n)
 			return err
 		}); err != nil {

@@ -58,7 +58,7 @@ func TestRecoveryFailsFlushedEvidenceWithDamagedMaterial(t *testing.T) {
 			t.Fatal(err)
 		}
 
-		if _, err := store.RecoverIncompleteIngests(h.DB); err != nil {
+		if _, err := store.RecoverIncompleteIngests(t.Context(), h.DB); err != nil {
 			t.Fatalf("recovery: %v", err)
 		}
 		got, err := dbio.GetEvidenceFile(eid, h.DB)

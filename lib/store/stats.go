@@ -147,7 +147,7 @@ func GatherStats(ctx context.Context, db *badger.DB) (*DBStats, error) {
 		return nil, err
 	}
 
-	s.OnDiskBytes = calcBlobDirBytes(db.Opts().Dir)
+	s.OnDiskBytes = calcBlobDirBytes(dbio.KVDir(db))
 	return s, nil
 }
 

@@ -45,7 +45,7 @@ func (u BlockIndexUpgrade) Complete() bool { return u.DamagedCount == 0 }
 // database error, or ctx ending.
 func UpgradeBlockIndex(ctx context.Context, db *badger.DB) (BlockIndexUpgrade, error) {
 	var report BlockIndexUpgrade
-	files, err := fio.BlockIndexFiles(db.Opts().Dir)
+	files, err := fio.BlockIndexFiles(dbio.KVDir(db))
 	if err != nil {
 		return report, err
 	}
@@ -78,7 +78,7 @@ func UpgradeBlockIndex(ctx context.Context, db *badger.DB) (BlockIndexUpgrade, e
 				return err
 			}
 
-			meta, err := verifiedContainerMeta(db.Opts().Dir, codec, ckey, r)
+			meta, err := verifiedContainerMeta(dbio.KVDir(db), codec, ckey, r)
 			if err != nil {
 				report.DamagedCount++
 				if len(report.Damaged) < maxDamagedSamples {

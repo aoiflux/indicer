@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"indicer/internal/console"
+	"indicer/internal/faultinject"
 	"indicer/internal/lifecycle"
 	"indicer/internal/termsafe"
 	"indicer/lib/cnst"
@@ -124,9 +125,11 @@ func MicroArtefactCmd(ctx context.Context, opts DBOptions, mo MicroOptions) (err
 		console.Printf("[micro] %d evidence had no file nodes in the graph; enriched them first.\n", rep.backfilled)
 	}
 
-	tree, err := repo.ReadHierarchy()
+	// The files with the most artefacts, not the whole graph: a store can
+	// hold millions of artefacts (GRA-17). `dues micro list` lists them all.
+	top, err := repo.TopFiles(ctx, cliTopFiles, cliTopFiles)
 	if err != nil {
-		logging.GetLogger().Error("MicroArtefactCmd READ_HIERARCHY_ERROR", zap.Error(err))
+		logging.GetLogger().Error("MicroArtefactCmd TOP_FILES_ERROR", zap.Error(err))
 		return err
 	}
 	shown, err := repo.ExportHTML(out, mo.TopK, mo.Overwrite)
@@ -139,7 +142,7 @@ func MicroArtefactCmd(ctx context.Context, opts DBOptions, mo MicroOptions) (err
 		logging.GetLogger().Error("MicroArtefactCmd EXPORT_HTML_ERROR", zap.Error(err), zap.String("file_path", out))
 		return err
 	default:
-		printHierarchyTree(tree)
+		printTopFiles(top)
 		console.Printf("HTML graph visualisation (%d file(s)): %s\n", shown, out)
 	}
 	logging.GetLogger().Info("MicroArtefactCmd COMPLETE",
@@ -255,7 +258,7 @@ func extractEvidence(ctx context.Context, db *badger.DB, service *microartefact.
 // backfillEvidence writes an evidence's hierarchy to the graph. Entropy it
 // cannot compute does not stop extraction.
 func backfillEvidence(ctx context.Context, db *badger.DB, eid []byte) (err error) {
-	enrichRepo, err := enrichment.OpenGrapheneRepository(db.Opts().Dir)
+	enrichRepo, err := enrichment.OpenGrapheneRepository(dbio.KVDir(db))
 	if err != nil {
 		return err
 	}
@@ -275,6 +278,9 @@ func backfillEvidence(ctx context.Context, db *badger.DB, eid []byte) (err error
 // extractFile extracts from one indexed file. Only a database or graph error
 // stops the run; a file that cannot be read or stored is counted.
 func extractFile(ctx context.Context, db *badger.DB, service *microartefact.Service, repo *microartefact.GrapheneRepository, evidenceID, evidenceName, pid, pname, iidB64 string, force bool, rep *microReport) error {
+	if err := faultinject.Hit(faultinject.MicroMid); err != nil {
+		return err
+	}
 	raw, err := base64.StdEncoding.DecodeString(iidB64)
 	if err != nil {
 		rep.fail(iidB64, err)
@@ -369,23 +375,35 @@ var errMicroLimit = errors.New("read limit reached")
 
 // ─── CLI visualisation tree ───────────────────────────────────────────────────
 
-// printHierarchyTree renders the micro-artefact hierarchy to stdout as an
-// ASCII tree after extraction completes.
-func printHierarchyTree(tree *microartefact.EvidenceFileHierarchy) {
-	if tree == nil || len(tree.EvidenceFiles) == 0 {
-		console.Println("\n  (no micro-artefacts found — run 'dues microartefacts' on a populated database)")
+// cliTopFiles is how many files, and artefacts of each, micro extract shows.
+const cliTopFiles = 20
+
+// fileArtefacts is how many artefacts a file holds, shown or not.
+func fileArtefacts(f *microartefact.IndexedFileArtefactView) int {
+	return max(f.ArtefactCount, len(f.Artefacts))
+}
+
+// printTopFiles renders, after extraction, the files with the most
+// micro-artefacts as an ASCII tree, and says how many more there are.
+func printTopFiles(top *graphrepo.TopFiles) {
+	if top == nil || top.Tree == nil || len(top.Tree.EvidenceFiles) == 0 {
+		console.Println("\n  (no micro-artefacts found)")
 		return
 	}
-
-	console.Printf("\n🔬 Micro-Artefact Graph  (%d evidence file(s) · %d artefact(s) · %d relation(s): %d deterministic, %d probabilistic)\n\n",
-		len(tree.EvidenceFiles), tree.TotalArtefacts, tree.TotalRelations, tree.DeterministicRelations, tree.ProbabilisticRelations)
+	tree := top.Tree
+	console.Printf("\n🔬 Micro-artefacts: %d file(s) hold %d artefact(s); the %d with the most:\n\n", top.Files, top.Artefacts, top.Shown)
+	defer func() {
+		if more := top.Files - top.Shown; more > 0 {
+			console.Printf("\n… and %d more file(s) with artefacts; `dues micro list` lists them all.\n", more)
+		}
+	}()
 
 	for di, disk := range tree.EvidenceFiles {
 		isLastDisk := di == len(tree.EvidenceFiles)-1
 		totalForDisk := 0
 		for _, p := range disk.Partitions {
 			for _, f := range p.Files {
-				totalForDisk += len(f.Artefacts)
+				totalForDisk += fileArtefacts(f)
 			}
 		}
 
@@ -405,7 +423,7 @@ func printHierarchyTree(tree *microartefact.EvidenceFileHierarchy) {
 				filePfx := partPfx + cliLevelPfx(isLastPart)
 				console.Printf("%s%s📄 %s  (%s · %d artefact(s))\n",
 					filePfx, cliBranch(isLastFile), termsafe.Line(file.Name),
-					humanReadableSize(file.Size), len(file.Artefacts))
+					humanReadableSize(file.Size), fileArtefacts(file))
 
 				grouped := cliGroupByKind(file.Artefacts)
 				kinds := cliSortedKinds(grouped)

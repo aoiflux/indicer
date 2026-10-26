@@ -122,7 +122,7 @@ func restoreToPath(ctx context.Context, db *badger.DB, rhash, rpath string, ropt
 	if err := checkRestoreTarget(rpath, ropts.Force); err != nil {
 		return report, err
 	}
-	err := fsx.WriteAtomic(rpath, cnst.FilePerm, fsx.Options{NoOverwrite: !ropts.Force}, func(f *os.File) error {
+	err := fsx.WriteAtomic(rpath, cnst.FilePerm, fsx.Options{NoOverwrite: !ropts.Force, RemoveStale: true}, func(f *os.File) error {
 		var err error
 		report, err = store.Restore(ctx, db, rhash, f, store.RestoreOptions{Verify: ropts.Verify, VerifyEWF: ropts.VerifyEWF})
 		return err

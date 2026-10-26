@@ -2,13 +2,12 @@
 
 package fio
 
-import (
-	"errors"
-	"os"
-)
+import "os"
 
-func openIoUringHandle() (ioUringHandle, error) {
-	return nil, errors.New("io-uring is only available on linux")
+// ioUringWriteBackend writes through the standard library where io-uring
+// does not exist; the engine is never selected there (probeIoUringSupport).
+type ioUringWriteBackend struct {
+	delegate stdlibWriteBackend
 }
 
 func (b *ioUringWriteBackend) WriteAt(file *os.File, data []byte, off int64) (int, error) {

@@ -170,7 +170,7 @@ func decompressZstdFile(ctx context.Context, input, out string, size int64, limi
 	defer dec.Close()
 	guard := &outputGuard{limits: limits, in: func() int64 { return counted.n }}
 	var written int64
-	err = fsx.WriteAtomic(out, defaultFilePerm, fsx.Options{}, func(f *os.File) error {
+	err = fsx.WriteAtomic(out, defaultFilePerm, fsx.Options{RemoveStale: true}, func(f *os.File) error {
 		n, err := copyWithProgress(ctx, guardedWriter{w: f, g: guard}, damageReader{dec}, func(int64) {
 			emitProgress(report, "decompressing", progressFromBytes(counted.n, size, 20, 97), "decompressing file data")
 		})

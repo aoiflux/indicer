@@ -30,7 +30,7 @@ func ChunkStored(ckey []byte, db *badger.DB) (bool, error) {
 	if err != nil {
 		return false, err
 	}
-	path := ResolveBlobPath(db.Opts().Dir, parsed.Path)
+	path := ResolveBlobPath(KVDir(db), parsed.Path)
 	if parsed.Container {
 		return fio.ContainerHolds(path, parsed.Offset, parsed.EncodedSize), nil
 	}

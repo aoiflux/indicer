@@ -14,31 +14,32 @@ import (
 	"indicer/lib/cnst"
 	"indicer/lib/dbio"
 	"indicer/lib/fio"
-	"indicer/lib/structs"
 	"indicer/lib/util"
 
 	"github.com/dgraph-io/badger/v4"
-	"github.com/edsrzf/mmap-go"
 )
 
+// chunkPassFunc runs one chunk pipeline.
+type chunkPassFunc = func(context.Context, ChunkPass) (ChunkResult, error)
+
 // The chunk passes a durable-blob test runs, by name.
-var chunkPasses = map[string]func(context.Context, structs.InputFile) (string, error){
-	"batch":  storeEvidenceDataBatchOwner,
-	"staged": storeEvidenceDataStaged,
+var chunkPasses = map[string]chunkPassFunc{
+	"batch":  ingestChunksBatchOwner,
+	"staged": ingestChunksStaged,
 }
 
-// runChunkPass stores content as the evidence named by fhash through pass,
-// and returns the evidence ID its relations are keyed by.
-func runChunkPass(t testing.TB, pass func(context.Context, structs.InputFile) (string, error), db *badger.DB, fhash string, content []byte) []byte {
+// runChunkPass stores content as the evidence fhash through pass, and
+// returns the evidence ID its relations are keyed by.
+func runChunkPass(t testing.TB, pass chunkPassFunc, db *badger.DB, fhash string, content []byte) []byte {
 	t.Helper()
 	if err := util.EnsureBlobPath(db.Opts().Dir); err != nil {
 		t.Fatal(err)
 	}
-	infile := structs.NewInputFile(db, nil, mmap.MMap(content), fhash, cnst.EviFileNamespace, []byte(fhash), int64(len(content)), 0)
-	if _, err := pass(t.Context(), infile); err != nil {
+	id := []byte(fhash)
+	if _, err := pass(t.Context(), ChunkPass{DB: db, ID: id, Source: byteReaderAt(content), Size: int64(len(content)), Quiet: true}); err != nil {
 		t.Fatalf("chunk pass for %s: %v", fhash, err)
 	}
-	return infile.GetHash()
+	return id
 }
 
 // blobFiles lists the chunk blobs in the database's blob directory.

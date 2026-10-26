@@ -1,6 +1,7 @@
 package store
 
 import (
+	"context"
 	"errors"
 	"testing"
 
@@ -23,7 +24,7 @@ func TestValidateFlushedClassifiesMissingMaterial(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := ValidateFlushedEvidenceMaterialized(infile.GetID(), e, db); err != nil {
+	if err := ValidateFlushedEvidenceMaterialized(t.Context(), infile.GetID(), e, db); err != nil {
 		t.Fatalf("complete material: %v", err)
 	}
 
@@ -37,13 +38,13 @@ func TestValidateFlushedClassifiesMissingMaterial(t *testing.T) {
 	}); err != nil {
 		t.Fatal(err)
 	}
-	if err := ValidateFlushedEvidenceMaterialized(infile.GetID(), e, db); !errors.Is(err, ErrMaterialMissing) {
+	if err := ValidateFlushedEvidenceMaterialized(t.Context(), infile.GetID(), e, db); !errors.Is(err, ErrMaterialMissing) {
 		t.Fatalf("missing chunk: %v, want ErrMaterialMissing", err)
 	}
 	if err := db.Update(func(txn *badger.Txn) error { return txn.Delete(rel) }); err != nil {
 		t.Fatal(err)
 	}
-	if err := ValidateFlushedEvidenceMaterialized(infile.GetID(), e, db); !errors.Is(err, ErrMaterialMissing) {
+	if err := ValidateFlushedEvidenceMaterialized(t.Context(), infile.GetID(), e, db); !errors.Is(err, ErrMaterialMissing) {
 		t.Fatalf("missing relation: %v, want ErrMaterialMissing", err)
 	}
 }
@@ -56,10 +57,10 @@ func TestRecoveryKeepsFlushedEvidenceOnTransientError(t *testing.T) {
 	infile := seedFlushedEvidenceWithChunk(t, db, "transient.dd", 4)
 
 	prev := validateFlushed
-	validateFlushed = func([]byte, structs.EvidenceFile, *badger.DB) error { return errors.New("read error") }
+	validateFlushed = func(context.Context, []byte, structs.EvidenceFile, *badger.DB) error { return errors.New("read error") }
 	t.Cleanup(func() { validateFlushed = prev })
 
-	if _, err := RecoverIncompleteIngests(db); err == nil {
+	if _, err := RecoverIncompleteIngests(t.Context(), db); err == nil {
 		t.Fatal("recovery hid a validation read error")
 	}
 	got, err := dbio.GetEvidenceFile(infile.GetID(), db)
@@ -87,7 +88,7 @@ func TestRepairInspectsEvidenceRecordsOnly(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	report, err := InspectEvidenceRepairs(db, false)
+	report, err := InspectEvidenceRepairs(t.Context(), db, false)
 	if err != nil {
 		t.Fatal(err)
 	}

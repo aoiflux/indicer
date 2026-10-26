@@ -26,7 +26,7 @@ import (
 // are keyed by.
 func seedCompletedEvidence(t testing.TB, db *badger.DB, id string, content []byte, fileHash string) []byte {
 	t.Helper()
-	rid := runChunkPass(t, storeEvidenceDataBatchOwner, db, id, content)
+	rid := runChunkPass(t, ingestChunksBatchOwner, db, id, content)
 	ef := structs.NewEvidenceFile("evidence-"+id, 0, int64(len(content)), nil, "dd", fileHash)
 	ef.Completed = true
 	ef.IngestState = structs.IngestStateCompleted

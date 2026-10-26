@@ -6,6 +6,8 @@ import (
 	"errors"
 	"fmt"
 	"indicer/internal/console"
+	"indicer/internal/faultinject"
+	"indicer/internal/msgpackx"
 	"indicer/lib/cnst"
 	"indicer/lib/dbio"
 	"indicer/lib/entropy"
@@ -16,7 +18,6 @@ import (
 
 	"github.com/dgraph-io/badger/v4"
 	"github.com/schollz/progressbar/v3"
-	"github.com/vmihailenco/msgpack/v5"
 )
 
 type Service struct {
@@ -121,7 +122,7 @@ func (service *Service) EnrichAll(ctx context.Context) (Report, error) {
 				return err
 			}
 			var evidata structs.EvidenceFile
-			if err := msgpack.Unmarshal(decodeStoredValue(value), &evidata); err != nil {
+			if err := msgpackx.Unmarshal(decodeStoredValue(value), &evidata); err != nil {
 				return err
 			}
 			if !evidata.Completed || evidata.IngestState == structs.IngestStateDuplicate {
@@ -146,6 +147,9 @@ func (service *Service) EnrichAll(ctx context.Context) (Report, error) {
 		fmt.Fprintln(console.Err())
 	}()
 	for _, eid := range ids {
+		if err := faultinject.Hit(faultinject.EnrichMid); err != nil {
+			return rep, err
+		}
 		evidata, err := dbio.GetEvidenceFile(eid, service.db)
 		if err != nil {
 			return rep, err
@@ -578,7 +582,7 @@ func readPartitionFileByHash(txn *badger.Txn, partitionHashB64 string) (structs.
 	}
 	value = decodeStoredValue(value)
 
-	if err := msgpack.Unmarshal(value, &pdata); err != nil {
+	if err := msgpackx.Unmarshal(value, &pdata); err != nil {
 		return pdata, err
 	}
 

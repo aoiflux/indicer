@@ -32,8 +32,6 @@ type GrapheneRepository struct {
 	actor duesgraph.ActorRef
 }
 
-const storeDirName = "graph"
-
 // ErrRepositoryClosed is returned by a write, or a read, through a repository
 // that is not open. Writes used to succeed doing nothing (GRA-10).
 var ErrRepositoryClosed = errors.New("enrichment: graph repository is not open")
@@ -635,11 +633,10 @@ func unpackProps(node *graphstore.Node) (props.Map, error) {
 	return fields, nil
 }
 
-func strProp(m props.Map, key string) string        { return m.Str(key) }
-func int64Prop(m props.Map, key string) int64       { return m.Int64(key) }
-func float64Prop(m props.Map, key string) float64   { return m.Float64(key) }
-func boolProp(m props.Map, key string) bool         { return m.Bool(key) }
-func strSliceProp(m props.Map, key string) []string { return m.Strings(key) }
+func strProp(m props.Map, key string) string      { return m.Str(key) }
+func int64Prop(m props.Map, key string) int64     { return m.Int64(key) }
+func float64Prop(m props.Map, key string) float64 { return m.Float64(key) }
+func boolProp(m props.Map, key string) bool       { return m.Bool(key) }
 
 func joinTags(tags []string) string {
 	if len(tags) == 0 {

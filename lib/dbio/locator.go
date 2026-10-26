@@ -31,7 +31,7 @@ func LocateChunk(ckey []byte, db *badger.DB) (structs.ChonkMetadata, error) {
 	var loc structs.ChonkMetadata
 	err := db.View(func(txn *badger.Txn) error {
 		var err error
-		loc, err = locateChunkTxn(txn, ckey, db.Opts().Dir)
+		loc, err = locateChunkTxn(txn, ckey, KVDir(db))
 		return err
 	})
 	return loc, err

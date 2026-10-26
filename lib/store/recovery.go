@@ -7,6 +7,7 @@ import (
 	"strings"
 	"time"
 
+	"indicer/internal/faultinject"
 	"indicer/lib/dbio"
 	"indicer/lib/logging"
 	"indicer/lib/structs"
@@ -78,6 +79,9 @@ func NeedsRecovery(e structs.EvidenceFile) bool {
 // another writer finished meanwhile is left alone.
 func RecoverEvidence(ctx context.Context, db *badger.DB, id []byte, e structs.EvidenceFile) ([]string, error) {
 	var actions []string
+	if err := faultinject.Hit(faultinject.RecoveryMid); err != nil {
+		return actions, err
+	}
 	switch {
 	case e.IngestState == structs.IngestStateDuplicate:
 		if err := CleanupDuplicate(ctx, db, id); err != nil {
@@ -86,7 +90,10 @@ func RecoverEvidence(ctx context.Context, db *badger.DB, id []byte, e structs.Ev
 		return append(actions, ActionDuplicateCleaned), nil
 
 	case !e.Completed && !e.Failed && e.IngestState == structs.IngestStateFlushed:
-		err := validateFlushed(id, e, db)
+		err := validateFlushed(ctx, id, e, db)
+		if err != nil && ctx.Err() != nil {
+			return actions, context.Cause(ctx)
+		}
 		if err != nil && !errors.Is(err, ErrMaterialMissing) {
 			return actions, fmt.Errorf("validate flushed evidence %s: %w", firstCleanName(e.Name), err)
 		}
@@ -177,8 +184,10 @@ func interruptIndex(e *structs.EvidenceFile) bool {
 // RecoverIncompleteIngests recovers every evidence record an unfinished
 // ingest left (RecoverEvidence), so retries and repair start from a known
 // state. A read error leaves its record for the next writable open; the
-// others are still recovered, and the errors are returned together.
-func RecoverIncompleteIngests(db *badger.DB) (RecoveryReport, error) {
+// others are still recovered, and the errors are returned together. A
+// cancelled ctx stops it between records, and the rest wait for the next
+// writable open.
+func RecoverIncompleteIngests(ctx context.Context, db *badger.DB) (RecoveryReport, error) {
 	var report RecoveryReport
 
 	type candidate struct {
@@ -201,10 +210,13 @@ func RecoverIncompleteIngests(db *badger.DB) (RecoveryReport, error) {
 
 	var readErrs []error
 	for _, c := range candidates {
+		if err := ctx.Err(); err != nil {
+			return report, context.Cause(ctx)
+		}
 		if !c.e.Completed && !c.e.Failed && c.e.IngestState != structs.IngestStateDuplicate {
 			report.IncompleteFound++
 		}
-		actions, err := RecoverEvidence(context.Background(), db, c.id, c.e)
+		actions, err := RecoverEvidence(ctx, db, c.id, c.e)
 		for _, a := range actions {
 			switch a {
 			case ActionMarkedFailed, ActionFlushedInvalid:

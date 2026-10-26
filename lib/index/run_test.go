@@ -130,6 +130,21 @@ func TestRunIndexesFixtures(t *testing.T) {
 				t.Errorf("coverage: %d files and %d symlinks seen, %d indexed", c.FilesSeen, c.Symlinks, c.FilesIndexed)
 			}
 			byPart := recordsByPartition(t, db, testEID)
+			// What was counted as indexed is what was written: the coverage
+			// reconciles with the records (index-integrity invariant 2).
+			written := 0
+			for _, paths := range byPart {
+				for _, recs := range paths {
+					written += len(recs)
+				}
+			}
+			var skipped int64
+			for _, n := range res.Coverage.Skipped {
+				skipped += n
+			}
+			if c := res.Coverage; int64(written) != c.FilesIndexed || c.FilesIndexed+skipped != c.FilesSeen+c.Symlinks {
+				t.Errorf("coverage %+v: %d records written", c, written)
+			}
 
 			check := func(name string, recs []indexed, wantSize int64, wantSum string, deleted bool) {
 				t.Helper()

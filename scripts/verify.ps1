@@ -19,12 +19,17 @@
 
 .PARAMETER NoVuln
   Skip govulncheck (it needs network access to the vulnerability database).
+
+.PARAMETER Long
+  Also run the long tests (scale and soak; DUES_LONG_TESTS=1), on Windows and
+  in WSL. They add some twenty minutes.
 #>
 param(
     [switch]$Fast,
     [switch]$NoWSL,
     [switch]$NoVuln,
-    [switch]$NoFuzz
+    [switch]$NoFuzz,
+    [switch]$Long
 )
 
 Set-StrictMode -Version Latest
@@ -115,7 +120,11 @@ if (-not $Fast -and -not $NoVuln) {
     }
 }
 
-Step "test" { go test -count=1 ./... }
+if ($Long) {
+    Step "test (with long tests)" { With-Env @{ DUES_LONG_TESTS = "1" } { go test -count=1 -timeout 90m ./... } }
+} else {
+    Step "test" { go test -count=1 ./... }
+}
 Step "test (faultinject)" { go test -count=1 -tags faultinject ./... }
 
 if (-not $Fast -and -not $NoWSL) {
@@ -123,6 +132,7 @@ if (-not $Fast -and -not $NoWSL) {
     Step "WSL sync" { wsl.exe --exec bash "$wslRepo/scripts/wsl/sync.sh" }
     $suiteArgs = @()
     if ($NoFuzz) { $suiteArgs += "--no-fuzz" }
+    if ($Long) { $suiteArgs += "--long" }
     Step "WSL suite" { wsl.exe --exec bash -lc "cd ~/.cache/dues-verify/src && bash scripts/wsl/suite.sh $suiteArgs" }
 }
 

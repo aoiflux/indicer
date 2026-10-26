@@ -6,6 +6,7 @@ import (
 	"encoding/binary"
 	"time"
 
+	"indicer/internal/faultinject"
 	"indicer/lib/cnst"
 	"indicer/lib/dbio"
 	"indicer/lib/entropy"
@@ -23,6 +24,9 @@ const headLen = 4096
 // counted; files, symlinks and streams are indexed, each under its own ID.
 func (ix *indexer) file(_ core.PartitionInfo, rec core.FileRecord) error {
 	if err := ix.failure(); err != nil {
+		return err
+	}
+	if err := faultinject.Hit(faultinject.IndexMid); err != nil {
 		return err
 	}
 	op := ix.part

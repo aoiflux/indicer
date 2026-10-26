@@ -111,7 +111,7 @@ func repairData(ctx context.Context, opts DBOptions, ro RepairOptions, in io.Rea
 	defer closeDB(h, &err)
 
 	logging.GetLogger().Info("RepairData REPAIR_EXECUTE", zap.Bool("fix", ro.Fix))
-	err = store.Repair(h.DB, ro.Fix)
+	err = store.Repair(ctx, h.DB, ro.Fix)
 	if err != nil {
 		logging.GetLogger().Error("RepairData REPAIR_ERROR", zap.Error(err), zap.Bool("fix", ro.Fix))
 		return err

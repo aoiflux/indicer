@@ -16,6 +16,7 @@ import (
 	"time"
 
 	"indicer/internal/diskspace"
+	"indicer/internal/faultinject"
 	"indicer/lib/cnst"
 	"indicer/lib/dbio"
 	"indicer/lib/dbmeta"
@@ -66,7 +67,7 @@ func DefaultUploadLimits() UploadLimits {
 		DoneTTL:      10 * time.Minute,
 		FinalizeWait: 25 * time.Second,
 		ReapInterval: time.Minute,
-		Headroom:     64 << 20,
+		Headroom:     diskspace.Reserve,
 	}
 }
 
@@ -548,6 +549,9 @@ func (m *uploads) ingestUpload(ctx context.Context, s *session) (*uploadResult, 
 		return nil, uploadErr(http.StatusServiceUnavailable, "the server stopped before the upload was stored; upload it again")
 	}
 	db := m.s.deps.DB
+	if err := faultinject.Hit(faultinject.UploadBeforeIngest); err != nil {
+		return nil, internal("ingest", err)
+	}
 	res, err := m.runIngest(ctx, db, ingest.Request{
 		Path:       s.path,
 		Name:       clientBase(s.clientPath),
@@ -555,6 +559,9 @@ func (m *uploads) ingestUpload(ctx context.Context, s *session) (*uploadResult, 
 		Decode:     true,
 		Quiet:      true,
 	})
+	if err == nil {
+		err = faultinject.Hit(faultinject.UploadAfterIngest)
+	}
 	var warning string
 	var incomplete *ingest.IndexIncompleteError
 	var mismatch *ingest.DigestMismatchError

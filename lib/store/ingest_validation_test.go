@@ -14,7 +14,7 @@ import (
 	"github.com/vmihailenco/msgpack/v5"
 )
 
-func seedFlushedEvidenceWithChunk(t testing.TB, db *badger.DB, name string, hashSeed byte) structs.InputFile {
+func seedFlushedEvidenceWithChunk(t testing.TB, db *badger.DB, name string, hashSeed byte) testEvidence {
 	t.Helper()
 
 	infile := newTestInputFile(db, name, bytes.Repeat([]byte{hashSeed}, 32))

@@ -268,3 +268,40 @@ func TestSharedLockOnReadOnlyFile(t *testing.T) {
 		t.Fatal("exclusive lock succeeded on a file that cannot be opened for writing")
 	}
 }
+
+// TestWriteAtomicRemovesStaleTemps: with RemoveStale, a write first removes
+// what killed writes to the same path left, and nothing else.
+func TestWriteAtomicRemovesStaleTemps(t *testing.T) {
+	dir := t.TempDir()
+	target := filepath.Join(dir, "report.json")
+	mk := func(name string) string {
+		p := filepath.Join(dir, name)
+		if err := os.WriteFile(p, []byte("partial"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		return p
+	}
+	stale := []string{mk(".report.json" + tempMarker + "1"), mk(".report.json" + tempMarker + "2")}
+	other := mk(".report.json.bak" + tempMarker + "3") // another target's
+	user := mk("report.json.old")
+
+	if err := WriteAtomic(target, 0o644, Options{RemoveStale: true}, func(f *os.File) error {
+		_, err := f.WriteString("{}")
+		return err
+	}); err != nil {
+		t.Fatal(err)
+	}
+	for _, p := range stale {
+		if _, err := os.Stat(p); !errors.Is(err, fs.ErrNotExist) {
+			t.Errorf("%s was left", filepath.Base(p))
+		}
+	}
+	for _, p := range []string{other, user, target} {
+		if _, err := os.Stat(p); err != nil {
+			t.Errorf("%s: %v", filepath.Base(p), err)
+		}
+	}
+	if got := TempPattern(target); got != ".report.json"+tempMarker+"*" {
+		t.Errorf("TempPattern = %q", got)
+	}
+}

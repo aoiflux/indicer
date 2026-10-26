@@ -47,8 +47,8 @@ type RepairEvidenceRow struct {
 	id []byte
 }
 
-func Repair(db *badger.DB, fix bool) error {
-	report, err := InspectEvidenceRepairs(db, fix)
+func Repair(ctx context.Context, db *badger.DB, fix bool) error {
+	report, err := InspectEvidenceRepairs(ctx, db, fix)
 	if err != nil {
 		return err
 	}
@@ -64,7 +64,7 @@ func Repair(db *badger.DB, fix bool) error {
 
 // InspectEvidenceRepairs lists the evidence an unfinished ingest left, and
 // with fix recovers each one as a writable open does (RecoverEvidence).
-func InspectEvidenceRepairs(db *badger.DB, fix bool) (RepairReport, error) {
+func InspectEvidenceRepairs(ctx context.Context, db *badger.DB, fix bool) (RepairReport, error) {
 	var report RepairReport
 	report.Fixed = fix
 
@@ -118,6 +118,9 @@ func InspectEvidenceRepairs(db *badger.DB, fix bool) (RepairReport, error) {
 
 	if fix {
 		for i := range report.Evidence {
+			if err := ctx.Err(); err != nil {
+				return report, context.Cause(ctx)
+			}
 			row := &report.Evidence[i]
 			e, err := dbio.GetEvidenceFile(row.id, db)
 			if errors.Is(err, badger.ErrKeyNotFound) {
@@ -130,7 +133,7 @@ func InspectEvidenceRepairs(db *badger.DB, fix bool) (RepairReport, error) {
 				continue
 			}
 			before := row.Action
-			actions, err := RecoverEvidence(context.Background(), db, row.id, e)
+			actions, err := RecoverEvidence(ctx, db, row.id, e)
 			for _, a := range actions {
 				switch a {
 				case ActionMarkedFailed, ActionFlushedInvalid:

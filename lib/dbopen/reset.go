@@ -6,8 +6,10 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"slices"
 	"strings"
 
+	"indicer/internal/faultinject"
 	"indicer/lib/cnst"
 	"indicer/lib/dbmeta"
 	"indicer/lib/fsx"
@@ -17,7 +19,10 @@ import (
 var ErrResetRefused = errors.New("refusing to reset")
 
 // ownedEntries are the entries of a data root that DUES creates. A reset
-// deletes these and nothing else (ING-16).
+// deletes these and nothing else (ING-16), in this order: the records first,
+// so a reset cut short never leaves records whose blobs are gone, and the
+// manifest last, so what is left is still recognised as a database to reset
+// again (or to open as an empty one).
 var ownedEntries = []string{
 	cnst.KVDBDIR, cnst.BLOBSDIR, cnst.GRAPHDIR, cnst.FTSDIR, cnst.UploadsDir, dbmeta.ManifestName,
 }
@@ -106,28 +111,56 @@ func (h *Handle) Reset() error {
 	return os.MkdirAll(filepath.Join(h.Root, cnst.BLOBSDIR), cnst.DirPerm)
 }
 
-// removeOwned deletes the named entries of root, and the DUES temporary files
-// at its top level.
+// removeOwned deletes the named entries of root in the order of names, with
+// the DUES temporary files at its top level before the last name.
 func removeOwned(root string, names []string) ([]string, error) {
 	entries, err := os.ReadDir(root)
 	if err != nil {
 		return nil, err
 	}
-	var removed []string
+	rank := func(name string) int {
+		for i, n := range names {
+			if samePathName(name, n) {
+				return i
+			}
+		}
+		if fsx.IsTempName(name) {
+			return len(names) - 1
+		}
+		return -1
+	}
+	var owned []string
 	for _, e := range entries {
-		owned := fsx.IsTempName(e.Name())
-		for _, n := range names {
-			owned = owned || samePathName(e.Name(), n)
+		if rank(e.Name()) >= 0 {
+			owned = append(owned, e.Name())
 		}
-		if !owned {
-			continue
+	}
+	// Temporary files sort before the entry that shares their rank.
+	slices.SortStableFunc(owned, func(a, b string) int {
+		ra, rb := rank(a), rank(b)
+		if ra != rb {
+			return ra - rb
 		}
-		if err := os.RemoveAll(filepath.Join(root, e.Name())); err != nil {
+		return boolInt(!fsx.IsTempName(a)) - boolInt(!fsx.IsTempName(b))
+	})
+	var removed []string
+	for _, name := range owned {
+		if err := os.RemoveAll(filepath.Join(root, name)); err != nil {
 			return removed, err
 		}
-		removed = append(removed, e.Name())
+		removed = append(removed, name)
+		if err := faultinject.Hit(faultinject.ResetMid); err != nil {
+			return removed, err
+		}
 	}
 	return removed, nil
+}
+
+func boolInt(b bool) int {
+	if b {
+		return 1
+	}
+	return 0
 }
 
 // contains reports whether dir is root or inside it.

@@ -17,6 +17,7 @@ import (
 	"sync"
 	"sync/atomic"
 
+	"indicer/internal/faultinject"
 	"indicer/internal/safe"
 	"indicer/lib/cnst"
 	"indicer/lib/dbio"
@@ -265,6 +266,9 @@ func storedEvidence(e structs.EvidenceFile) bool {
 // matchQuery looks up every distinct chunk of q, then, in deep mode, the
 // chunks found nowhere by their signatures.
 func (r *run) matchQuery(ctx context.Context, q *query) error {
+	if err := faultinject.Hit(faultinject.NearMid); err != nil {
+		return err
+	}
 	r.cov.QueryChunks, r.cov.DistinctChunks, r.cov.UnstoredSpans = q.occurrences, len(q.chunks), q.unstored
 	g, gctx := safe.WithContext(ctx)
 	g.SetLimit(r.workers)

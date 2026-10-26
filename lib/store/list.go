@@ -29,6 +29,7 @@ func listOutput(db *badger.DB, statusFilter string) (map[string]interface{}, err
 	statusFilter = normalizeStatusFilter(statusFilter)
 	var output map[string]interface{}
 	err := db.View(func(txn *badger.Txn) error {
+		lookup := newPartitionLookup(txn)
 		var evidenceFiles []map[string]interface{}
 		var completedCount, pendingCount, failedCount int
 
@@ -53,10 +54,12 @@ func listOutput(db *badger.DB, statusFilter string) (map[string]interface{}, err
 				hashStr = evidenceID
 			}
 
-			// Build partition data
+			// Build partition data. A quarantined index is known wrong
+			// (ING-7): its partitions are not listed.
 			var partitions []map[string]interface{}
-			if evidata.Completed {
-				partitionHashes, err := getEvidencePartitionHashes(txn, evidenceID, evidata)
+			quarantined := evidata.Index != nil && evidata.Index.State == structs.IndexInvalid
+			if evidata.Completed && !quarantined {
+				partitionHashes, err := lookup.hashes(evidenceID, evidata)
 				if err != nil {
 					if errors.Is(err, badger.ErrKeyNotFound) {
 						partitionHashes = nil
@@ -88,6 +91,12 @@ func listOutput(db *badger.DB, statusFilter string) (map[string]interface{}, err
 				"fileCount":      1,
 				"partitions":     partitions,
 				"partitionCount": len(partitions),
+			}
+			if evidata.Index != nil {
+				eviFile["indexState"] = string(evidata.Index.State)
+				if evidata.Index.Reason != "" {
+					eviFile["indexReason"] = evidata.Index.Reason
+				}
 			}
 			evidenceFiles = append(evidenceFiles, eviFile)
 			return nil

@@ -1,13 +1,11 @@
 package util
 
 import (
-	"bytes"
 	"crypto/aes"
 	"crypto/cipher"
 	"crypto/rand"
 	"crypto/sha256"
 	"crypto/sha3"
-	"encoding/base32"
 	"encoding/base64"
 	"fmt"
 	"hash"
@@ -15,7 +13,6 @@ import (
 	"indicer/internal/console"
 	"indicer/lib/cnst"
 	"io"
-	"math/bits"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -25,30 +22,6 @@ import (
 	"github.com/cheggaaa/pb/v3"
 	"github.com/dgraph-io/badger/v4"
 )
-
-func GetDBPath() (string, error) {
-	const dbdir = ".dues"
-	path, err := os.UserHomeDir()
-	if err != nil {
-		path, err = os.Getwd()
-		if err != nil {
-			return "", err
-		}
-	}
-
-	fullpath, err := filepath.Abs(path)
-	if err != nil {
-		return "", err
-	}
-
-	dbpath := filepath.Join(fullpath, dbdir)
-	err = os.MkdirAll(dbpath, cnst.DirPerm)
-	if err != nil {
-		return "", err
-	}
-
-	return dbpath, err
-}
 
 func EnsureBlobPath(dbpath string) error {
 	blobpath := BlobPath(dbpath)
@@ -158,11 +131,6 @@ func GetChonkHash(data []byte, hasher hash.Hash) ([]byte, error) {
 	return hasher.Sum(nil), nil
 }
 
-func IsLogicalFile(inid []byte) bool {
-	return bytes.HasPrefix(inid, []byte(cnst.PartiFileNamespace)) ||
-		bytes.HasPrefix(inid, []byte(cnst.IdxFileNamespace))
-}
-
 func AppendToBytesSlice(args ...interface{}) []byte {
 	const unsupported = "Unsupported Type"
 
@@ -211,29 +179,6 @@ func HashPassword(password string) ([]byte, error) {
 	return hash[:], nil
 }
 
-func PartialMatchConfidence(s1, s2 []byte) float64 {
-	if len(s1) == 0 || len(s2) == 0 {
-		return 0
-	}
-
-	minLength := len(s1)
-	if len(s2) < minLength {
-		minLength = len(s2)
-	}
-	if minLength == 0 {
-		return 0
-	}
-
-	var matchedBits int
-	for i := 0; i < minLength; i++ {
-		x := s1[i] ^ s2[i]
-		matchedBits += 8 - bits.OnesCount8(x)
-	}
-
-	totalBits := minLength * 8
-	return float64(matchedBits) / float64(totalBits)
-}
-
 func ChunkSimHash64(data []byte) uint64 {
 	if len(data) == 0 {
 		return 0
@@ -270,23 +215,11 @@ func ChunkSimHash64(data []byte) uint64 {
 	return sig
 }
 
-func HammingSimilarity64(a, b uint64) float64 {
-	distance := bits.OnesCount64(a ^ b)
-	return float64(64-distance) / 64
-}
-
 func GetDBStartOffset(startIndex int64) int64 {
 	if startIndex == 0 {
 		return 0
 	}
 	return (startIndex / cnst.ChonkSize) * cnst.ChonkSize
-}
-
-func GetDBEndOffset(endIndex int64) int64 {
-	if endIndex == 0 {
-		return 0
-	}
-	return (endIndex-1)/cnst.ChonkSize*cnst.ChonkSize + cnst.ChonkSize
 }
 
 // rawEvidenceIDLen is the length of an evidence ID, a UUIDv7.
@@ -313,19 +246,6 @@ func GetEvidenceFileHash(fname string) ([]byte, error) {
 	}
 	return eviFileHash, nil
 }
-func GetEvidenceFileID(eviFileHash []byte) []byte {
-	return append([]byte(nil), eviFileHash...)
-}
-
-func GetRandomName(length int) string {
-	randomBytes := make([]byte, 32)
-	_, err := rand.Read(randomBytes)
-	if err != nil {
-		panic(err)
-	}
-	return base32.StdEncoding.EncodeToString(randomBytes)[:length]
-}
-
 func SealAES(key, plaintext []byte) ([]byte, error) {
 	block, err := aes.NewCipher(key)
 	if err != nil {
@@ -384,12 +304,4 @@ func InitBatch(db *badger.DB) (*badger.WriteBatch, error) {
 	batch := db.NewWriteBatch()
 	batch.SetMaxPendingTxns(count)
 	return batch, nil
-}
-
-func GetArbitratyMapKey(kv map[string]struct{}) string {
-	var k string
-	for k = range kv {
-		break
-	}
-	return k
 }

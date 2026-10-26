@@ -145,7 +145,7 @@ func SearchReport(ctx context.Context, db *badger.DB, req Request) (Outcome, err
 	if err != nil {
 		return out, err
 	}
-	err = fsx.WriteAtomic(out.ReportPath, cnst.FilePerm, fsx.Options{NoOverwrite: !req.Force}, func(f *os.File) error {
+	err = fsx.WriteAtomic(out.ReportPath, cnst.FilePerm, fsx.Options{NoOverwrite: !req.Force, RemoveStale: true}, func(f *os.File) error {
 		_, err := f.Write(body)
 		return err
 	})

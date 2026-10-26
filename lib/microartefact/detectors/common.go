@@ -92,11 +92,24 @@ func registryValueString(valueData *regparser.ValueData) string {
 	if valueData.Error != nil {
 		return valueData.Error.Error()
 	}
-	if valueData.String != "" {
-		return valueData.String
+	// Windows stores a string with its terminating NUL, which is not part
+	// of the value.
+	if s := strings.TrimRight(valueData.String, "\x00"); s != "" {
+		return s
 	}
 	if len(valueData.MultiSz) > 0 {
-		return strings.Join(valueData.MultiSz, ";")
+		parts := make([]string, 0, len(valueData.MultiSz))
+		for _, p := range valueData.MultiSz {
+			if p = strings.TrimRight(p, "\x00"); p != "" {
+				parts = append(parts, p)
+			}
+		}
+		return strings.Join(parts, ";")
+	}
+	switch valueData.Type {
+	case regparser.REG_DWORD, regparser.REG_DWORD_BIG_ENDIAN, regparser.REG_QWORD:
+		// Zero is a value too.
+		return strconv.FormatUint(valueData.Uint64, 10)
 	}
 	if valueData.Uint64 != 0 {
 		return strconv.FormatUint(valueData.Uint64, 10)

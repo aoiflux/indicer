@@ -18,6 +18,7 @@ import (
 	"path/filepath"
 	"time"
 
+	"indicer/internal/faultinject"
 	"indicer/lib/blobcodec"
 	"indicer/lib/cnst"
 	"indicer/lib/fsx"
@@ -250,7 +251,13 @@ func Save(root string, m Manifest) error {
 	if err != nil {
 		return err
 	}
-	if err := fsx.WriteFileAtomic(ManifestPath(root), b, cnst.FilePerm); err != nil {
+	err = fsx.WriteAtomic(ManifestPath(root), cnst.FilePerm, fsx.Options{RemoveStale: true}, func(f *os.File) error {
+		if _, err := f.Write(b); err != nil {
+			return err
+		}
+		return faultinject.Hit(faultinject.ManifestTempWritten)
+	})
+	if err != nil {
 		return err
 	}
 	return fsx.WriteFileAtomic(MirrorPath(root), b, cnst.FilePerm)

@@ -199,13 +199,18 @@ func linkNames(rec *libntfs.MFTEntry) int {
 }
 
 // mftRecords is how many MFT records the walk accounts for: the count the
-// $MFT run list implies, cut to what the volume could hold. A damaged run
+// $MFT run list implies, cut to what the partition could hold. A damaged run
 // list can claim billions of records, and the reached set and the sweep are
-// both sized by this count.
+// both sized by this count. libntfs caps the count at the volume size its
+// boot sector declares, which damage can inflate too; the partition's size
+// cannot be.
 func (a *ntfsFS) mftRecords() (uint64, error) {
 	count, err := a.vol.MFTEntryCount()
 	if err != nil {
 		return 0, err
+	}
+	if err := a.vol.MFTDataRunsError(); err != nil {
+		a.p.Report(core.Issue{Code: core.IssueOutOfBounds, Path: "/$MFT", Detail: err.Error()})
 	}
 	if rs := uint64(a.vol.MFTRecordSize()); rs > 0 && a.p.Size > 0 {
 		if most := uint64(a.p.Size) / rs; count > most {
@@ -392,8 +397,10 @@ func (a *ntfsFS) Stat(n core.Node) (core.FileInfo, error) {
 // Content locates a node's data:
 //   - resident data is inline (fixups already applied by the record parser);
 //   - compressed data is decoded, read through Open;
-//   - a WOF-compressed file keeps its content in a reparse point DUES cannot
-//     decode yet, and is unavailable;
+//   - a file compacted by the Windows Overlay Filter keeps its content
+//     compressed in its WofCompressedData stream, which DUES cannot decode
+//     yet: its unnamed stream is unavailable (the stream itself is indexed
+//     like any other);
 //   - everything else is its runs, with bytes past the initialized size read
 //     as zeros. Encrypted data is located like any other, flagged encrypted:
 //     the ciphertext is what the volume holds.
@@ -437,10 +444,10 @@ func (a *ntfsFS) Content(n core.Node) (core.Content, error) {
 			c.Confidence = core.ConfDeclared
 		}
 	default:
-		if !n.IsDeleted {
-			if wof, err := a.isWOF(n); err == nil && wof {
+		if _, stream := n.Ref.(streamRef); !n.IsDeleted && !stream {
+			if wof, detail := a.wof(n); wof {
 				return core.Content{Kind: core.ContentUnavailable, Size: size, Prov: core.ProvCompressed | core.ProvTruncated, Confidence: core.ConfUnknown,
-					Issues: []core.Issue{{Code: core.IssueUnsupported, Path: n.Path, Inode: n.ID, Detail: "WOF-compressed content"}}}, nil
+					Issues: []core.Issue{{Code: core.IssueUnsupported, Path: n.Path, Inode: n.ID, Detail: detail}}}, nil
 			}
 		}
 		frags, err := a.vol.AttributeFragments(attr)
@@ -482,16 +489,21 @@ func (a *ntfsFS) Content(n core.Node) (core.Content, error) {
 	return c, nil
 }
 
-func (a *ntfsFS) isWOF(n core.Node) (bool, error) {
+// wof reports whether libntfs finds n's file compacted by the Windows Overlay
+// Filter, and why its unnamed stream cannot be read.
+func (a *ntfsFS) wof(n core.Node) (bool, string) {
 	f, err := a.vol.Open(n.ID)
 	if err != nil {
-		return false, err
+		return false, ""
 	}
-	rp, err := f.ReparsePoint()
-	if err != nil || rp == nil {
-		return false, err
+	s := f.ReadSupport()
+	if !s.WOFCompressed {
+		return false, ""
 	}
-	return rp.ReparseType == libntfs.ReparsePointWOF, nil
+	if s.BlockingError != nil {
+		return true, s.BlockingError.Error()
+	}
+	return true, "WOF-compressed content"
 }
 
 // reallocated reports whether any cluster of c's data extents is allocated

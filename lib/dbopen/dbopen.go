@@ -574,11 +574,11 @@ func discardWritable(dir string) bool {
 
 // newShadow makes a temporary badger directory holding every file of dir
 // but DISCARD, so badger can open a read-only database whose own directory
-// it cannot write: it gets a DISCARD of its own there. badger also opens
-// every value log for writing, read-only or not, so those are copied (DUES
-// keeps its values small, so they are too); the other files are linked
-// where the platform allows it and copied otherwise. copied counts the bytes
-// copied. Removing the directory removes only the links and copies.
+// it cannot write: it gets a DISCARD of its own there. The files are linked
+// where the platform allows it and copied otherwise; since badger v4.9.2 a
+// read-only open opens its value logs read-only too, so links to them serve.
+// copied counts the bytes copied. Removing the directory removes only the
+// links and copies.
 func newShadow(dir string) (shadow string, copied int64, err error) {
 	entries, err := os.ReadDir(dir)
 	if err != nil {
@@ -599,7 +599,7 @@ func newShadow(dir string) (shadow string, copied int64, err error) {
 			continue
 		}
 		src, dst := filepath.Join(dir, name), filepath.Join(shadow, name)
-		if !strings.HasSuffix(name, ".vlog") && os.Symlink(src, dst) == nil {
+		if os.Symlink(src, dst) == nil {
 			continue
 		}
 		n, err := copyFile(src, dst)

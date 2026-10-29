@@ -12,18 +12,18 @@ require (
 	github.com/alecthomas/kingpin/v2 v2.4.0
 	github.com/aoiflux/graphene v0.9.0
 	github.com/aoiflux/libewf v0.2.1
-	github.com/aoiflux/libext v0.4.1
-	github.com/aoiflux/libfat v0.3.3
+	github.com/aoiflux/libext v0.4.2
+	github.com/aoiflux/libfat v0.3.5
 	github.com/aoiflux/libhfs v0.3.2
-	github.com/aoiflux/libntfs v0.3.5
-	github.com/aoiflux/libtable v0.2.3
-	github.com/aoiflux/libvhdi v0.4.1
-	github.com/aoiflux/libxfat v1.4.0
+	github.com/aoiflux/libntfs v0.3.6
+	github.com/aoiflux/libtable v0.2.4
+	github.com/aoiflux/libvhdi v0.4.2
+	github.com/aoiflux/libxfat v1.4.1
 	github.com/aoiflux/libxfs v0.4.1
 	github.com/atotto/clipboard v0.1.4
 	github.com/blevesearch/bleve/v2 v2.6.0
 	github.com/cheggaaa/pb/v3 v3.1.7
-	github.com/dgraph-io/badger/v4 v4.9.1
+	github.com/dgraph-io/badger/v4 v4.9.6
 	github.com/diskfs/go-diskfs v1.9.3
 	github.com/dustin/go-humanize v1.0.1
 	github.com/fatih/color v1.19.0

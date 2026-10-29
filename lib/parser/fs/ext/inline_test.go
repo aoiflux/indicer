@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"io"
 	"os"
 	"sync"
 	"testing"
@@ -50,10 +51,11 @@ func inodeOffset(t *testing.T, img []byte, ino uint32) int64 {
 	return rec.last
 }
 
-// TestForgedInlineSizeIsRefused is the PAR-35 regression: libext allocates an
-// inline inode's claimed size before reading it, so one flipped bit in the
-// size's high word asked for 192 GiB and the process died out of memory.
-// Every adapter path that reaches inline data must refuse such an inode.
+// TestForgedInlineSizeIsRefused is the PAR-35 regression: libext v0.4.1
+// allocated an inline inode's claimed size before reading it, so one flipped
+// bit in the size's high word asked for 192 GiB and the process died out of
+// memory. libext v0.4.2 refuses the claim; every adapter path that reaches
+// inline data must pass that refusal on.
 func TestForgedInlineSizeIsRefused(t *testing.T) {
 	var m fixture.Manifest
 	for _, f := range fixture.All(t) {
@@ -115,8 +117,8 @@ func TestForgedInlineSizeIsRefused(t *testing.T) {
 		n := nodes[p]
 		switch n.Kind {
 		case core.KindDir:
-			if _, err := b.list(n); !errors.Is(err, core.ErrBadExtent) {
-				t.Errorf("listing %s: %v, want ErrBadExtent", p, err)
+			if _, err := b.list(n); !errors.Is(err, libext.ErrUnsupportedLayout) {
+				t.Errorf("listing %s: %v, want ErrUnsupportedLayout", p, err)
 			}
 		case core.KindSymlink:
 			info, err := b.Stat(n)
@@ -124,11 +126,11 @@ func TestForgedInlineSizeIsRefused(t *testing.T) {
 				t.Errorf("stat of %s: target %q, %v; want no target and no error", p, info.Target, err)
 			}
 		default:
-			if _, err := b.Content(n); !errors.Is(err, core.ErrBadExtent) {
-				t.Errorf("content of %s: %v, want ErrBadExtent", p, err)
+			if _, err := b.Content(n); !errors.Is(err, libext.ErrUnsupportedLayout) {
+				t.Errorf("content of %s: %v, want ErrUnsupportedLayout", p, err)
 			}
-			if _, err := b.Open(n); !errors.Is(err, core.ErrBadExtent) {
-				t.Errorf("open of %s: %v, want ErrBadExtent", p, err)
+			if _, err := readAll(b, n); !errors.Is(err, libext.ErrUnsupportedLayout) {
+				t.Errorf("reading %s: %v, want ErrUnsupportedLayout", p, err)
 			}
 		}
 	}
@@ -139,4 +141,14 @@ func TestForgedInlineSizeIsRefused(t *testing.T) {
 	if c, err := b.Content(nodes["/sub/a.bin"]); err != nil || c.Size != 5000 {
 		t.Fatalf("an intact file: %+v, %v", c, err)
 	}
+}
+
+// readAll reads a node through Open.
+func readAll(a *extFS, n core.Node) ([]byte, error) {
+	rc, err := a.Open(n)
+	if err != nil {
+		return nil, err
+	}
+	defer rc.Close()
+	return io.ReadAll(rc)
 }

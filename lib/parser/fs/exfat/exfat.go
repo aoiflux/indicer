@@ -58,12 +58,16 @@ func (a *exfatFS) Close() error { return nil }
 // Walk visits every entry: live, deleted in place (and the contents of
 // deleted directories whose clusters are still free), then entry sets carved
 // from unallocated clusters, under /$OrphanFiles. libxfat's walk is cycle-safe
-// and depth-capped but silent about what it skips; a PreorderTracker reports
-// unreadable directories, cycles and the depth cap.
+// and depth-capped; OnSkip names each directory it did not descend into or
+// read only part of, and OnRecoveredScan says when the sweep for carved
+// entries was incomplete.
 func (a *exfatFS) Walk(ctx context.Context, fn func(core.Node) error) error {
 	lim := a.p.Limits.WithDefaults()
-	tracker := &fsutil.PreorderTracker{Sink: a.p.Sink, MaxDepth: lim.MaxDepth, Probe: a.probe}
 	paths := &fsutil.RawPaths{MaxName: lim.MaxName}
+	var last struct {
+		id   int64
+		path string
+	}
 	seen := map[int64]struct{}{}
 	var emitted int64
 	var synth uint64
@@ -73,9 +77,28 @@ func (a *exfatFS) Walk(ctx context.Context, fn func(core.Node) error) error {
 		DescendDeletedDirectories: true,
 		IncludeRecovered:          true,
 		MaxDepth:                  lim.MaxDepth,
+		OnSkip: func(raw string, e libxfat.Entry, reason libxfat.SkipReason, err error) error {
+			path := last.path
+			if id, ok := e.EntrySetOffset(); !ok || id != last.id || path == "" {
+				path = fsutil.EscapePath(raw)
+			}
+			if i, ok := skipIssue(path, e, reason, err); ok {
+				a.p.Report(i)
+			}
+			return nil
+		},
+		OnRecoveredScan: func(r *libxfat.RecoveredScanResult) error {
+			if r.Truncated {
+				a.p.Report(core.Issue{Code: core.IssueLibrary, Path: libxfat.RecoveredPath,
+					Detail: fmt.Sprintf("the image ends inside the allocation bitmap: %d of the heap's clusters were not swept for carved entries", r.ClustersUnclassified)})
+			}
+			return nil
+		},
 	}, func(raw string, _ uint32, e libxfat.Entry) error {
+		last.id, last.path = -1, ""
 		id, ok := e.EntrySetOffset()
 		if ok {
+			last.id = id
 			if _, dup := seen[id]; dup {
 				return nil // a carved copy of an entry the tree already gave
 			}
@@ -104,8 +127,7 @@ func (a *exfatFS) Walk(ctx context.Context, fn func(core.Node) error) error {
 			n.Kind = core.KindDir
 			paths.Enter(raw, path)
 		}
-		liveDir := e.IsDir() && !e.IsDeleted() && !e.IsVirtualEntry() && !e.IsSpecialFile()
-		tracker.Visit(path, liveDir, uint64(e.FirstCluster()), e)
+		last.path = path
 
 		if emitted >= lim.MaxEntries {
 			a.p.Report(core.Issue{Code: core.IssueEntryBudget, Path: path, Detail: fmt.Sprintf("stopped after %d entries", emitted)})
@@ -114,8 +136,34 @@ func (a *exfatFS) Walk(ctx context.Context, fn func(core.Node) error) error {
 		emitted++
 		return fn(n)
 	})
-	tracker.Flush()
 	return err
+}
+
+// skipIssue turns a directory libxfat did not descend into, or read only part
+// of, into an issue. A deleted or carved directory whose clusters are in use
+// again, were taken by a live directory, or lie outside the heap is ordinary
+// and reported by nothing but its content's provenance.
+func skipIssue(path string, e libxfat.Entry, reason libxfat.SkipReason, err error) (core.Issue, bool) {
+	live := !e.IsDeleted() && !strings.HasPrefix(path, libxfat.RecoveredPath+"/")
+	i := core.Issue{Path: path}
+	if id, ok := e.EntrySetOffset(); ok {
+		i.Inode = uint64(id)
+	}
+	switch {
+	case reason == libxfat.SkipDepthLimit:
+		i.Code, i.Detail = core.IssueDepthCap, fmt.Sprintf("depth %d", strings.Count(path, "/"))
+	case reason == libxfat.SkipReadError:
+		i.Code, i.Detail = core.IssueUnreadableDir, err.Error()
+	case reason == libxfat.SkipPartialRead && live:
+		i.Code, i.Detail = core.IssuePartialDir, err.Error()
+	case reason == libxfat.SkipRevisit && live:
+		i.Code, i.Detail = core.IssueCycle, "directory already visited"
+	case reason == libxfat.SkipInvalidCluster && live:
+		i.Code, i.Detail = core.IssueUnreadableDir, fmt.Sprintf("first cluster %d is outside the cluster heap", e.FirstCluster())
+	default:
+		return core.Issue{}, false
+	}
+	return i, true
 }
 
 func entryProv(e libxfat.Entry, raw string) core.Prov {
@@ -136,15 +184,6 @@ func entryProv(e libxfat.Entry, raw string) core.Prov {
 		p |= core.ProvFSMetadata
 	}
 	return p
-}
-
-// probe counts a directory's children, for the tracker.
-func (a *exfatFS) probe(ref any) (int, error) {
-	entries, err := a.ex.ReadDir(ref.(libxfat.Entry))
-	if err != nil && !errors.Is(err, io.EOF) && !errors.Is(err, libxfat.ErrEOF) {
-		return 0, err
-	}
-	return len(entries), nil
 }
 
 func entryOf(n core.Node) (libxfat.Entry, error) {

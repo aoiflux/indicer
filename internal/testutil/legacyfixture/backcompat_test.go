@@ -18,11 +18,6 @@ import (
 	"indicer/lib/dbmeta"
 )
 
-// emptyValueLog is the size of a badger value log holding no values: its
-// header alone. badger deletes such a log at every open, read-only too, when
-// it is not the newest; it holds nothing, so a read may remove it.
-const emptyValueLog = 20
-
 // fileHashes maps every file under root to the SHA-256 of its content and
 // its size. Lock files, which readers create to coordinate, are left out.
 func fileHashes(t *testing.T, root string) map[string]string {
@@ -58,11 +53,7 @@ func fileHashes(t *testing.T, root string) map[string]string {
 func diffHashes(before, after map[string]string) []string {
 	var d []string
 	for k, v := range before {
-		got, ok := after[k]
-		if !ok && strings.HasSuffix(k, ".vlog") && strings.HasSuffix(v, fmt.Sprintf(" %d", emptyValueLog)) {
-			continue
-		}
-		if got != v {
+		if got := after[k]; got != v {
 			d = append(d, k)
 		}
 	}

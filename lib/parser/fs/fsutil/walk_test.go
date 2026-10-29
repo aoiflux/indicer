@@ -222,37 +222,6 @@ func TestTreeWalkerCancel(t *testing.T) {
 	}
 }
 
-func TestPreorderTracker(t *testing.T) {
-	var is issues
-	probes := map[uint64]struct {
-		n   int
-		err error
-	}{
-		10: {0, nil},                       // genuinely empty
-		11: {3, nil},                       // children the library skipped
-		12: {0, errors.New("bad cluster")}, // unreadable
-	}
-	tk := &PreorderTracker{Sink: is.sink, MaxDepth: 3, Probe: func(ref any) (int, error) {
-		p := probes[ref.(uint64)]
-		return p.n, p.err
-	}}
-	visit := func(path string, dir bool, key uint64) { tk.Visit(path, dir, key, key) }
-	visit("/empty", true, 10)
-	visit("/skipped", true, 11)
-	visit("/bad", true, 12)
-	visit("/full", true, 13)
-	visit("/full/x", false, 0)
-	visit("/full/loop", true, 13) // the library revisits /full and stops
-	visit("/a", true, 20)
-	visit("/a/b", true, 21)
-	visit("/a/b/c", true, 22) // depth 3: at the cap, not read
-	tk.Flush()
-
-	if is.count(core.IssueUnreadableDir) != 2 || is.count(core.IssueCycle) != 1 || is.count(core.IssueDepthCap) != 1 {
-		t.Fatalf("issues %v", is)
-	}
-}
-
 func TestRawPaths(t *testing.T) {
 	r := &RawPaths{}
 	type step struct {

@@ -9,7 +9,6 @@ import (
 	"strings"
 
 	"github.com/aoiflux/libvhdi"
-	"github.com/aoiflux/libvhdi/types"
 
 	"indicer/lib/parser/core"
 )
@@ -17,86 +16,18 @@ import (
 // vhdImage adapts a libvhdi virtual disk (VHD/VHDX) to core.Image.
 type vhdImage struct {
 	d *libvhdi.Disk
-	// r is d, or for a differencing VHDX d behind sectorAlignedReader (PAR-31)
-	// and, when a layer ends partway through a chunk, tailResolver (PAR-33).
-	r     io.ReaderAt
-	files []io.Closer // layer files tailResolver reads
 }
 
 func newVHDImage(d *libvhdi.Disk) (*vhdImage, error) {
-	im := &vhdImage{d: d, r: d}
-	if d.IsDifferencing() && d.Format() == types.FileFormatVHDX {
-		sector := int64(d.SectorSize())
-		if sector <= 0 {
-			sector = types.DefaultSectorSize
-		}
-		im.r = sectorAlignedReader{r: d, sector: sector}
-	}
-	if d.IsDifferencing() {
-		r, files, err := newTailFix(d)
-		if err != nil {
-			d.Close()
-			return nil, err
-		}
-		if r != nil {
-			im.r, im.files = r, files
-		}
-	}
-	return im, nil
+	return &vhdImage{d: d}, nil
 }
 
 func (im *vhdImage) ReadAt(p []byte, off int64) (int, error) {
-	return guardedReadAt(im.r, "vhd", p, off)
+	return guardedReadAt(im.d, "vhd", p, off)
 }
 func (im *vhdImage) Size() int64              { return int64(im.d.Size()) }
 func (im *vhdImage) Format() core.ImageFormat { return core.FormatVHD }
-
-func (im *vhdImage) Close() error {
-	err := im.d.Close()
-	for _, f := range im.files {
-		if cerr := f.Close(); err == nil {
-			err = cerr
-		}
-	}
-	return err
-}
-
-// sectorAlignedReader makes every read start on a sector boundary.
-//
-// libvhdi v0.4.1 mis-serves a read that starts inside a sector of a VHDX
-// PARTIALLY_PRESENT block: it returns bytes from the start of that sector, so
-// an ext4 inode 256 bytes into a sector reads as its neighbour. Reads that
-// start aligned are served correctly, including those ending mid-sector, and
-// the differencing resolver keeps them aligned down the parent chain. So only
-// the head of an unaligned read is fetched as a whole sector and copied out.
-type sectorAlignedReader struct {
-	r      io.ReaderAt
-	sector int64
-}
-
-func (a sectorAlignedReader) ReadAt(p []byte, off int64) (int, error) {
-	head := off % a.sector
-	if head == 0 || len(p) == 0 {
-		return a.r.ReadAt(p, off)
-	}
-	buf := make([]byte, a.sector)
-	n, err := a.r.ReadAt(buf, off-head)
-	if int64(n) <= head {
-		if err == nil {
-			err = io.ErrUnexpectedEOF
-		}
-		return 0, err
-	}
-	got := copy(p, buf[head:n])
-	if got == len(p) {
-		return got, nil
-	}
-	if err != nil {
-		return got, err
-	}
-	rest, err := a.r.ReadAt(p[got:], off+int64(got))
-	return got + rest, err
-}
+func (im *vhdImage) Close() error             { return im.d.Close() }
 
 // ChainDepth reports how many disks the opened chain holds, counting the
 // image itself; 1 for a disk that is not differencing.

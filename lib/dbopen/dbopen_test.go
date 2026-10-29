@@ -558,6 +558,19 @@ func TestReadOnlyOpenOfUnwritableDatabase(t *testing.T) {
 	if got := dbio.KVDir(h.DB); got != kv {
 		t.Fatalf("KVDir = %s, want the data root's %s", got, kv)
 	}
+	// Where the platform allows links, nothing is copied: badger opens even
+	// its value logs read-only now.
+	if probe := filepath.Join(t.TempDir(), "link"); os.Symlink(kv, probe) == nil {
+		entries, err := os.ReadDir(shadow)
+		if err != nil {
+			t.Fatal(err)
+		}
+		for _, e := range entries {
+			if e.Name() != "DISCARD" && e.Type()&os.ModeSymlink == 0 {
+				t.Errorf("%s was copied into the temporary directory, not linked", e.Name())
+			}
+		}
+	}
 	if err := h.Close(); err != nil {
 		t.Fatal(err)
 	}

@@ -5,6 +5,8 @@ import (
 	"encoding/binary"
 	"testing"
 
+	"github.com/aoiflux/libtable"
+
 	"indicer/lib/parser/core"
 	"indicer/lib/parser/image"
 )
@@ -106,6 +108,37 @@ func TestParseClampsToImage(t *testing.T) {
 	}
 	if !hasIssue(issues, core.IssueClamped) {
 		t.Fatalf("issues %v", issues)
+	}
+}
+
+// TestConvertRefusesUnaddressableRanges: an entry whose byte range wraps or
+// passes 2^63 (StartLBA past 2^54 at 512-byte sectors) is kept at the image
+// end with size 0 and reported, never turned into a small, plausible offset
+// (TABLE-U1).
+func TestConvertRefusesUnaddressableRanges(t *testing.T) {
+	const size = 1 << 30
+	tbl := &libtable.Table{BlockSize: 512, Partitions: []libtable.Partition{
+		{Index: 1, StartLBA: 2048, LengthLBA: 4096, Flags: libtable.PartFlagAlloc},
+		{Index: 2, StartLBA: 1 << 55, LengthLBA: 8, Flags: libtable.PartFlagAlloc},
+		{Index: 3, StartLBA: 4096, LengthLBA: 1 << 60, Flags: libtable.PartFlagAlloc},
+	}}
+	out, issues := convert(tbl, size)
+	if p := out.Partitions[0]; p.Offset != 2048*512 || p.Size != 4096*512 {
+		t.Fatalf("ordinary partition: %+v", p)
+	}
+	for _, p := range out.Partitions[1:] {
+		if p.Offset != size || p.Size != 0 {
+			t.Errorf("partition %d: offset %d size %d; want the image end and 0", p.Index, p.Offset, p.Size)
+		}
+	}
+	n := 0
+	for _, i := range issues {
+		if i.Code == core.IssueClamped {
+			n++
+		}
+	}
+	if n != 2 {
+		t.Fatalf("issues %v; want two partition_clamped", issues)
 	}
 }
 

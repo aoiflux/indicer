@@ -11,6 +11,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"strings"
 
 	"github.com/aoiflux/libfat"
 
@@ -52,12 +53,15 @@ func (a *fatFS) Close() error { return a.vol.Close() }
 // Walk visits every entry: live, deleted (and the contents of deleted
 // directories whose first cluster is still free), then directories found by
 // the orphan scan, under /$OrphanFiles. libfat's walk is cycle-safe and
-// depth-capped but silent about what it skips; a PreorderTracker reports
-// unreadable directories, cycles and the depth cap.
+// depth-capped; OnSkip names each directory it did not descend into, and
+// OnOrphanScan says when the orphan scan was cut short.
 func (a *fatFS) Walk(ctx context.Context, fn func(core.Node) error) error {
 	lim := a.p.Limits.WithDefaults()
-	tracker := &fsutil.PreorderTracker{Sink: a.p.Sink, MaxDepth: lim.MaxDepth, Probe: a.probe}
 	paths := &fsutil.RawPaths{MaxName: lim.MaxName}
+	var last struct {
+		off  int64
+		path string
+	}
 	seen := map[libfat.FileID]struct{}{}
 	var emitted int64
 	var synth uint64
@@ -67,7 +71,29 @@ func (a *fatFS) Walk(ctx context.Context, fn func(core.Node) error) error {
 		DescendDeletedDirectories: true,
 		IncludeOrphans:            true,
 		MaxDepth:                  lim.MaxDepth,
+		OnSkip: func(raw string, e libfat.DirEntry, reason libfat.SkipReason, err error) error {
+			path := last.path
+			if e.EntryAbsoluteOffset != last.off || path == "" {
+				path = fsutil.EscapePath(raw)
+			}
+			if i, ok := skipIssue(path, e, reason, err); ok {
+				a.p.Report(i)
+			}
+			return nil
+		},
+		OnOrphanScan: func(r *libfat.OrphanScanResult) error {
+			if r.Truncated {
+				a.p.Report(core.Issue{Code: core.IssueEntryBudget, Path: libfat.OrphanPath,
+					Detail: fmt.Sprintf("orphan scan stopped at its bound after %d clusters", r.ClustersScanned)})
+			}
+			if r.ReachableWalkFailed {
+				a.p.Report(core.Issue{Code: core.IssueLibrary, Path: libfat.OrphanPath,
+					Detail: "part of the live tree could not be walked, so some orphans may be reachable"})
+			}
+			return nil
+		},
 	}, func(raw string, _ uint32, e libfat.DirEntry) error {
+		last.off, last.path = e.EntryAbsoluteOffset, ""
 		if id, ok := a.vol.FileID(e); ok {
 			if _, dup := seen[id]; dup {
 				return nil // an orphan the tree already gave
@@ -91,7 +117,7 @@ func (a *fatFS) Walk(ctx context.Context, fn func(core.Node) error) error {
 			n.Kind = core.KindDir
 			paths.Enter(raw, path)
 		}
-		tracker.Visit(path, e.IsDirectory && !e.Deleted && !e.Virtual && !e.Orphaned, uint64(e.FirstCluster), e)
+		last.path = path
 
 		if emitted >= lim.MaxEntries {
 			a.p.Report(core.Issue{Code: core.IssueEntryBudget, Path: path, Detail: fmt.Sprintf("stopped after %d entries", emitted)})
@@ -100,8 +126,29 @@ func (a *fatFS) Walk(ctx context.Context, fn func(core.Node) error) error {
 		emitted++
 		return fn(n)
 	})
-	tracker.Flush()
 	return err
+}
+
+// skipIssue turns a directory libfat did not descend into into an issue. A
+// recovered (deleted or orphaned) directory whose cluster is in use again,
+// was taken by a live directory, or names no data cluster is ordinary and
+// reported by nothing but its content's provenance.
+func skipIssue(path string, e libfat.DirEntry, reason libfat.SkipReason, err error) (core.Issue, bool) {
+	live := !e.Deleted && !e.Orphaned
+	i := core.Issue{Path: path, Inode: uint64(max(e.EntryAbsoluteOffset, 0))}
+	switch {
+	case reason == libfat.SkipDepthLimit:
+		i.Code, i.Detail = core.IssueDepthCap, fmt.Sprintf("depth %d", strings.Count(path, "/"))
+	case reason == libfat.SkipReadError:
+		i.Code, i.Detail = core.IssueUnreadableDir, err.Error()
+	case reason == libfat.SkipRevisit && live:
+		i.Code, i.Detail = core.IssueCycle, "directory already visited"
+	case reason == libfat.SkipInvalidCluster && live:
+		i.Code, i.Detail = core.IssueUnreadableDir, fmt.Sprintf("first cluster %d is outside the data area", e.FirstCluster)
+	default:
+		return core.Issue{}, false
+	}
+	return i, true
 }
 
 func entryProv(e libfat.DirEntry) core.Prov {
@@ -122,16 +169,6 @@ func entryProv(e libfat.DirEntry) core.Prov {
 		p |= core.ProvFSMetadata
 	}
 	return p
-}
-
-// probe counts a directory's children, for the tracker.
-func (a *fatFS) probe(ref any) (int, error) {
-	f, err := a.vol.OpenEntry(ref.(libfat.DirEntry))
-	if err != nil {
-		return 0, err
-	}
-	entries, err := f.ReadDir()
-	return len(entries), err
 }
 
 func entryOf(n core.Node) (libfat.DirEntry, error) {

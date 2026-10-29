@@ -6,7 +6,6 @@ package partition
 import (
 	"errors"
 	"fmt"
-	"math"
 
 	"github.com/aoiflux/libtable"
 
@@ -58,7 +57,10 @@ func convert(tbl *libtable.Table, imageSize int64) (core.PartitionTable, []core.
 	}
 	var issues []core.Issue
 	for _, p := range tbl.Partitions {
-		off, n, ok := byteRange(tbl, p)
+		// ByteRange is ok only for a range below 2^63, so the conversions
+		// cannot wrap.
+		uoff, un, ok := tbl.ByteRange(p)
+		off, n := int64(uoff), int64(un)
 		cp := core.Partition{
 			Index:      p.Index,
 			TypeCode:   p.TypeCode,
@@ -88,24 +90,6 @@ func convert(tbl *libtable.Table, imageSize int64) (core.PartitionTable, []core.
 		out.Partitions = append(out.Partitions, cp)
 	}
 	return out, issues
-}
-
-// byteRange computes a partition's byte offset and length without the
-// unchecked uint64 arithmetic of libtable's ByteOffset/ByteSize.
-func byteRange(tbl *libtable.Table, p libtable.Partition) (off, n int64, ok bool) {
-	bs := uint64(tbl.BlockSize)
-	if bs == 0 {
-		bs = 512
-	}
-	if p.StartLBA > (math.MaxInt64-tbl.Offset)/bs || p.LengthLBA > math.MaxInt64/bs {
-		return 0, 0, false
-	}
-	o := tbl.Offset + p.StartLBA*bs
-	l := p.LengthLBA * bs
-	if o > math.MaxInt64 || l > math.MaxInt64 {
-		return 0, 0, false
-	}
-	return int64(o), int64(l), true
 }
 
 func wholeDevice(size int64) core.PartitionTable {

@@ -10,10 +10,12 @@ import (
 	"github.com/aoiflux/libntfs"
 )
 
-// DUES decodes NTFS-compressed streams itself. libntfs v0.3.5 takes the
-// attribute's compression-unit field as a cluster count, but the field is a
-// power of two (4 means 16 clusters), so it decodes every unit at a quarter of
-// its size and fails ("symbol token writes past output buffer", PAR-27).
+// DUES decodes NTFS-compressed streams itself, from the attribute's runs, so
+// the same decoder serves deleted files, whose records libntfs will not open.
+// It was written when libntfs (up to v0.3.5) took the compression-unit field
+// as a cluster count instead of a power of two and failed on every unit
+// (PAR-27); TestDecoderMatchesLibntfs checks that the two decoders agree on
+// live files now.
 
 var errLZNT1 = errors.New("ntfs: corrupt LZNT1 data")
 

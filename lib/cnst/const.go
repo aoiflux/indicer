@@ -18,7 +18,13 @@ const (
 	FILE_APPENDED       = "APPENDED"
 	UnknownEvidenceType = "unknown"
 	DefaultDBPath       = "./data"
-	DirPerm             = 0o755
+	// DirPerm is for directories DUES creates in a data root, BlobPerm for the
+	// chunk blobs and containers in it: they hold evidence content, in the
+	// clear in an unencrypted database, so only the owner may read them
+	// (STO-19). FilePerm is for outputs the user names (reports, restored
+	// files) and the manifest, which holds no evidence.
+	DirPerm             = 0o700
+	BlobPerm            = 0o600
 	FilePerm            = 0o644
 	KVDBDIR             = "kvdb"
 	GRAPHDIR            = "graph"
@@ -66,7 +72,7 @@ var CONTAINERMODE bool
 // Only the manifest sets it.
 var LegacyBlockIndex bool
 var ENABLESIMHASH = false  // compute and persist per-chunk simhash signatures during ingest (opt-in via --simhash)
-var ENABLEREVREL = false   // persist reverse-relation writes during ingest (opt-in via --enable-revrel)
+var ENABLEREVREL = false   // persist reverse-relation writes during ingest (opt-in via --revrel)
 var CompressLevel = "best" // per-chunk zstd ingest level: fast | default | best
 var StoreHashStrategy = SyncHashStrategy
 var HochoMode = HochoModeBaseline

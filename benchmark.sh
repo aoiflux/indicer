@@ -60,28 +60,43 @@ extract_ns_op() {
 
 write_revrel_mode_summary() {
     hotspot_file="$1"
-    unbuffered_pattern="BenchmarkIngestMetadataPathHotspots/process_revrel_dual_write_unbuffered/files_32/chunks_16"
-    buffered_pattern="BenchmarkIngestMetadataPathHotspots/process_revrel_dual_write_buffered/files_32/chunks_16"
+    revrel_pattern="BenchmarkIngestMetadataPathHotspots/process_revrel_append_primary/files_32/chunks_16"
+    member_pattern="BenchmarkIngestMetadataPathHotspots/append_member_only/files_32/chunks_16"
 
-    unbuffered_ns="$(extract_ns_op "$hotspot_file" "$unbuffered_pattern")"
-    buffered_ns="$(extract_ns_op "$hotspot_file" "$buffered_pattern")"
+    revrel_ns="$(extract_ns_op "$hotspot_file" "$revrel_pattern")"
+    member_ns="$(extract_ns_op "$hotspot_file" "$member_pattern")"
 
     {
         echo ""
-        echo "=== Reverse-Relation Dual-Write Mode Summary ==="
-        if [ -z "$unbuffered_ns" ] || [ -z "$buffered_ns" ]; then
-            echo "Buffered/unbuffered hotspot lines not found in $hotspot_file"
+        echo "=== Reverse-Relation Write Summary (files_32/chunks_16) ==="
+        if [ -z "$revrel_ns" ] || [ -z "$member_ns" ]; then
+            echo "Reverse-relation hotspot lines not found in $hotspot_file"
         else
-            improvement="$(awk -v u="$unbuffered_ns" -v b="$buffered_ns" 'BEGIN { if (u > 0) printf "%.2f", ((u-b)/u)*100; else printf "0.00" }')"
-            echo "unbuffered_ns_op: $unbuffered_ns"
-            echo "buffered_ns_op: $buffered_ns"
-            echo "buffered_improvement_percent: $improvement"
+            echo "process_revrel_append_primary_ns_op: $revrel_ns"
+            echo "append_member_only_ns_op: $member_ns"
         fi
     } | tee "$SUMMARY_FILE" | tee -a "$FULL_RUN_FILE" > /dev/null
 }
 
+# extract_store_seconds prints the store duration in seconds from dues store
+# output: "Stored as evidence ... in <Go duration>" (for example 1m2.5s or
+# 850ms), or "Stored in: <seconds>s" from older releases.
 extract_store_seconds() {
     text="$1"
+    dur="$(printf '%s\n' "$text" | sed -n 's/^Stored as evidence .* in \([0-9][0-9.hmsuµn]*\)$/\1/p' | tail -n 1)"
+    if [ -n "$dur" ]; then
+        printf '%s\n' "$dur" | awk '{
+            s = 0; d = $0
+            while (match(d, /^[0-9.]+(h|ms|us|µs|ns|m|s)/)) {
+                tok = substr(d, 1, RLENGTH); d = substr(d, RLENGTH + 1)
+                match(tok, /^[0-9.]+/); v = substr(tok, 1, RLENGTH) + 0; u = substr(tok, RLENGTH + 1)
+                if (u == "h") s += v * 3600; else if (u == "m") s += v * 60; else if (u == "s") s += v
+                else if (u == "ms") s += v / 1e3; else if (u == "ns") s += v / 1e9; else s += v / 1e6
+            }
+            printf "%.6f\n", s
+        }'
+        return 0
+    fi
     printf '%s\n' "$text" | sed -n 's/.*Stored in:[[:space:]]*\([0-9][0-9.]*\)s.*/\1/p' | tail -n 1
 }
 

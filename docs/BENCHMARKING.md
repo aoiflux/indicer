@@ -1,233 +1,160 @@
-# Benchmarking Guide
+# Benchmarking
 
-This document describes the initial benchmark harness for storage-path
-performance tracking.
+This page lists the Go benchmarks for the storage path, the harness scripts
+that run them, and how to compare two runs. For the test gate, see
+[TESTING.md](TESTING.md).
 
-## What is included
+## Benchmarks
 
-- Service benchmark: `BenchmarkGetChonkMap` in `lib/server`
-- Store benchmarks:
-  - `BenchmarkIngestDataPath` in `lib/store`
-  - `BenchmarkIngestMetadataPath` in `lib/store`
-  - `BenchmarkIngestMetadataPathHotspots` in `lib/store`
-  - `BenchmarkIngestBatchOwnership` in `lib/store`
-  - `BenchmarkIngestBatchOwnershipSteadyState` in `lib/store`
-  - `BenchmarkProcessRevRel` in `lib/store`
-  - `BenchmarkInspectEvidenceRepairs` in `lib/store`
-  - `BenchmarkRestoreDataPath` in `lib/store`
-- Repeatable harness scripts:
-  - `benchmark.ps1` (Windows/PowerShell)
-  - `benchmark.sh` (Linux/macOS shell)
+| Benchmark | Package | Harness output | What it measures |
+|---|---|---|---|
+| `BenchmarkGetChonkMap` | `lib/server` | `service_getchonkmap` | The server's chunk map (`chunkMap`) for an evidence of 16, 64 or 256 chunks. `start_zero` reads the evidence record. `start_mid_chunk` reads a partition record that starts half-way into the first chunk. |
+| `BenchmarkIngestDataPath` | `lib/store` | `store_ingest_path` | Read-only probes for each chunk: a chunk key lookup (once per distinct chunk), a relation key lookup and a reverse-relation read. It writes nothing. Workloads: `highly_unique`, `half_duplicate` and `mostly_duplicate`, each with 16 and 64 chunks. |
+| `BenchmarkIngestMetadataPath` | `lib/store` | `store_ingest_metadata_path` | `processRel` and `processRevRel` for many files that share one chunk sequence, one write batch per file. Opens and closes a database in every iteration. Workloads: `append_primary/files_8/chunks_16`, `files_32/chunks_16` and `files_8/chunks_64`. |
+| `BenchmarkIngestMetadataPathHotspots` | `lib/store` | `store_ingest_metadata_hotspots` | The `files_32/chunks_16` workload split into `key_construction_only`, `process_rel_only`, `process_revrel_append_primary` and `append_member_only`. |
+| `BenchmarkProcessRevRel` | `lib/store` | `store_revrel_path` | Reverse-relation writes and reads for one chunk: `existing_same_file_noop`, `existing_new_file_write`, `append_collect_32_members`. The `synthetic_append_shard_*` cases use a test-only key layout (`revapp:`) for comparison. |
+| `BenchmarkInspectEvidenceRepairs` | `lib/store` | `store_repair_scan` | `InspectEvidenceRepairs` over 500, 2,000 and 5,000 evidence records with some pending and some failed (`small_mostly_completed`, `medium_mixed`, `large_mixed`). |
+| `BenchmarkRestoreDataPath` | `lib/store` | `store_restore_path` | A logical restore of 16 or 64 chunks to `io.Discard`. `start_zero` restores the evidence. `start_mid` restores a partition that starts half-way into the first chunk. |
+| `BenchmarkIngestBatchOwnership` | `lib/store` | not run | The batch-owner writer's relation and reverse-relation writes (`batch_owner/...`), one batch per file, with no chunk bytes, no chunk-metadata barrier and no hocho root. Opens and closes a database in every iteration. |
+| `BenchmarkIngestBatchOwnershipSteadyState` | `lib/store` | not run | The same workload with one database per sub-benchmark and new file IDs in each iteration. `batch_owner_via_metadata_helper/...` uses the metadata helper. `batch_owner/...` uses the direct write loop. |
+| `BenchmarkIngestBatchOwnershipSimhashToggle` | `lib/store` | not run | The full batch-owner chunk pass (`ingestChunksBatchOwner`) with SimHash off (`simhash_off/...`) and on (`simhash_on/...`). |
 
-Outputs are written to `bench/outputs` by default.
+"Not run" means the harness scripts do not run that benchmark. Run it by hand
+(see [Running one benchmark](#running-one-benchmark)).
 
-Harness artifacts:
+### Reverse relations are off in the benchmarks
 
-- per-benchmark raw outputs (`*.txt`),
-- consolidated run transcript (`full_run.txt`),
-- derived summary (`summary.txt`) including buffered-vs-unbuffered
-  reverse-relation dual-write delta from the metadata hotspot benchmark.
+`processRevRel` writes nothing unless `cnst.ENABLEREVREL` is true.
+`dues store --revrel` sets it. No benchmark sets it, so:
 
-## Quick Start
+- `process_revrel_append_primary` and the two `existing_*` cases of
+  `BenchmarkProcessRevRel` time an empty call and an empty batch flush.
+- The metadata-path and batch-ownership benchmarks time relation writes only.
+- `append_member_only` and `append_collect_32_members` call `lib/dbio`
+  directly, so they do write and read reverse-relation keys.
 
-### Windows (PowerShell)
+## Harness scripts
 
-Run benchmark suite:
+`benchmark.ps1` (PowerShell) and `benchmark.sh` (POSIX `sh`) run the seven
+benchmarks that have a harness output name above. Each runs
+`go test <package> -run '^$' -bench '^<name>$' -benchmem` from the repository
+root.
 
 ```powershell
 ./benchmark.ps1
-```
-
-Run with profiles enabled:
-
-```powershell
 ./benchmark.ps1 -Profiles
-```
-
-Adjust run length/sample count:
-
-```powershell
 ./benchmark.ps1 -Count 7 -Benchtime 3s
 ```
 
-Run optional io_uring queue-depth sweep against a real dataset:
-
-```powershell
-./benchmark.ps1 -StoreDataset .\samples\evidence.img -StoreCount 3 -IOUringQueueDepths 256,512,1024,2048
-```
-
-Notes:
-
-- If `-StoreExe` is omitted, the harness uses `./dues.exe` when available,
-  otherwise falls back to `go run .`.
-- Sweep results are appended to `bench\outputs\summary.txt` with
-  `depth=... median_seconds=...` and a `recommended_depth=...` line.
-
-### Linux/macOS
-
-Run benchmark suite:
-
-```bash
+```sh
 sh ./benchmark.sh
-```
-
-Run with profiles enabled:
-
-```bash
 PROFILES=1 sh ./benchmark.sh
-```
-
-Adjust run length/sample count:
-
-```bash
 COUNT=7 BENCHTIME=3s sh ./benchmark.sh
 ```
 
-Run optional io_uring queue-depth sweep against a real dataset:
+### Options
 
-```bash
-STORE_DATASET=./samples/evidence.img STORE_COUNT=3 IO_URING_DEPTHS="256 512 1024 2048" sh ./benchmark.sh
+| `benchmark.ps1` | `benchmark.sh` | Default | Meaning |
+|---|---|---|---|
+| `-Count` | `COUNT` | `5` | `go test -count` |
+| `-Benchtime` | `BENCHTIME` | `2s` | `go test -benchtime` |
+| `-Profiles` | `PROFILES=1` | off | Also write a CPU and a memory profile for each benchmark |
+| `-OutputDir` | `OUTPUT_DIR` | `bench\outputs` / `bench/outputs` | Where the outputs go |
+| `-StoreDataset` | `STORE_DATASET` | empty | Run the io_uring queue-depth sweep on this evidence file |
+| `-StoreExe` | `STORE_EXE` | empty | The `dues` binary for the sweep |
+| `-StoreCount` | `STORE_COUNT` | `3` | Sweep runs for each depth |
+| `-IOUringQueueDepths` | `IO_URING_DEPTHS` | `256,512,1024,2048` / `"256 512 1024 2048"` | Queue depths to sweep |
+| `-StoreDbRoot` | `STORE_DB_ROOT` | `bench\store_matrix` / `bench/store_matrix` | Where the sweep's databases go |
+
+### Outputs
+
+The `bench/` directory is ignored by git.
+
+| File | Content |
+|---|---|
+| `<name>.txt` | The output of one benchmark, for example `store_restore_path.txt` |
+| `full_run.txt` | Every benchmark's output, plus the summary |
+| `summary.txt` | The summary sections below |
+| `<name>.cpu.pprof`, `<name>.mem.pprof` | Profiles, with `-Profiles` or `PROFILES=1` |
+
+`summary.txt` starts with a "Reverse-Relation Dual-Write Mode Summary". It
+looks for the `process_revrel_dual_write_unbuffered` and
+`process_revrel_dual_write_buffered` sub-benchmarks of
+`BenchmarkIngestMetadataPathHotspots`. Those sub-benchmarks no longer exist, so
+the section always reads "Buffered/unbuffered hotspot lines not found".
+
+### io_uring queue-depth sweep
+
+With a dataset set, the harness also times `dues store` at each queue depth:
+
+```
+dues store --io-engine io-uring --io-uring-queue-depth <depth> -d <db> <dataset>
 ```
 
-Notes:
+- Each run uses a fresh database under the sweep's database root.
+- The summary gets one `depth=... median_seconds=...` line for each depth and a
+  `recommended_depth=...` line.
+- Without `-StoreExe` or `STORE_EXE`, the harness uses `./dues.exe` or `./dues`
+  when it exists, and otherwise `go run .`.
+- `benchmark.sh` needs a regular file. `benchmark.ps1` accepts any existing
+  path.
 
-- If `STORE_EXE` is omitted, the harness uses `./dues` when available, otherwise
-  falls back to `go run .`.
-- Sweep results are appended to `bench/outputs/summary.txt` with
-  `depth=... median_seconds=...` and a `recommended_depth=...` line.
+Limits:
 
-## Manual benchmark commands
+- io_uring exists only on Linux. Elsewhere `dues store` prints a warning and
+  falls back to the `stdlib` engine, so a sweep on Windows or macOS times
+  `stdlib` at every depth.
+- The sweep does not work at present. Both scripts parse a `Stored in: <n>s`
+  line, but `dues store` now prints
+  `Stored as evidence <id> (<bytes> bytes, <format>) in <duration>`. The sweep
+  stops at the first run with "Could not parse store duration".
+  `compare_store_speed.ps1` parses the same line.
 
-Service benchmark only:
+## Running one benchmark
 
-```bash
+```sh
+go test ./lib/store -run '^$' -bench '^BenchmarkRestoreDataPath$' -benchmem -count 5 -benchtime 2s
 go test ./lib/server -run '^$' -bench '^BenchmarkGetChonkMap$' -benchmem -count 5 -benchtime 2s
 ```
 
-Store repair scan benchmark only:
+To check that a benchmark still runs, without timing it:
 
-```bash
-go test ./lib/store -run '^$' -bench '^BenchmarkInspectEvidenceRepairs$' -benchmem -count 5 -benchtime 2s
+```sh
+go test ./lib/store -run XXX -bench '^BenchmarkIngestBatchOwnership$' -benchtime 1x
 ```
 
-Store reverse-relation write benchmark only:
+## Profiling
 
-```bash
-go test ./lib/store -run '^$' -bench '^BenchmarkProcessRevRel$' -benchmem -count 5 -benchtime 2s
-```
-
-The reverse-relation benchmark currently includes:
-
-- current append-primary noop path,
-- current append-primary growing write path,
-- direct append/shard write path,
-- compatibility dual-write path,
-- merged append+legacy member collection,
-- append/shard prototype member collection.
-
-Experimental runtime path:
-
-- default runtime behavior persists reverse relations into append-primary shard
-  keys and merges append + legacy map nodes on reads.
-- `--revrel-append-prototype` enables compatibility dual-write so legacy map
-  nodes are still emitted alongside append-primary keys for migration or
-  rollback benchmarking.
-
-Store ingest metadata-path benchmark only:
-
-```bash
-go test ./lib/store -run '^$' -bench '^BenchmarkIngestMetadataPath$' -benchmem -count 5 -benchtime 2s
-```
-
-This benchmark simulates multiple files ingesting the same chunk sequence and
-compares:
-
-- append-primary relation metadata writes,
-- compatibility dual-write of append-primary + legacy map nodes.
-
-Store batch-ownership benchmark only:
-
-```bash
-go test ./lib/store -run '^$' -bench '^BenchmarkIngestBatchOwnership$' -benchmem -count 5 -benchtime 2s
-```
-
-This benchmark compares shared-batch and batch-owner metadata write loops, but
-includes per-iteration DB open/close overhead.
-
-Store batch-ownership steady-state benchmark only:
-
-```bash
-go test ./lib/store -run '^$' -bench '^BenchmarkIngestBatchOwnershipSteadyState$' -benchmem -count 5 -benchtime 2s
-```
-
-This steady-state variant keeps one DB open per sub-benchmark and uses
-iteration-offset file IDs to reduce DB-open noise and preserve non-trivial
-relation/reverse-relation write pressure.
-
-Store ingest metadata hotspot benchmark only:
-
-```bash
-go test ./lib/store -run '^$' -bench '^BenchmarkIngestMetadataPathHotspots$' -benchmem -count 5 -benchtime 2s
-```
-
-This benchmark breaks down the `files_32/chunks_16` metadata workload into:
-
-- key construction only,
-- relation-only writes,
-- reverse-relation append-primary writes,
-- reverse-relation compatibility dual-write path,
-- reverse-relation compatibility dual-write unbuffered path,
-- reverse-relation compatibility dual-write buffered path,
-- append-member-only writes.
-
-The harness summary parses the buffered/unbuffered pair and records:
-
-- `unbuffered_ns_op`,
-- `buffered_ns_op`,
-- `buffered_improvement_percent`.
-
-Store restore-path benchmark only:
-
-```bash
-go test ./lib/store -run '^$' -bench '^BenchmarkRestoreDataPath$' -benchmem -count 5 -benchtime 2s
-```
-
-## Profiling workflow
-
-Example profile run:
-
-```bash
+```sh
 go test ./lib/store -run '^$' -bench '^BenchmarkInspectEvidenceRepairs$' -benchmem -count 1 -benchtime 5s -cpuprofile bench/outputs/store_repair_scan.cpu.pprof -memprofile bench/outputs/store_repair_scan.mem.pprof
-```
-
-Restore-path profile run:
-
-```bash
-go test ./lib/store -run '^$' -bench '^BenchmarkRestoreDataPath$' -benchmem -count 1 -benchtime 5s -cpuprofile bench/outputs/store_restore_path.cpu.pprof -memprofile bench/outputs/store_restore_path.mem.pprof
-```
-
-Inspect CPU profile:
-
-```bash
 go tool pprof -top bench/outputs/store_repair_scan.cpu.pprof
-```
-
-Inspect memory profile:
-
-```bash
 go tool pprof -top bench/outputs/store_repair_scan.mem.pprof
 ```
 
-## Baseline policy
+## Comparing runs
 
-- Keep benchmark commands stable while tuning code.
-- Record machine type, OS, Go version, and command line with each run.
-- Compare medians across multiple runs, not one-off results.
-- Treat benchmark regressions as blockers for storage-path changes.
+- Keep the benchmark commands the same while you tune code.
+- Record the machine, the OS, `go version` and the command line with each run.
+- Compare with `benchstat` (`golang.org/x/perf/cmd/benchstat`) over several
+  runs, not one.
+- Run `benchstat` comparisons interleaved, round by round (old, new, old, new),
+  on a quiet machine, so drift affects both sides.
+- Treat a benchmark regression as a blocker for a storage-path change.
 
-## Next benchmark additions
+## Writing a benchmark
 
-- Ingest-path benchmark for batch ownership variants.
-- Reverse-relation benchmark extensions for larger fanout and mixed read/write
-  workloads.
-- Hierarchical block lookup benchmark for scan vs indexed lookup.
+- A benchmark that prints progress must silence it with
+  `defer console.Quiet()()` (`internal/console`). Otherwise the progress bar
+  pushes the result columns off the `Benchmark` line, and `benchstat` and the
+  harness drop the result. Swapping `os.Stdout` does not work, because
+  `internal/console` keeps the writers it captured at start.
+- A new benchmark that the harness should run needs a `Run-Bench` line in
+  `benchmark.ps1` and a `run_bench` line in `benchmark.sh`.
+
+## Gaps
+
+No benchmark covers:
+
+- the staged pipeline (`dues store --pipeline staged`, `ingestChunksStaged`);
+- reverse-relation writes with `cnst.ENABLEREVREL` on;
+- reverse relations with more than 32 members, or mixed reads and writes.

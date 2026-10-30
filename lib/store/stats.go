@@ -283,10 +283,12 @@ func printStats(s *DBStats) {
 	}
 
 	// ── WRITE ENGINE ───────────────────────────────────────────────────────
+	// The counters are this process's. dues stats writes nothing, so they
+	// mean something only in a process that also stored data (the TUI).
 	fioStats := fio.GetWriteBackendStats()
 
 	console.Println()
-	sectionHdr.Println("  WRITE ENGINE")
+	sectionHdr.Println("  WRITE ENGINE (this process)")
 	console.Println("  ", dim.Sprint(sep))
 
 	statRow("Requested engine", fioStats.RequestedEngine, val)

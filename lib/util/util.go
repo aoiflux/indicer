@@ -29,9 +29,6 @@ func EnsureBlobPath(dbpath string) error {
 	if err != nil && !os.IsNotExist(err) {
 		return err
 	}
-	if os.IsExist(err) {
-		return nil
-	}
 	return os.MkdirAll(blobpath, cnst.DirPerm)
 }
 

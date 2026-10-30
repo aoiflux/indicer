@@ -45,6 +45,30 @@ func TestPrintHelpForPath_UnknownFallsBackToRootHelp(t *testing.T) {
 	}
 }
 
+// TestEveryCommandHasHelp checks that `dues help` knows every command the
+// parser defines. The help text is written by hand, apart from the parser,
+// and `dues help repair` and `dues help reindex` printed "Unknown command".
+func TestEveryCommandHasHelp(t *testing.T) {
+	for _, c := range newCLIDefinition().app.Model().Commands {
+		if c.Hidden {
+			continue
+		}
+		paths := [][]string{{c.Name}}
+		for _, sub := range c.Commands {
+			if !sub.Hidden {
+				paths = append(paths, []string{c.Name, sub.Name})
+			}
+		}
+		for _, path := range paths {
+			name := strings.Join(path, " ")
+			out := captureStdout(t, func() { printHelpForPath(path) })
+			if !strings.Contains(out, "Command: "+name+"\n") {
+				t.Errorf("dues help %s does not print its own help", name)
+			}
+		}
+	}
+}
+
 func captureStdout(t *testing.T, fn func()) string {
 	t.Helper()
 	oldStdout := os.Stdout

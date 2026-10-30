@@ -18,10 +18,11 @@ const revRelSyntheticAppendShards = 16
 func BenchmarkProcessRevRel(b *testing.B) {
 	ensureBenchmarkCodecs(b)
 
-	oldQuickOpt := cnst.QUICKOPT
-	cnst.QUICKOPT = true
+	// processRevRel writes nothing unless reverse relations are on.
+	oldQuickOpt, oldRevRel := cnst.QUICKOPT, cnst.ENABLEREVREL
+	cnst.QUICKOPT, cnst.ENABLEREVREL = true, true
 	defer func() {
-		cnst.QUICKOPT = oldQuickOpt
+		cnst.QUICKOPT, cnst.ENABLEREVREL = oldQuickOpt, oldRevRel
 	}()
 
 	b.Run("existing_same_file_noop", func(b *testing.B) {

@@ -71,8 +71,8 @@ type Coverage struct {
 	// NotStored counts evidence records not searched because their content
 	// is not stored: pending, failed, or a duplicate being removed.
 	NotStored int64
-	// Quarantined counts evidence whose index is quarantined; only the
-	// evidence itself was searched.
+	// Quarantined counts evidence whose index is quarantined; its partitions
+	// and files were not searched.
 	Quarantined int64
 	// NotCandidates counts, in full-text mode, the objects the full-text
 	// index did not offer: evidence, partitions and other indexed files.

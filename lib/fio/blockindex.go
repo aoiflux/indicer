@@ -7,7 +7,7 @@ package fio
 // retired it: new chunk locations always go to C|||, and nothing writes block
 // files any more. Databases that have them stay readable through
 // LookupBlockIndex, and `dues repair --upgrade` moves their records into
-// C||| (ReadBlockIndex).
+// C||| (ReadBlockFile).
 //
 // A v2 block file is a 9-byte header ("BIDX", version 2, record count as a
 // little-endian uint32), the records sorted by hash (64-byte zero-padded

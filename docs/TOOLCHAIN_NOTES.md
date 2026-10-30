@@ -1,249 +1,129 @@
-# Toolchain Notes: CGO, Static Linking, Musl, Zig, and MinGW
+# Toolchain notes
 
-> ⚠️ **SUPERSEDED (2026-08-10) — the `dues` binary is now pure Go.** libtusk / the
-> CGo dependency was removed (see [LIBTSK_REMOVAL_PLAN.md](LIBTSK_REMOVAL_PLAN.md)):
-> `lib/parser/tusk_amd64.go`, `tusk_fallback.go`, `clib/libtusk_*.a`, the `!notusk`
-> build tag, and the `--parser` flag are gone. The evidence parser is the pure-Go
-> `lib/parser` stack (via `tskcompat`). **The main binary builds with
-> `CGO_ENABLED=0` on every target** — no C compiler, MinGW, musl, or zig required;
-> `build.sh` / `build.ps1` no longer set `CC` or `CGO_ENABLED=1`. Verified
-> cross-compiling linux/amd64, linux/arm64, and darwin/arm64 with no C toolchain.
->
-> The only remaining CGO in the repo is the **compression FFI** (`build-compression.*`,
-> `-buildmode=c-shared`), which is unrelated to libtusk and out of scope here.
->
-> Everything below is retained for historical reference only — it no longer
-> describes how `dues` is built.
+This page lists the Go versions, analysis tools, build scripts and C toolchain
+needs of DUES. For the verify gate, see [TESTING.md](TESTING.md).
 
----
+## Go versions and tools
 
-This document captures the toolchain decisions and constraints around building
-`dues` with CGO for the `windows/amd64` and `linux/amd64` targets. Both require
-linking `libtusk`, a C++ static archive. Everything here is a result of working
-through real build failures.
+| What | Value | Set in | Effect |
+|---|---|---|---|
+| Language version | `go 1.26.2` | `go.mod` | The oldest Go the module accepts |
+| Toolchain | `go1.27.3` | `go.mod` | With the default `GOTOOLCHAIN=auto`, an older local `go` downloads and runs `go1.27.3` |
+| Analysis toolchain | `go1.26.6` | `scripts/tools.env` (`ANALYSIS_TOOLCHAIN`) | The verify scripts run staticcheck with `GOTOOLCHAIN=go1.26.6` |
+| staticcheck | `honnef.co/go/tools/cmd/staticcheck@v0.8.1` | `scripts/tools.env` (`STATICCHECK`) | Run with `go run`, once without and once with `-tags faultinject` |
+| govulncheck | `golang.org/x/vuln/cmd/govulncheck@v1.8.0` | `scripts/tools.env` (`GOVULNCHECK`) | Run with `go run` in source mode, and in binary mode on a linux/amd64 build |
 
----
+- `scripts/verify.ps1` and `scripts/verify.sh` both read `scripts/tools.env`.
+  Change tool versions there only.
+- staticcheck runs under its own pinned toolchain because older staticcheck
+  releases cannot read the export data that newer toolchains write.
+- `GOTOOLCHAIN=go1.26.6` overrides the `toolchain` line in `go.mod`. It works
+  because `go1.26.6` is not older than the `go 1.26.2` line.
 
-## Why CGO Is Required for Some Targets
+## Building `dues`
 
-`libtusk` exposes a C API (`libtusk_analyze`, `libtusk_free`) wrapping The
-Sleuth Kit (TSK), a large C/C++ forensics library. Go's FFI mechanism, CGO, is
-the only first-class way to call into a static archive at compile time.
+`dues` is pure Go. It needs no cgo and no C compiler on any target.
 
-CGO is only enabled for `windows/amd64` and `linux/amd64`. All other targets
-(`linux/arm64`, `darwin/*`, `windows/arm64`) build with `CGO_ENABLED=0` because
-no matching pre-built `libtusk` archive exists for those platforms.
+`build.ps1` and `build.sh` build six targets from one host: `windows`, `linux`
+and `darwin`, each on `amd64` and `arm64`. Every build uses:
 
----
+- `CGO_ENABLED=0`;
+- `GOAMD64=v1` (amd64 only; `build.sh` sets it for every target, and other
+  architectures ignore it);
+- `go build -trimpath -buildvcs=false -tags netgo,osusergo -ldflags "-s -w -buildid="`;
+- `-pgo default.pgo` when the repository root has a `default.pgo` (none is
+  committed).
 
-## The Core Constraint: ABI Compatibility
+The `netgo` and `osusergo` tags select Go's own DNS resolver and user lookup.
 
-This is the single most important rule:
+| | `build.ps1` | `build.sh` |
+|---|---|---|
+| Output | `dist\dues-<os>-<arch>[.exe]` | `dist/dues-<os>-<arch>[.exe]` |
+| Choose targets | `-Targets linux/amd64,darwin/arm64` | `TARGETS="linux/amd64 darwin/arm64"` |
+| Other settings | `-BinaryName`, `-MainPackage`, `-OutputDir` | `BINARY_NAME`, `MAIN_PACKAGE`, `OUTPUT_DIR` |
+| Old output | Deleted first, unless `-NoClean` | Always deleted first |
 
-> **The C++ static archive (`libtusk_*.a`) and the final binary must be built
-> with toolchains that share the same C++ ABI and C runtime.**
+`build.ps1` also clears `CC` for the build and restores `CC`, `CGO_ENABLED`,
+`GOOS`, `GOARCH` and `GOAMD64` afterwards.
 
-A static archive is not self-contained. It carries unresolved external
-references to symbols from the C++ standard library and C runtime. When the
-linker combines the archive with Go's object files, those external symbols must
-exist in whatever runtime the linker is targeting.
+The verify gate cross-builds `.` and `./cmd/compression` for the same six
+targets with `CGO_ENABLED=0 -trimpath -tags netgo,osusergo`.
 
-If the archive was compiled with toolchain A and the linker targets toolchain B,
-you get `undefined symbol` errors for things like
-`std::string::~basic_string()`, `__snprintf_chk`, vtables, etc. — exactly what
-happened with zig+musl vs a glibc-compiled archive.
+## Build tags
 
----
+No build tag chooses a parser or a C dependency. The tags in the tree are:
 
-## Linux/amd64: Musl vs Glibc
+| Tag | Used by | Purpose |
+|---|---|---|
+| `faultinject` | `internal/faultinject`, `internal/e2e`, `lib/store` tests | Turns on named failure points for tests. The verify gate fails a release binary that carries this tag. |
+| `fixturegen` | `lib/graph/fixturegen_test.go` | Regenerates a legacy graph fixture. Read the file's header before you run it. |
 
-### Why Static Linking on Linux Is Hard
+The rest are the standard `windows` and `linux` platform constraints.
 
-Linux binaries conventionally link against **glibc** (the GNU C Library). Glibc
-is designed for dynamic linking. While glibc allows `-static`, it has
-well-documented limitations:
+## Evidence parsing
 
-- `getaddrinfo` (DNS) uses `dlopen` internally to load NSS modules at runtime. A
-  statically linked glibc binary doing DNS resolution can fail or crash on
-  systems with a different glibc version because it tries to `dlopen` a `.so`
-  that may not exist or may be ABI-incompatible.
-- Glibc's `_FORTIFY_SOURCE` injects checked variants of standard functions
-  (`__snprintf_chk`, `__fprintf_chk`, `__vsnprintf_chk`, `__vfprintf_chk`).
-  These are glibc-internal symbols. If your archive was compiled with
-  `_FORTIFY_SOURCE` (which is common in release builds on Ubuntu/Debian with
-  `-O2`) and your linker targets musl or a different glibc, the symbols are
-  simply absent.
+Parsing is pure Go, in `lib/parser`:
 
-### Why Musl Solves This
+| Layer | Package | Libraries |
+|---|---|---|
+| Images | `lib/parser/image` | `github.com/aoiflux/libewf`, `github.com/aoiflux/libvhdi` |
+| Partition tables | `lib/parser/partition` | `github.com/aoiflux/libtable`, `github.com/diskfs/go-diskfs` |
+| File systems | `lib/parser/fs/<name>` | `github.com/aoiflux/libntfs`, `libext`, `libfat`, `libxfat`, `libhfs`, `libxfs` |
 
-**musl-libc** is designed from the ground up for clean static linking. A binary
-linked against musl statically is a single self-contained ELF with no runtime
-dependencies. It runs on any Linux kernel regardless of what userspace is
-installed.
+During ingest, `lib/evidence` opens images and `lib/index` reads partitions
+and file systems (through `lib/parser/scan`). `lib/parser/tskcompat` and
+`lib/parser/pdiff` are comparison tools from the move away from libtsk; no
+production code imports them.
 
-The build script uses `x86_64-linux-musl-gcc` (or the zig wrapper) to target
-musl. The resulting binary has zero shared library dependencies.
+## Compression product and FFI
 
-### Zig as a Cross-Compiler
+The FFI library is the only part of the repository that uses cgo
+(`cmd/ffi/main.go`).
 
-`zig cc` bundles a full cross-compilation toolchain including:
+`build-compression.ps1` and `build-compression.sh` build the compression
+product. `build-product.ps1` and `build-product.sh` route to them.
 
-- LLVM/clang compiler
-- Musl libc headers and static libraries
-- `compiler-rt`
+| Setting | `build-compression.ps1` | `build-compression.sh` | Default |
+|---|---|---|---|
+| What to build | `-Mode cli\|ffi\|all` | `MODE` | `all` |
+| Library kind | `-FfiBuildMode auto\|c-shared\|c-archive` | `FFI_BUILD_MODE` | `auto` |
+| Build profile | `-BuildProfile debug\|release` | `BUILD_PROFILE` | `debug` |
+| Targets | `-Targets` | `TARGETS`, separated by commas | `windows/amd64` (PowerShell), `linux/amd64` (sh) |
+| Output | `-OutputDir` | `OUTPUT_DIR` | `dist/compression` |
 
-It can target any supported triple directly from Windows:
+- The CLI builds from `./cmd/compression` with `CGO_ENABLED=0`.
+- The library builds from `./cmd/ffi` with `CGO_ENABLED=1` and
+  `-buildmode c-shared` or `c-archive`. `auto` picks `c-shared` (`.dll`) on
+  Windows and `c-archive` (`.a`) elsewhere. Go also writes a C header beside it.
+- `release` adds `-ldflags "-s -w"`.
+- `build-product.ps1` has no build-profile parameter, so it always builds
+  `debug`.
+- `build-compression-linux.sh` runs only on Linux or WSL. It builds the library
+  as a `c-archive` with the `release` profile.
 
+The library build needs a C compiler for the target:
+
+- The scripts do not set `CC`, so cgo uses the compiler that `go env CC`
+  names.
+- On Windows, cgo needs a GCC-compatible compiler such as MinGW-w64 `gcc` on
+  `PATH`. MSVC `cl.exe` does not work with cgo.
+- A `c-archive` built on Windows is a GNU `.a`, which MSVC toolchains do not
+  link. For Flutter on Windows, use `c-shared`.
+- Building the library for another OS needs a cross C compiler. Build the Linux
+  library inside Linux or WSL instead.
+
+[COMPRESSION_ABI_REFERENCE.md](COMPRESSION_ABI_REFERENCE.md) describes the
+outputs and the library's ABI.
+
+## History
+
+Until commit `2991008` (2026-08-11), `dues` linked `libtusk`, a C++ wrapper of
+The Sleuth Kit, through cgo on `windows/amd64` and `linux/amd64`. That needed
+MinGW-w64 on Windows and a zig/musl toolchain on Linux, with matching C++ ABIs.
+The `notusk` build tag, the `--parser` flag, `lib/parser/tusk_amd64.go`,
+`lib/parser/tusk_fallback.go` and `clib/` went with it. The old notes on those
+toolchains no longer apply. To read them:
+
+```sh
+git show 2991008:docs/TOOLCHAIN_NOTES.md
 ```
-zig cc -target x86_64-linux-musl
-```
-
-Because CMake and Go's CGO expect `CC` to be a plain command (no embedded
-spaces), a `.cmd` wrapper is used:
-
-**`zigcc-linux-amd64.cmd`** (in repo root):
-
-```bat
-@zig cc -target x86_64-linux-musl %*
-```
-
-Set as `CC` before `go build`:
-
-```
-CC=zigcc-linux-amd64.cmd CGO_ENABLED=1 GOOS=linux GOARCH=amd64 go build ...
-```
-
-### The ABI Mismatch We Hit
-
-The current `libtusk_lnx.a` was compiled on a Linux machine with:
-
-- **System GCC** (gcc-13)
-- **Glibc headers** (`/usr/include/x86_64-linux-gnu/`)
-- **libstdc++** (GCC's C++ standard library)
-
-The final link step with `zig cc -target x86_64-linux-musl` failed because:
-
-1. Musl does not have `__snprintf_chk` / `__fprintf_chk` / etc. — these are
-   glibc `_FORTIFY_SOURCE` wrapper symbols compiled into the object files.
-2. Zig uses LLVM's **libc++**, not **libstdc++**. The two C++ ABIs are
-   incompatible. Symbols like `std::__cxx11::basic_string<...>::~basic_string()`
-   live in libstdc++; libc++ uses different symbol names and a different vtable
-   layout.
-
-**Fix:** `libtusk_lnx.a` must be rebuilt from the tusk source using
-`zig cc -target x86_64-linux-musl` as the C/C++ compiler. Both the archive and
-the final binary must target the same ABI.
-
-Rebuilding with zig (on any machine with zig installed):
-
-```bash
-# zigcc.sh / zigcxx.sh wrappers:
-#   zigcc.sh:  zig cc  -target x86_64-linux-musl "$@"
-#   zigcxx.sh: zig c++ -target x86_64-linux-musl "$@"
-
-cd /path/to/tusk
-cmake -S . -B build \
-  -DCMAKE_C_COMPILER=/path/to/zigcc.sh \
-  -DCMAKE_CXX_COMPILER=/path/to/zigcxx.sh \
-  -DCMAKE_BUILD_TYPE=Release
-cmake --build build
-# copy build/libtusk.a -> clib/libtusk_lnx.a
-```
-
----
-
-## Windows/amd64: MinGW vs MSVC
-
-### Why MSVC Cannot Be Used
-
-Go's CGO toolchain on Windows requires a GCC-compatible compiler. The CGO bridge
-generates C code that is compiled with whatever `CC` points to. MSVC (`cl.exe`):
-
-- Uses a completely different command-line interface (`/Fe`, `/Fo`, `/MT`, etc.)
-  instead of GCC-style flags (`-o`, `-c`, `-static`)
-- Uses its own C++ ABI (MSVC ABI) incompatible with GCC's Itanium ABI
-- Cannot be driven by CGO's internal compiler invocation
-
-MSVC is therefore **not supported** for CGO builds of Go programs.
-
-### MinGW-w64
-
-**MinGW-w64** provides GCC targeting Windows PE/COFF executables. It is the
-standard CGO toolchain on Windows.
-
-The build uses `x86_64-w64-mingw32-gcc` as the cross-compiler for
-`windows/amd64`. This must be a proper MinGW-w64 cross-compiler targeting
-`x86_64-w64-mingw32`. On Windows, this is available from:
-
-- **MSYS2**: `pacman -S mingw-w64-x86_64-gcc` (recommended, most up-to-date)
-- **Scoop** (`extras` bucket): `scoop install mingw`
-- **WinLibs** (standalone distribution): https://winlibs.com
-
-The regular `gcc` in PATH on Windows is almost always the MinGW compiler that
-comes with Git for Windows or MSYS2. It targets the host Windows machine
-(`x86_64-pc-windows-gnu`), which is fine when building for `windows/amd64`
-natively. However, the build script runs on Windows and cross-compiles all
-targets, so the `x86_64-w64-mingw32-gcc` form is used explicitly to avoid
-ambiguity.
-
-### Why -static Works on Windows With MinGW
-
-MinGW uses `msvcrt.dll` (the old MSVC C runtime) or `ucrt.dll` as its C runtime,
-but all of MinGW's own runtime pieces (`libgcc`, `libstdc++`, `libmingw32`) can
-be statically linked:
-
-```
--static -lstdc++ -lm
-```
-
-This embeds the C++ runtime and math library into the binary. The final binary
-still depends on `kernel32.dll`, `ntdll.dll`, etc. (Windows kernel DLLs), but
-those are always present and stable across all supported Windows versions.
-
-The glibc `_FORTIFY_SOURCE` problem does not apply on Windows because MinGW does
-not inject those checked-function wrappers.
-
-### libtusk_win.a ABI
-
-`libtusk_win.a` was compiled on Linux using `x86_64-w64-mingw32-g++` (a Linux-
-hosted MinGW cross-compiler). This produces PE/COFF object files using the MinGW
-ABI — the same ABI that `x86_64-w64-mingw32-gcc` on Windows expects.
-
-As long as both sides use MinGW-w64 with the same target triple, the archive
-links cleanly. The same ABI-mismatch risk exists here: if the archive were ever
-rebuilt with MSVC or with a different ABI (e.g., LLVM/clang-cl targeting MSVC),
-the link would fail with C++ symbol errors.
-
----
-
-## Summary Table
-
-| Target        | CGO | CC                            | C++ Runtime  | C Runtime | libtusk built with                  |
-| ------------- | --- | ----------------------------- | ------------ | --------- | ----------------------------------- |
-| windows/amd64 | Yes | `x86_64-w64-mingw32-gcc`      | libstdc++    | msvcrt    | `x86_64-w64-mingw32-g++`            |
-| linux/amd64   | Yes | `zigcc-linux-amd64.cmd` (zig) | libc++ (zig) | musl      | `zig c++ -target x86_64-linux-musl` |
-| linux/arm64   | No  | —                             | —            | —         | not needed                          |
-| darwin/amd64  | No  | —                             | —            | —         | not needed                          |
-| darwin/arm64  | No  | —                             | —            | —         | not needed                          |
-| windows/arm64 | No  | —                             | —            | —         | not needed                          |
-
----
-
-## Checklist When Regenerating libtusk Archives
-
-### libtusk_lnx.a
-
-- [ ] Build with `zig c++ -target x86_64-linux-musl` (not system GCC)
-- [ ] Do not compile with `-D_FORTIFY_SOURCE` (or ensure zig suppresses it)
-- [ ] Do not link against system libstdc++; zig bundles its own libc++
-- [ ] Verify with `nm libtusk_lnx.a | grep __snprintf_chk` — must return nothing
-- [ ] Verify with `nm libtusk_lnx.a | grep musl` or check for musl-linked
-      symbols
-
-### libtusk_win.a
-
-- [ ] Build with `x86_64-w64-mingw32-g++` (MinGW-w64, not MSVC, not clang-cl)
-- [ ] Verify PE/COFF format: `file libtusk_win.a` should show `Windows` object
-      files
-- [ ] Ensure `-lstdc++ -lm` is present in the Go `#cgo windows LDFLAGS`
-      directive

@@ -150,6 +150,10 @@ func BenchmarkIngestMetadataPathHotspots(b *testing.B) {
 	})
 
 	b.Run("process_revrel_append_primary/files_32/chunks_16", func(b *testing.B) {
+		// processRevRel writes nothing unless reverse relations are on.
+		oldRevRel := cnst.ENABLEREVREL
+		cnst.ENABLEREVREL = true
+		defer func() { cnst.ENABLEREVREL = oldRevRel }()
 		db := openRevRelBenchDB(b)
 		defer db.Close()
 
@@ -434,16 +438,15 @@ func probeRevRelHotpath(chash []byte, db *badger.DB) error {
 	return nil
 }
 
-// BenchmarkIngestBatchOwnership compares the metadata write throughput of the
-// current shared-batch fan-out path against the single-writer batch-owner path.
+// BenchmarkIngestBatchOwnership measures the metadata write throughput of the
+// single-writer batch-owner path. (The shared-batch fan-out path it was once
+// compared with is gone.)
 //
-// Both modes use the same workload: N files each with M chunks, where every
-// file shares the same set of chunk hashes so reverse-relation map merges are
-// exercised on every write.
+// The workload is N files each with M chunks, where every file shares the
+// same set of chunk hashes.
 //
 // The benchmark measures only the write-loop side (processRel + processRevRel
-// issued directly, as in BenchmarkIngestMetadataPath) so the two modes differ
-// only in their batch-ownership model, not in hashing work.
+// issued directly, as in BenchmarkIngestMetadataPath), not hashing work.
 func BenchmarkIngestBatchOwnership(b *testing.B) {
 	ensureBenchmarkCodecs(b)
 

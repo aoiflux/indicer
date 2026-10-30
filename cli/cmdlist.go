@@ -30,7 +30,7 @@ func ListData(ctx context.Context, opts DBOptions, statusFilter string) (err err
 	db := h.DB
 	encryptionNotice(h)
 
-	// Open the enrichment graph, read-only, for graphdb-first retrieval. It
+	// Open the enrichment graph, read-only, for the annotations it adds. It
 	// lives in the data root, not the working directory, and a listing never
 	// creates it (CFG-7).
 	logging.GetLogger().Debug("ListData OPEN_GRAPH_REPOSITORY")
@@ -58,13 +58,13 @@ func ListData(ctx context.Context, opts DBOptions, statusFilter string) (err err
 		}
 	}()
 
-	// Try graphdb-first listing
-	logging.GetLogger().Info("ListData LIST_EXECUTE", zap.String("mode", "graphdb_first"))
+	// List from the database; the graph only annotates indexed files.
+	logging.GetLogger().Info("ListData LIST_EXECUTE", zap.String("mode", "database_annotated"))
 	err = store.ListWithEnrichment(db, enrichRepo, statusFilter)
 	if err != nil {
 		logging.GetLogger().Warn("ListData LIST_GRAPHDB_FAILED_FALLBACK_KV",
 			zap.Error(err),
-			zap.String("mode", "graphdb_first"),
+			zap.String("mode", "database_annotated"),
 		)
 		err = store.List(db, statusFilter)
 		if err != nil {
@@ -79,7 +79,7 @@ func ListData(ctx context.Context, opts DBOptions, statusFilter string) (err err
 	}
 	logging.GetLogger().Info("ListData COMPLETE",
 		zap.Int64("duration_ms", time.Since(start).Milliseconds()),
-		zap.String("mode", "graphdb_first"),
+		zap.String("mode", "database_annotated"),
 	)
 	return nil
 }

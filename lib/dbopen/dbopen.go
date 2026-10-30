@@ -769,6 +769,7 @@ func (h *Handle) Close() error {
 	h.DB = nil
 	blobcodec.Unregister(db)
 	dbio.UnregisterKVDir(db)
+	dbmeta.UnregisterLayout(db)
 	err := db.Close()
 	h.removeShadow()
 	if h.lock != nil {

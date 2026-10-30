@@ -31,7 +31,7 @@ const (
 	DefaultLimit = 5000
 	// MaxTextBytes is how much of each file's content is read for its text.
 	MaxTextBytes = 128 * 1024
-	// maxTextRunes bounds the text kept for one file.
+	// maxTextRunes bounds the text kept for one file, in bytes of UTF-8.
 	maxTextRunes = 80 * 1024
 	// boltTimeout bounds the wait for an index another process holds.
 	boltTimeout = "2s"

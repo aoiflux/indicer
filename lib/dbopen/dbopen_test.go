@@ -461,6 +461,24 @@ func TestReadOnlyOpenOfUnfinishedDatabase(t *testing.T) {
 // TestWritableOpenSweepsTemps: a writable open holds the root lock alone, so
 // every temporary file a killed process left in the root is removed, however
 // young, with the part files of uploads; a read-only open removes nothing.
+// TestCloseForgetsTheDatabase: the registries keyed by *badger.DB must drop a
+// closed database, or every open in a long-running process (the FFI library)
+// keeps one alive.
+func TestCloseForgetsTheDatabase(t *testing.T) {
+	root := setup(t)
+	h := open(t, Request{Path: root, Mode: ReadWrite})
+	db := h.DB
+	if _, ok := dbmeta.LayoutFor(db); !ok {
+		t.Fatal("an open database has no registered layout")
+	}
+	if err := h.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := dbmeta.LayoutFor(db); ok {
+		t.Error("the layout registry still holds the closed database")
+	}
+}
+
 func TestWritableOpenSweepsTemps(t *testing.T) {
 	root := setup(t)
 	h := open(t, Request{Path: root, Mode: ReadWrite})

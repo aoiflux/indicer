@@ -12,6 +12,9 @@ import (
 // logDirFromArgs.
 const flagLogDir = "log-dir"
 
+// cmdReindex names the reindex command.
+const cmdReindex = "reindex"
+
 type cliFlags struct {
 	logDir            *string
 	dbpath            *string
@@ -150,7 +153,7 @@ func newCLIDefinition() cliDefinition {
 	flags.performanceMode = app.Flag(cnst.FlagPerformanceMode, "Convenience preset: equivalent to --preset performance").Short(cnst.FlagPerformanceModeShort).Default("false").Bool()
 	flags.lowResourceMode = app.Flag(cnst.FlagLowResourceMode, "Convenience preset: equivalent to --preset low-resource").Short(cnst.FlagLowResourceModeShort).Default("false").Bool()
 	flags.memopt = app.Flag(cnst.FlagLowResource, "Low resource use mode, foregoes performance in favour of utilising less memory, cpu, and energy").Short(cnst.FlagLowResourceShort).Default("false").Bool()
-	flags.quickOpt = app.Flag(cnst.FlagFastMode, "Quick mode, forgoes encryption, intra-chunk & overall db compression in favour of higher throughput").Short(cnst.FlagFastModeShort).Default("false").Bool()
+	flags.quickOpt = app.Flag(cnst.FlagFastMode, "Quick mode: create the database without table compression, for throughput (encryption is unchanged)").Short(cnst.FlagFastModeShort).Default("false").Bool()
 	flags.containerMode = app.Flag(cnst.FlagContainerMode, "Use container-based storage (packs multiple chunks into 1GB containers)").Short(cnst.FlagContainerModeShort).Default("false").Bool()
 	flags.hierarchicalIndex = app.Flag(cnst.FlagHierarchicalIndex, "RETIRED: has no effect; chunk locations are always kept in the database").Short(cnst.FlagHierarchicalShort).Hidden().Default("false").Bool()
 	flags.compressLevel = app.Flag(cnst.FlagCompressLevel, "Per-chunk zstd compression level [fast|default|best] (default: best)").Short(cnst.FlagCompressLevelShort).Default("best").String()
@@ -170,7 +173,7 @@ func newCLIDefinition() cliDefinition {
 	flags.storeHashStrategy = commands.store.Flag(cnst.FlagHashStrategy, "Store hash strategy for evidence [sync|async|hocho] (default: sync)").Short(cnst.FlagHashStrategyShort).Default(cnst.SyncHashStrategy).String()
 	flags.storePipeline = commands.store.Flag(cnst.FlagStorePipeline, "Store ingest pipeline mode [batch-owner|staged] (default: batch-owner)").Short(cnst.FlagStorePipelineShort).Default(cnst.StorePipelineBatch).String()
 	flags.storeAsyncFileWrite = commands.store.Flag(cnst.FlagStoreAsyncFileWrite, "DEPRECATED: has no effect; chunk blobs are always written durably").Short(cnst.FlagStoreAsyncFileWriteShort).Hidden().Default("false").Bool()
-	flags.storeIOEngine = commands.store.Flag(cnst.FlagStoreIOEngine, "Store write engine [auto|stdlib|io-uring] (default: auto)").Short(cnst.FlagStoreIOEngineShort).Default(cnst.StoreIOEngineAuto).String()
+	flags.storeIOEngine = commands.store.Flag(cnst.FlagStoreIOEngine, "Store write engine [auto|stdlib|io-uring] (default: auto, which uses stdlib; io-uring must be asked for)").Short(cnst.FlagStoreIOEngineShort).Default(cnst.StoreIOEngineAuto).String()
 	flags.storeIOUringQueue = commands.store.Flag(cnst.FlagStoreIOUringQueueDepth, "io-uring SQ/CQ depth (0 = auto-tuned)").Short(cnst.FlagStoreIOUringQueueDepthShort).Default("0").Int()
 	flags.hochoMode = commands.store.Flag(cnst.FlagHochoMode, "RETIRED: has no effect; partition and indexed-file hashes are always plain hashes").Short(cnst.FlagHochoModeShort).Hidden().Default(cnst.HochoModeBaseline).String()
 	flags.enableSimhash = commands.store.Flag(cnst.FlagSimhash, "Compute and store per-chunk simhash signatures during ingest (enables NeAR chunk-level similarity; off by default)").Short(cnst.FlagSimhashShort).Default("false").Bool()
@@ -181,13 +184,13 @@ func newCLIDefinition() cliDefinition {
 	commands.restore = app.Command(cnst.CmdRestore, "Restore file from database")
 	flags.rpath = commands.restore.Flag(cnst.FlagRestoreFilePath, "Path for restoring the file").Short(cnst.FlagRestoreFilePathShort).Default("restored").String()
 	flags.restoreForce = commands.restore.Flag("force", "Replace the restore path if it already exists").Default("false").Bool()
-	flags.restoreVerify = commands.restore.Flag("verify", "What to check while restoring: full (every chunk and the whole content's recorded hash), chunks (every chunk), or off").Default("full").Enum("full", "chunks", "off")
+	flags.restoreVerify = commands.restore.Flag("verify", "What to check while restoring: full (every chunk and the whole content's recorded hash), chunks (every chunk), or off (v2 chunks are still checked as they are decoded)").Default("full").Enum("full", "chunks", "off")
 	flags.restoreVerifyEWF = commands.restore.Flag("verify-ewf", "Also check a restored E01 evidence against the MD5 and SHA-1 its set recorded at acquisition").Default("false").Bool()
 	flags.restoreWorkers = commands.restore.Flag(cnst.FlagRestoreWorkers, "Override restore worker count (0 = adaptive default)").Short(cnst.FlagRestoreWorkersShort).Default("0").Int()
 	flags.restoreQueue = commands.restore.Flag(cnst.FlagRestoreQueue, "Override restore pipeline queue depth (0 = adaptive default)").Short(cnst.FlagRestoreQueueShort).Default("0").Int()
 	flags.restoreProgressMs = commands.restore.Flag(cnst.FlagRestoreProgressMs, "Restore progress update interval in milliseconds (default: 120)").Short(cnst.FlagRestoreProgressMsShort).Default("120").Int()
 	flags.restoreBufferMB = commands.restore.Flag(cnst.FlagRestoreBufferMB, "Restore output buffer size in MB (0 = mode-aware default: low=32, high=256)").Short(cnst.FlagRestoreBufferMBShort).Default("0").Int()
-	flags.rhash = commands.restore.Arg(cnst.OperandHash, "Hash of file that must be restoed").String()
+	flags.rhash = commands.restore.Arg(cnst.OperandHash, "Hash or ID of the object to restore, as list shows it").String()
 
 	commands.list = app.Command(cnst.CmdList, "List all the saved files in the database")
 	flags.listStatus = commands.list.Flag(cnst.FlagListStatus, "Filter evidence by status [all|completed|pending|failed]").Short(cnst.FlagListStatusShort).Default("all").String()
@@ -200,7 +203,7 @@ func newCLIDefinition() cliDefinition {
 	flags.repairYes = commands.repair.Flag("yes", "With --upgrade, delete the moved block index files without asking").Default("false").Bool()
 	flags.repairVfy = commands.repair.Flag(cnst.FlagRepairVerify, "Read back every stored chunk and check it against its hash").Default("false").Bool()
 
-	commands.reindex = app.Command("reindex", "Rebuild the index of stored evidence from its stored chunks")
+	commands.reindex = app.Command(cmdReindex, "Rebuild the index of stored evidence from its stored chunks")
 	flags.reindexIDs = commands.reindex.Arg("id", "Evidence ID or hash, as list shows it").Strings()
 	flags.reindexFailed = commands.reindex.Flag("failed", "Every evidence whose index pass failed or was interrupted").Default("false").Bool()
 	flags.reindexAll = commands.reindex.Flag("all", "Every stored evidence").Default("false").Bool()

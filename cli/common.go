@@ -58,7 +58,7 @@ func Common(ctx context.Context, opts DBOptions, mode dbopen.Mode, recover bool)
 	if l := h.Manifest.Layout; h.Created && l.ChunkKiB < 128 && !cnst.CONTAINERMODE {
 		color.Yellow("\n⚠️  RECOMMENDATION: You're using a chunk size of %dKB (< 128KB).", l.ChunkKiB)
 		color.Yellow("   Consider using --container flag for better filesystem efficiency.")
-		color.Yellow("   Container mode packs multiple small chunks into 1GB compressed files.\n")
+		color.Yellow("   Container mode packs many small chunks into container files of up to 1 GB.\n")
 		console.Println()
 	}
 

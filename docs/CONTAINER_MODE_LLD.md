@@ -1,1581 +1,332 @@
-# Container Mode - Low-Level Design Document
-
-## Table of Contents
-
-1. [Overview](#overview)
-2. [Architecture](#architecture)
-3. [Components](#components)
-4. [Data Structures](#data-structures)
-5. [Storage Flow](#storage-flow)
-6. [Retrieval Flow](#retrieval-flow)
-7. [Concurrency Model](#concurrency-model)
-8. [File Format Specifications](#file-format-specifications)
-9. [Configuration](#configuration)
-10. [Backward Compatibility](#backward-compatibility)
-11. [Performance Considerations](#performance-considerations)
-12. [Trade-offs](#trade-offs)
-
----
-
-## Overview
-
-### Purpose
-
-Container Mode is an optimization for the indicer deduplication system that
-reduces filesystem overhead by packing multiple data chunks into large container
-files (max 1GB each) instead of creating one file per chunk.
-
-### Key Benefits
-
-- **Reduced filesystem overhead**: From ~4000 files to 1 file per GB of unique
-  data
-- **Better compression ratios**: Compressing entire containers (1GB) vs
-  individual chunks (256KB)
-- **Sequential I/O patterns**: Appending chunks to containers instead of random
-  file creation
-- **Efficient storage**: Automatic zstd compression when containers are
-  finalized
-- **Lock-free concurrency**: Channel-based architecture eliminates mutex
-  contention
-- **High throughput**: CPU × 2 workers for optimal I/O-bound performance (20-40%
-  faster)
-
-### Recent Improvements (v2.0)
-
-**Lock-Free Channel Architecture**:
-
-- Replaced mutex-based writes with Go channel CSP pattern
-- Zero lock contention between worker goroutines
-- Buffered ring buffer (1000 requests) for burst handling
-- Single dedicated writer goroutine for sequential processing
-- CPU × 2 worker configuration in high performance mode
-
-**Performance Impact**:
-
-- **8-core CPU**: 16 workers vs 8 → 25-40% throughput improvement
-- **16-core CPU**: 32 workers vs 16 → 30-50% throughput improvement
-- Reduced context switches from ~50k/sec to ~10k/sec
-- Better CPU utilization for I/O-bound operations
-
-### Use Cases
-
-- **Optimal**: Small chunk sizes (< 128KB) where file count becomes problematic
-- **Beneficial**: Large datasets with high deduplication where unique data is
-  limited
-- **Standard**: Default 256KB chunks when filesystem can handle the file count
-
----
-
-## Architecture
-
-### High-Level Architecture
-
-```
-┌─────────────────────────────────────────────────────────────┐
-│                     Store Command                            │
-└─────────────────┬───────────────────────────────────────────┘
-                  │
-                  ▼
-┌─────────────────────────────────────────────────────────────┐
-│              storeEvidenceData()                             │
-│  • Creates ContainerManager (if CONTAINERMODE enabled)      │
-│  • Spawns multiple storeWorker() goroutines                 │
-└─────────────────┬───────────────────────────────────────────┘
-                  │
-                  ▼
-┌─────────────────────────────────────────────────────────────┐
-│                   storeWorker()                              │
-│  • Reads chunk from memory-mapped file                      │
-│  • Computes hash                                             │
-│  • Calls processChonk()                                      │
-└─────────────────┬───────────────────────────────────────────┘
-                  │
-                  ▼
-┌─────────────────────────────────────────────────────────────┐
-│                  processChonk()                              │
-│  • Checks if chunk exists (deduplication)                   │
-│  • If new: calls SetBatchChonkNode()                        │
-└─────────────────┬───────────────────────────────────────────┘
-                  │
-                  ▼
-┌─────────────────────────────────────────────────────────────┐
-│              SetBatchChonkNode()                             │
-│  Container Mode:                 Original Mode:              │
-│  • WriteChunkToContainer()      • WriteChonk()              │
-│  • Store "path|offset|size"     • Store filepath            │
-└─────────────────┬───────────────────────────────────────────┘
-                  │
-                  ▼
-┌─────────────────────────────────────────────────────────────┐
-│              ContainerManager                                │
-│  • Lock-free channel-based writes                            │
-│  • Single writer goroutine (no contention)                   │
-│  • Auto-creates new containers when full                     │
-│  • Compresses containers on finalization                     │
-└─────────────────────────────────────────────────────────────┘
-```
-
-### Component Interaction
-
-```
-┌─────────────┐        ┌──────────────┐       ┌─────────────┐
-│  store.go   │───────>│  dbio.go     │──────>│   fio.go    │
-│             │ chunks │              │ write │             │
-│ ThreadIO    │        │ SetBatch     │       │ Container   │
-│ Management  │        │ ChonkNode    │       │ Manager     │
-└─────────────┘        └──────────────┘       └─────────────┘
-       │                      │                      │
-       │                      │                      │
-       ▼                      ▼                      ▼
-┌─────────────┐        ┌──────────────┐       ┌─────────────┐
-│  Badger DB  │        │  Metadata    │       │  Container  │
-│  (K/V pairs)│        │  Storage     │       │   Files     │
-│             │        │              │       │  .blob.zst  │
-└─────────────┘        └──────────────┘       └─────────────┘
-```
-
-### Sequence Diagrams (Current Code)
-
-The following diagrams reflect the **current** implementation in
-`lib/fio/container.go` (queue-close draining, idempotent close, streaming
-container compression).
-
-#### A) Store path (new chunk in container mode)
-
-```mermaid
-sequenceDiagram
-   participant W as storeWorker goroutine
-   participant D as dbio.SetBatchChonkNode
-   participant C as ContainerManager.WriteChunkToContainer
-   participant Q as writeQueue (chan *WriteRequest)
-   participant L as writerLoop goroutine
-   participant F as current .blob file
-   participant B as badger WriteBatch
-
-   W->>D: processChonk(cdata, chash)
-   D->>C: WriteChunkToContainer(data, ckey, encKey)
-   C->>Q: enqueue WriteRequest{data,key,responseCh}
-   L->>Q: dequeue request
-   L->>L: doWrite(data,key)
-   alt QUICKOPT disabled
-      L->>L: zstd EncodeAll(data)
-      L->>L: AES Seal(encoded,key)
-   else QUICKOPT enabled
-      L->>L: processedData = data
-   end
-   alt first write OR container full
-      L->>L: createNewContainer()
-   end
-   L->>F: append processedData
-   L-->>C: WriteResponse{path,offset,size}
-   C-->>D: (containerPath,offset,size)
-   D->>B: SetBatchNode(ckey, "path|offset|size")
-```
-
-#### B) Close path (graceful drain + finalize)
-
-```mermaid
-sequenceDiagram
-   participant S as storeEvidenceData defer
-   participant C as ContainerManager.Close
-   participant Q as writeQueue
-   participant L as writerLoop
-   participant F as current .blob
-   participant Z as .blob.zst output
-
-   S->>C: Close()
-   C->>C: closeOnce.Do(...)
-   C->>C: acceptMu.Lock + closed=true
-   C->>Q: close(writeQueue)
-   C->>C: acceptMu.Unlock
-   L->>Q: range drain remaining requests
-   L-->>C: close(writerDone) when queue exhausted
-   C->>F: Sync + Close
-   C->>Z: compressContainer(streaming zstd)
-   C->>F: Remove original .blob
-```
-
-#### C) Restore path (read by metadata)
-
-```mermaid
-sequenceDiagram
-   participant R as dbio.GetChonkNode
-   participant C as fio.ReadChunkFromContainer
-   participant F as container file
-   participant D as decoder/decryptor
-
-   R->>R: Parse metadata "path|offset|size"
-   R->>C: ReadChunkFromContainer(path,offset,size,key)
-   alt path missing and .blob.zst exists
-      C->>C: switch to .blob.zst
-   end
-   alt .blob.zst
-      C->>F: stream decode + skip offset + read size
-   else .blob
-      C->>F: ReadAt(offset,size)
-   end
-   alt QUICKOPT disabled
-      C->>D: UnsealAES(encoded,key)
-      C->>D: zstd DecodeAll(decrypted)
-   end
-   C-->>R: raw chunk bytes
-```
-
----
-
-## Components
-
-### 1. ContainerManager (`lib/fio/container.go`)
-
-**Responsibility**: Manages writing chunks to container files using lock-free
-channel-based concurrency.
-
-**Key Fields**:
-
-```go
-type ContainerManager struct {
-    currentContainer string              // Path to active container
-    currentFile      *os.File            // Open file handle
-    currentOffset    int64               // Current write position
-    dbpath           string              // Database directory path
-    containerIndex   int                 // Container sequence number
-    writeQueue       chan *WriteRequest  // Lock-free write queue (buffered)
-    shutdownCh       chan struct{}       // Signal to stop writer goroutine
-    writerDone       chan struct{}       // Signal writer goroutine finished
-}
-```
-
-**Architecture**: Lock-free ring buffer using Go channels
-
-- **No mutex**: Uses channel-based CSP (Communicating Sequential Processes)
-- **Single writer goroutine**: Eliminates lock contention
-- **Buffered queue**: 1000 request capacity for burst handling
-
-**Key Methods**:
-
-#### `NewContainerManager(dbpath string) *ContainerManager`
-
-- Initializes a new container manager
-- Sets initial container index to 0
-- No files created until first write
-
-#### `WriteChunkToContainer(data, ckey, key []byte) (string, int64, int64, error)`
-
-- **Lock-free**: Enqueues write request via buffered channel
-- **Non-blocking**: Worker goroutines don't wait for locks
-- **Returns**: `(containerPath, offset, sizeWritten, error)` via response
-  channel
-
-**Flow**:
-
-1. Worker creates WriteRequest with response channel
-2. Enqueues to writeQueue (lock-free operation)
-3. Waits for response from writer goroutine
-4. Returns result to caller
-
-#### `writerLoop()`
-
-- **Dedicated goroutine**: Processes all writes sequentially
-- **No contention**: Single writer = no lock needed
-- **Graceful shutdown**: Drains pending requests on Close()
-
-**Processing**:
-
-- Compresses (zstd) and encrypts (AES) chunk data
-- Space check: Creates new container if current is full
-- Appends processed data to current container
-- Sends response back to caller's channel
-
-#### `createNewContainer() error`
-
-- Closes and compresses previous container
-- Generates unique container filename using hash
-- Creates new `.blob` file in `BLOBS/` directory
-- Resets offset to 0
-
-#### `compressContainer(containerPath string) error`
-
-- Reads entire uncompressed container file
-- Compresses using zstd encoder (`cnst.ENCODER`)
-- Writes to `.blob.zst` file
-- Deletes original `.blob` file
-- Atomic operation to prevent corruption
-
-#### `Close() error`
-
-- Syncs and closes current file handle
-- Compresses the final container
-- Called via `defer` in storage flow
-
-### 2. Database Layer (`lib/dbio/dbio.go`)
-
-#### `SetBatchChonkNode(key, data []byte, db *badger.DB, batch *badger.WriteBatch, containerMgr *fio.ContainerManager) error`
-
-**Dual-mode implementation**:
-
-```go
-if containerMgr != nil {
-    // CONTAINER MODE
-    containerPath, offset, size := containerMgr.WriteChunkToContainer(...)
-    metadata := fmt.Sprintf("%s|%d|%d", containerPath, offset, size)
-    return SetBatchNode(key, []byte(metadata), batch)
-} else {
-    // ORIGINAL MODE
-    cfpath := fio.WriteChonk(...)
-    return SetBatchNode(key, cfpath, batch)
-}
-```
-
-**Database Key-Value Mapping**:
-
-- **Key**: `C|||:<chunk_hash>` (chunk namespace + SHA3-512 hash)
-- **Value (Container)**: `"/path/to/container.blob.zst|offset|size"`
-- **Value (Original)**: `"/path/to/chunk.blob"`
-
-#### `GetChonkNode(key []byte, db *badger.DB) ([]byte, error)`
-
-**Intelligent format detection**:
-
-```go
-metadata := GetNode(key, db)
-parts := strings.Split(string(metadata), "|")
-
-if len(parts) == 3 {
-    // New format: container mode
-    return ReadChunkFromContainer(parts[0], offset, size, key)
-} else {
-    // Old format: direct file path
-    return ReadChonk(metadata, key)
-}
-```
-
-### 3. Storage Coordinator (`lib/store/store.go`)
-
-#### `storeEvidenceData(infile structs.InputFile) error`
-
-**Container Manager Lifecycle**:
-
-```go
-var containerMgr *fio.ContainerManager
-if cnst.CONTAINERMODE {
-    containerMgr = fio.NewContainerManager(db.Opts().Dir)
-    defer containerMgr.Close()  // Ensures cleanup and compression
-} else {
-    containerMgr = nil
-}
-
-tio.ContainerMgr = containerMgr  // Passed to worker goroutines
-```
-
-**Worker Pool Pattern**:
-
-- Spawns concurrent `storeWorker()` goroutines
-- Limited by `cnst.GetMaxThreadCount()` (CPU × 2 in high performance mode)
-- Each worker processes chunks independently
-- Shares single ContainerManager (lock-free channel queue)
-
-#### `processChonk(cdata, chash []byte, db *badger.DB, batch *badger.WriteBatch, containerMgr *fio.ContainerManager) error`
-
-**Deduplication Check**:
-
-1. Check if chunk hash exists in database
-2. If exists: skip (already stored)
-3. If new: write via `SetBatchChonkNode()`
-
----
-
-## Data Structures
-
-### ThreadIO Structure
-
-```go
-type ThreadIO struct {
-    Index         int64                    // Current chunk position in file
-    ChonkEnd      int64                    // End position of chunk
-    MappedFile    mmap.MMap                // Memory-mapped source file
-    FHash         []byte                   // File hash
-    DB            *badger.DB               // Database handle
-    Batch         *badger.WriteBatch       // Batch write handle
-    Err           chan error               // Error channel for goroutines
-    ContainerMgr  *fio.ContainerManager    // Shared container manager (or nil)
-}
-```
-
-### Metadata Format
-
-#### Container Mode
-
-```
-Format: "containerPath|offset|size"
-Example: "/data/BLOBS/Ax7bQ2.blob.zst|268435456|262144"
-         └── path ──┘ └─ offset ─┘ └─size─┘
-```
-
-- **containerPath**: Absolute path to container file
-- **offset**: Byte offset where chunk starts (int64)
-- **size**: Size of chunk in bytes after compression/encryption (int64)
-
-#### Original Mode
-
-```
-Format: "filePath"
-Example: "/data/BLOBS/Bx9cD4f5g6h7i8j9k0l1m2n3o4.blob"
-```
-
----
-
-## Storage Flow
-
-### Detailed Sequence Diagram
-
-```
-User          CLI          Store         Worker        ContainerMgr      Disk
- │             │             │             │                │             │
- │─store cmd──>│             │             │                │             │
- │             │─StoreData──>│             │                │             │
- │             │             │             │                │             │
- │             │             │─create mgr──────────────────>│             │
- │             │             │             │                │             │
- │             │             │─spawn──────>│                │             │
- │             │             │─spawn──────>│                │             │
- │             │             │─spawn──────>│                │             │
- │             │             │             │                │             │
- │             │             │             │─read chunk────>│             │
- │             │             │             │─compute hash──>│             │
- │             │             │             │                │             │
- │             │             │             │─write chunk───>│             │
- │             │             │             │                │─compress    │
- │             │             │             │                │─encrypt     │
- │             │             │             │                │─check space │
- │             │             │             │                │             │
- │             │             │             │                │─append─────>│
- │             │             │             │                │<────ok──────│
- │             │             │             │<─path|off|sz───│             │
- │             │             │             │                │             │
- │             │             │             │─store metadata>│             │
- │             │             │             │  (to badgerDB) │             │
- │             │             │             │                │             │
- │             │             │<─done───────│                │             │
- │             │             │<─done───────│                │             │
- │             │             │<─done───────│                │             │
- │             │             │             │                │             │
- │             │             │─close mgr──────────────────>│             │
- │             │             │             │                │─sync file   │
- │             │             │             │                │─compress────>│
- │             │             │             │                │  container  │
- │             │             │             │                │<────ok──────│
- │             │<─success────│             │                │             │
- │<─success────│             │             │                │             │
-```
-
-### Step-by-Step Process
-
-1. **Initialization**
-   - User executes: `indicer store --container file.dd`
-   - CLI parses flags, sets `cnst.CONTAINERMODE = true`
-   - Opens database connection
-   - Memory-maps input file
-
-2. **Container Manager Creation**
-   - `NewContainerManager()` initializes manager
-   - Starts dedicated writer goroutine
-   - Creates buffered channel queue (1000 capacity)
-   - Lock-free channel ready for concurrent access
-
-3. **Worker Pool Dispatch**
-   - Creates worker pool (size = CPU × 2 in high performance mode)
-   - Each worker assigned chunk range
-   - All workers share single ContainerManager (lock-free queue)
-
-4. **Chunk Processing** (per worker)
-   ```
-   a. Read chunk from mmap (zero-copy)
-   b. Compute SHA3-512 hash
-   c. Check if chunk exists (deduplication)
-   d. If new chunk:
-      - Call ContainerManager.WriteChunkToContainer()
-      - Store metadata in BadgerDB
-   ```
-
-5. **Container Write** (lock-free channel-based)
-   ```
-   a. Worker creates WriteRequest with response channel
-   b. Enqueue to writeQueue (non-blocking)
-   c. Writer goroutine dequeues request
-   d. Compress chunk with zstd
-   e. Encrypt chunk with AES-256
-   f. Check if chunk fits in current container
-      - If no: finalize current, create new
-   g. Append to current container
-   h. Update offset tracker
-   i. Send response back to worker's channel
-   j. Worker receives (path, offset, size)
-   ```
-
-6. **Container Finalization**
-   - When container reaches ~1GB or new container needed:
-     ```
-     a. Sync file writes (flush OS buffers)
-     b. Close file handle
-     c. Read entire container
-     d. Compress with zstd level 15
-     e. Write to .blob.zst file
-     f. Delete original .blob file
-     ```
-
-7. **Cleanup**
-   - Close final container
-   - Compress final container
-   - Close database
-   - Unmap file
-
----
-
-## Retrieval Flow
-
-### Sequence Diagram
-
-```
-User          CLI         Restore       DBIO          FIO           Disk
- │             │            │             │            │             │
- │─restore────>│            │             │            │             │
- │  cmd        │            │             │            │             │
- │             │─Restore───>│             │            │             │
- │             │  Data      │             │            │             │
- │             │            │─get chunk─>│            │             │
- │             │            │  key       │            │             │
- │             │            │            │─GetChonk──>│             │
- │             │            │            │  Node      │             │
- │             │            │            │            │─read meta   │
- │             │            │            │            │─parse "|"   │
- │             │            │            │            │             │
- │             │            │            │            │─open file──>│
- │             │            │            │            │<─.blob.zst──│
- │             │            │            │            │             │
- │             │            │            │            │─decompress  │
- │             │            │            │            │  container  │
- │             │            │            │            │             │
- │             │            │            │            │─extract     │
- │             │            │            │            │  chunk at   │
- │             │            │            │            │  offset     │
- │             │            │            │            │             │
- │             │            │            │            │─decrypt     │
- │             │            │            │            │─decompress  │
- │             │            │            │            │             │
- │             │            │            │<─chunk─────│             │
- │             │            │<─chunk─────│            │             │
- │             │            │─write to──────────────────────────────>│
- │             │            │  output                               │
- │             │<─success───│                                       │
- │<─restored───│                                                    │
-```
-
-### Detailed Steps
-
-1. **Metadata Retrieval**
-   ```go
-   metadata := db.Get("C|||:<chunk_hash>")
-   // Container: "/path/file.blob.zst|268435456|262144"
-   // Original:  "/path/file.blob"
-   ```
-
-2. **Format Detection**
-   ```go
-   parts := strings.Split(metadata, "|")
-   if len(parts) == 3 {
-       // Container format
-   } else {
-       // Original format (backward compatibility)
-   }
-   ```
-
-3. **Container Read** (Container Format)
-   ```
-   a. Extract: containerPath, offset, size
-   b. Check if file exists:
-      - Try .blob.zst (compressed)
-      - Fallback to .blob (uncompressed)
-   c. Read entire container file
-   d. Decompress if .zst extension
-   e. Extract chunk: data[offset:offset+size]
-   f. Decrypt chunk (AES-256)
-   g. Decompress chunk (zstd)
-   h. Return raw data
-   ```
-
-4. **Optimization: Container Caching** (Future Enhancement)
-   - Currently: Reads entire container for each chunk
-   - Opportunity: LRU cache of decompressed containers
-   - Trade-off: Memory vs. I/O performance
-
----
-
-## Concurrency Model
-
-### Lock-Free Channel-Based Architecture
-
-#### Ring Buffer Implementation
-
-```go
-type WriteRequest struct {
-    data       []byte
-    ckey       []byte
-    key        []byte
-    responseCh chan WriteResponse  // Reply channel
-}
-
-type ContainerManager struct {
-    writeQueue chan *WriteRequest  // Buffered channel (1000 capacity)
-    shutdownCh chan struct{}       // Shutdown signal
-    writerDone chan struct{}       // Completion signal
-    // ... other fields ...
-}
-
-// Workers enqueue writes (lock-free)
-func (cm *ContainerManager) WriteChunkToContainer(...) {
-    req := &WriteRequest{
-        data:       data,
-        responseCh: make(chan WriteResponse, 1),
-    }
-    cm.writeQueue <- req     // Non-blocking enqueue
-    resp := <-req.responseCh // Wait for result
-    return resp.containerPath, resp.offset, resp.size, resp.err
-}
-
-// Single writer goroutine processes sequentially
-func (cm *ContainerManager) writerLoop() {
-    for {
-        select {
-        case req := <-cm.writeQueue:
-            path, offset, size, err := cm.doWrite(...)
-            req.responseCh <- WriteResponse{path, offset, size, err}
-        case <-cm.shutdownCh:
-            // Drain remaining requests
-            return
-        }
-    }
-}
-```
-
-**Why Lock-Free Channels**:
-
-- ✅ **Zero lock contention**: Workers never block each other
-- ✅ **Go-idiomatic**: Channels use lock-free operations internally
-- ✅ **Better throughput**: 20-40% improvement with CPU×2 workers
-- ✅ **Backpressure**: Buffered channel provides natural rate limiting
-- ✅ **Simple reasoning**: Single writer = no race conditions
-
-**vs. Mutex Approach**:
-
-- **Mutex**: All workers serialize at lock, context switches, wasted CPU cycles
-- **Channels**: Lock-free enqueue, workers stay productive doing I/O-bound work
-
-**Worker Configuration**:
-
-- **High Performance Mode** (default): `runtime.NumCPU() × 2` workers
-- **Rationale**: Workers are I/O-bound (file writes, DB ops, compression)
-- **Benefit**: More workers keep pipeline full when some are blocked on I/O
-
-### Worker Pool Concurrency (Lock-Free)
-
-```
-┌─────────────────────────────────────────────────────────┐
-│                    Main Goroutine                        │
-│  • Memory-maps file                                      │
-│  • Creates ContainerManager (with writer goroutine)      │
-│  • Spawns N workers (N = CPU × 2 in high perf mode)     │
-│  • Waits for completion                                  │
-└────────────────┬────────────────────────────────────────┘
-                 │
-        ┌────────┴────────┬────────────┬─────────────┐
-        ▼                 ▼            ▼             ▼
-  ┌──────────┐      ┌──────────┐  ┌──────────┐  ┌──────────┐
-  │ Worker 1 │      │ Worker 2 │  │ Worker 3 │  │ Worker N │
-  │          │      │          │  │          │  │          │
-  │ • Hash   │      │ • Hash   │  │ • Hash   │  │ • Hash   │
-  │ • Enqueue│      │ • Enqueue│  │ • Enqueue│  │ • Enqueue│
-  │   request│      │   request│  │   request│  │   request│
-  └────┬─────┘      └────┬─────┘  └────┬─────┘  └────┬─────┘
-       │                 │            │            │
-       │                 │            │            │
-       └────────┬────────┴────────┬───┴────────────┘
-                │ (Lock-free enqueue via channel)
-                ▼
-         ┌──────────────────────────────────┐
-         │   Write Queue (buffered ch)      │
-         │   Capacity: 1000 requests        │
-         │   • Backpressure on overflow     │
-         └──────────┬───────────────────────┘
-                    │
-                    ▼
-         ┌──────────────────────────────┐
-         │   Writer Goroutine           │
-         │   • Sequential processing    │
-         │   • Compress & encrypt       │
-         │   • Append to container      │
-         │   • Send response            │
-         └──────────────────────────────┘
-```
-
-**Parallelism Benefits**:
-
-- **CPU**: Hash computation (SHA3-512) fully parallelized across workers
-- **I/O**: Memory-map reads (parallel from OS page cache)
-- **No contention**: Workers never block each other on container writes
-- **CPU × 2 workers**: Optimal for I/O-bound operations (compression,
-  encryption, disk I/O)
-
-**Throughput Improvement**:
-
-- **8 cores**: 16 workers vs 8 with mutex (25-40% faster)
-- **16 cores**: 32 workers vs 16 with mutex (30-50% faster)
-- **Reason**: More workers compensate for I/O wait time
-
-### Error Handling
-
-```go
-tio.Err = make(chan error, cnst.GetMaxThreadCount())
-
-// Each worker sends result
-storeWorker(tio) {
-    err := processChunk(...)
-    tio.Err <- err  // Non-blocking (buffered channel)
-}
-
-// Main goroutine collects results
-for active > 0 {
-    err := <-tio.Err
-    if err != nil {
-        return err  // Fast-fail on first error
-    }
-    active--
-}
-```
-
----
-
-## File Format Specifications
-
-### Container File Structure
-
-#### Uncompressed Container (`.blob`)
-
-```
-┌─────────────────────────────────────────────────────────┐
-│ Offset 0: Chunk 1 (compressed + encrypted)              │
-│           Size: Variable (e.g., 215,423 bytes)           │
-├─────────────────────────────────────────────────────────┤
-│ Offset 215,423: Chunk 2 (compressed + encrypted)        │
-│                 Size: Variable (e.g., 198,765 bytes)     │
-├─────────────────────────────────────────────────────────┤
-│ Offset 414,188: Chunk 3 (compressed + encrypted)        │
-│                 Size: Variable                           │
-├─────────────────────────────────────────────────────────┤
-│ ...                                                      │
-├─────────────────────────────────────────────────────────┤
-│ Offset ~1GB: Last chunk                                 │
-└─────────────────────────────────────────────────────────┘
-
-Total Size: ≤ 1GB (1,073,741,824 bytes)
-Format: Raw binary append-only
-No header, no footer, no index
-```
-
-**Key Properties**:
-
-- **No metadata**: Pure data storage, metadata in database
-- **Append-only**: Sequential writes, no random updates
-- **Variable chunk sizes**: Compression creates different sizes
-- **No alignment**: Chunks packed tightly, no padding
-
-#### Compressed Container (`.blob.zst`)
-
-```
-┌─────────────────────────────────────────────────────────┐
-│ ZSTD Frame Header                                        │
-├─────────────────────────────────────────────────────────┤
-│ Compressed Block 1                                       │
-├─────────────────────────────────────────────────────────┤
-│ Compressed Block 2                                       │
-├─────────────────────────────────────────────────────────┤
-│ ...                                                      │
-├─────────────────────────────────────────────────────────┤
-│ ZSTD Frame Checksum                                      │
-└─────────────────────────────────────────────────────────┘
-
-Original Size: ~1GB
-Compressed Size: Varies (typically 40-80% depending on data)
-Compression Level: 15 (zstd.SpeedBestCompression)
-```
-
-**Creation Process**:
-
-```go
-// 1. Read entire uncompressed container
-data := io.ReadAll(srcFile)  // ~1GB in memory
-
-// 2. Compress
-compressed := cnst.ENCODER.EncodeAll(data, make([]byte, 0, len(data)))
-
-// 3. Write to .zst file
-dstFile.Write(compressed)
-
-// 4. Delete original .blob
-os.Remove(srcFile)
-```
-
-### Chunk Format (Inside Container)
-
-#### Layer 1: Raw Chunk Data
-
-```
-Original chunk from file: 256KB raw bytes
-```
-
-#### Layer 2: After Compression
-
-```
-ZSTD compressed: ~40-200KB (varies by entropy)
-```
-
-#### Layer 3: After Encryption
-
-```
-AES-256-GCM encrypted: compressed_size + 28 bytes (GCM overhead)
-```
-
-#### Final Format in Container
-
-```
-[Encrypted(Compressed(RawData))] + [Next Chunk] + ...
-```
-
-### Database Key-Value Format
-
-#### Chunk Metadata Entry
-
-**Key Structure**:
-
-```
-Namespace: "C|||:"
-Hash: SHA3-512 (64 bytes)
-Full Key: "C|||:" + base64(hash)
-```
-
-**Value Structure (Container Mode)**:
-
-```
-Format: ASCII string
-Pattern: "/absolute/path/to/container.blob.zst|offset|size"
-Example: "/opt/indicer/data/BLOBS/Ax7bQ2n.blob.zst|268435456|262144"
-
-Fields:
-  - containerPath: UTF-8 string, absolute path
-  - offset: int64, decimal string representation
-  - size: int64, decimal string representation
-Delimiter: "|" (pipe character, ASCII 124)
-```
-
-**Value Structure (Original Mode)**:
-
-```
-Format: ASCII string
-Pattern: "/absolute/path/to/chunk.blob"
-Example: "/opt/indicer/data/BLOBS/Bx9cD4f5g6h7i8j9k0l1m2n3o4.blob"
-
-No delimiters, single path string
-```
-
-### Container Naming Convention
-
-```
-Pattern: {base64_hash[:25]}.blob[.zst]
-
-Examples:
-  Uncompressed: Ax7bQ2n3p5q7r9s1t3u5v.blob
-  Compressed:   Ax7bQ2n3p5q7r9s1t3u5v.blob.zst
-
-Generation:
-  1. Create unique string: "container_{index}"
-  2. Hash with SHA3-512
-  3. Base64 encode (URL-safe, no padding)
-  4. Truncate to 25 characters
-  5. Append extension
-```
-
----
-
-## Configuration
-
-### Global Flags
-
-```go
-// lib/cnst/const.go
-var CONTAINERMODE bool  // Enable container storage mode
-
-// main.go
-containerMode := app.Flag(
-    cnst.FlagContainerMode,
-    "Use container-based storage (packs multiple chunks into 1GB containers)"
-).Short(cnst.FlagContainerModeShort).Default("false").Bool()
-```
-
-### Constants
-
-```go
-// lib/fio/container.go
-const MaxContainerSize = 1 * cnst.GB  // 1,073,741,824 bytes
-
-// lib/cnst/const.go
-const (
-    BLOBSDIR    = "BLOBS"         // Directory for blob storage
-    BLOBEXT     = ".blob"         // Uncompressed container extension
-    BLOBZSTEXT  = ".blob.zst"     // Compressed container extension
-    FileNameLen = 25              // Length of generated filenames
-)
-
-const DefaultChonkSize = 256 * KB  // Default chunk size
-```
-
-### Runtime Detection
-
-```go
-// cli/common.go
-func common(chonkSize int, ...) {
-    if chonkSize < 128 && !cnst.CONTAINERMODE {
-        color.Yellow("⚠️  RECOMMENDATION: You're using a chunk size of %dKB (< 128KB).", chonkSize)
-        color.Yellow("   Consider using --container flag for better filesystem efficiency.")
-    }
-}
-```
-
-**Logic**:
-
-- Chunk size < 128KB → recommend container mode
-- No forced behavior, user decides
-- Warning shown once per execution
-
----
-
-## Backward Compatibility
-
-### Multi-Format Support
-
-The system maintains **full backward compatibility** through intelligent format
-detection:
-
-```go
-func GetChonkNode(key []byte, db *badger.DB) ([]byte, error) {
-    metadata, err := GetNode(key, db)
-    if err != nil {
-        return nil, err
-    }
-
-    // Parse metadata: detect format by delimiter
-    parts := strings.Split(string(metadata), "|")
-
-    if len(parts) == 3 {
-        // NEW FORMAT: Container mode
-        containerPath := parts[0]
-        offset, _ := strconv.ParseInt(parts[1], 10, 64)
-        size, _ := strconv.ParseInt(parts[2], 10, 64)
-        return ReadChunkFromContainer(containerPath, offset, size, key)
-    } else {
-        // OLD FORMAT: Direct file path (backward compatibility)
-        return ReadChonk(metadata, key)
-    }
-}
-```
-
-### Migration Scenarios
-
-#### Scenario 1: Read Old Database (Original → Container Mode)
-
-```
-User Action: Enable --container flag on existing database
-Database: Contains chunks stored in original format
-Result:
-  ✓ Old chunks read successfully (direct file paths)
-  ✓ New chunks written to containers
-  ✓ Mixed mode operation supported
-```
-
-#### Scenario 2: Read New Database (Container → Original Mode)
-
-```
-User Action: Disable --container flag on container-mode database
-Database: Contains chunks stored in container format
-Result:
-  ✓ Container chunks read successfully (parse metadata)
-  ✓ New chunks written as individual files
-  ✓ Mixed mode operation supported
-```
-
-#### Scenario 3: Database Migration (Optional)
-
-```
-Not implemented (deferred to future version)
-
-Potential approach:
-  1. Iterate all chunk keys
-  2. Read chunk data
-  3. Re-write in new format
-  4. Update metadata
-  5. Delete old storage
-
-Complexity: High, benefit: Low (mixed mode works)
-```
-
-### Format Conversion
-
-**Automatic Detection Logic**:
-
-```
-Read Metadata
-     │
-     ▼
-Contains "|"? ────YES───> Parse 3 fields ──> Container Read
-     │
-     NO
-     │
-     ▼
-Direct Path ──> Original Read
-```
-
-**No Configuration Needed**:
-
-- System detects format per-chunk
-- No database-level flag required
-- Transparent to user
-
----
-
-## Performance Considerations
-
-### Benchmarks
-
-#### File Creation Overhead
-
-**Original Mode**:
-
-```
-Chunks:        1,000,000
-Chunk Size:    256 KB
-Files Created: 1,000,000
-Syscalls:      1,000,000 × (open + write + close) = 3M syscalls
-
-Filesystem Operations:
-  - Inode allocation: 1M
-  - Directory entry: 1M
-  - Metadata updates: 1M+
-
-Estimated Time (ext4, SSD): ~30-60 seconds (pure file creation)
-```
-
-**Container Mode (Lock-Free)**:
-
-```
-Chunks:        1,000,000
-Chunk Size:    256 KB
-Total Data:    ~250 GB unique
-Containers:    250 (at 1GB each)
-Files Created: 250
-Syscalls:      1,000,000 × (append) + 250 × (open + close) = 1M + 500
-Workers:       CPU × 2 (e.g., 16 workers on 8-core CPU)
-
-Filesystem Operations:
-  - Inode allocation: 250
-  - Directory entry: 250
-  - Metadata updates: 250 + 1M (offset tracking)
-
-Estimated Time (ext4, SSD): ~1-2 seconds (file operations)
-```
-
-**Speedup**: ~30-60× reduction in filesystem overhead
-
-#### Lock-Free Channel vs Mutex Benchmarks (8-core CPU)
-
-**Mutex Implementation**:
-
-```
-Workers:          8 (CPU count)
-Throughput:       ~100 MB/s
-Lock contention:  High (all workers serialize)
-Context switches: ~50,000/sec
-```
-
-**Lock-Free Channel Implementation**:
-
-```
-Workers:          16 (CPU × 2)
-Throughput:       ~120-140 MB/s
-Lock contention:  Zero (channel is lock-free)
-Context switches: ~10,000/sec
-```
-
-**Performance Gain**: 20-40% improvement with lock-free channels
-
-#### Compression Performance
-
-**Per-Chunk Compression (Original)**:
-
-```
-Operation:      Compress each 256KB chunk
-Compression:    zstd level 15
-Per-Chunk Time: ~10-50ms
-Total Chunks:   1,000,000
-Total Time:     10,000-50,000 seconds (2.7-13.9 hours)
-
-Parallelization: Limited by worker count
-```
-
-**Container Compression (Container Mode)**:
-
-```
-Operation:      Compress per 1GB container (after finalized)
-Compression:    zstd level 15
-Per-Container:  ~30-120 seconds
-Total Containers: 250
-Total Time:     7,500-30,000 seconds (2.0-8.3 hours)
-
-Benefit: Post-processing, doesn't block writes
-```
-
-**Note**: Container compression happens asynchronously (new container while old
-compresses)
-
-### Space Efficiency
-
-#### Original Mode
-
-```
-Chunk Size:       256 KB
-Compressed:       ~100 KB (varies)
-Encrypted:        ~100 KB + 28 bytes
-Metadata:         ~4 KB (filesystem)
-Per-Chunk Total:  ~104 KB
-
-1M Chunks: 104 GB (plus inode overhead)
-```
-
-#### Container Mode
-
-```
-Chunk Size:       256 KB
-Compressed:       ~100 KB (within container)
-Encrypted:        ~100 KB + 28 bytes
-Container:        ~1 GB (packed)
-Container Comp:   ~400-600 MB (zstd level 15)
-Metadata:         ~4 KB × 250 containers
-
-1M Chunks:
-  - Uncompressed containers: 100 GB
-  - Compressed containers: 40-60 GB
-  - Metadata: 50 bytes per chunk (in DB)
-```
-
-**Space Savings**: ~40-50% from container-level compression
-
-### Memory Usage
-
-#### Original Mode
-
-```
-Per Worker:
-  - Chunk buffer: 256 KB
-  - Compression buffer: ~256 KB
-  - Encryption buffer: ~256 KB
-
-Total (8 workers): ~6 MB active
-
-Database: Managed by BadgerDB (configurable)
-```
-
-#### Container Mode
-
-```
-Per Worker:
-  - Chunk buffer: 256 KB
-  - Compression buffer: ~256 KB
-  - Encryption buffer: ~256 KB
-
-ContainerManager:
-  - File handle: ~8 KB
-  - Write buffer: ~256 KB (OS-managed)
-
-Compression (peak):
-  - Container in memory: 1 GB (during compression)
-  - Compressed output: ~400-600 MB
-
-Total (8 workers + compression): ~1.6 GB peak
-```
-
-**Trade-off**: Higher peak memory for better compression and I/O
-
-### Runtime Memory Accounting and Cache Policy (2026-05)
-
-High resident memory in large deployments is often expected and is mostly
-cache-driven. For example, with ~100 GB of on-disk data, seeing 2-3 GB process
-memory can be normal when caches are intentionally configured for throughput.
-
-#### 1) BadgerDB cache policy (metadata path)
-
-Badger cache sizing is derived from available system memory using
-`GetCacheLimit()`.
-
-Policy:
-
-- Target budget: 25% of available RAM
-- Reliability floor: 64 MB
-- Reliability cap: 8 GB
-- Probe failure fallback: 256 MB (non-fatal)
-
-Allocation strategy:
-
-- The computed budget is treated as a total cache budget, not per-cache budget.
-- Budget is split as:
-  - Block cache: 75%
-  - Index cache: 25%
-- Minimum split floors:
-  - Block cache >= 64 MB
-  - Index cache >= 32 MB
-
-Rationale:
-
-- Keeps strong cache locality on high-memory hosts (speed-oriented).
-- Avoids accidental double budgeting where both caches were set to the full
-  limit.
-- Prevents memory-probe failures from blocking DB startup.
-
-#### 2) Container read cache policy (restore path)
-
-Restore flow uses a separate container read cache.
-
-Policy:
-
-- Uses `GetCacheLimit()` as baseline budget
-- Explicit restore cap: 4 GB
-- Probe failure fallback: 256 MB (non-fatal)
-
-Rationale:
-
-- Fast repeated reads for compressed container restores.
-- Bounded memory use with LRU eviction and optional disk spill path.
-
-#### 3) Interpreting high memory correctly
-
-When profiling memory, separate:
-
-- Expected cache usage:
-  - Badger block/index caches
-  - Container read cache during restore
-  - OS file cache effects
-- Unexpected growth:
-  - Monotonic heap growth without steady-state plateau
-  - Cache bypassing configured bounds
-
-Operationally, high memory is acceptable when:
-
-- Throughput improves measurably, and
-- Memory remains bounded by configured policies.
-
-#### 4) Reliability guarantees from current policy
-
-- Cache-size probing failure does not abort core operations.
-- All cache paths have practical lower and upper bounds.
-- High-memory machines can still leverage large caches for speed.
-- Low-resource mode remains available for constrained environments.
-
-### I/O Patterns
-
-#### Original Mode
-
-```
-Pattern:   Random writes (new files)
-Seeks:     None (sequential within file)
-Fsync:     Per file (if enabled)
-Fragmentation: High (1M files)
-
-Disk Queue Depth: High variability
-Cache Efficiency: Poor (many small files)
-```
-
-#### Container Mode
-
-```
-Pattern:   Sequential appends
-Seeks:     None (append-only)
-Fsync:     Per container (250 total)
-Fragmentation: Low (250 files)
-
-Disk Queue Depth: Consistent
-Cache Efficiency: Excellent (few large files)
-```
-
-### Database Performance
-
-#### Key-Value Size
-
-**Original Mode**:
-
-```
-Key:   ~70 bytes ("C|||:" + base64(hash))
-Value: ~50 bytes (file path)
-Total: 120 bytes per chunk
-
-1M Chunks: 120 MB metadata
-```
-
-**Container Mode**:
-
-```
-Key:   ~70 bytes ("C|||:" + base64(hash))
-Value: ~100 bytes (path + "|" + offset + "|" + size)
-Total: 170 bytes per chunk
-
-1M Chunks: 170 MB metadata
-```
-
-**Increase**: 50 bytes per chunk (acceptable trade-off)
-
----
-
-## Trade-offs
-
-### Advantages of Container Mode
-
-1. **Filesystem Efficiency**
-   - ✅ Reduces file count by ~4000:1 ratio
-   - ✅ Fewer inodes consumed
-   - ✅ Faster directory listings
-   - ✅ Easier backup/replication
-
-2. **I/O Performance**
-   - ✅ Sequential writes (SSD/HDD friendly)
-   - ✅ Reduced syscall overhead
-   - ✅ Better OS caching behavior
-   - ✅ Lower context switching
-
-3. **Compression Efficiency**
-   - ✅ Better compression ratios (1GB blocks)
-   - ✅ Reduced storage footprint (40-50% savings)
-   - ✅ Lower network bandwidth for replication
-
-4. **Small Chunk Optimization**
-   - ✅ Ideal for chunks < 128KB
-   - ✅ Mitigates file-per-chunk overhead
-
-### Disadvantages of Container Mode
-
-1. **Memory Usage**
-   - ❌ Peak memory: ~1.6GB during compression
-   - ❌ Container decompression: 1GB per read
-   - ⚠️ Not ideal for memory-constrained systems
-
-2. **Read Performance**
-   - ❌ Must decompress entire container for single chunk
-   - ❌ No random access to compressed containers
-   - ⚠️ Future optimization: container caching
-
-3. **Complexity**
-   - ❌ More complex code paths
-   - ❌ Additional failure modes (partial compression)
-   - ❌ Debugging is harder
-
-4. **Write Latency**
-   - ✅ Lock-free channel serializes writes naturally
-   - ✅ Single writer goroutine eliminates contention
-   - ⚠️ Negligible vs. I/O time in practice
-
-5. **Container Corruption Risk**
-   - ❌ Single container failure affects ~4000 chunks
-   - ⚠️ Mitigated by: zstd checksums, atomic writes
-
-### When to Use Container Mode
-
-#### Recommended
-
-- ✅ Chunk size < 128KB
-- ✅ Large datasets (> 100GB)
-- ✅ Filesystem with file count limits
-- ✅ Network storage (NAS/SAN)
-- ✅ Backup/archival scenarios
-
-#### Not Recommended
-
-- ❌ Memory < 4GB
-- ❌ Frequent random chunk access
-- ❌ Real-time low-latency requirements
-- ❌ Very small datasets (< 1GB)
-
-### Comparison Matrix
-
-| Aspect                | Original Mode | Container Mode |
-| --------------------- | ------------- | -------------- |
-| File Count            | Very High     | Very Low       |
-| Filesystem Overhead   | High          | Low            |
-| Write Performance     | Good          | Excellent      |
-| Read Performance      | Excellent     | Good           |
-| Memory Usage          | Low           | High           |
-| Storage Efficiency    | Good          | Excellent      |
-| Compression Ratio     | Good          | Excellent      |
-| Random Access         | Fast          | Slower         |
-| Corruption Blast Rad. | 1 chunk       | ~4000 chunks   |
-| Complexity            | Low           | Medium         |
-| Backup Speed          | Slow          | Fast           |
-| Restoration           | Granular      | Bulk           |
-
----
-
-## Future Enhancements
-
-### Potential Optimizations
-
-1. **Container Caching**
-   ```go
-   type ContainerCache struct {
-       cache *lru.Cache  // LRU cache of decompressed containers
-       maxSize int64     // Max memory for cache (e.g., 4GB)
-   }
-   ```
-   - Keep recently accessed containers in memory
-   - Avoid repeated decompression
-   - Configurable cache size
-
-2. **Partial Container Reads**
-   ```go
-   // Instead of: decompress entire 1GB
-   // Use: zstd seeking (if supported by lib)
-   ```
-   - Zstd supports frame-based seeking
-   - Requires index at compression time
-   - Trade-off: larger files, faster reads
-
-3. **Background Compression**
-   ```go
-   type CompressionQueue struct {
-       queue chan string  // Paths to compress
-       workers int        // Background workers
-   }
-   ```
-   - Don't block on compression
-   - Compress in background goroutine
-   - Monitor with status channel
-
-4. **Container Rebalancing**
-   ```
-   Scenario: Deduplication reduces effective container fill
-   Solution: Periodic compaction of sparse containers
-   Benefit: Maintain optimal container density
-   ```
-
-5. **Multi-Level Containers**
-   ```
-   Concept: Container hierarchy
-     - L1: 1GB containers (current)
-     - L2: 100GB super-containers
-     - L3: Archive (multi-TB)
-   ```
-
-### Monitoring & Observability
-
-1. **Metrics to Track**
-   ```go
-   type ContainerMetrics struct {
-       ActiveContainers     int
-       TotalChunksWritten   int64
-       AvgCompressionRatio  float64
-       AvgWriteLatency      time.Duration
-       CompressionQueueSize int
-   }
-   ```
-
-2. **Health Checks**
-   - Container integrity verification
-   - Compression success rate
-   - Write throughput monitoring
-   - Memory pressure detection
-
-3. **Debug Logging**
-   ```
-   [CONTAINER] Created new container: index=42, path=/data/BLOBS/Ax7.blob
-   [CONTAINER] Wrote chunk: offset=12345678, size=200KB, container=42
-   [CONTAINER] Compressing container 41: original=1.0GB, ratio=0.58
-   [CONTAINER] Compression complete: container 41, time=45s, size=580MB
-   ```
-
----
-
-## Appendix
-
-### Code References
-
-| Component         | File Path                  | Key Functions                                                       |
-| ----------------- | -------------------------- | ------------------------------------------------------------------- |
-| Container Manager | `lib/fio/container.go`     | `NewContainerManager`, `WriteChunkToContainer`, `compressContainer` |
-| Database Layer    | `lib/dbio/dbio.go`         | `SetBatchChonkNode`, `GetChonkNode`                                 |
-| Storage Flow      | `lib/store/store.go`       | `storeEvidenceData`, `processChonk`                                 |
-| CLI Integration   | `main.go`, `cli/common.go` | Flag parsing, recommendations                                       |
-| Constants         | `lib/cnst/const.go`        | `CONTAINERMODE`, `MaxContainerSize`                                 |
-| Thread Structures | `lib/structs/thread.go`    | `ThreadIO`                                                          |
-
-### Testing Scenarios
-
-1. **Basic Functionality**
-   - Store file with container mode
-   - Restore file and verify integrity
-   - Compare checksums
-
-2. **Concurrency**
-   - Store multiple files simultaneously
-   - Verify no data races (run with `-race`)
-   - Check container integrity
-
-3. **Container Transitions**
-   - Store enough data to trigger multiple containers
-   - Verify compression of finalized containers
-   - Check metadata correctness
-
-4. **Backward Compatibility**
-   - Store with original mode
-   - Enable container mode
-   - Restore old chunks
-   - Store new chunks
-   - Verify mixed operation
-
-5. **Error Handling**
-   - Simulate disk full during write
-   - Corrupt container file
-   - Verify graceful degradation
-
-6. **Performance**
-   - Benchmark original vs container mode
-   - Measure file creation time
-   - Measure compression time
-   - Measure read latency
-
-### Glossary
-
-- **Chunk**: Fixed-size block of data (default 256KB) used for deduplication
-- **Container**: Large file (max 1GB) containing multiple packed chunks
-- **Deduplication**: Process of storing identical chunks only once
-- **Lock-Free**: Concurrency approach using channels instead of mutexes,
-  eliminating contention
-- **Ring Buffer**: Buffered channel queue for lock-free write request handling
-  (1000 capacity)
-- **Writer Goroutine**: Dedicated goroutine for sequential container writes (no
-  contention)
-- **Thread IO**: Structure passed to worker goroutines for concurrent processing
-- **BadgerDB**: Embedded key-value database used for metadata storage
-- **Zstd**: Zstandard compression algorithm (by Facebook)
-- **AES-256-GCM**: Advanced Encryption Standard with Galois/Counter Mode
-- **Memory-mapped file**: File accessed directly through memory addresses
-  (zero-copy)
-- **CSP**: Communicating Sequential Processes - Go's concurrency model using
-  channels
-
----
-
-**Document Version**: 2.0 **Last Updated**: February 17, 2026 **Author**:
-Indicer Development Team **Status**: Production Ready - Lock-Free Channel
-Architecture
+# Container storage: low-level design
+
+Container storage packs many chunks into a few large files instead of writing one blob file per chunk. This document describes how containers are written, made durable, located and read, and how containers written by older versions are still read. It is for developers changing `lib/fio`, `lib/dbio` or the chunk passes in `lib/store`.
+
+Related documents:
+
+- The chunk encoding is described in the package comment of `lib/blobcodec`.
+- The ingest pipelines are described in [STORE_LLD.md](STORE_LLD.md).
+- The retired block index is described in [HIERARCHICAL_INDEX.md](HIERARCHICAL_INDEX.md).
+
+## Storage is part of the database layout
+
+The manifest (`dues-manifest.json`) records the storage in `layout.storage`:
+
+| Value | Meaning |
+|---|---|
+| `file` | One blob file per chunk. |
+| `container` | Chunks in containers. Every chunk location is in the database. |
+| `container-bidx` | Legacy. A container database written in the retired hierarchical mode. Some chunk locations are in block index files. |
+
+- A new database gets `container` when it is created with `--container` (`-x`), and `file` otherwise (`storageOf`, `lib/dbopen/dbopen.go`). No new database gets `container-bidx`.
+- An existing database keeps the storage it was created with. `dbopen.ApplyToGlobals` sets `cnst.CONTAINERMODE` from the manifest, so every command reads and writes the way the database was written.
+- An explicit `--container` that contradicts the manifest is a usage error, which names the database's storage (`checkRequested`). On a `container-bidx` database, `--container` is accepted.
+- When `dues` creates a file-storage database with chunks smaller than 128 KiB, it recommends `--container` (`cli/common.go`).
+
+## Files on disk
+
+All chunk material is in the blob directory, `<data root>/blob` (`util.BlobPath`).
+
+| Path | Written now | Contents |
+|---|---|---|
+| `blob/ctr-<uuidv7>.blob` | Yes, in container storage | A v2 container. |
+| `blob/<name>.blob` | Yes, in file storage | One encoded chunk. `<name>` is the unpadded URL-safe base64 of the hash of the chunk key. |
+| `blob/<name>.blob` | No | A legacy container: encoded chunks back to back, with no header. |
+| `blob/<name>.blob.zst` | No | A legacy container compressed with zstd as a whole. |
+| `blob/blocks/block_<xx>.bidx` | No | A legacy block index file. |
+
+A container is closed, and a new one started, when the next frame would take it past 1 GiB (`maxContainerSize`).
+
+## Container format v2
+
+Integers are little endian. CRC-32C uses the Castagnoli polynomial.
+
+### Header (64 bytes)
+
+| Bytes | Field |
+|---|---|
+| 0–7 | Magic `DUESCTR2` |
+| 8–9 | Format version, `2` |
+| 10–15 | Zero |
+| 16–31 | Container ID: the UUIDv7 in the file name |
+| 32–39 | Creation time, Unix nanoseconds |
+| 40–59 | Zero |
+| 60–63 | CRC-32C of bytes 0–59 |
+
+### Frames
+
+Each chunk is one frame. Frames follow the header and each other with no gap.
+
+| Bytes | Field |
+|---|---|
+| 0–3 | Magic `DCR2` |
+| 4 | Hash length, `h` |
+| 5–7 | Zero |
+| 8–15 | Payload length |
+| 16–19 | CRC-32C of the payload |
+| 20–23 | CRC-32C of bytes 0–19 followed by the hash |
+| 24 onwards, `h` bytes | Chunk hash |
+| After the hash | Payload |
+
+- The hash is the chunk hash without the `C|||:` prefix: 32 bytes for BLAKE3, 64 for SHA3-512. A hash longer than 64 bytes (`maxFrameHash`) is refused.
+- The payload is what the database's codec returned for the chunk (`blobcodec.For(db).Encode`).
+
+## What `C|||` records
+
+The key is `C|||:` followed by the chunk hash. The value is a msgpack `structs.ChonkMetadata`. It is compressed with zstd unless the database's value encoding is raw (legacy quick mode).
+
+| Field | Container chunk | File-storage chunk |
+|---|---|---|
+| `path` | `blob/ctr-<uuidv7>.blob` | `blob/<name>.blob` |
+| `offset` | Offset of the payload in the container | `0` |
+| `original_size` | Chunk length before encoding | Chunk length before encoding |
+| `stored_size` | Payload length | Blob length |
+| `encoded_size` | Payload length | Blob length |
+| `container` | `true` | `false` |
+
+- The offset and size locate the payload, not the frame. A reader reads the encoded chunk directly, so the same code reads v2 and legacy containers.
+- `parseChonkMetadata` rejects an empty path, a container record whose `encoded_size` is not positive, and negative sizes. The error wraps `ErrChunkMetaInvalid`.
+- During ingest, `C|||` reaches the write batch only through the durability barrier (see [Sync and the durability barrier](#sync-and-the-durability-barrier)).
+
+## Blob paths (`lib/dbio/blobpath.go`)
+
+- New metadata records paths relative to the data root, with forward slashes: `blob/<name>` (`StoredBlobPath`). This covers file-storage blobs, containers, and records moved by `dues repair --upgrade`. A path outside the blob directory is kept as it is.
+- `ResolveBlobPath(dbDir, stored)` turns a recorded path into a file:
+  - A path that starts with `blob/` resolves under this database's data root.
+  - Any other path was recorded by an older version, as an absolute path on the machine that wrote it. It resolves to the file with the same base name in this database's blob directory. The base name is split off at `/` or `\`, so a Windows path read on Linux also works.
+- A recorded path is never opened where it points: it could name another case's blob directory (STO-10).
+- Paths are resolved when they are used: `readChonk`, the logical reader, `ChunkStored`, ingest validation and `UpgradeBlockIndex`. Records keep the form they were written in.
+- A data root can therefore be moved, copied, or opened from another machine.
+
+## Writing
+
+### One manager per chunk pass
+
+- In container storage, each chunk pass creates one `ContainerManager` with `fio.NewContainerManager(dbio.KVDir(db))`, and closes it when the pass ends. Both pipelines do this: `ingestChunksBatchOwner` (`lib/store/batch_owner.go`) and `ingestChunksStaged` (`lib/store/staged_pipeline.go`). A close error fails the pass if nothing failed before it.
+- A manager creates no file until its first write.
+- Ingests that run at the same time have their own managers, so each one writes its own containers.
+
+### The writer goroutine
+
+- `writerLoop` is the only goroutine that touches the open container. Callers reach it through `writeQueue`, a channel with room for 1000 requests. Each request carries its own reply channel.
+- `WriteChunkToContainer(ckey, encode)`:
+  1. If this manager has already written `ckey`, it returns that location and does not call `encode` (the `seen` map).
+  2. It calls `encode` in the caller's goroutine. Encoding runs in parallel; the writer only writes.
+  3. It queues the frame and waits for the location: container path, payload offset and payload length.
+  4. It remembers a successful location in `seen`. A failed write is not remembered.
+- After `Close`, `WriteChunkToContainer` and `Sync` fail with `container manager is closed`.
+
+### Writing one frame (`doWrite`)
+
+1. Build the frame header from the hash and the payload.
+2. If a container is open and the frame would take it past `maxContainerSize`, sync and close that container.
+3. If no container is open, create one (`createNewContainer`):
+   - a new UUIDv7 gives the name `ctr-<uuid>.blob`;
+   - the file is opened with `O_CREATE|O_EXCL|O_WRONLY`;
+   - the header is written at offset 0. If that fails, the file is closed and removed.
+4. Write the frame header at the writer's offset, then the payload straight after it. Both are positioned writes (`writeBackend.WriteAt`), never appends.
+5. Advance the writer's offset only when both writes are complete.
+
+A container is always a new file. A session never writes to a file that another session wrote, so every offset it records is an offset in a file it created (STO-1).
+
+### A failed or short write
+
+- A write that returns fewer bytes than asked for is `io.ErrShortWrite`.
+- If either write in step 4 fails, `abandonFrame` truncates the container to the start of the failed frame, which is the end of the last complete frame. It then syncs and closes the container. The caller gets the original error, with any clean-up error joined to it.
+- The writer's offset never moves past a frame that was not fully written. A short write or a full disk therefore cannot shift a later chunk's offset (STO-3).
+- The next request opens a new container. In practice the error fails the chunk pass, and the ingest with it.
+- Before a chunk is encoded, ingest also charges its size to the volume's disk-space guard (`diskspace.GuardFor`). The guard fails the ingest once the volume runs low.
+
+### Sync and the durability barrier
+
+`ContainerManager.Sync` makes every chunk the manager has acknowledged durable:
+
+- It is a request on the writer's queue, so it runs after every write queued before it.
+- It syncs the open container.
+- A container the manager rotated away from was synced when it was closed.
+
+Ingest skips chunks that `C|||` says are stored. If metadata reached the database before its bytes were on disk, a power loss could leave metadata that every later ingest trusts, pointing at bytes that were never written (STO-5). The chunk-metadata barrier (`chunkMetaBarrier`, `lib/store/durability.go`) prevents this:
+
+- The pipeline's single writer hands each chunk's `C|||` metadata to the barrier, not to the write batch.
+- The barrier fires when any of these is reached:
+
+  | Trigger | Value |
+  |---|---|
+  | Pending chunks | 4096 (`barrierMaxChunks`) |
+  | Content of the pending chunks | 64 MiB (`barrierMaxBytes`) |
+  | Age of the oldest pending entry | 250 ms (`barrierMaxDelay`), checked at every chunk, duplicates included |
+  | End of the pass | Before the final `batch.Flush` |
+
+- Firing runs `syncChunkMaterial`: `ContainerManager.Sync`, then `fsx.SyncDir` on the blob directory, so the names of new containers and blobs survive a power loss. `fsx.SyncDir` does nothing on Windows.
+- Only after the sync does the barrier pass the pending entries to the batch. If the sync fails, nothing is released and the ingest fails.
+- Relation keys go to the batch at once. An ingest is trusted only once it is FLUSHED, and that is recorded after the final fire.
+
+In file storage, `fio.WriteChonk` syncs each blob as it writes it, and the barrier syncs only the directory.
+
+### Close
+
+`Close` runs once (`closeOnce`). It:
+
+1. marks the manager closed under `acceptMu`, so no new request is queued;
+2. closes the queue, and waits while the writer finishes every request already queued;
+3. syncs and closes the open container, and returns that error.
+
+## Skipping chunks already stored (`dbio.ChunkStored`)
+
+Ingest materialises a chunk through `materializeChunkMeta` (`lib/store/staged_pipeline.go`). It skips the chunk, and records no metadata for it, when `dbio.ChunkStored` reports it stored.
+
+`ChunkStored(ckey, db)`:
+
+1. Finds the chunk with `LocateChunk`, so a chunk that only a legacy block index holds counts as stored (STO-21).
+2. Reports `false` for missing or invalid metadata. The chunk is then written again and its metadata replaced.
+3. Resolves the path with `ResolveBlobPath`.
+4. For a container chunk, returns `fio.ContainerHolds(path, offset, encoded_size)`. That is true when the container is a regular file, the offset is not negative, the size is positive, and `offset + size` fits inside the file. A compressed legacy container cannot be measured without decoding it, so its presence is enough.
+5. For a file-storage chunk, returns true when the blob is a regular file of exactly `stored_size` bytes.
+
+- Only read errors are returned.
+- A chunk left short by a crash or a full disk reports `false`, so the next ingest writes it again.
+- The check is a stat, not a read. `dues repair --verify` reads every chunk and checks its hash.
+- Within one pass, repeated chunks are caught before this check. The pipeline tracks the chunks it has seen, and the manager's `seen` map returns a location it has already written.
+
+## Reading
+
+### Locating a chunk (`lib/dbio/locator.go`)
+
+`LocateChunk(ckey, db)` returns a chunk's `structs.ChonkMetadata` in one read transaction (`locateChunkTxn` inside an existing one):
+
+1. It reads `C|||`. A value that decodes as zstd is decompressed first. The msgpack record is then parsed and checked (`parseChonkMetadata`).
+2. If there is no `C|||` key and the database has a legacy block index (`cnst.LegacyBlockIndex`), it calls `fio.LookupBlockIndex`. A block index record becomes a container location, with `stored_size` and `encoded_size` both set to the record's size.
+
+| Outcome | Error |
+|---|---|
+| No location anywhere | Wraps `ErrChunkNotFound`, which also matches `badger.ErrKeyNotFound` |
+| Metadata that does not decode or describe a location | Wraps `ErrChunkMetaInvalid` |
+| A badger read error, or a block file that is damaged or cannot be read | Returned as it is |
+
+A badger read error is never taken for a missing key, so it never sends the lookup on to the block index.
+
+Callers: `GetChonkNode`, `ChunkStored`, the logical reader (`lib/dbio/logical.go`, which restore uses) and ingest validation (`validateChunk`).
+
+### Reading a chunk
+
+`GetChonkNode(key, db)` and the logical reader both:
+
+1. locate the chunk;
+2. resolve its path;
+3. read the stored bytes: `fio.ReadChunkFromContainer(path, offset, encoded_size)` for a container chunk, `fio.ReadChonk(path)` for a blob;
+4. decode them with the database's codec (`blobcodec.For(db).Decode`).
+
+The v2 blob encoding checks the decoded chunk against its hash. A payload read from the wrong place is therefore an error, not wrong content. The legacy encodings do not check it. For them, the logical reader checks each decoded chunk with `blobcodec.Verify`, unless its caller sets `ReadOptions.SkipVerify`.
+
+Restore reads each batch of chunks grouped by container (`containerLocalityOrder`), for cache and read locality. The order in which it writes them does not change.
+
+### Bounds checks in `ReadChunkFromContainer`
+
+- A negative offset or size is an error.
+- If the recorded file is missing and a file of the same name with `.blob.zst` in place of `.blob` exists, that compressed container is read (`resolveContainerPath`).
+- For an uncompressed container, the offset and size are checked against the file's size before the buffer is allocated. Both come from metadata, which can be damaged (STO-16).
+- The read does not check the container header or the frame CRCs. It reads only the payload bytes, and the codec checks them.
+- Reads from compressed containers have their own bounds (see [The legacy `.blob.zst` read cache](#the-legacy-blobzst-read-cache)).
+
+### Scanning a container (`fio.ScanContainer`)
+
+`ScanContainer(path, fn)` walks a v2 container and calls `fn` with a `ContainerFrame{Hash, Offset, Size}` for each frame. The offset and size locate the payload, as in `C|||`. The chunk index of a container can therefore be rebuilt from the container alone.
+
+It checks, in order:
+
+1. The header has the magic `DUESCTR2` and a valid CRC. The version field is not checked.
+2. For each frame:
+   - at least 24 bytes remain;
+   - the magic is `DCR2`;
+   - the hash length is at most 64, and the hash and payload fit in the rest of the file (compared before the payload buffer is allocated);
+   - the header CRC matches;
+   - the payload CRC matches.
+
+- The first failed check stops the scan with an error that wraps `ErrContainerCorrupt` and names the frame's offset. Frames before it have already been passed to `fn`.
+- A read error, or an error from `fn`, is returned as it is.
+- A legacy container has no header, so it is rejected.
+- No command calls `ScanContainer` yet. `TestScanContainer` and `FuzzScanContainer` exercise it.
+
+## Legacy containers
+
+- Containers written by older versions have no header and no frames, and are not named `ctr-*`. They are read through the same `C|||` offsets, and never written.
+- In older container databases, chunks stored by a second session can sit at offsets that do not match their metadata (STO-1). A read that checks the chunk's hash reports an error. A read that does not, such as `GetChonkNode` with a legacy encoding, can return another chunk's content. The data of those chunks cannot be recovered.
+- Older versions in quick mode compressed each finished container into `<name>.blob.zst`, while `C|||` kept the `.blob` name. Container-level compression is retired for new databases: no container is compressed, renamed or replaced after it is written.
+
+### The legacy `.blob.zst` read cache
+
+A `.blob.zst` container is one zstd stream. It cannot be read at an offset without decoding everything before it. `lib/fio/container_cache.go` handles this.
+
+Without the cache, `streamReadCompressedChunk` decodes from the start, discards `offset` bytes and reads `size` bytes. It first checks that `offset + size` is within the 1 GiB limit.
+
+During a restore the cache is on:
+
+- `restoreLogical` (`lib/store/restore.go`) calls `EnableContainerReadCache`, and `DisableContainerReadCache` when it ends. Calls nest, so concurrent restores share the cache. The last `DisableContainerReadCache` releases every entry.
+- `configureRestoreCache` sets the memory budget (`SetContainerReadCacheSize`) to `cnst.GetCacheLimit()`, at most 4 GiB. `GetCacheLimit` is a quarter of available memory, between 64 MiB and 8 GiB. It is 64 MiB in low-resource mode, and 256 MiB when memory cannot be probed. Until a restore sets it, the budget is 2 GiB (`defaultMaxCacheSize`).
+- Each container is decoded once, by the first read that needs it. Other reads of that container wait on its entry, not on a global lock. Only one decode runs at a time.
+- A decoded container stays in memory if it fits in what is left of the budget. Otherwise it is spilled to a temporary file:
+  - The file comes from `fsx.CreateTempDeleteOnClose`, with the pattern `dues-container-*.tmp`, in the system temporary directory.
+  - On Unix the file is unlinked as soon as it is created. On Windows it is created with `FILE_FLAG_DELETE_ON_CLOSE`.
+  - Decompressed evidence therefore never outlives the process, even when the process is killed.
+  - With the 64 MiB budget of low-resource mode, larger containers are cached on disk.
+- A failed decode is not cached. The next read tries again.
+- An evicted entry is released once no read holds it. A spill file is deleted when it is closed.
+
+| Bound | Value |
+|---|---|
+| Decompressed size of one container | 1 GiB (`maxDecompressedContainer`). Larger is an error: quick mode closed containers at 1 GiB, so a larger one is damage or a decompression bomb. |
+| zstd decoder memory | 256 MiB (`zstd.WithDecoderMaxMemory`) |
+| Containers spilled to disk at once | 4 (`maxSpilledContainers`). The least recently used is evicted first. |
+| Containers held in memory | Within the budget |
+| One read | `offset + size` within the decoded size |
+
+## Write backends
+
+Container writes go through a `writeBackend` (`lib/fio/write_backend.go`). It is chosen once per process from `dues store --io-engine` (`-I`):
+
+| Value | Backend |
+|---|---|
+| `auto` (default) | Standard library positioned writes |
+| `stdlib` | Standard library positioned writes |
+| `io-uring` | io-uring on Linux. If the probe fails, a warning and the standard library. |
+
+- File-storage blobs do not use the backend. They are written with `fsx.WriteNewFile`.
+- Every write is positioned, so writing the same bytes at the same offset again changes nothing.
+- The standard library backend loops until all bytes are written. A zero-byte write is `io.ErrShortWrite`.
+- `fio.GetWriteBackendStats` returns the engines and the io-uring counters of the current process. `dues stats` prints them.
+
+The io-uring backend (`write_backend_iouring_linux.go`):
+
+- The queue depth comes from `--io-uring-queue-depth` (`-j`). `0` means `runtime.NumCPU() × 16`, between 256 and 4096.
+- Each submission carries its offset. A short write continues at the next offset.
+- `io_uring_enter` is repeated on `EINTR`, and on `EAGAIN` or `EBUSY` up to 100 times, 1 ms apart.
+- An error before the kernel accepted the request wraps `errNotSubmitted`. Only then does the backend write the rest of the data with a plain positioned write.
+- After any other error a write may still be in flight. The ring is closed, so the kernel cancels the request, and the error is returned. The bytes are never written twice (STO-15). Later writes use the standard library.
+
+## Code map
+
+| Area | Files | Main identifiers |
+|---|---|---|
+| Container writer and reader | `lib/fio/container.go` | `ContainerManager`, `WriteChunkToContainer`, `Sync`, `Close`, `ScanContainer`, `ContainerHolds`, `ReadChunkFromContainer` |
+| Legacy compressed containers | `lib/fio/container_cache.go`, `lib/fsx/tempfile*.go` | `EnableContainerReadCache`, `SetContainerReadCacheSize`, `CreateTempDeleteOnClose` |
+| Write backends | `lib/fio/write_backend*.go` | `writeBackend`, `ioUringWriteBackend`, `errNotSubmitted` |
+| File-storage blobs | `lib/fio/fio.go` | `WriteChonk`, `ReadChonk` |
+| Metadata and paths | `lib/dbio/dbio.go`, `lib/dbio/blobpath.go` | `MaterializeChonkNode`, `GetChonkNode`, `StoredBlobPath`, `ResolveBlobPath` |
+| Locator and stored check | `lib/dbio/locator.go`, `lib/dbio/chunk_stored.go` | `LocateChunk`, `ChunkStored` |
+| Durability barrier | `lib/store/durability.go` | `chunkMetaBarrier`, `syncChunkMaterial` |
+| Legacy block index | `lib/fio/blockindex.go` | `LookupBlockIndex` |
+
+## Tests
+
+| Test | What it checks |
+|---|---|
+| `TestContainerSessionsNeverShareFile` | Two sessions write two different containers. |
+| `TestContainerFailedWriteKeepsOffsets` | A write that stops half way, then reports disk full, leaves every later offset right. |
+| `TestContainerRotation`, `TestContainerFileHeader` | Rotation at the size limit, and the header layout. |
+| `TestScanContainer`, `FuzzScanContainer` | Frame checks, including a flipped payload byte. |
+| `TestCompressedContainerDecodedOnce`, `TestCompressedContainerCacheBounded`, `TestCompressedContainerSizeCapped`, `TestCompressedContainerWithoutCache` | The legacy read cache. |
+| `TestCreateTempDeleteOnClose`, `TestCreateTempDeleteOnCloseAfterCrash` | Spill files are gone after close, and after the process is killed. |
+| `TestIoUringWriteNeverDuplicates`, `TestIoUringWriteAtRealRing` | io-uring error handling, and positioned writes on a real ring (Linux only). |
+| `TestStoredBlobPathRoundTrip`, `TestResolveLegacyBlobPaths` | Relative paths, and legacy Windows, UNC, Unix and relative paths. |
+
+Builds with `-tags faultinject` can fail a write at `container.mid_record`, between a frame's header and its payload. They can also fail at `store.chunk.before_barrier` and `store.chunk.after_barrier`, on either side of the barrier's sync and release.

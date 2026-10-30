@@ -244,6 +244,32 @@ func TestStorageFailureResumes(t *testing.T) {
 	}
 }
 
+// TestCommitClearsAttemptKey: a committed ingest leaves no attempt key, also
+// when it records a source path other than the file it read (server uploads
+// read a part file and record the client's path).
+func TestCommitClearsAttemptKey(t *testing.T) {
+	for _, sourcePath := range []string{"", "client/upload.img"} {
+		t.Run("source="+sourcePath, func(t *testing.T) {
+			db := openDB(t)
+			path := fixture(t, "fat/fat16")
+			if _, err := Run(t.Context(), db, Request{Path: path, SourcePath: sourcePath, Decode: true, NoIndex: true, Quiet: true}); err != nil {
+				t.Fatal(err)
+			}
+			err := db.View(func(txn *badger.Txn) error {
+				it := txn.NewIterator(badger.IteratorOptions{Prefix: []byte(cnst.EviAttemptNamespace)})
+				defer it.Close()
+				for it.Rewind(); it.Valid(); it.Next() {
+					t.Errorf("attempt key left after commit: %x", it.Item().Key())
+				}
+				return nil
+			})
+			if err != nil {
+				t.Fatal(err)
+			}
+		})
+	}
+}
+
 // TestIndexFailureKeepsStorage: an index pass that fails does not stop the
 // evidence being stored and committed; the ingest reports the index
 // incomplete, and the evidence records why.

@@ -15,7 +15,7 @@ func getVersionText() string {
 		"DUES v%s  (%s)\n"+
 			"Deduplicated Unified Evidence Store\n\n"+
 			"Highlights\n"+
-			"  - Chunk-level deduplication with encrypted storage\n"+
+			"  - Chunk-level deduplication, encrypted when a password is given\n"+
 			"  - Fast restore, NeAR similarity analysis, and search\n"+
 			"  - Short flags + presets for faster daily usage\n\n"+
 			"Try: dues --help\n"+
@@ -136,6 +136,10 @@ func printHelpForPath(path []string) {
 		printListHelp()
 	case cnst.CmdStats:
 		printStatsHelp()
+	case cnst.CmdRepair:
+		printRepairHelp()
+	case cmdReindex:
+		printReindexHelp()
 	case cnst.CmdSearch:
 		printSearchHelp()
 	case cnst.CmdEnrich:
@@ -173,15 +177,20 @@ func printRootHelp() {
 	fmt.Printf("  %s, %s   Password for the DUES database (visible to other users)\n", cmd("--password"), cmd("-p"))
 	fmt.Printf("  %s  Read the password from a file (preferred; or set DUES_PASSWORD)\n", cmd("--password-file"))
 	fmt.Printf("  %s Read the password from standard input\n", cmd("--password-stdin"))
-	fmt.Printf("  %s, %s   Custom chunk size (KB), default 256\n", cmd("--chonksize"), cmd("-c"))
+	fmt.Printf("  %s, %s   Chunk size (KB) of a new database, default 256\n", cmd("--chonksize"), cmd("-c"))
 	fmt.Printf("  %s, %s   Low resource mode\n", cmd("--low"), cmd("-l"))
-	fmt.Printf("  %s, %s   Quick mode (less protection, more throughput)\n", cmd("--quick"), cmd("-q"))
-	fmt.Printf("  %s, %s   Container mode\n", cmd("--container"), cmd("-x"))
+	fmt.Printf("  %s, %s   Quick mode: a new database without table compression (encryption unchanged)\n", cmd("--quick"), cmd("-q"))
+	fmt.Printf("  %s, %s   Container storage for a new database\n", cmd("--container"), cmd("-x"))
 	fmt.Printf("  %s, %s   Chunk compression level [fast|default|best]\n", cmd("--compress-level"), cmd("-z"))
 	fmt.Printf("  %s, %s   Mode preset [quick|performance|low-resource]\n", cmd("--preset"), cmd("-P"))
 	fmt.Printf("  %s, %s   Quick preset convenience alias\n", cmd("--quick-mode"), cmd("-Q"))
 	fmt.Printf("  %s, %s   Performance preset convenience alias\n", cmd("--performance-mode"), cmd("-o"))
 	fmt.Printf("  %s, %s   Low-resource preset convenience alias\n", cmd("--low-resource-mode"), cmd("-L"))
+
+	printHelpSection("Database Layout")
+	fmt.Println("  Chunk size, hash algorithm, storage and encryption are fixed when a database is")
+	fmt.Println("  created and recorded in its manifest. An existing database keeps its own; a flag")
+	fmt.Println("  that contradicts it is an error (exit 2).")
 
 	printHelpSection("Preset Rules")
 	fmt.Println("  Presets are convenience defaults.")
@@ -207,6 +216,12 @@ func printRootHelp() {
 	fmt.Printf("  %-20s %s\n", cmd(cnst.CmdReset), "Delete database")
 	fmt.Printf("  %-20s %s\n", cmd(cnst.CmdVeresion), "Show version details")
 	fmt.Printf("  %-20s %s\n", cmd(cnst.CmdStats), "Show stats about data")
+	fmt.Printf("  %-20s %s\n", cmd(cnst.CmdRepair), "Inspect, finish, verify or upgrade the database")
+	fmt.Printf("  %-20s %s\n", cmd(cmdReindex), "Rebuild the index of stored evidence")
+
+	printHelpSection("Exit Codes")
+	fmt.Println("  0 success; 1 failure; 2 usage error, or done with a warning (for example an")
+	fmt.Println("  incomplete index); 70 internal error (see the crash file); 130/143 interrupted")
 
 	printHelpSection("Command-Level Help")
 	fmt.Println("  Root help and command help are both available.")
@@ -242,13 +257,18 @@ func printRootHelp() {
 
 func printStoreHelp() {
 	printHelpHeader("store")
-	fmt.Println("Usage: dues store FILE [--sync|-s] [--no-index|-N] [--fts|-F] [--enrich|-E] [--hash-algo|-g [sha3|blake3]] [--hash-strategy|-S [sync|async|hocho]] [--pipeline|-Y [batch-owner|staged]] [--simhash|-H] [--revrel|-R] [--store-workers|-w N] [--store-queue|-W N] [global options]")
-	fmt.Println("Stores a file in the DUES database using chunk-level deduplication.")
+	fmt.Println("Usage: dues store FILE|FOLDER [--no-index|-N] [--require-verified] [--fts|-F] [--enrich|-E] [--hash-algo|-g [sha3|blake3]] [--hash-strategy|-S [sync|async|hocho]] [--pipeline|-Y [batch-owner|staged]] [--simhash|-H] [--revrel|-R] [--store-workers|-w N] [--store-queue|-W N] [global options]")
+	fmt.Println("Stores a file, or every regular file in a folder, using chunk-level deduplication.")
+	fmt.Println("E01 sets and VHD/VHDX disks are stored as the disk image they decode to, and a")
+	fmt.Println("file whose content is already stored is recorded as an alias of it.")
+	fmt.Println("Exits 2 when the content was stored but its index is incomplete, or an E01's")
+	fmt.Println("stored MD5/SHA-1 does not match.")
 	fmt.Println("")
 	printHelpSection("Most-Used Flags")
 	fmt.Println("  -F, --fts            Enable full-text indexing during store")
 	fmt.Println("  -E, --enrich         Enrich hierarchy metadata during store")
 	fmt.Println("  -N, --no-index       Skip indexing")
+	fmt.Println("      --require-verified  Fail an E01 whose stored digests do not match, instead of storing it flagged")
 	fmt.Println("  -w, --store-workers  Override worker count")
 	fmt.Println("  -W, --store-queue    Override queue depth")
 	fmt.Println("")
@@ -272,13 +292,13 @@ func printStoreHelp() {
 	fmt.Println("  --store-workers, -w N   Override worker count (0 = mode-aware default)")
 	fmt.Println("  --store-queue, -W N     Override task queue depth (0 = mode-aware default)")
 	fmt.Println("  --revrel, -R            Persist reverse-relation keys during ingest (off by default)")
-	fmt.Println("  --io-engine, -I         Write engine [auto|stdlib|io-uring]")
+	fmt.Println("  --io-engine, -I         Write engine [auto|stdlib|io-uring]; auto uses stdlib")
 	fmt.Println("  --io-uring-queue-depth, -j  io-uring queue depth (0 = auto-tuned)")
 	fmt.Println("  --hash-strategy, -S     Hash strategy [sync|async|hocho]")
-	fmt.Println("  --hocho-mode, -M        Hocho mode [baseline|reuse|postdedup] (only with --hash-strategy hocho)")
+	fmt.Println("  --hash-algo, -g         Chunk hash of a new database [sha3|blake3]")
 	fmt.Println("  Defaults are chosen by storage mode:")
 	fmt.Println("    file mode: higher workers")
-	fmt.Println("    container/hierarchical: lower workers + deeper queue")
+	fmt.Println("    container: lower workers + deeper queue")
 	printExamples(
 		"dues store E01-image.dd",
 		"dues store E01-image.dd -w 24 -W 192",
@@ -303,13 +323,19 @@ func printEnrichHelp() {
 
 func printRestoreHelp() {
 	printHelpHeader("restore")
-	fmt.Println("Usage: dues restore HASH [--filepath|-f restored] [--force] [--verify full|chunks|off] [--restore-workers|-y N] [--restore-queue|-U N] [--restore-progress-ms|-m N] [--restore-buffer-mb|-b N] [global options]")
-	fmt.Println("Restores a stored file by its hash.")
+	fmt.Println("Usage: dues restore HASH [--filepath|-f restored] [--force] [--verify full|chunks|off] [--verify-ewf] [--restore-workers|-y N] [--restore-queue|-U N] [--restore-progress-ms|-m N] [--restore-buffer-mb|-b N] [global options]")
+	fmt.Println("Restores a stored file by its hash. The output is written beside the target and")
+	fmt.Println("renamed into place only when the restore succeeded; an existing file is refused")
+	fmt.Println("without --force. Exits 2 when the content was restored but is incomplete, or an")
+	fmt.Println("E01 does not match its stored digests.")
 	printHelpSection("Most-Used Flags")
 	fmt.Println("  -f, --filepath            Output path")
 	fmt.Println("      --force               Replace the output path if it exists")
 	fmt.Println("      --verify              full (default): every chunk and the content's recorded hash;")
-	fmt.Println("                            chunks: every chunk only; off: no checks")
+	fmt.Println("                            chunks: every chunk only; off: no separate checks")
+	fmt.Println("                            (chunks of databases written by this release are always")
+	fmt.Println("                            checked as they are decoded)")
+	fmt.Println("      --verify-ewf          Also check a restored E01 against the MD5/SHA-1 its set recorded")
 	fmt.Println("  -y, --restore-workers     Worker count")
 	fmt.Println("  -U, --restore-queue       Queue depth")
 	fmt.Println("  -m, --restore-progress-ms Progress update interval")
@@ -345,34 +371,83 @@ func printStatsHelp() {
 	fmt.Println("Displays statistics about the DUES database.")
 	fmt.Println()
 	printHelpSection("Output includes")
-	fmt.Println("  Total / completed evidence files")
+	fmt.Println("  Total / completed evidence files, and the database's chunk size")
 	fmt.Println("  Total partitions and indexed files")
-	fmt.Println("  Indexed deleted/fragmented stats (fragmented is 0 until fragmented ingestion is enabled)")
+	fmt.Println("  Indexed deleted and fragmented files")
 	fmt.Println("  Total logical size (sum of all stored file sizes)")
 	fmt.Println("  Unique chunks vs total chunk references")
 	fmt.Println("  Shared chunks (referenced by more than one file)")
 	fmt.Println("  On-disk bytes and deduplication ratio")
-	fmt.Println("  Requested/selected write engine and fallback count")
-	fmt.Println("  io-uring queue depth, submit/wait/completion/error counters (when io-uring is selected)")
+	fmt.Println("  This process's write engine and its counters, which count only what the same")
+	fmt.Println("  process stored (in the TUI, after a store; from dues stats they are zero)")
 	printExamples(
 		"dues stats",
 		"dues stats --dbpath ./caseA",
 	)
 }
 
+func printRepairHelp() {
+	printHelpHeader("repair")
+	fmt.Println("Usage: dues repair [--fix [--reindex-failed] [--revrel]] [--verify] [--upgrade [--yes]] [global options]")
+	fmt.Println("Without options, lists what interrupted ingests left, opening the database read-only.")
+	printHelpSection("Options")
+	fmt.Println("  --fix, -J          Finish what interrupted ingests left: unfinished attempts are marked")
+	fmt.Println("                     failed (storing the file again resumes them), flushed ones are checked")
+	fmt.Println("                     and committed, duplicates removed, and interrupted index passes marked")
+	fmt.Println("  --reindex-failed   With --fix, rebuild every index whose pass failed or was interrupted")
+	fmt.Println("  --revrel           With --fix, add the reverse relations NeAR needs to evidence stored without them")
+	fmt.Println("  --verify           Read back every stored chunk and check it against its hash; exits 1 if any")
+	fmt.Println("                     evidence is damaged")
+	fmt.Println("  --upgrade          Move a legacy hierarchical block index into the database, and set aside")
+	fmt.Println("                     indexes made from the raw bytes of E01 or VHD/VHDX evidence")
+	fmt.Println("  --yes              With --upgrade, delete the moved block index files without asking")
+	printExamples(
+		"dues repair",
+		"dues repair --fix",
+		"dues repair --fix --reindex-failed",
+		"dues repair --verify --dbpath ./caseA",
+		"dues repair --upgrade --yes",
+	)
+}
+
+func printReindexHelp() {
+	printHelpHeader(cmdReindex)
+	fmt.Println("Usage: dues reindex ID|HASH... | --failed | --all [--source PATH] [--fts] [--enrich] [global options]")
+	fmt.Println("Rebuilds the index of stored evidence from its stored chunks, each one checked")
+	fmt.Println("against its hash. The previous index, with its full-text documents and graph")
+	fmt.Println("nodes, is deleted first. Features the evidence was stored with are rebuilt too.")
+	printHelpSection("Options")
+	fmt.Println("  --failed     Every evidence whose index pass failed or was interrupted")
+	fmt.Println("  --all        Every stored evidence")
+	fmt.Println("  --source     Read one evidence from this file instead; its content must match")
+	fmt.Println("  --fts        Also build the full-text index")
+	fmt.Println("  --enrich     Also write the graph nodes")
+	printExamples(
+		"dues reindex --failed",
+		"dues reindex <hash>",
+		"dues reindex <id> --source ./evidence.E01",
+		"dues reindex --all --fts --dbpath ./caseA",
+	)
+}
+
 func printSearchHelp() {
 	printHelpHeader("search")
-	fmt.Println("Usage: dues search QUERY [--rank-alpha|-r N] [--fts|-F] [global options]")
-	fmt.Println("Searches indexed data by query string.")
-	fmt.Println("Use --fts to try sidecar full-text search first, then fallback to scan path.")
+	fmt.Println("Usage: dues search QUERY [--rank-alpha|-r N] [--fts|-F] [--out PATH] [--force] [global options]")
+	fmt.Println("Searches the content of every stored evidence, partition and indexed file, case-insensitively.")
+	fmt.Println("Terms are literal: a b needs both, a|b either, and \"a b\" in double quotes is one phrase")
+	fmt.Println("(at most 16 terms of at most 1024 bytes).")
+	fmt.Println("Exits 2 when some objects could not be read; the report names them.")
 	printHelpSection("Most-Used Flags")
-	fmt.Println("  -F, --fts         Prefer full-text sidecar index first")
+	fmt.Println("  -F, --fts         Search only the indexed files the full-text index offers;")
+	fmt.Println("                    the report says what that leaves out")
 	fmt.Println("  -r, --rank-alpha  Occurrence boost weight")
+	fmt.Println("      --out         Report path (default report.json)")
+	fmt.Println("      --force       Replace the report if it exists")
 	printExamples(
 		"dues search \"invoice\"",
 		"dues search \"invoice\" --fts",
-		"dues search \"user:alice\" -r 0.5",
-		"dues search \"user:alice\" --dbpath ./caseA",
+		"dues search \"invoice|receipt\" -r 0.5",
+		"dues search \"invoice\" --out case-a-invoice.json --dbpath ./caseA",
 	)
 }
 
@@ -441,8 +516,11 @@ func printNearHelp() {
 	fmt.Println("  near in   — query file is already stored in the DUES database (identified by hash)")
 	fmt.Println("  near out  — query file is on disk outside the database (identified by path)")
 	fmt.Println()
-	fmt.Println("Both sub-commands produce a near_report.json with a ranked list of matching artefacts.")
-	fmt.Println("Each match includes an overall_relatedness score that combines all active phases.")
+	fmt.Println("Both sub-commands write a report (near_report.json, or --out PATH; --force replaces it)")
+	fmt.Println("with a ranked list of matching artefacts. Each match includes an overall_relatedness")
+	fmt.Println("score that combines all active phases.")
+	fmt.Println("NeAR needs reverse relations: store with --revrel, or add them with dues repair --fix --revrel.")
+	fmt.Println("It exits 2 when some evidence could not be searched; the report says which.")
 	fmt.Println()
 	fmt.Println("Try: dues help near in")
 	fmt.Println("Try: dues help near out")
@@ -457,22 +535,25 @@ func printNearHelp() {
 func printNearInHelp() {
 	cmd := color.New(color.FgBlue, color.Bold).SprintFunc()
 	printHelpHeader("near in")
-	fmt.Println("Usage: dues near in HASH [--deep|-e] [--advanced-deep|-a] [--top-k|-k N] [global options]")
+	fmt.Println("Usage: dues near in HASH [--deep|-e] [--advanced-deep|-a] [--top-k|-k N] [--out PATH] [--force] [global options]")
 	fmt.Println()
 	fmt.Println("Finds NeAR objects for a file already stored in the DUES database.")
-	fmt.Println("Produces near_report.json with ranked matches and an overall_relatedness score per match.")
+	fmt.Println("Writes near_report.json (or --out PATH) with ranked matches and an overall_relatedness score per match.")
 
 	printHelpSection("Options")
 	fmt.Printf("  %s, %s   Phase 1: enable partial chunk SimHash matching (slower, finds more candidates)\n", cmd("--deep"), cmd("-e"))
 	fmt.Printf("  %s, %s   Phase 2: full-file SimHash re-ranking of top-K candidates\n", cmd("--advanced-deep"), cmd("-a"))
 	fmt.Printf("              Eliminates chunk-alignment noise from Phase 1 scores.\n")
-	fmt.Printf("              Results are cached in the DB (F|||: namespace) — subsequent runs are O(1).\n")
+	fmt.Printf("              Signatures cached in the DB (F|||: namespace) are reused. dues near opens the\n")
+	fmt.Printf("              database read-only, so only a writable session (the TUI) adds to that cache.\n")
 	fmt.Printf("  %s, %s      Number of candidates for Phase 2 (default 0 = auto-select)\n", cmd("--top-k"), cmd("-k"))
 	fmt.Printf("              Auto-selection scales with available memory × CPU threads, bounded [5, 100].\n")
+	fmt.Printf("  %s          Report path (default near_report.json)\n", cmd("--out"))
+	fmt.Printf("  %s        Replace the report if it exists\n", cmd("--force"))
 
 	printHelpSection("Report Fields (per match)")
 	fmt.Println("  overall_relatedness       Single score [0.0–1.0] combining all active phases")
-	fmt.Println("  overall_relatedness_pct   Same value as a percentage")
+	fmt.Println("  overall_relatedness_percent Same value as a percentage")
 	fmt.Println("  relatedness_basis         Which signals were used: exact | phase1 | phase1+phase2")
 	fmt.Println("  phase1_deviation_estimate Fraction of chunk comparisons affected by edge-alignment noise")
 	fmt.Println("  phase2_file_similarity    Full-file SimHash similarity (only present when --advanced-deep used)")
@@ -488,10 +569,10 @@ func printNearInHelp() {
 func printNearOutHelp() {
 	cmd := color.New(color.FgBlue, color.Bold).SprintFunc()
 	printHelpHeader("near out")
-	fmt.Println("Usage: dues near out FILE [--deep|-e] [--explain-exact|-t] [--advanced-deep|-a] [--top-k|-k N] [global options]")
+	fmt.Println("Usage: dues near out FILE [--deep|-e] [--explain-exact|-t] [--advanced-deep|-a] [--top-k|-k N] [--out PATH] [--force] [global options]")
 	fmt.Println()
 	fmt.Println("Finds NeAR objects for a file on disk that is outside the DUES database.")
-	fmt.Println("Produces near_report.json with ranked matches and an overall_relatedness score per match.")
+	fmt.Println("Writes near_report.json (or --out PATH) with ranked matches and an overall_relatedness score per match.")
 
 	printHelpSection("Options")
 	fmt.Printf("  %s, %s   Phase 1: enable partial chunk SimHash matching (slower, finds more candidates)\n", cmd("--deep"), cmd("-e"))
@@ -499,13 +580,15 @@ func printNearOutHelp() {
 	fmt.Printf("  %s, %s   Phase 2: full-file SimHash re-ranking of top-K candidates\n", cmd("--advanced-deep"), cmd("-a"))
 	fmt.Printf("              Eliminates chunk-alignment noise from Phase 1 scores.\n")
 	fmt.Printf("              Note: the query file is external, so its signature is computed fresh each run.\n")
-	fmt.Printf("              Candidate signatures are cached in the DB and reused on subsequent runs.\n")
+	fmt.Printf("              Candidate signatures cached in the DB are reused; dues near adds none.\n")
 	fmt.Printf("  %s, %s      Number of candidates for Phase 2 (default 0 = auto-select)\n", cmd("--top-k"), cmd("-k"))
 	fmt.Printf("              Auto-selection scales with available memory × CPU threads, bounded [5, 100].\n")
+	fmt.Printf("  %s          Report path (default near_report.json)\n", cmd("--out"))
+	fmt.Printf("  %s        Replace the report if it exists\n", cmd("--force"))
 
 	printHelpSection("Report Fields (per match)")
 	fmt.Println("  overall_relatedness       Single score [0.0–1.0] combining all active phases")
-	fmt.Println("  overall_relatedness_pct   Same value as a percentage")
+	fmt.Println("  overall_relatedness_percent Same value as a percentage")
 	fmt.Println("  relatedness_basis         Which signals were used: exact | phase1 | phase1+phase2")
 	fmt.Println("  phase1_deviation_estimate Fraction of chunk comparisons affected by edge-alignment noise")
 	fmt.Println("  phase2_file_similarity    Full-file SimHash similarity (only present when --advanced-deep used)")

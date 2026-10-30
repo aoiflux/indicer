@@ -19,6 +19,4 @@
 // This package holds only interfaces and data types (no CGo, no backing-library
 // imports), so it compiles on every platform and every adapter depends on it
 // without cycles.
-//
-// See docs/LIBTSK_REMOVAL_PLAN.md for the full design and migration plan.
 package core

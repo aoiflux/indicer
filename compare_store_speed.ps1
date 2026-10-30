@@ -31,11 +31,40 @@ function Get-StoreDurationSeconds {
     )
 
     $output = & $Exe @ExecutionParams 2>&1 | Out-String
-    $m = [regex]::Match($output, 'Stored in:\s*([0-9.]+)s')
-    if (-not $m.Success) {
+    $seconds = ConvertFrom-StoreOutput -Output $output
+    if ($null -eq $seconds) {
         throw "Could not parse store duration from output for $Exe. Output:`n$output"
     }
-    return [double]$m.Groups[1].Value
+    return $seconds
+}
+
+# ConvertFrom-StoreOutput returns the store duration in seconds from dues
+# store output: "Stored as evidence ... in <Go duration>" (for example 1m2.5s
+# or 850ms), or "Stored in: <seconds>s" from older releases. $null if neither.
+function ConvertFrom-StoreOutput {
+    param([string]$Output)
+
+    $m = [regex]::Match($Output, 'Stored as evidence .* in ((?:[0-9.]+(?:h|ms|us|\u00B5s|ns|m|s))+)')
+    if ($m.Success) {
+        $seconds = 0.0
+        foreach ($part in [regex]::Matches($m.Groups[1].Value, '([0-9.]+)(h|ms|us|\u00B5s|ns|m|s)')) {
+            $v = [double]$part.Groups[1].Value
+            switch ($part.Groups[2].Value) {
+                'h' { $seconds += $v * 3600 }
+                'm' { $seconds += $v * 60 }
+                's' { $seconds += $v }
+                'ms' { $seconds += $v / 1e3 }
+                default { if ($part.Groups[2].Value -eq 'ns') { $seconds += $v / 1e9 } else { $seconds += $v / 1e6 } }
+            }
+        }
+        return $seconds
+    }
+
+    $m = [regex]::Match($Output, 'Stored in:\s*([0-9.]+)s')
+    if ($m.Success) {
+        return [double]$m.Groups[1].Value
+    }
+    return $null
 }
 
 if (-not (Test-Path $Dataset)) {

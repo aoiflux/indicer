@@ -183,10 +183,10 @@ func (ix *indexer) hashOf(data []byte) string {
 // kv is one more entry a record's write carries.
 type kv struct{ k, v []byte }
 
-// memberEntry is the record's member key in its partition and its value.
-// Until W7 moves search and near onto the reader, the value is the legacy
-// evidence range: from the first data extent to the end of the last, or
-// empty for content that is not an evidence range.
+// memberEntry is the record's member key in its partition and its value. The
+// value is the legacy evidence range, which older readers expect: from the
+// first data extent to the end of the last, or empty for content that is not
+// an evidence range.
 func memberEntry(op *openPartition, iid []byte, ext []structs.Extent) (key, val []byte, err error) {
 	member := structs.InternalOffset{Start: 0, End: -1}
 	if lo, hi, ok := dataSpan(ext); ok {

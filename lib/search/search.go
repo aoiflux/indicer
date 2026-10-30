@@ -9,7 +9,6 @@ import (
 	"fmt"
 	"io/fs"
 	"os"
-	"sort"
 	"strings"
 	"sync"
 
@@ -134,7 +133,7 @@ func SearchReport(ctx context.Context, db *badger.DB, req Request) (Outcome, err
 
 	ranked := rankHits(res, pq.op, req.RankAlpha)
 	if len(scores) > 0 {
-		ranked = applyFTSBoost(ranked, scores)
+		ranked = applyFTSBoost(ranked, scores, req.RankAlpha)
 	}
 	out.Ranked = len(ranked)
 	report, err := buildReport(db, req.Query, pq, out.Mode, res, ranked)
@@ -214,7 +213,9 @@ func rankHits(res *Result, op queryOp, alpha float64) []RankedResult {
 	return rankBM25(hitMaps, sizes, c.Evidence+c.Partitions+c.Files, op, alpha)
 }
 
-func applyFTSBoost(ranked []RankedResult, ftScores map[string]float64) []RankedResult {
+// applyFTSBoost adds a share of each file's full-text score to its BM25 score
+// and sorts again as rankBM25 does, so --rank-alpha still applies.
+func applyFTSBoost(ranked []RankedResult, ftScores map[string]float64, alpha float64) []RankedResult {
 	if len(ranked) == 0 || len(ftScores) == 0 {
 		return ranked
 	}
@@ -223,15 +224,7 @@ func applyFTSBoost(ranked []RankedResult, ftScores map[string]float64) []RankedR
 			ranked[index].Score += 0.05 * score
 		}
 	}
-	sort.Slice(ranked, func(i, j int) bool {
-		if ranked[i].Score != ranked[j].Score {
-			return ranked[i].Score > ranked[j].Score
-		}
-		if ranked[i].TF != ranked[j].TF {
-			return ranked[i].TF > ranked[j].TF
-		}
-		return ranked[i].FileID < ranked[j].FileID
-	})
+	sortRankedResults(ranked, alpha)
 	return ranked
 }
 

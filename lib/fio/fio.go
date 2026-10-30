@@ -33,9 +33,9 @@ func WriteChonk(dbpath string, data, ckey, key []byte) ([]byte, error) {
 	cfname := base64.RawURLEncoding.EncodeToString(ckhash) + cnst.BLOBEXT
 	cfpath := filepath.Join(util.BlobPath(dbpath), cfname)
 	if err := blobWrites.do(cfpath, func() error {
-		err := writeNewFile(cfpath, data, cnst.FilePerm)
+		err := writeNewFile(cfpath, data, cnst.BlobPerm)
 		if errors.Is(err, fs.ErrExist) {
-			err = replaceFile(cfpath, data, cnst.FilePerm)
+			err = replaceFile(cfpath, data, cnst.BlobPerm)
 		}
 		return err
 	}); err != nil {

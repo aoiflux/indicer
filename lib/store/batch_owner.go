@@ -7,9 +7,7 @@ package store
 //  2) Workers send prepared chunk tasks to one writer goroutine over a channel.
 //  3) The writer goroutine is the only owner of mutable ingest-write state.
 //
-// The writer exclusively owns:
-//  - *badger.WriteBatch
-//  - reverse-relation append buffer
+// The writer exclusively owns the *badger.WriteBatch.
 //
 // Why this is simpler and faster than the old shared-batch variant:
 //  - No WriteBatch multi-writer pressure: one goroutine performs all batch
@@ -20,7 +18,8 @@ package store
 //  - Easier reasoning about ownership and race safety.
 //  - Deterministic write ordering for relation and reverse-relation updates.
 //
-// This is now the only ingest path; the shared-batch path is retired.
+// The shared-batch path is retired. The staged pipeline (staged_pipeline.go)
+// is the other way to run the chunk pass (--pipeline staged).
 
 import (
 	"context"

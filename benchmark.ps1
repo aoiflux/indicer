@@ -70,29 +70,23 @@ function Get-NsOpFromFile {
 function Write-RevRelModeSummary {
     param([string]$HotspotFile)
 
-    $unbufferedPattern = "BenchmarkIngestMetadataPathHotspots/process_revrel_dual_write_unbuffered/files_32/chunks_16"
-    $bufferedPattern = "BenchmarkIngestMetadataPathHotspots/process_revrel_dual_write_buffered/files_32/chunks_16"
+    $revRelPattern = "BenchmarkIngestMetadataPathHotspots/process_revrel_append_primary/files_32/chunks_16"
+    $memberPattern = "BenchmarkIngestMetadataPathHotspots/append_member_only/files_32/chunks_16"
 
-    $unbufferedNs = Get-NsOpFromFile -FilePath $HotspotFile -BenchPattern $unbufferedPattern
-    $bufferedNs = Get-NsOpFromFile -FilePath $HotspotFile -BenchPattern $bufferedPattern
+    $revRelNs = Get-NsOpFromFile -FilePath $HotspotFile -BenchPattern $revRelPattern
+    $memberNs = Get-NsOpFromFile -FilePath $HotspotFile -BenchPattern $memberPattern
 
     $lines = @(
         "",
-        "=== Reverse-Relation Dual-Write Mode Summary ==="
+        "=== Reverse-Relation Write Summary (files_32/chunks_16) ==="
     )
 
-    if ($null -eq $unbufferedNs -or $null -eq $bufferedNs) {
-        $lines += "Buffered/unbuffered hotspot lines not found in $HotspotFile"
+    if ($null -eq $revRelNs -or $null -eq $memberNs) {
+        $lines += "Reverse-relation hotspot lines not found in $HotspotFile"
     }
     else {
-        $improvementPct = 0.0
-        if ($unbufferedNs -gt 0) {
-            $improvementPct = (($unbufferedNs - $bufferedNs) / $unbufferedNs) * 100.0
-        }
-
-        $lines += "unbuffered_ns_op: $([math]::Round($unbufferedNs, 0))"
-        $lines += "buffered_ns_op: $([math]::Round($bufferedNs, 0))"
-        $lines += "buffered_improvement_percent: $([math]::Round($improvementPct, 2))"
+        $lines += "process_revrel_append_primary_ns_op: $([math]::Round($revRelNs, 0))"
+        $lines += "append_member_only_ns_op: $([math]::Round($memberNs, 0))"
     }
 
     $lines | Tee-Object -FilePath $summaryFile | Out-Null
@@ -124,12 +118,41 @@ function Get-StoreDurationSeconds {
     )
 
     $output = & $Exe @ExecutionParams 2>&1 | Out-String
-    $m = [regex]::Match($output, 'Stored in:\s*([0-9.]+)s')
-    if (-not $m.Success) {
+    $seconds = ConvertFrom-StoreOutput -Output $output
+    if ($null -eq $seconds) {
         throw "Could not parse store duration from output. Command: $Exe $($ExecutionParams -join ' '). Output:`n$output"
     }
 
-    return [double]$m.Groups[1].Value
+    return $seconds
+}
+
+# ConvertFrom-StoreOutput returns the store duration in seconds from dues
+# store output: "Stored as evidence ... in <Go duration>" (for example 1m2.5s
+# or 850ms), or "Stored in: <seconds>s" from older releases. $null if neither.
+function ConvertFrom-StoreOutput {
+    param([string]$Output)
+
+    $m = [regex]::Match($Output, 'Stored as evidence .* in ((?:[0-9.]+(?:h|ms|us|\u00B5s|ns|m|s))+)')
+    if ($m.Success) {
+        $seconds = 0.0
+        foreach ($part in [regex]::Matches($m.Groups[1].Value, '([0-9.]+)(h|ms|us|\u00B5s|ns|m|s)')) {
+            $v = [double]$part.Groups[1].Value
+            switch ($part.Groups[2].Value) {
+                'h' { $seconds += $v * 3600 }
+                'm' { $seconds += $v * 60 }
+                's' { $seconds += $v }
+                'ms' { $seconds += $v / 1e3 }
+                default { if ($part.Groups[2].Value -eq 'ns') { $seconds += $v / 1e9 } else { $seconds += $v / 1e6 } }
+            }
+        }
+        return $seconds
+    }
+
+    $m = [regex]::Match($Output, 'Stored in:\s*([0-9.]+)s')
+    if ($m.Success) {
+        return [double]$m.Groups[1].Value
+    }
+    return $null
 }
 
 function Write-IOUringQueueDepthSummary {

@@ -233,3 +233,17 @@ func TestSortRankedResultsNegativeAlphaCountsAsZero(t *testing.T) {
 		t.Fatalf("expected BM25 alone to rank with a negative alpha, got %q first", results[0].FileID)
 	}
 }
+
+func TestFTSBoostKeepsRankAlpha(t *testing.T) {
+	results := []RankedResult{
+		{FileID: "low-tf", Score: 1.00, TF: 1},
+		{FileID: "high-tf", Score: 0.90, TF: 100},
+	}
+	scores := map[string]float64{"low-tf": 0.1, "high-tf": 0.1}
+
+	ranked := applyFTSBoost(results, scores, 0.35)
+
+	if ranked[0].FileID != "high-tf" {
+		t.Fatalf("full-text boost ignored --rank-alpha: got %q first", ranked[0].FileID)
+	}
+}

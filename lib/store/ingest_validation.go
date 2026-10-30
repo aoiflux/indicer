@@ -10,7 +10,6 @@ import (
 	"indicer/lib/blobcodec"
 	"indicer/lib/cnst"
 	"indicer/lib/dbio"
-	"indicer/lib/dbmeta"
 	"indicer/lib/fio"
 	"indicer/lib/structs"
 	"indicer/lib/util"
@@ -74,14 +73,18 @@ func ValidateFlushedEvidenceMaterialized(ctx context.Context, fileID []byte, evi
 // valid evidence, an error wrapping ErrMaterialMissing or ErrMaterialCorrupt
 // for the first problem found, and any other error when reading failed.
 //
-// The chunk size is the database's, from its manifest; per-evidence chunk
-// sizes arrive with the W6 evidence record.
+// It steps at the chunk size the evidence was stored with
+// (dbio.EvidenceChunkSize): a legacy database can hold evidence stored at
+// several.
 func ValidateEvidence(ctx context.Context, db *badger.DB, fileID []byte, evidenceFile structs.EvidenceFile, level ValidationLevel) error {
 	if evidenceFile.Size <= 0 {
 		return nil
 	}
-	cs := dbmeta.ChunkSize(db)
 	end := evidenceFile.Start + evidenceFile.Size
+	cs, err := dbio.EvidenceChunkSize(db, fileID, end)
+	if err != nil {
+		return err
+	}
 	checked := make(map[string]struct{}, validatedCacheSize)
 	type ref struct {
 		offset int64
@@ -153,19 +156,23 @@ func validateChunk(db *badger.DB, ckey []byte, level ValidationLevel) error {
 	}
 
 	path := dbio.ResolveBlobPath(dbio.KVDir(db), loc.Path)
-	fi, err := os.Stat(path)
-	if errors.Is(err, fs.ErrNotExist) {
-		return fmt.Errorf("%w: %s does not exist", ErrMaterialMissing, path)
-	}
-	if err != nil {
-		return err
-	}
 	if loc.Container {
+		// ContainerHolds also finds a legacy container compressed to
+		// <name>.blob.zst, which the metadata still names <name>.blob.
 		if !fio.ContainerHolds(path, loc.Offset, loc.EncodedSize) {
-			return fmt.Errorf("%w: %s ends before offset %d + %d", ErrMaterialMissing, path, loc.Offset, loc.EncodedSize)
+			return fmt.Errorf("%w: %s is missing or ends before offset %d + %d", ErrMaterialMissing, path, loc.Offset, loc.EncodedSize)
 		}
-	} else if fi.Size() != loc.StoredSize {
-		return fmt.Errorf("%w: %s holds %d bytes, its metadata records %d", ErrMaterialMissing, path, fi.Size(), loc.StoredSize)
+	} else {
+		fi, err := os.Stat(path)
+		if errors.Is(err, fs.ErrNotExist) {
+			return fmt.Errorf("%w: %s does not exist", ErrMaterialMissing, path)
+		}
+		if err != nil {
+			return err
+		}
+		if fi.Size() != loc.StoredSize {
+			return fmt.Errorf("%w: %s holds %d bytes, its metadata records %d", ErrMaterialMissing, path, fi.Size(), loc.StoredSize)
+		}
 	}
 	if level == ValidateMaterial {
 		return nil

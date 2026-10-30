@@ -41,7 +41,7 @@ type Producer struct {
 // be written unattributed.
 var DefaultProducer = Producer{Pipeline: "dues", Version: "0"}
 
-// String renders the stamp, e.g. "enrichment@2/graphene@v0.4.0".
+// String renders the stamp, e.g. "enrichment@1/graphene@v0.9.0".
 func (p Producer) String() string {
 	pipeline := p.Pipeline
 	if pipeline == "" {

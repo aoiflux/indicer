@@ -101,7 +101,7 @@ func searchSummary(o search.Outcome) (lines, problems []string) {
 		lines = append(lines, fmt.Sprintf("%d evidence records are not stored (pending, failed or duplicate) and were not searched.", c.NotStored))
 	}
 	if c.Quarantined > 0 {
-		lines = append(lines, fmt.Sprintf("%d evidence have a quarantined index: only the evidence itself was searched.", c.Quarantined))
+		lines = append(lines, fmt.Sprintf("%d evidence have a quarantined index: their partitions and files were not searched.", c.Quarantined))
 	}
 	if c.Unavailable > 0 {
 		lines = append(lines, fmt.Sprintf("%d indexed files have no readable content (metadata only).", c.Unavailable))

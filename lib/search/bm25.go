@@ -74,9 +74,10 @@ func rankBM25(hitMaps []map[string]int, docSizes map[string]int64, totalDocs int
 }
 
 // sortRankedResults keeps ordering stable and occurrence-aware:
-// 1) Higher BM25 score first
-// 2) Higher occurrence count (TF) first
-// 3) Lexicographically smaller file ID first (deterministic output)
+// 1) Higher rank score first: BM25 plus alpha × log(1 + TF)
+// 2) Higher BM25 score first
+// 3) Higher occurrence count (TF) first
+// 4) Lexicographically smaller file ID first (deterministic output)
 //
 // A negative alpha counts as zero.
 func sortRankedResults(results []RankedResult, alpha float64) {

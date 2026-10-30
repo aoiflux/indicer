@@ -44,8 +44,9 @@ func (e *ChunkCorruptError) Unwrap() error { return e.Err }
 
 // ReadOptions control how the readers in this file read chunks.
 type ReadOptions struct {
-	// SkipVerify reads chunks without checking them against their hash.
-	// Every read is verified unless a caller turns this on (I4).
+	// SkipVerify skips the separate check of each chunk against its hash.
+	// Every read is verified unless a caller turns this on (I4). The v2
+	// encoding's Decode checks the hash anyway; legacy encodings do not.
 	SkipVerify bool
 	// CacheBytes bounds the decoded chunks a reader keeps for reuse. Zero
 	// means DefaultChunkCacheBytes; a negative value keeps none.

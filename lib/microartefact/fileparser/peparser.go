@@ -16,9 +16,10 @@ import (
 // mapping and handle leaked and, on Windows, the temporary file with evidence
 // content was left behind (GRA-15).
 //
-// The parsed file is not closed: for a file made by NewBytes, Close unmaps
-// the data, which would unmap the caller's buffer (GRA-22). It holds nothing
-// else.
+// The parsed file is not closed. Close unmaps the data even for a file made
+// by NewBytes (GRA-22). For a heap buffer like this one the unmap fails and
+// Close drops the error, so nothing happens, but memory the caller had mapped
+// itself would be unmapped under it. The file holds nothing else.
 func parsePEContent(content []byte) ([]byte, error) {
 	if len(content) == 0 {
 		return nil, errors.New("pe: empty")

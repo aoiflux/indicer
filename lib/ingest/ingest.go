@@ -166,7 +166,7 @@ func Run(ctx context.Context, db *badger.DB, req Request) (Result, error) {
 		return res, nil
 	}
 
-	eid, resumed, err := store.BeginAttempt(db, src.Path(), rec)
+	eid, resumed, err := store.BeginAttempt(db, attemptPath(res.Source, src), rec)
 	if err != nil {
 		return res, err
 	}
@@ -175,6 +175,16 @@ func Run(ctx context.Context, db *badger.DB, req Request) (Result, error) {
 		return res, fail(db, eid, err)
 	}
 	return run(ctx, db, src, eid, name, req, res)
+}
+
+// attemptPath is the path an attempt is keyed by: the first source member the
+// record keeps, which is what the commit clears the key by, else the path
+// read.
+func attemptPath(info structs.EvidenceSource, src *evidence.Source) string {
+	if len(info.Members) > 0 {
+		return info.Members[0].Path
+	}
+	return src.Path()
 }
 
 // recordedSource is what the evidence records about where it was read from.

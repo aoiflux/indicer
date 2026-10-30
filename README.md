@@ -4,93 +4,134 @@
   <img src="logo.svg" alt="DUES Logo" width="600"/>
 </p>
 
-[![Go Version](https://img.shields.io/badge/Go-1.25-blue.svg)](https://golang.org)
+[![Go Version](https://img.shields.io/badge/Go-1.26-blue.svg)](https://golang.org)
 [![Version](https://img.shields.io/badge/version-0.39-green.svg)](https://github.com/aoiflux/indicer)
-[![License](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
+![License](https://img.shields.io/badge/license-MIT-blue.svg)
 
 DUES is a digital forensics data platform for ingesting, deduplicating,
 indexing, searching, restoring, and comparing large evidence sets.
 
 Version: 0.39 Codename: <pineapple> spacebar
 
-## Important upgrade notice (breaking)
-
-v0.38 introduces structural changes in on-disk DB and index layouts.
-
-- Older DB directories may not be fully compatible with this release.
-- Reusing older DB paths without migration or rebuild can cause read/startup
-  failures.
-- Back up existing DB paths before upgrading.
-- After upgrade, run repair and reindex/restore workflows to rebuild state in
-  the new format.
-
-## Release summary
-
-This release is a large cross-cutting update focused on reliability, retrieval
-quality, and investigation speed.
-
-- Storage pipeline improvements with better reliability and throughput tuning.
-- Restore pipeline upgrades, including multithreaded restore controls.
-- Search relevance improvements with BM25 and hybrid full-text fallback.
-- New enrichment pipeline for evidence, partition, and indexed-file metadata.
-- New micro-artefact extraction and graph workflows.
-- Near-similarity and SimHash enhancements for in-db and out-of-db matching.
-- Expanded server capabilities for browser upload sessions.
-- Wider test and benchmark coverage across core subsystems.
-
 Patent information: this software has led to two derivative inventions protected
 by patents 567877 and 556272 registered at the Indian Patent Office.
+
+## Upgrading from an earlier release
+
+This release went through a correctness pass. Its findings, fixes and residual
+risks are in [docs/CORRECTNESS_REPORT.md](docs/CORRECTNESS_REPORT.md), and the
+dependency changes in
+[docs/DEPENDENCY_UPGRADE_REPORT.md](docs/DEPENDENCY_UPGRADE_REPORT.md).
+
+Databases written by earlier releases open without a migration step:
+- A read-only command (list, search, restore...) reads them and writes nothing.
+- The first writable command records a manifest (`dues-manifest.json`) with the
+  layout it infers from the database. That layout is kept from then on.
+- New evidence stored into an older database uses that database's encoding.
+
+Some data in older databases needs action:
+
+| What | Action |
+|---|---|
+| Evidence that may have been damaged by earlier releases (container mode across sessions, interrupted ingests) | `dues repair --verify` lists every damaged evidence. Store those files again from the original evidence. |
+| Indexes built from the raw bytes of an E01 or VHD/VHDX file, which are wrong | `dues repair --upgrade` sets them aside. Store the original evidence again: it is now decoded at ingest. |
+| A hierarchical (`--hierarchical`) block index | `dues repair --upgrade` moves it into the database. |
+| Indexes built before fragmented, resident, compressed and deleted files were indexed | `dues reindex --all` rebuilds them from the stored chunks. |
+| NeAR on evidence stored without `--revrel` | `dues repair --fix --revrel` adds the reverse relations it needs. |
+
+Do not open a database with an earlier release once this one has written to it.
+Downgrading is not supported.
+
+Behaviour that changed:
+- A database created without a password is not encrypted, and DUES says so.
+  With a password, the key is derived with Argon2id and a per-database salt.
+- Quick mode no longer drops encryption.
+- Storing content that is already stored records an alias of it instead of a
+  second copy.
+- Restore checks every chunk and the content's recorded hash, and refuses to
+  replace an existing file without `--force`.
+- Search, near and micro reports are written to `--out` and refuse to replace
+  an existing file without `--force` (or `--overwrite` for the micro graph
+  view).
+- The server listens on loopback only, unless `--listen` and a token say
+  otherwise.
+- Read commands open the database read-only, so several can run at once, and
+  they work on read-only media.
+- On Linux and macOS a new data root is readable by its owner only (mode 0700
+  directories, 0600 chunk files).
 
 ## Feature highlights
 
 ### 1) Ingest, dedup, and storage
 
-- Chunk-level deduplication with configurable hash algorithm.
-- Default hashing is BLAKE3; SHA3 is also supported.
-- Optional password-based encrypted DB operation.
-- Per-chunk zstd compression with tunable compression level.
-- Container mode for large-scale blob packing.
-- Hierarchical block index mode for scalable lookup paths.
-- Ingest validation and startup recovery for incomplete ingests.
-- Repair tooling to inspect and optionally mark partial ingests as failed.
+- Chunk-level deduplication. Chunks are hashed with BLAKE3 by default, or SHA3,
+  and compressed with zstd.
+- Optional encryption with AES-GCM. Each stored chunk is bound to its own key,
+  so a chunk read from the wrong place is an error, never wrong content.
+- File mode (one blob per chunk) or container mode (`--container`, chunks
+  packed into framed container files).
+- Crash-safe storage: chunk data is synced before it is recorded, and an
+  interrupted ingest is recovered or resumed at the next writable open.
+- Idempotent ingest: storing content that is already stored records an alias.
+- E01 sets, split raw images (`.001`, `.002`...) and VHD/VHDX disks, including
+  snapshot chains, are decoded at ingest and stored as the disk image they
+  hold. An E01 is checked against the MD5/SHA-1 its set recorded.
+  `--require-verified` refuses one that does not match.
+- Folders are stored file by file; links and special files are skipped and
+  reported.
+- `dues repair` finishes interrupted ingests, verifies stored data and upgrades
+  older databases. `dues reindex` rebuilds indexes from the stored chunks.
 
-### 2) Image parsing with libtsk (via libtusk)
+### 2) Image parsing
 
-- DUES now uses libtusk (a C wrapper over The Sleuth Kit) for partition table
-  and filesystem parsing on supported targets.
-- This enables richer partition/filesystem-aware indexing behavior aligned with
-  forensic image analysis use cases.
-- Current CGO/libtusk-enabled targets: windows/amd64 and linux/amd64.
-- On unsupported targets, DUES falls back to internal parsing (MBR/exFAT path).
-- Fragmented-file handling remains limited in current parser flow; fragmented
-  entries are reported and skipped by the libtusk indexing path.
-
-See also:
-
-- [TOOLCHAIN_NOTES.md](docs/TOOLCHAIN_NOTES.md)
-- [clib/LIBTUSK_ABI.md](clib/LIBTUSK_ABI.md)
+- Pure Go, on every target, through the aoiflux libraries: no cgo and no C
+  toolchain.
+- Partition tables: MBR, GPT, APM, BSD and Sun. A device with no table is
+  read as one volume.
+- Filesystems: FAT12/16/32, exFAT, NTFS, ext2/3/4, XFS, classic HFS and HFS+.
+  BitLocker, LUKS, APFS, ReFS, btrfs, LVM2 and swap are recognised and
+  reported, not parsed.
+- Every file is indexed with its real layout: fragmented and sparse files,
+  unwritten extents, resident and inline data, NTFS alternate data streams
+  (as `path:stream`), and compressed content, which is decoded and stored.
+- Deleted files are recovered where the filesystem allows, with flags for how
+  far the recovered content can be trusted.
+- A damaged or hostile image cannot crash DUES: parser panics are contained,
+  sizes read from the image are bounded, and problems are reported per
+  partition.
 
 ### 3) Search and ranking
 
-- Query parsing with AND/OR/phrase search behaviors.
-- BM25-driven ranking support.
-- Occurrence-aware rank adjustment via rank-alpha.
-- Hybrid mode: full-text sidecar first, automatic fallback to scan search.
-- Search output generation for report workflows.
+- Every stored evidence, partition and indexed file is searched as its own
+  bytes, case-insensitively, including matches that span chunk boundaries.
+- `a b` needs both terms, `a|b` either, and `"a b"` is one phrase.
+- BM25-driven ranking, with an occurrence boost (`--rank-alpha`).
+- `--fts` searches only the files a full-text index offers, and the report
+  says what that leaves out.
+- The report (`report.json`, or `--out`) counts matches per level and names
+  any object that could not be read.
 
 ### 4) Near similarity
 
-- Near in: compare objects already stored in DUES.
-- Near out: compare external files against DUES content.
-- SimHash-enabled workflows and top-K verification options.
-- Optional deep and explain-exact behaviors for investigation workflows.
+- `near in`: compare an object already stored in DUES.
+- `near out`: compare an external file against DUES content.
+- Chunk matches are attributed to the most specific object holding them, and
+  confidence is the share of the object's chunks that match.
+- `--deep` adds similar-chunk matching through chunk SimHash signatures
+  (`store --simhash`), and `--advanced-deep` re-ranks by full-file SimHash.
+- NeAR needs reverse relations: store with `--revrel`, or add them with
+  `dues repair --fix --revrel`.
 
 ### 5) Enrichment and micro-artefacts
 
-- Graph enrichment command to backfill hierarchy metadata.
-- Micro-artefact extraction pipeline across indexed files.
-- Detector and parser expansion for common forensic artefact patterns.
-- Graph export support, including interactive HTML output.
+- `dues enrich` writes the evidence, partition and file hierarchy to a graph
+  store, with entropy and type information.
+- `dues micro extract` finds micro-artefacts in indexed files: URLs, IP
+  addresses, e-mail addresses, domains and hashes; key-value pairs, log lines
+  and timestamps; scheduled tasks, services and browser artefacts; Windows
+  event records; PE, registry and EVTX metadata. PE, ELF and PDF files are
+  parsed for their text too. Hostile input is parsed with bounds.
+- An interactive HTML view of the graph (`graph.html`, or `--out`).
 
 ### 6) API, server, and browser upload path
 
@@ -125,12 +166,23 @@ See also:
   file asks first; the database's chunk layout is shown, not changed.
 - See [docs/TUI_QUICKSTART.md](docs/TUI_QUICKSTART.md).
 
+### 8) Operations
+
+- Per-process NDJSON logs with secrets redacted, and a crash file for every
+  crash. A logging failure never stops a command.
+- Ctrl-C and SIGTERM stop at a safe point; the exit codes are stable.
+- DUES keeps 128 MiB free on the database's volume, and stops an ingest before
+  the disk fills.
+- See [docs/OPERATIONS.md](docs/OPERATIONS.md).
+
 ## Installation
 
 ### Prerequisites
 
-- Go 1.25+
-- Windows, Linux, or macOS
+- Go 1.26.2 or later. `go.mod` names `toolchain go1.27.3`, which the `go`
+  command fetches automatically (`GOTOOLCHAIN=auto`, the default) so builds
+  get its security fixes.
+- Windows, Linux, or macOS, on amd64 or arm64.
 
 ### Build
 
@@ -146,6 +198,9 @@ Windows users may prefer:
 go build -o dues.exe .
 ```
 
+`build.ps1` and `build.sh` build release binaries for all six targets into
+`dist/`. DUES is pure Go, so one machine cross-compiles them all.
+
 Compression product specific builds:
 
 Note: FFI build mode defaults to `auto`:
@@ -153,8 +208,8 @@ Note: FFI build mode defaults to `auto`:
 - Windows targets use `c-shared` (DLL)
 - Non-Windows targets use `c-archive` (static `.a`)
 
-Compression product build scripts compile with `-tags notusk`, which disables
-libtusk/clib usage for compression artifacts on Windows and Linux.
+The FFI library needs cgo and a C toolchain for its target; the compression
+command does not.
 
 ```powershell
 # Windows compression CLI artifact
@@ -215,25 +270,28 @@ described in [docs/COMPRESSION_ABI_REFERENCE.md](docs/COMPRESSION_ABI_REFERENCE.
 ## Quick start
 
 ```powershell
-# Store evidence (file or folder)
-dues store E01-image.dd --enrich --fts
+# Store evidence (a file, an E01 set, a VHDX, or a folder)
+dues store evidence.E01 --enrich --fts --revrel
+
+# Store into an encrypted database (the password is read from the file)
+dues store evidence.E01 --dbpath ./caseA --password-file ./caseA.key
 
 # Store with convenience presets
-dues store E01-image.dd --preset quick
-dues store E01-image.dd --quick-mode
-dues store E01-image.dd --performance-mode
-dues store E01-image.dd --low-resource-mode
+dues store evidence.dd --preset quick
+dues store evidence.dd --quick-mode
+dues store evidence.dd --performance-mode
+dues store evidence.dd --low-resource-mode
 
 # List entries
 dues list
 
-# Search (scan ranking)
+# Search (writes report.json)
 dues search "invoice payment"
 
-# Hybrid full-text first, then fallback
+# Search only what the full-text index offers
 dues search "invoice|receipt" --fts
 
-# Restore by hash
+# Restore by hash, verified, to a new file
 dues restore <hash> --filepath restored.bin
 
 # Near similarity from DB object
@@ -248,9 +306,13 @@ dues enrich
 # Extract micro-artefacts and export graph.html
 dues micro extract --top-k 25
 
-# Inspect/repair pending ingests
+# Inspect, finish and verify
 dues repair
 dues repair --fix
+dues repair --verify
+
+# Rebuild indexes that failed or were interrupted
+dues reindex --failed
 
 # Launch TUI
 dues tui
@@ -260,13 +322,13 @@ dues tui
 
 ```powershell
 # 1) Fast triage ingest (throughput-first)
-dues store E01-image.dd --preset quick --fts
+dues store evidence.E01 --preset quick --fts
 
-# 2) Balanced case ingest (good default)
-dues store E01-image.dd --preset performance --enrich --fts
+# 2) Balanced case ingest (good default), ready for NeAR
+dues store evidence.E01 --preset performance --enrich --fts --revrel
 
 # 3) Low-resource ingest (laptop / constrained VM)
-dues store E01-image.dd --preset low-resource --compress-level default
+dues store evidence.E01 --preset low-resource --compress-level default
 
 # 4) Search -> near -> restore investigation loop
 dues search "invoice" --fts
@@ -279,20 +341,25 @@ dues restore <hash> -y 8 -U 32 -m 100 -b 128
 # 6) Micro-artefact extraction workflow
 dues micro extract -V -K 25
 dues micro list
+
+# 7) After a crash or a full disk
+dues repair --fix --reindex-failed
+dues repair --verify
 ```
 
 ## Command summary
 
 Core commands:
 
-- dues store FILE
+- dues store FILE|FOLDER
 - dues list
 - dues search QUERY
 - dues restore HASH
 - dues near in HASH
 - dues near out FILE
 - dues stats
-- dues repair [--fix]
+- dues repair [--fix] [--verify] [--upgrade]
+- dues reindex ID|HASH... | --failed | --all
 - dues enrich
 - dues micro extract
 - dues micro list
@@ -300,6 +367,10 @@ Core commands:
 - dues tui
 - dues version
 - dues reset
+
+Exit codes: 0 success, 1 failure, 2 usage error or done with a warning,
+70 internal error, 130/143 interrupted. See
+[docs/OPERATIONS.md](docs/OPERATIONS.md).
 
 ## Important flags
 
@@ -328,40 +399,51 @@ Most-used shortcuts for day-to-day operations:
 | Near    | --deep                | -e    |
 | Near    | --advanced-deep       | -a    |
 | Near    | --top-k               | -k    |
+| Repair  | --fix                 | -J    |
 
 Tip: run `dues help <command>` for command-specific short flags and examples.
 
 ### Global
 
-- --dbpath, -d: custom database path
-- --password, -p: password for encrypted DB access
-- --chonksize, -c: chunk size in KB (default 256)
+- --dbpath, -d: data root (default `~/.dues`)
+- --log-dir: directory for log and crash files
+- --password-file: read the password from the first line of a file
+- --password-stdin: read the password from standard input
+- --password, -p: password (visible to other users; the `DUES_PASSWORD`
+  environment variable is another option)
+- --chonksize, -c: chunk size in KB of a new database (default 256)
 - --low, -l: low-resource mode
-- --quick, -q: throughput-first mode
-- --container, -x: container blob mode
-- --hierarchical, -i: hierarchical index mode
+- --quick, -q: a new database without table compression; encryption is unchanged
+- --container, -x: container storage for a new database
 - --compress-level, -z: fast, default, or best
 - --preset, -P: apply convenience preset (quick, performance, low-resource)
 - --quick-mode, -Q: convenience alias for --preset quick
 - --performance-mode, -o: convenience alias for --preset performance
 - --low-resource-mode, -L: convenience alias for --preset low-resource
 
+Chunk size, hash algorithm, storage and encryption are fixed when a database
+is created. A flag that contradicts an existing database is an error.
+
 ### Store-specific highlights
 
-- --sync, -s: synchronous indexing
-- --no-index, -N: skip indexing
-- --fts, -F: build sidecar full-text index
-- --enrich, -E: upsert hierarchy metadata to graphdb
-- --hash-algo, -g: sha3 or blake3
+- --no-index, -N: store without indexing
+- --require-verified: refuse an E01 whose stored MD5/SHA-1 does not match
+- --fts, -F: build the full-text index
+- --enrich, -E: write hierarchy metadata to the graph store
+- --hash-algo, -g: chunk hash of a new database, sha3 or blake3
 - --hash-strategy, -S: sync, async, or hocho
 - --pipeline, -Y: batch-owner or staged
 - --simhash, -H: compute chunk SimHash signatures during ingest
-- --revrel, -R: persist reverse relations during ingest
+- --revrel, -R: persist reverse relations during ingest (NeAR needs them)
 - --store-workers, -w and --store-queue, -W: override ingest pipeline tuning
+- --io-engine, -I and --io-uring-queue-depth, -j: write engine (io-uring on Linux)
 
 ### Restore-specific highlights
 
 - --filepath, -f: output path
+- --force: replace an existing output file
+- --verify: full (default), chunks or off
+- --verify-ewf: also check a restored E01 against its stored MD5/SHA-1
 - --restore-workers, -y and --restore-queue, -U: pipeline tuning
 - --restore-progress-ms, -m: progress update interval
 - --restore-buffer-mb, -b: write buffer sizing
@@ -369,7 +451,8 @@ Tip: run `dues help <command>` for command-specific short flags and examples.
 ### Search-specific highlights
 
 - --rank-alpha, -r: occurrence boost weighting
-- --fts, -F: hybrid full-text + fallback scan path
+- --fts, -F: search only the files the full-text index offers
+- --out and --force: report path, and replacing an existing report
 
 ### Near-specific highlights
 
@@ -377,6 +460,18 @@ Tip: run `dues help <command>` for command-specific short flags and examples.
 - --advanced-deep, -a: phase-2 full-file SimHash rerank
 - --top-k, -k: top-K candidates for phase-2 rerank
 - --explain-exact, -t: force chunk drilldown for exact out-file match
+- --out and --force: report path, and replacing an existing report
+
+### Repair and reindex
+
+- repair --fix, -J: finish what interrupted ingests left
+- repair --fix --reindex-failed: also rebuild failed or interrupted indexes
+- repair --fix --revrel: add the reverse relations NeAR needs
+- repair --verify: read back every chunk and check its hash
+- repair --upgrade [--yes]: move a legacy block index into the database, and
+  set aside indexes of raw-stored E01 or VHD/VHDX evidence
+- reindex --failed | --all | ID...: rebuild indexes from the stored chunks;
+  --source reads one evidence from its original file instead
 
 ## CLI migration notes
 
@@ -385,42 +480,47 @@ Tip: run `dues help <command>` for command-specific short flags and examples.
 - `--topk` is now `--top-k`.
 - Presets are available via `--preset` and convenience aliases (`--quick-mode`,
   `--performance-mode`, `--low-resource-mode`).
-
-## Migration checklist (pre-0.38 to 0.38)
-
-1. Back up current DB directory.
-2. Upgrade binary to v0.38.
-3. Run dues repair and review pending/failed evidence.
-4. Re-run store/index paths where needed for format alignment.
-5. Re-run enrichment and micro extract if graph metadata is required.
-6. Validate search and restore outputs on representative samples.
+- Retired flags are still accepted, but are hidden, have no effect and print a
+  warning: `--hierarchical`/`-i`, `store --sync`/`-s`, `store --hocho-mode`/`-M`
+  and `store --async-fio`/`-A`.
+- `dues server` no longer listens on every interface by default; see
+  [docs/SERVER_API.md](docs/SERVER_API.md).
 
 ## Architecture and design docs
 
+- [OPERATIONS.md](docs/OPERATIONS.md)
+- [TESTING.md](docs/TESTING.md)
+- [CORRECTNESS_REPORT.md](docs/CORRECTNESS_REPORT.md)
+- [DEPENDENCY_UPGRADE_REPORT.md](docs/DEPENDENCY_UPGRADE_REPORT.md)
 - [STORE_LLD.md](docs/STORE_LLD.md)
-- [STORE_BOTTLENECKS.md](docs/STORE_BOTTLENECKS.md)
+- [UUID_HASH_DESIGN_DECISIONS.md](docs/UUID_HASH_DESIGN_DECISIONS.md)
+- [RESTORE_LLD.md](docs/RESTORE_LLD.md)
 - [SEARCH_LLD.md](docs/SEARCH_LLD.md)
+- [NEAR_SIMILARITY_LLD.md](docs/NEAR_SIMILARITY_LLD.md)
+- [CONTAINER_MODE_LLD.md](docs/CONTAINER_MODE_LLD.md)
+- [HIERARCHICAL_INDEX.md](docs/HIERARCHICAL_INDEX.md)
 - [ENRICHMENT_LLD.md](docs/ENRICHMENT_LLD.md)
 - [MICRO_ARTEFACT_DEEP_DIVE.md](docs/MICRO_ARTEFACT_DEEP_DIVE.md)
-- [NEAR_SIMILARITY_LLD.md](docs/NEAR_SIMILARITY_LLD.md)
-- [HIERARCHICAL_INDEX.md](docs/HIERARCHICAL_INDEX.md)
-- [CONTAINER_MODE_LLD.md](docs/CONTAINER_MODE_LLD.md)
-- [CONTAINER_MANAGER_CURRENT.md](docs/CONTAINER_MANAGER_CURRENT.md)
-- [RESTORE_LLD.md](docs/RESTORE_LLD.md)
-- [BENCHMARKING.md](docs/BENCHMARKING.md)
+- [SERVER_API.md](docs/SERVER_API.md)
+- [COMPRESSION_ABI_REFERENCE.md](docs/COMPRESSION_ABI_REFERENCE.md)
 - [TUI_QUICKSTART.md](docs/TUI_QUICKSTART.md)
 - [TUI_IMPLEMENTATION.md](docs/TUI_IMPLEMENTATION.md)
+- [BENCHMARKING.md](docs/BENCHMARKING.md)
+- [TOOLCHAIN_NOTES.md](docs/TOOLCHAIN_NOTES.md)
 
 ## Output artefacts
 
-- report.json: search report output
-- graph.html: similarity and micro-artefact graph visualisations
-- BLOBS/*.blob: deduplicated chunk/container data
+- `report.json`: search report (or `search --out`)
+- `near_report.json`: NeAR report (or `near in|out --out`)
+- `graph.html`: micro-artefact graph view, in the working directory (or
+  `micro extract --out`)
+- `blob/` in the data root: deduplicated chunk blobs or containers
 
 ## License
 
-MIT. See [LICENSE](LICENSE).
+MIT.
 
 ## Contributing
 
-Issues and pull requests are welcome.
+Issues and pull requests are welcome. Every change must pass the verify gate;
+see [docs/TESTING.md](docs/TESTING.md).

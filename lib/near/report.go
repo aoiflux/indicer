@@ -92,7 +92,7 @@ type nearReportMatch struct {
 	// Phase 1 alignment noise estimate (0.0 = fully aligned, 1.0 = all chunks are edge chunks).
 	Phase1DeviationEstimate float64 `json:"phase1_deviation_estimate"`
 	Phase1DeviationWarning  string  `json:"phase1_deviation_warning,omitempty"`
-	// Phase 2 full-file SimHash re-ranking fields (populated when --verify is used).
+	// Phase 2 full-file SimHash re-ranking fields (populated when --advanced-deep is used).
 	Phase2FileSimilarity    float64 `json:"phase2_file_similarity,omitempty"`
 	Phase2FileSimilarityPct float64 `json:"phase2_file_similarity_pct,omitempty"`
 	Phase2Rank              int     `json:"phase2_rank,omitempty"`
@@ -119,10 +119,10 @@ func (r *run) finish(ctx context.Context, out Outcome, input nearReportInput, vc
 	if vcfg.isOutfile && r.opts.Deep {
 		report.SimilarityWarning = "Phase 1 deep-simhash scores compare fixed-size chunks. " +
 			"The query file's chunk grid is unlikely to align with stored files' chunk grids, so confidence values are approximate. " +
-			"Use --verify for full-file SimHash re-ranking, which is alignment-independent."
+			"Use --advanced-deep for full-file SimHash re-ranking, which is alignment-independent."
 	} else if r.opts.Deep {
 		report.SimilarityWarning = "Deep-simhash confidence values may be affected by partial edge-chunk alignment " +
-			"(see phase1_deviation_estimate per match). Use --verify to re-rank by full-file SimHash."
+			"(see phase1_deviation_estimate per match). Use --advanced-deep to re-rank by full-file SimHash."
 	}
 
 	keys := make([]string, 0, len(r.matches)+len(r.exact))

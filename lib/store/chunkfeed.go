@@ -16,8 +16,9 @@ import (
 var ErrSourceRead = errors.New("evidence source read failed")
 
 // SourceReadError means the bytes being stored could not be read: the device
-// went away or a sector is unreadable. The ingest fails; nothing past Offset
-// was stored.
+// went away or a sector is unreadable. The ingest fails and is not
+// committed. With parallel readers, chunks past Offset may already have been
+// stored; nothing refers to them until an ingest of the evidence succeeds.
 type SourceReadError struct {
 	Offset int64
 	Err    error

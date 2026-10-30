@@ -292,7 +292,7 @@ func (cm *ContainerManager) createNewContainer() error {
 		return err
 	}
 	path := filepath.Join(blobsDir, containerPrefix+id.String()+cnst.BLOBEXT)
-	f, err := os.OpenFile(path, os.O_CREATE|os.O_EXCL|os.O_WRONLY, cnst.FilePerm)
+	f, err := os.OpenFile(path, os.O_CREATE|os.O_EXCL|os.O_WRONLY, cnst.BlobPerm)
 	if err != nil {
 		return err
 	}

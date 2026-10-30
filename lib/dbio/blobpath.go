@@ -8,10 +8,10 @@ import (
 	"indicer/lib/util"
 )
 
-// blobPathPrefix starts every chunk path recorded from this pass on: C|||
-// and block index paths are relative to the data root, with forward slashes,
-// so a data root can be moved, copied or opened from another machine
-// (STO-10).
+// blobPathPrefix starts every chunk path DUES records in C||| (including the
+// records repair --upgrade moves from a block index): relative to the data
+// root, with forward slashes, so a data root can be moved, copied or opened
+// from another machine (STO-10).
 const blobPathPrefix = cnst.BLOBSDIR + "/"
 
 // StoredBlobPath returns the form in which C||| records path, a blob or

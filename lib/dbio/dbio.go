@@ -609,12 +609,10 @@ func GetNode(key []byte, db *badger.DB) ([]byte, error) {
 		if err != nil {
 			return err
 		}
-
-		err = item.Value(func(val []byte) error {
-			data, err = item.ValueCopy(val)
-			return err
-		})
-
+		// A copy into a new buffer (STO-18): the value item.Value lends may be
+		// badger's mapping of its value log, read-only on a read-only open and
+		// unmapped when the database closes.
+		data, err = item.ValueCopy(nil)
 		return err
 	})
 	if err != nil {

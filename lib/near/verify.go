@@ -63,9 +63,9 @@ func computeAlignmentDeviation(start, size, stride int64) (edgeChunks int, devia
 	case deviation < 0.1:
 		warning = "Low alignment noise. Chunk-level similarity scores are reliable."
 	case deviation < 0.3:
-		warning = "Moderate alignment noise. Consider --verify for improved re-ranking."
+		warning = "Moderate alignment noise. Consider --advanced-deep for improved re-ranking."
 	default:
-		warning = "High alignment noise (small or misaligned file). Phase 1 scores may be inaccurate. --verify strongly recommended."
+		warning = "High alignment noise (small or misaligned file). Phase 1 scores may be inaccurate. --advanced-deep strongly recommended."
 	}
 	return
 }

@@ -26,7 +26,7 @@ import (
 
 // RepairOptions selects what repair changes. With none set it only inspects.
 type RepairOptions struct {
-	Fix     bool // mark partial evidence ingests as failed (--fix)
+	Fix     bool // finish what interrupted ingests left: the recovery table (--fix)
 	Upgrade bool // move a legacy block index into the database (--upgrade)
 	Yes     bool // delete the moved block index files without asking (--yes)
 	Verify  bool // read back and check every stored chunk (--verify)

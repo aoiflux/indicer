@@ -37,7 +37,9 @@ const (
 	VerifyFull VerifyLevel = iota
 	// VerifyChunks checks every chunk against its hash.
 	VerifyChunks
-	// VerifyOff checks nothing.
+	// VerifyOff checks nothing beyond what decoding a chunk checks: the v2
+	// encoding always checks a chunk against its hash, legacy encodings do
+	// not.
 	VerifyOff
 )
 
@@ -381,8 +383,10 @@ var (
 	notePendingChunks = func(int) {}
 )
 
-// restoreWindowBytes is the decoded chunk data a restore aims to hold at
-// once: chunks being read, queued, or parked until their turn (RST-5).
+// restoreWindowBytes sizes a restore's lookup batch (RST-5). The window of
+// chunks being read, queued, or parked until their turn is twice the batch,
+// so it holds up to 2 x restoreWindowBytes: 256 MiB up to 1 MiB chunks, and
+// 512 MiB from 2 MiB chunks on.
 const restoreWindowBytes = 256 * cnst.MB
 
 // restoreWindow returns how many chunks of chunkSize the producer looks up

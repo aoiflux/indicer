@@ -1,6 +1,18 @@
 # Attack-Path Graph — Low-Level Design & Build Plan
 
-> **Status:** Draft v0.1 — living document, meant to be iterated on.
+> **Status: proposal (draft v0.1). It is not implemented.** No entity,
+> rule-engine or path-assembly code exists. Observations exist only as
+> micro-artefacts under indexed files. The foundation this design builds on
+> does exist: the container hierarchy that enrichment writes, and the graph
+> layer in `lib/graph` (handle, atomic batches, `producer_version` stamps,
+> edge dedup on `edge_key`, and node and edge kinds reserved for §2 and §8.2
+> in `lib/graph/schema/kinds.go`). §3 and Appendix A describe existing code
+> (checked against the code on 2026-10-30); the rest of this document is design
+> to debate. Two constraints it was written against no longer hold: parsing is
+> pure Go (§5.6), and fragmented, resident and compressed files are indexed (C7). For how the existing code
+> works, see [ENRICHMENT_LLD.md](ENRICHMENT_LLD.md) and
+> [MICRO_ARTEFACT_DEEP_DIVE.md](MICRO_ARTEFACT_DEEP_DIVE.md).
+>
 > **Supersedes/extends:** [MICRO_ARTEFACT_DEEP_DIVE.md](MICRO_ARTEFACT_DEEP_DIVE.md)
 > (which proposed the canonical node/edge model and triage scoring that this
 > document builds into a full attack-path system).
@@ -126,19 +138,28 @@ Grounded in the code (see [Appendix A](#17-appendix-a--current-code-map) for ref
 
 ### What exists and works
 
-- **Extraction pipeline** `lib/microartefact/service.go`:
-  `content → scanWindow(cap 4 MiB) → parser.Parse → detectionEngine.Detect →
-  dedupe → sort → relationEngine.Relate → repository.Store`.
-- **Parsers** (`fileparser`/`parsing`): text, pdf, pe, elf, evtx.
+- **Extraction pipeline** `lib/microartefact/service.go` (`ProcessFile`):
+  `content (≤ 64 MiB, RawLimit) → parser.Parse → detectionEngine.Detect →
+  dedupe → sort → relationEngine.Relate → repository.Record`. Text detectors
+  scan the first 4 MiB of the parsed text (`scanWindow`); detectors that parse
+  a format (`WantsRaw`) get the file's bytes.
+- **Parsers** (`fileparser`/`parsing`): text, pdf, pe, elf, evtx, registry.
 - **Detectors** (`detectors/`): url, ioc (ip/email/domain/hash), key-value,
   log-line, windows-event-record, scheduled-task, service, browser, registry-hive
-  (via `regparser`), evtx-native. Mostly **regex over the first 4 MiB of text**.
+  (via `regparser`), evtx-native, pe-metadata. Mostly **regex over text**; the
+  last three parse their format.
 - **Relations** (`relation/`): two builders — `same-identifier`,
-  `transaction-propagation` — both **intra-file**, deterministic.
-- **Graph** (`repository/graphene`): node types evidence(0)/partition(1)/
-  indexed(2)/`MicroArtefact`; edges `Contains` + generic `Relation`=EdgeType(100)
-  differentiated by a `relation_type` string property. Property-indexed nodes,
-  directional filtered traversal, `EdgeExists`, interactive HTML export.
+  `transaction-propagation` — both **intra-file**, deterministic, capped per
+  group.
+- **Graph** (`lib/graph`, `repository/graphene`): graphene v0.9.0 behind a
+  reference-counted handle, with atomic batches (`Batch.Upsert`, `Add`,
+  `EnsureEdge`). Container kinds evidence(0)/partition(1)/indexed(2)/file(3)
+  are offsets resolved through the store's schema registry; artefacts use
+  graphene's `NodeTypeMicroArtefact`. Edges are `Contains` and one relation
+  kind (`schema.EdgeKindRelation`) differentiated by a `relation_type`
+  property, deduplicated on (endpoints, labels, `relation_type`, `method`)
+  through an indexed `edge_key`. Every node and edge carries
+  `producer_version`. Interactive HTML export of the top files.
 - **Canonical model** `model/artefact_relation.go`: `CanonicalNode{ID,
   CanonicalKey, Timestamp, Origin, PayloadRef, Features, Confidence, Parser,
   RawEvidenceSnippet}` and `Relation{...}` — **defined but not wired into the
@@ -148,27 +169,32 @@ Grounded in the code (see [Appendix A](#17-appendix-a--current-code-map) for ref
 
 | # | Constraint (CURRENT) | Why it blocks attack-path | Where |
 | --- | --- | --- | --- |
-| C1 | Micro-artefacts attach **only** to indexed files; `EvidenceFileID`+`PartitionID` required, exactly-one-file-parent enforced | Need artefacts at evidence/partition level and shared entities | `repository.go` `validateStoreHierarchy`, `ensureMicroArtefactHasExactlyOneFileParent` |
-| C2 | Detection is **regex over first 4 MiB of text** | Real artefacts (SQLite, $MFT, prefetch, pcap, memory) are structured & large | `service.go` `scanWindow`; `detectors/*` |
+| C1 | Micro-artefacts attach **only** to indexed files; `IndexedFileID`+`EvidenceFileID`+`PartitionID` required, exactly-one-file-parent enforced | Need artefacts at evidence/partition level and shared entities | `repository.go` `validateStoreHierarchy`, `storeArtefactNodes`, `VerifyOneFileParent` |
+| C2 | Text detection is **regex over the first 4 MiB of text**; structured parsers read at most 64 MiB, and a larger file is scanned as text only | Real artefacts (SQLite, $MFT, prefetch, pcap, memory) are structured & large | `service.go` `scanWindow`, `RawLimit`; `detectors/*` |
 | C3 | Relations are **intra-file only**; a new graph node per artefact **occurrence** | Attack-path is cross-file / cross-evidence / cross-modality | `relation/engine.go`; `storeArtefactNodes` |
-| C4 | **Canonical entities not wired**; no global "one entity per canonical_key" upsert | No entity to chain; no dedup across evidence | `model/artefact_relation.go` unused by writer |
-| C5 | Object IDs are **UUIDv7, non-idempotent** across re-ingests | Cross-evidence identity must be content-derived, not ID-derived | `structs/inputfile.go` `NewInputFile` |
-| C6 | `EvidenceType` = **file-format sniff only**; pipeline always assumes disk image | Multi-modal roots (RAM/pcap/flat) need branched ingestion | `util/filetype.go`; `store/store.go` |
-| C7 | **Fragmented files are skipped** before the graph | Missing artefacts from fragmented evidence | `parser/common.go` `buildIdxMap` |
+| C4 | **Canonical entities not wired**; no global "one entity per canonical_key" upsert (the keyed-upsert primitive exists: `Batch.Upsert`) | No entity to chain; no dedup across evidence | `model/artefact_relation.go` unused by writer |
+| C5 | Evidence IDs are **UUIDv7**; partition and indexed-file IDs derive from the evidence ID and the record's place in it. Stable across a reindex, but not across databases | Cross-evidence identity must be content-derived, not ID-derived | `lib/store/commit.go` (`uuid.NewV7`); `lib/index/ids.go` |
+| C6 | `EvidenceType` = **file-format sniff only**; pipeline always assumes disk image | Multi-modal roots (RAM/pcap/flat) need branched ingestion | `util/filetype.go` (`DetectEvidenceType`); `lib/ingest/ingest.go` |
+| C7 | *Resolved.* Fragmented files used to be skipped before the graph. Since the correctness pass, indexed files carry multi-extent content (holes allowed), inline data, or decoded content stored as its own object, and every reader serves them | (no longer blocks) | `lib/parser/core/content.go`; `lib/index` |
 
 ---
 
 ## 4. Identity strategy — content-anchored canonical keys
 
-**Problem:** object IDs (evidence/partition/indexed) are UUIDv7, freshly minted
-each ingest (C5). Graph node logical IDs are salted by those UUIDs, so they also
-change across runs. Therefore **nothing in the current identity scheme is stable
-across two ingests of the same evidence** — fatal for cross-evidence correlation.
+**Problem:** the evidence ID is a UUIDv7 minted when the evidence is first
+stored (C5). Partition and indexed-file IDs are derived from it and the
+record's place in the evidence (`lib/index/ids.go`), and the graph keys its
+container nodes by the base64 of these IDs. FILE node IDs hash the parent's ID
+with the path. So a reindex of the same evidence finds the same nodes, and the
+same content stored twice in one database is aliased to the first evidence.
+But the same evidence in another database or case gets different IDs at every
+level: **nothing in the current identity scheme is stable across databases**
+— fatal for cross-evidence and cross-case correlation.
 
 **Solution:** entities (Layer C) are keyed by a deterministic **canonical key**
 derived from content/semantics, never from object IDs. Observations (Layer B)
-remain tied to their container by the existing (UUID-based) IDs — that's fine
-because observations are per-evidence anyway.
+remain tied to their container by the existing IDs — that's fine because
+observations are per-evidence anyway.
 
 ### Canonical-key formula
 
@@ -200,8 +226,11 @@ object (files, binaries, email bodies); prefer a normalized semantic string
 otherwise (URLs, registry keys, accounts). Store the raw, un-normalized form as a
 property for display and evidence.
 
-**Entity upsert** = `graph.NodesByProperty("canonical_key", key)` → reuse-or-create
-(mirror enrichment's `upsertNode`). This is the missing global dedup (C4).
+**Entity upsert** = `Batch.Upsert(UpsertKey{Key: "canonical_key", Value: key}, …)`
+(`lib/graph/batch.go`), the keyed find-or-create enrichment already uses. It
+finds the node in the batch, the handle's identity cache or the store
+(`NodesByProperty`), merges new properties over it, and commits its index
+entries with it. What is missing is calling it for entities (C4).
 
 ---
 
@@ -232,7 +261,7 @@ const (
 
 | Class | Ingestion (Stage 1) | Entities produced |
 | --- | --- | --- |
-| DiskImage | filesystem-parse provider (libtusk today → **in-house pure-Go FS libraries** later) → partition+file discovery; MBR/exFAT fallback | Files, and everything filesystem artefacts yield |
+| DiskImage | filesystem-parse provider (the **in-house pure-Go FS libraries**, §5.6) → partition+file discovery; a device whose table mounts nothing is tried as one volume | Files, and everything filesystem artefacts yield |
 | MemoryImage | **new**: **in-house pure-Go memory-forensics library** (Volatility 3 feature parity, native — no subprocess, no Python) → processes, DLLs, handles, netscan, injected regions, command lines | Process, ExecutableFile (mapped), NetworkEndpoint, Account |
 | NetworkCapture | **new**: pure-Go pcap reader → flows, DNS, HTTP, TLS SNI | NetworkEndpoint, Domain, URL, Host |
 | FlatFile | treat the file as a single IndexedFile under a synthetic partition; run modality extraction directly | modality-dependent |
@@ -246,24 +275,23 @@ and a disk `prefetch`-derived `Process` unify into the same entity type.
 ### 5.6 Provider abstraction — pure-Go parsers (strategic)
 
 The filesystem and memory parsers are **swappable providers behind a stable
-interface**, not hard dependencies of the pipeline. Two in-house replacements are
-in progress and must drop in without touching Stages 2–6:
+interface**, not hard dependencies of the pipeline. They must drop in without
+touching Stages 2–6:
 
-- **Filesystem:** libtusk (CGo Sleuth Kit wrapper) is the *current* provider; it
-  will be replaced by **in-house pure-Go filesystem libraries**. Keep the existing
-  `ParseImage`/`IndexFilesystem` seam (disk → partitions → indexed files) as the
-  contract so the provider swap is invisible upstream.
+- **Filesystem (CURRENT):** the in-house pure-Go libraries (`github.com/aoiflux/lib*`)
+  are the provider, behind `core.Filesystem` (`lib/parser/core`). The seam is
+  `scan.Scan` with a `scan.Visitor` (disk → partitions → indexed files), which
+  `lib/index` implements. libtusk and its CGo build are gone.
 - **Memory:** ingested via an **in-house pure-Go memory-forensics library** aiming
   at Volatility 3 feature parity — called **natively in-process**, emitting entities
   straight into the graph (no subprocess, no JSON marshalling boundary, no Python
   runtime).
 
 **Why this matters (not just a dependency swap):**
-- **Removes the CGo/libtusk toolchain constraints.** Today forensic parsing only
-  builds with CGo on windows/amd64 + linux/amd64 (the `notusk` tag disables it
-  elsewhere; see `TOOLCHAIN_NOTES.md`). Pure-Go means **one binary, all platforms,
-  trivial cross-compilation** — which is itself a competitive differentiator (every
-  incumbent is Windows-only; see `../prodocs/COMPETITIVE_ANALYSIS.md §4.3`).
+- **No CGo toolchain constraints.** Forensic parsing builds everywhere Go does:
+  **one binary, all platforms, trivial cross-compilation**, which is itself a
+  competitive differentiator (every incumbent is Windows-only; see
+  `../prodocs/COMPETITIVE_ANALYSIS.md §4.3`). The memory provider must keep this.
 - **No Python/Volatility runtime dependency** for memory analysis → the
   single-binary deployment story holds for RAM images too.
 - **Tighter integration & control:** in-process extraction means entities and their
@@ -271,8 +299,8 @@ in progress and must drop in without touching Stages 2–6:
   behaviour is ours to tune (important for the deterministic/auditable pipeline that
   admissibility later needs, LLD §15).
 
-**Design rule:** define a `ParseProvider` (filesystem) and `MemoryProvider`
-interface now; libtusk is one implementation. Stages 2–6 consume the provider
+**Design rule:** keep `core.Filesystem` and the scan visitor as the filesystem
+contract, and define a `MemoryProvider` interface beside it. Stages 2–6 consume the provider
 output (containers + a work-list of extraction tasks), never the provider directly.
 
 ---
@@ -284,7 +312,7 @@ and idempotent (re-runs converge, not duplicate).
 
 ```
 Stage 0  Classify evidence → pick ingestion strategy                (§5)
-Stage 1  Parse root→partition→indexed (all classes, incl fragmented) (C7 fix)
+Stage 1  Parse root→partition→indexed (all classes, incl fragmented) (C7 resolved)
 Stage 2  Enrich container graph with file/artefact properties        (extends enrichment)
 Stage 3  Extract micro-artefacts (observations) at every level +
          canonicalise into entities                                  (Layers B+C)
@@ -295,11 +323,10 @@ Stage 6  Score, MITRE-map, export                                    (triage + v
 
 ### Stage 1 — Full parse from root, partition, and indexed
 
-- Disk: filesystem-parse provider (libtusk today, pure-Go later — §5.6) + MBR/exFAT
-  fallback. **Fix C7**: implement fragmented-file
-  reassembly (lift fragment ranges to the partition level — the TODO already in
-  `common.go`/`tusk.go`) so fragmented files become indexed files with multi-range
-  `Fragments` rather than being dropped.
+- Disk (CURRENT): `lib/index.Run` walks the decoded image with `scan.Scan`
+  (§5.6). Every partition is recorded with a status, and fragmented, sparse,
+  resident and compressed files are indexed with their extents, inline data or
+  decoded content (C7 is resolved).
 - Every container level can emit observations. A disk image with no parsable
   filesystem still yields **evidence-level** observations (carving, strings,
   embedded IOCs). A partition can yield **partition-level** observations
@@ -310,10 +337,12 @@ Stage 6  Score, MITRE-map, export                                    (triage + v
 ### Stage 2 — Graph enrichment with artefact/file properties
 
 - Extend the existing enrichment (`lib/enrichment`) so every container node carries
-  the properties rules will need: `content_hash`, `size`, `mime/file_type`,
-  `entropy`, `is_deleted`, `is_fragmented`, and **timestamps** (MACB from $MFT for
-  disk files — new). Timestamps are first-class because the attack-path timeline
-  depends on them.
+  the properties rules will need. Indexed-file nodes already carry `hash`,
+  `size`, `file_type`, `entropy`, `is_deleted`, `is_fragmented`, `start`,
+  `simhash` and the MACB times the filesystem records (`mtime`, `atime`,
+  `ctime`, `btime`); their FILE nodes add `name`, `path`, `mime_type` and
+  `tags`. Evidence and partition nodes carry less. Timestamps are first-class
+  because the attack-path timeline depends on them.
 - This stage is where "enrich graphdb with artefact info, properties" happens for
   **files-as-artefacts** (Layer A metadata), before micro-artefact extraction.
 
@@ -430,18 +459,26 @@ NODE_THRESHOLD = 0.60   // promote to entity/attack-path if >= threshold
 ### 8.1 Node types
 
 ```
-Containers (Layer A)   — reuse CustomNodeType(0/1/2) + extend
-  evidence_file, partition, indexed_file
+Containers (Layer A)   — reuse schema.KindEvidenceFile/KindPartition/
+                         KindIndexedFile/KindFile (offsets 0-3) + extend
+  evidence_file, partition, indexed_file, file
 Observation (Layer B)  — NodeTypeMicroArtefact (existing), generalised parent
-Entity (Layer C)       — NEW: one CustomNodeType per entity class, OR a single
+Entity (Layer C)       — NEW: one kind per entity class, OR a single
                          "entity" type discriminated by `entity_type` property
 Event (sub-kind of entity, time-stamped): ExecutionEvent, LogonEvent, VisitEvent…
 AttackPath             — NEW: a path node grouping an ordered entity subgraph
 ```
 
+DUES kinds are offsets in graphene's custom type band, resolved to raw types
+through the store's schema registry (`Handle.Schema()`), never from graphene's
+constants. `lib/graph/schema/kinds.go` already reserves one kind per class:
+`KindObservation` (16), the entity classes (32–43), the event kinds (64–67),
+and `KindAttackPath`, `KindCluster` and `KindHypothesis` (128–130). Nothing
+writes them yet.
+
 Recommendation: a single `entity` node label + `entity_type` property (simpler
-indexing, open taxonomy) rather than a fixed enum of `CustomNodeType`s. Validate
-against the current graphene API during the re-baseline (§13).
+indexing, open taxonomy) rather than a fixed set of kinds. If adopted, the
+reserved entity kinds go unused. Decide before anything writes them (§15).
 
 ### 8.2 Edge types
 
@@ -461,17 +498,25 @@ against the current graphene API during the re-baseline (§13).
 | `temporal_next` | event → event | time ordering within a window | probabilistic |
 | `attack_step` | entity → entity (in an AttackPath) | a hop in a reconstructed path, MITRE-tagged | scored |
 
+`lib/graph/schema/kinds.go` reserves these as edge kinds 16–28
+(`EdgeKindEvidences` … `EdgeKindAttackStep`). Nothing writes them yet.
+`contains` is graphene's built-in `EdgeTypeContains`.
+
 Edge properties (all typed relation edges): `relation_type`, `method` (rule id),
 `deterministic_flag`, `confidence`, `evidence_fields[]`, `mitre_technique?`,
-`observed_time?`. Extend edge-dedup to key on `(src,dst,relation_type,method)` not
-just `(src,dst,type)` (current `EdgeExists` limitation).
+`observed_time?`. Edge dedup already keys on the 4-tuple: `Batch.EnsureEdge`
+hashes the endpoints, labels and caller-supplied discriminators into an
+indexed `edge_key`, and micro-artefact relation edges pass `relation_type` and
+`method`.
 
 ### 8.3 Identity summary
 
-- Container node ids: existing (UUID-salted) — fine, per-evidence.
-- Observation node ids: per-occurrence (existing).
+- Container node ids: existing — `evidence_file_id`, `partition_id` and
+  `indexed_file_id` are the base64 of the database records' IDs, and
+  `file_node_id` hashes the parent's ID with the path. Fine, per-evidence.
+- Observation node ids: per-occurrence (existing; `Batch.Add`).
 - **Entity node ids: `sha256(canonical_key)`** — stable across runs & evidence (§4).
-- Edge ids: graphene-internal; logical dedup via the 4-tuple above.
+- Edge ids: graphene-internal; logical dedup via the 4-tuple above (`edge_key`).
 
 ---
 
@@ -573,7 +618,8 @@ express the cross-file / cross-evidence joins attack-path needs.
   (`graph.NodesByProperty`), not per-file `[]Artefact` — the cross-file/cross-evidence
   unlock.
 - Three passes (deterministic / probabilistic / path), edges tagged with
-  `producer_version` for retrospective re-derivation (§14.2).
+  `producer_version` for retrospective re-derivation (§14.2). The batch already
+  stamps it; each pass would name its rule-sheet version with `Writer.As`.
 
 #### 9.4.3 Migration steps (staged, parity-checked, non-breaking)
 
@@ -593,8 +639,9 @@ express the cross-file / cross-evidence joins attack-path needs.
 4. **Move edge emission to the generic emitter.** Replace `storeRelationEdges`'s
    in-batch `relationNodeLookupKey` matching with an `EmitSpec`-driven emitter that
    resolves endpoints by entity anchor index (works across files/evidence). Keep the
-   graphene typed-edge *mechanics* (`edgeTypeRelation`, property packing, edge
-   dedup) — only the matching changes.
+   typed-edge *mechanics* (edge kinds resolved through the schema registry,
+   `props.Pack`, `Batch.EnsureEdge` dedup on `edge_key`) — only the matching
+   changes.
 5. **Add the three passes** and rule versioning; the current two relations become
    deterministic-pass rules.
 6. **Delete the bespoke builders** once parity holds — but **keep the `Builder`
@@ -607,7 +654,7 @@ express the cross-file / cross-evidence joins attack-path needs.
 | --- | --- |
 | **Keep** | `spec.Sheet` container + `Add/RemoveRelationRule` mutation surface; the rule-as-data idea; graphene typed-edge write mechanics; the **detection** engine (detection ≠ graphing — untouched by this migration) |
 | **Replace** | `relation/builders.go` bespoke builders → generic evaluator + data rules; `Engine.Relate(file, artefacts)` (per-file) → `Engine.Evaluate(scope)` (graph-level); `storeRelationEdges` in-batch matching → anchor-index emit |
-| **Add** | `MatchSpec`/`TemporalSpec`/`EmitSpec`; anchor index; 3-pass orchestration; `producer_version` tagging; (later) a rule file format / DSL for user-authored rules |
+| **Add** | `MatchSpec`/`TemporalSpec`/`EmitSpec`; anchor index; 3-pass orchestration; a producer name and version per rule sheet (the batch already stamps `producer_version`); (later) a rule file format / DSL for user-authored rules |
 | **Delete (after parity)** | the two hard-coded `Builder` structs — retaining the interface only as an escape hatch |
 
 #### 9.4.5 Risks
@@ -1070,14 +1117,17 @@ endpoints) and is idempotent on re-run.
 The storage-level similarity engine (`lib/near`, `lib/util`) is the unique asset
 that makes cross-evidence attack-path possible. Reuse, don't rebuild:
 
-- `util.ChunkSimHash64` / `fileSimHashAccumulator` (whole-file, alignment-independent,
-  cached at `F|||:<fid>`) + `util.HammingSimilarity64` → cluster `ExecutableFile`
-  entities across hosts even when the implant is repacked/renamed (`corr.same_implant`).
+- `util.ChunkSimHash64` / `lib/near` `fileSimHashAccumulator` (whole-file,
+  alignment-independent, cached at `F|||:<fid>` through `dbio.SetFileSimhash`) and
+  its Hamming similarity (`hammingSimilarity64`, unexported today) → cluster
+  `ExecutableFile` entities across hosts even when the implant is repacked/renamed
+  (`corr.same_implant`).
 - `dbio.GuessFileTypes` (content-hash → object id) → resolve a hash anchor to its
   container across evidence.
-- `countRList/countEviFile/countPartiFile/countIdxFile` already resolve a chunk
-  match up to indexed→partition→evidence — the exact container mapping the
-  `evidences`/attribution edges need.
+- `lib/near/attribute.go` (`buildEvidenceIndex`) already resolves a chunk
+  occurrence to the most specific object holding it (indexed file, then
+  partition, then evidence), through each file's data extents — the exact
+  container mapping the `evidences`/attribution edges need.
 - Because entities are keyed by content hash (§4), the **same binary/account/domain
   seen on machine A and machine B is one entity**, and cross-host edges
   (`moved_to`, `same_entity`, shared-C2) fall out of the join naturally.
@@ -1174,7 +1224,7 @@ of already-ingested evidence across all accessible cases.
 - **Fast because it hits indexes, not raw bytes**: exact indicators resolve via the
   existing property indexes (`artefact_value_hash`, entity `canonical_key`,
   `IdxFileHashLookup`); similarity indicators (SimHash of a new sample) scan the
-  cached `F|||` file-simhashes with `HammingSimilarity64` — no re-ingest.
+  cached `F|||` file-simhashes with a Hamming similarity — no re-ingest.
 - **Output**: every case/evidence/artefact that matches, on a timeline that
   contrasts **when the underlying activity happened** vs **when the indicator became
   known** — the "compromised months before attribution" gap that makes
@@ -1229,20 +1279,24 @@ historical cases at once ("Domain X, now attributed to APT-Y, appears in Cases 4
 
 Open questions to resolve as we iterate (each is a real fork):
 
-1. **Graphene re-baseline.** Graphene has changed since this code was written.
-   Before building, audit the current `github.com/aoiflux/graphene` API: does it
-   support the property-indexed upsert, typed edges, multi-parent nodes, and edge
-   dedup we assume? Pin a version. *(Blocking for Stage 3+.)*
+1. **Graphene re-baseline.** Done. graphene is pinned at v0.9.0, behind
+   `lib/graph`: a keyed upsert whose index entries commit with the node
+   (`Batch.Upsert`), typed node and edge kinds resolved through the store's
+   schema registry, and edge dedup on `edge_key` (`Batch.EnsureEdge`). See
+   [ENRICHMENT_LLD.md](ENRICHMENT_LLD.md).
 2. **Entity node modelling** — single `entity` label + `entity_type` property
-   (flexible, recommended) vs one `CustomNodeType` per class (faster typed
-   traversal). Decide against the real graphene API.
+   (flexible, recommended) vs one kind per class (faster typed traversal; the
+   kinds are reserved in `lib/graph/schema/kinds.go`). Decide before anything
+   writes them.
 3. **Multi-parent entities vs one-file-parent invariant.** Observations keep one
-   container parent; entities need many `evidences` in-edges. Confirm graphene
-   allows this and drop `ensureMicroArtefactHasExactlyOneFileParent` for entities
-   only (keep it for observations).
-4. **The 4 MiB scan window (C2).** Fine for regex over text; wrong for SQLite,
-   $MFT, memory, pcap. Structured extractors must stream/seek the full object via
-   `dbio.StreamLogicalFileBytes`, not the capped `scanWindow`. Decide per-modality.
+   container parent; entities need many `evidences` in-edges. The one-parent
+   rule is DUES's own (`storeArtefactNodes` at write time, `VerifyOneFileParent`
+   after); apply it to observations only.
+4. **The scan windows (C2).** Structured parsers read up to 64 MiB in memory,
+   and text detectors scan 4 MiB. That is fine for regex over text, and
+   wrong for large SQLite files, $MFT, memory and pcap. Structured extractors
+   for those must stream or seek the object through the reader
+   (`dbio.OpenLogical`) instead of buffering it. Decide per modality.
 5. **MFT/registry cardinality.** Confirm the watchlist + lazy-MFT policy (§7.3);
    decide default watchlists and whether full-MFT timeline is a separate opt-in.
 6. **Identity edge cases.** Path aliases, hard links, deleted/overwritten files,
@@ -1250,8 +1304,8 @@ Open questions to resolve as we iterate (each is a real fork):
    edge, not `same_entity`). Nail the canonical-key table (§4) per entity.
 7. **Timestamps & timezones.** MACB, EVTX, browser epochs, prefetch — normalise to
    UTC with source-tz metadata; timeline correctness depends on it.
-8. **Fragmented files (C7).** Reassembly is a prerequisite for complete parsing;
-   scope it in Stage 1.
+8. **Fragmented files (C7).** Resolved by the correctness pass: indexed files
+   carry their extents, inline data or decoded content.
 9. **Determinism vs recall.** How aggressively to promote probabilistic edges;
    corroboration thresholds; false-path suppression in Pass 3.
 10. **Performance & incrementality.** Rules must run incrementally as new evidence
@@ -1279,7 +1333,7 @@ Maps to the forensics pillar phases in
 
 | Phase | Deliverable | Stages | Breaks |
 | --- | --- | --- | --- |
-| **AP-0** | Graphene re-baseline + entity-upsert primitive + canonical-key lib | schema, §4 | C4, C5 |
+| **AP-0** | Canonical-key lib (the graphene re-baseline and the keyed-upsert primitive exist in `lib/graph`) | schema, §4 | C4, C5 |
 | **AP-1** | Layer split: observations at any container level + entity nodes wired; canonical model persisted; **decouple graphing from extraction** (§9.4.3 step 3) | 3 | C1, C4 |
 | **AP-2** | Structured extractors v1: browser SQLite (cookies/history/downloads), registry watchlist, cmd/PS history, prefetch | 1, 3 | C2 |
 | **AP-3** | **Rule-engine migration** — replace hard-coded `relation/builders.go` with the generic data-driven evaluator (§9.4, parity-gated) + web/execution/persistence rule packs | 4 (pass 1) | C3 |
@@ -1287,7 +1341,7 @@ Maps to the forensics pillar phases in
 | **AP-5** | Path assembly + MITRE mapping + scoring + HTML/JSON export | 5, 6 | — |
 | **AP-6** | Multi-modal roots: pcap then memory ingestion (memory via in-house pure-Go lib); introduce `ParseProvider`/`MemoryProvider` interfaces (§5.6) | 0, 1 | C6 |
 | **AP-7** | Cross-evidence correlation pack (SimHash clustering, shared C2/account) | 4, 12 | — |
-| **AP-8** | Fragmented-file reassembly; $MFT lazy timeline; email/pcap depth | 1 | C7 |
+| **AP-8** | $MFT lazy timeline; email/pcap depth (fragmented-file reassembly is done) | 1 | C7 (resolved) |
 | **AP-9** | Case scope + cross-case entity index + seen-before/campaign clustering (ACL-aware) | 13 | — |
 | **AP-10** | Retrospective: versioned derived layers, retro-hunt, re-derivation diff, retro-alerts inbox | 14 | — |
 
@@ -1296,10 +1350,12 @@ AP-0 and AP-1 are the foundation and unlock immediate value (structured artefact
 
 **Dependencies for the cross-case / retrospective phases:** AP-9 depends on the
 case-management layer (a `Case` scope, backlog D in the product plan) and on
-content-anchored identity (AP-0). AP-10 depends on `producer_version` tagging being
-introduced in AP-1 (cheap to add early, expensive to retrofit) — so **stamp
-`producer_version` on every derived node/edge from AP-1 onward even before
-re-derivation is built**, so historical data is diffable when AP-10 lands.
+content-anchored identity (AP-0). AP-10 depends on `producer_version` on every
+derived node and edge (cheap to add early, expensive to retrofit). `lib/graph`
+already stamps it on every node a batch writes and every edge it creates
+(`<pipeline>@<version>/graphene@<version>`), so historical data is diffable
+when AP-10 lands. Each new pipeline must name itself with `Writer.As`, or its
+writes carry the default `dues@0`.
 
 ---
 
@@ -1307,38 +1363,48 @@ re-derivation is built**, so historical data is diffable when AP-10 lands.
 
 Grounding references (file:symbol) for everything above.
 
-- **Pipeline:** `lib/microartefact/service.go` — `Service.ExtractWithRelations`,
-  `scanWindow` (4 MiB cap), `Process`.
+- **Graph layer:** `lib/graph` — `handle.go` (`Open`, `OpenWith`, read-only opens),
+  `batch.go` (`Upsert`, `UpsertFill`, `Add`, `Update`, `DeleteNode`, `EnsureEdge`,
+  `edge_key`), `producer.go` (`Producer`, `producer_version`), `schema/kinds.go`
+  (container kinds and the reserved observation, entity, event, analytic and edge kinds).
+- **Pipeline:** `lib/microartefact/service.go` — `Service.ProcessFile`, `Outcome`,
+  `RawLimit` (64 MiB), `scanWindow` (4 MiB of text), `ExtractWithRelations`.
 - **Detection:** `lib/microartefact/detection/engine.go` — `DefaultMethods` (kind→detector map);
   `lib/microartefact/detectors/*` — `Default()` detector set; `detectors/common.go` regex bank.
-- **Parsing:** `lib/microartefact/parsing/parser.go`, `.../fileparser/fileparser.go` — kinds text/pdf/pe/elf/evtx.
+- **Parsing:** `lib/microartefact/parsing/parser.go`, `.../fileparser/fileparser.go` — kinds text/pdf/pe/elf/evtx/registry.
 - **Relations (rule-engine migration target — §9.4):** `lib/microartefact/relation/engine.go`
   (`Engine.Relate` — per-file, to become graph-level `Evaluate`), `relation/builders.go`
   (`SameIdentifierBuilder`, `TransactionPropagationBuilder`, `DefaultMethods` — hard-coded
   builders to port to data rules).
 - **Spec/rules:** `lib/microartefact/spec/{types,methods,mutations,defaults}.go` — `Sheet`,
   `DetectionRule`, `RelationRule`, `AddRelationRule`/`RemoveRelationRule`.
-- **Graph write:** `lib/microartefact/repository/graphene/repository.go` — `Store`,
-  `createArtefactNode`, `createContainsEdge`, `storeRelationEdges`,
-  `ensureMicroArtefactHasExactlyOneFileParent`; node types 0/1/2 + `MicroArtefact`,
-  `edgeTypeRelation=EdgeType(100)`.
-- **Graph read/export:** `.../graphene/query.go` — `ReadHierarchy`; `repository.go` — `ExportInteractiveHTMLTopK`.
+- **Graph write:** `lib/microartefact/repository/graphene/repository.go` — `Record`,
+  `Store`, `createArtefactNode`, `createContainsEdge`, `storeRelationEdges`
+  (`relationPairs`), `storeArtefactNodes` (one-file-parent check), `VerifyOneFileParent`;
+  container kinds through the schema registry + `NodeTypeMicroArtefact`,
+  `schema.EdgeKindRelation`.
+- **Graph read/export:** `.../graphene/query.go` — `ReadHierarchy`, `TopFiles`;
+  `repository.go` — `ExportHTML`.
 - **Canonical model (unwired):** `lib/microartefact/model/artefact_relation.go` —
-  `CanonicalNode`, `Relation`, `EvidenceField`; `model/file_record.go` — `FileRecord`, `BuildIndexedFileID`.
-- **Container enrichment:** `lib/enrichment/graphene_repository.go` — `UpsertEvidence/Partition/File`,
-  `upsertNode` (the idempotent find-or-create to mirror), `ensureContains` (only `contains` today).
+  `CanonicalNode`, `Relation`, `EvidenceField`; `model/file_record.go` — `FileRecord`.
+- **Container enrichment:** `lib/enrichment/graphene_repository.go` — `UpsertEvidence/Partition/File`
+  over `Batch.Upsert`/`UpsertFill` (the keyed find-or-create to mirror), `ensureContains`
+  (only `contains` today), `DeleteEvidenceIndex`; `lib/enrichment/service.go` —
+  `EnrichAll`, `EnrichEvidenceIndex`.
 - **Data model:** `lib/structs/filestruct.go` — `EvidenceFile ⊃ PartitionFile ⊃ IndexedFile ⊃ baseFile`,
-  `EvidenceType`, `InternalObjects`, `IngestState`; `structs/inputfile.go` — `NewInputFile` (UUIDv7).
-- **Identity:** UUIDv7 object ids (`inputfile.go`), content hash `IndexedFile.FileHash` +
-  `IdxFileHashLookupNamespace` reverse index (`parser/common.go`), `dbio.GuessFileTypes`.
-- **Parser flow:** `lib/parser/parse.go` (`TuskAnalysis`, `ParseImage` → MBR/exFAT fallback),
-  `parser/tusk.go` (`IndexFilesystem`, fragmented skip), `parser/common.go` (`buildIdxMap`,
-  `finalizeIndexedFiles` → `EnrichPartition`).
-- **Evidence type:** `lib/util/filetype.go` (`DetectEvidenceType`=format sniff), `lib/store/store.go`
-  (`evidenceFilePreflight`, `maybeUpdateEvidenceType`).
-- **Similarity:** `lib/near/{infile,outfile,near,simhash,verify}.go` — `NearInFile`, `NearOutFile`,
-  `partialChonkMatch`, `verifyPhase2`; `lib/util/util.go` — `ChunkSimHash64`, `HammingSimilarity64`;
-  `dbio` — `GetChonkSignature`, `Get/SetFileSimhash`, `StreamLogicalFileBytes`.
+  `EvidenceType`, `InternalObjects`, `IngestState`.
+- **Identity:** evidence IDs are UUIDv7 (`lib/store/commit.go`); partition and indexed-file
+  IDs are derived (`lib/index/ids.go`: `PartitionID`, `IndexedID`); graph nodes use their
+  base64. Content hash `IndexedFile.FileHash` + `IdxFileHashLookupNamespace` reverse index
+  (`lib/index/record.go`), `dbio.GuessFileTypes`.
+- **Index pass:** `lib/index` (`Run`) walks the decoded image (`lib/parser/scan`) and writes
+  partition and indexed records; enrichment runs after the commit (`lib/ingest/features.go`).
+- **Evidence type:** `lib/util/filetype.go` (`DetectEvidenceType`=format sniff), called when
+  `lib/ingest/ingest.go` builds the evidence record.
+- **Similarity:** `lib/near/{near,query,attribute,simhash,verify,report}.go` — `In`, `Out`,
+  `buildEvidenceIndex`, `fileSimHashAccumulator`, `hammingSimilarity64`, `verifyPhase2`;
+  `lib/util/util.go` — `ChunkSimHash64`; `dbio` — `GetChonkSignature`, `Get/SetFileSimhash`,
+  `ForEachChunkOccurrence`, `OpenLogical`.
 - **KV namespaces:** `lib/cnst/const.go` — `E||| P||| I||| R||| RA||| C||| S||| F||| EH||| PH|||`.
 
 ---

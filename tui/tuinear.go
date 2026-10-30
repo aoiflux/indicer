@@ -94,7 +94,7 @@ func (s *nearScreen) escape() bool {
 
 func (s *nearScreen) setFocus(f int) {
 	if s.mode == nearOut && f == nearFocusDeep {
-		// Deep mode is for stored objects only; skip it.
+		// The TUI offers deep mode for stored objects only; skip it.
 		if s.focus == nearFocusAnalyze {
 			f = nearFocusInput
 		} else {

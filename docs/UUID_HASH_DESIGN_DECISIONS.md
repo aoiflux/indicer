@@ -1,240 +1,213 @@
-# UUID and Hash Design Decisions
+# IDs, hashes and content identity
 
-Last updated: 2026-05-21 Status: Active working design (to be refined)
+This document describes how DUES names its records, which hashes each record holds, and how an ingest finds content that is already stored. It is for developers who change ingest, indexing, hash lookups, or any code that reads record keys.
 
-## Why This File Exists
+How restore checks these hashes is described in [`RESTORE_LLD.md`](RESTORE_LLD.md).
 
-This document is the single source of truth for ID and hash behavior while the
-project transitions to UUID-first file identity.
+## Rules
 
-We will keep updating this file as decisions evolve.
+1. A record's ID is fixed when the record is created, and never changes. Hashes are fields and lookup keys, never primary keys.
+2. Evidence IDs are UUIDv7. Partition and indexed-file IDs are derived from what identifies the record, so indexing again writes the same keys.
+3. One content root names at most one COMPLETED evidence. A later ingest of the same content becomes an alias of it.
+4. Partition and indexed records carry their evidence ID, partition ID and path as fields. Code reads them through the helpers in `lib/dbio/recordref.go`, and never splits a name itself.
+5. The hash algorithms belong to the database, not to the process.
 
-## Core Decisions
+Rule 1 follows from badger. A key cannot be renamed: changing one means writing the value under the new key, deleting the old one, and rewriting every key that refers to it (relations, members, lookups). A hash that is known only at the end of an ingest therefore cannot be the key.
 
-1. Evidence and partition records are UUIDv7 keyed.
-2. Indexed records remain content-hash keyed for now.
-3. File content hash and file identity are separate concepts.
-4. Reverse hash indexes are used where primary keys are UUIDs.
-5. Evidence keeps UUID identity in all hashing modes for structural commonality.
+## Record IDs
 
-## Key Spaces and What They Mean
+Every ID is 16 raw bytes.
 
-- E|||: Primary key space for evidence records. Key suffix is raw UUID bytes.
-- P|||: Primary key space for partition records. Key suffix is raw UUID bytes.
-- I|||: Primary key space for indexed records. Key suffix is raw content-hash
-  bytes.
-- EH|||: Reverse index mapping evidence content hash to evidence UUID.
-- PH|||: Reverse index mapping partition content hash to partition UUID.
-- IH|||: Reverse index mapping partition content hash to indexed UUID.
+| Record | ID | Made by |
+| --- | --- | --- |
+| Evidence | UUIDv7 | `store.BeginAttempt` |
+| Partition | BLAKE3-128 of its identity | `index.PartitionID` |
+| Indexed file | BLAKE3-128 of its identity | `index.IndexedID` |
+| Materialised object | the indexed file's ID | the index pass (`materialize`) |
 
-## Identity vs Content Hash
+- The keys are `E|||:<id>`, `P|||:<id>`, `I|||:<id>` and `X|||:<id>`.
+- The relations of an evidence or an object are keyed by its raw ID: `R|||:<id>|||<offset>`.
+- `dbio.CanonicalEvidenceKey`, `CanonicalPartitionKey` and `CanonicalIndexedKey` add the prefix when it is missing. `dbio.EvidenceRawID` removes it.
+- Commands show an ID as the standard base64 of its 16 bytes, such as the `id` field of `dues list`.
 
-- File ID answers: "Which stored object is this?"
-- File hash answers: "What is the file content fingerprint?"
+### Evidence IDs
 
-Current model:
+- `store.BeginAttempt` makes the ID with `uuid.NewV7()`, in the transaction that writes the record.
+- UUIDv7 IDs sort by creation time, so key order is storage order.
+- An attempt that stopped before its commit is resumed under the same ID, and keeps the chunks it stored.
+  - `EP|||:<sha256(source path)>` names a source path's unfinished attempt.
+  - `BeginAttempt` resumes that attempt when it is PENDING or FAILED, has not reached FLUSHED, uses the v2 content model, and has the same size, fingerprint and chunk size.
+  - Otherwise `BeginAttempt` makes a new ID.
 
-- Evidence: ID is UUIDv7, FileHash is base64(content hash)
-- Partition: ID is UUIDv7, FileHash is base64(content hash)
-- Indexed: ID is currently content hash key (I namespace), FileHash also stored
-  in metadata
+### Partition and indexed-file IDs
 
-## Lookup Strategy
+`lib/index/ids.go` derives both. Each is the first 16 bytes (`IDLen`) of a BLAKE3 hash over a domain tag and fixed fields. Integers are 8-byte big-endian, and byte strings are preceded by their length.
 
-Given an external hash input, resolution prefers fast indexed lookups:
+- `PartitionID(eid, ordinal, offset)` hashes the tag `dues-pid1`, the evidence ID, the partition's ordinal in its table, and its offset. The ordinal is -1 for a filesystem that spans the whole device.
+- `IndexedID(eid, ordinal, partOffset, inode, path, deleted, collision)` hashes the tag `dues-iid1`, the evidence ID, the partition's ordinal and offset, the inode, the path, the deleted flag (one byte) and a collision count. The path includes `:stream` for an alternate data stream.
 
-1. Direct UUID key probe when input is already UUID bytes.
-2. Legacy namespace probes for backward compatibility.
-3. Reverse hash index probes:
-   - EH|||:<base64Hash> -> evidence UUID
-   - PH|||:<base64Hash> -> partition UUID
-4. Full-scan fallback only when no index-based hit exists.
+The collision count keeps apart records that would otherwise share an ID, such as two deleted entries with the same name and inode. Per partition, the index pass keeps the first 8 bytes of every ID it issued. It increments the count until the ID is new.
 
-## NeAR Exact-Match Behavior
+The inputs are the same on every pass. So `dues reindex`, a resumed ingest and recovery overwrite the same keys instead of adding copies.
 
-Exact-match short-circuit now uses:
+### Fields on partition and indexed records
 
-1. I|||:<rawHash> for indexed exact match.
-2. PH|||:<base64Hash> -> UUID for partition exact match.
-3. EH|||:<base64Hash> -> UUID for evidence exact match.
+- **Indexed files** carry `EvidenceID`, `PartitionID` and `Path`, and `Name` equals `Path`.
+- **Partitions** carry `EvidenceID` and `Path`. `Path` is the label: `<evidence name>_p<n>`, or `<evidence name>_dev` for a whole-device filesystem.
+  - `Name` keeps the older form, `base64(evidence ID)|||<label>`, because `list` groups partitions by that prefix.
+- The evidence lists its partitions by base64 ID in `InternalObjects`. A partition's members are one key each, under `PX|||:` (ING-21).
+- `index.Run` writes a partition's record, and its link from the evidence, before any member.
 
-Rationale: partition/evidence are UUID keyed, so direct P|||:<hash> and
-E|||:<hash> probes are not valid for new data.
+## Hash algorithms
 
-## Ingest and Commit Semantics
+- The manifest fixes the chunk hash when the database is created: BLAKE3 (32 bytes) or SHA3-512 (64 bytes).
+  - `--hash-algo` (`-g`) on `store` or `server` chooses it.
+  - Given for an existing database that uses another algorithm, `--hash-algo` is a usage error.
+- The file hash follows the chunk hash: BLAKE3, or SHA3-256 in a SHA3 database (`dbmeta.FileHasher`). Evidence, partition, indexed-file and object hashes, content roots and fingerprints all use the file hash.
+- New evidence records name both algorithms: `ChunkHashAlgo` (`blake3` or `sha3-512`) and `FileHashAlgo` (`blake3` or `sha3-256`).
+- Hashes are stored, printed and looked up as standard base64 with padding.
 
-1. Evidence UUID is assigned at initialization.
-2. Evidence content hash is computed asynchronously.
-3. Completion transition atomically writes:
-   - updated evidence record with FileHash and completed ingest state
-   - EH reverse index entry
+## Hash strategies
 
-This keeps restore-by-hash and recovery behavior consistent without making hash
-generation a startup blocker.
+`store --hash-strategy` (`-S`) chooses one of three strategies. The default is `sync`. The spellings `synchash`, `asynchash` and `hochohash` are also accepted. The evidence records its strategy in `HashStrategy`.
 
-## Parser and Enrichment Data Flow
+Every strategy computes the same two hashes over exactly the bytes it stores, in the chunk pass (`store.IngestChunks`): the plain hash and the content root. The strategies differ in two things only:
 
-- Parent evidence ID is no longer stored inside InputFile as hidden state.
-- Parser/enrichment call chains receive evidence ID explicitly as an argument
-  where needed.
-- This makes linkage explicit and avoids confusing API semantics.
+| Strategy | Before storing, the ingest looks for stored content by | `FileHash` |
+| --- | --- | --- |
+| `sync` | reading the source once for both hashes (`store.HashContent`), then `store.StoredByIdentity` | plain hash |
+| `async` | `store.QuickCandidates(size, fingerprint)` | plain hash |
+| `hocho` | `store.QuickCandidates(size, fingerprint)` | content root |
 
-## Why Indexed Records Still Use Hash Keys
+For `async` and `hocho`:
 
-Keeping indexed files hash keyed currently provides:
+- A source of at most 4 MiB (`evidence.FingerprintFullLimit`) matches a candidate outright, because its fingerprint covers the whole content.
+- A larger source is confirmed by computing its content root and comparing it with each candidate's.
+- A miss here is not final: the commit checks again (see [Ingest flow](#ingest-flow)).
 
-1. Natural dedup identity across evidence and partitions.
-2. Fast exact lookup without an extra reverse index.
-3. Lower write amplification for common operations.
+## What each record's hash is
 
-## Existing Chunk Hashing And Dedup
+| Record | Field | Value |
+| --- | --- | --- |
+| Evidence | `PlainHash` | the file hash of the stored bytes |
+| Evidence | `ContentRoot` | the content root; the evidence's content identity |
+| Evidence | `FileHash` | `PlainHash`, or `ContentRoot` under `hocho` |
+| Evidence | `Fingerprint` | the cheap identity the quick lookup uses |
+| Partition | `FileHash` | the plain hash of its range |
+| Indexed file | `FileHash` | the plain hash of its located content, holes read as zeros |
+| Materialised object | `FileHash` | the plain hash of the decoded content |
 
-The codebase already hashes chunks and deduplicates them during ingest.
+- **Partitions.** The chunk pass hashes every partition-table range as it stores the evidence. After both passes, `index.SetPartitionHash` records each hash and its `PH` lookup. A filesystem that spans the whole device takes the evidence's plain hash. Any other partition is read and hashed (`store.HashContent`).
+- **Indexed files.** An empty file (`none`) gets the hash of no bytes. A metadata-only record (`unavailable`, including symlinks) has no hash. A file whose content was only partly located is hashed over the located bytes.
 
-Relevant paths:
+### Content root
 
-- `lib/util/util.go`: `GetLogicalFileHash(...)` and `GetChonkHash(...)`
-- `lib/fio/container.go`: in-run chunk dedup via `seen` keyed by chunk hash
-- `lib/fio/blockindex.go`: persisted chunk metadata is sorted and deduplicated
+The content root (hocho) is the file hash over every chunk hash in evidence order. Each chunk hash is preceded by its length, as a 4-byte big-endian integer:
 
-This means we already have chunk-level hashing and chunk-level dedup behavior.
-What we do not yet have is a file-level Merkle root or hash-of-hashes scheme
-that uses the chunk hashes themselves as the canonical file fingerprint.
+```
+root = H( len(c0) ‖ c0 ‖ len(c1) ‖ c1 ‖ … )
+```
 
-That distinction matters:
+Here `H` is the file hash and `cᵢ` is the hash of chunk i.
 
-- current chunk hashing supports dedup and lookup of chunks
-- a Merkle-style root would be a new file identity strategy built from those
-  chunk hashes
-- hashing chunks alone does not automatically give us a file root hash
+- The root depends on the chunk size and the chunk hash. The same bytes give different roots in databases with different layouts.
+- For one layout, the root identifies content exactly, so it is the content identity. The commit also compares sizes.
+- It costs nothing extra: the chunk pass already has every chunk hash.
 
-## Hashing Options (A-D)
+The **edge form** exists only on older partition and indexed records. It is the same computation over the chunks a range touches, except that a chunk the range covers only partly, or a short last chunk, contributes the file hash of its covered bytes instead of its chunk hash. Nothing writes this form now. Restore still verifies it.
 
-This section is the short implementation view for the four options.
+### Fingerprint
 
-### A. `sync`
+`evidence.Fingerprint` is the file hash of the tag `dues-fp1`, the size (8-byte big-endian), and then either:
 
-- What it is: full logical-file hash before commit.
-- Implementation impact: low; mostly ingest flow ordering.
-- Data model impact: none; uses current IDs and indexes.
-- Operational tradeoff: predictable behavior, higher ingest latency.
+- the whole content, for a source of at most 4 MiB; or
+- three 1 MiB samples, at the head, the middle and the tail.
 
-### B. `async`
+Equal content always has equal fingerprints. For a source larger than 4 MiB, an equal fingerprint only nominates a candidate.
 
-- What it is: hash in background while ingest/index runs, finalize at
-  completion.
-- Implementation impact: low-medium; requires state coordination and atomic
-  completion write.
-- Data model impact: none; keeps evidence UUID and EH reverse lookup.
-- Operational tradeoff: lower wall-clock latency, more failure-path handling.
+## Content identity and aliases
 
-### C. `hash-of-chunks`
+The lookup keys:
 
-- What it is: file fingerprint from ordered logical chunk hashes.
-- Implementation impact: medium-high; needs strict canonical ordering/framing.
-- Data model impact: usually add as metadata first; do not replace primary keys
-  initially.
-- Operational tradeoff: can reuse chunk work, but boundary rules must be exact
-  (especially partition/indexed start/end chunks).
-- Current implementation note: exposed as `hash-strategy=hocho` for evidence
-  flow, with async overlap during ingest/dedup.
-- Logical-file note (current): partition/indexed attempt chunk-hash reuse only
-  for chunk-aligned ranges; when reuse is unavailable or range boundaries are
-  not aligned, hashing falls back to existing exact byte-range logical hashing.
-- Observability note: hocho logical reuse counters are emitted per evidence
-  indexing pass (`attempts`, `reused`, `fallback_unaligned`,
-  `fallback_missing_relation`, `errors`) to guide whether wider rollout is
-  beneficial.
+- `EH|||:<FileHash>`: evidence by its recorded hash. Members are `E|||:<id>` keys.
+- `ER|||:<ContentRoot>`: the one COMPLETED evidence holding that content. The value is its raw ID.
+- `EQ|||:<size>|||<Fingerprint>`: evidence that may hold content of that size and fingerprint. Members are `E|||:<id>` keys. The size is decimal.
+- `EA|||:<winner ID><sha256(source path)>`: an `AliasRecord`. There is one per winner and source path.
+- `EP|||:<sha256(source path)>`: the raw ID of that path's unfinished attempt.
+- `PH|||:<FileHash>` and `IH|||:<FileHash>`: partitions and indexed files by hash. Members are `P|||:<id>` and `I|||:<id>` keys.
 
-### D. `merkle-tree-root`
+The key builders are in `lib/dbio/identity.go` (`RootLookupKey`, `QuickLookupKey`, `AliasKey`, `AttemptKey`, `PathDigest`). The namespaces are in `lib/cnst/const.go`.
 
-- What it is: Merkle root built from logical chunk-hash leaves.
-- Implementation impact: high; tree construction/versioning/proof conventions.
-- Data model impact: add root field (and optional reverse index if queried by
-  root).
-- Operational tradeoff: strongest verification model, highest implementation and
-  test complexity.
+A hash lookup keeps one key per member: `HM|||:<lookup key>|||<record key>`, with an empty value (`dbio.AppendHashLookupUUIDByKeyTxn`). An append writes one key, so a popular hash costs the same as a rare one, and concurrent appends do not conflict (STO-22). `dbio.HashLookupMembersTxn` reads the members.
 
-## Quick Comparison
+### Ingest flow
 
-| Option                | Complexity  | Runtime effect                    | Migration risk | Current posture                          |
-| --------------------- | ----------- | --------------------------------- | -------------- | ---------------------------------------- |
-| A. `synchash`         | Low         | Higher ingest latency             | Low            | Keep as baseline fallback                |
-| B. `asynchash`        | Low-Medium  | Best latency profile for evidence | Low-Medium     | Keep as primary for evidence             |
-| C. `hash-of-chunks`   | Medium-High | Potential reuse wins              | Medium         | Prototype behind feature flag            |
-| D. `merkle-tree-root` | High        | Similar to C plus tree overhead   | High           | Defer until proof/audit need is explicit |
+`ingest.Run` (`lib/ingest/ingest.go`) runs these steps:
 
-## Key Mutation Reality
+1. **Look before storing.** It looks for a COMPLETED evidence with the same content, as the strategy says. If one exists, it writes an alias (`store.WriteAlias`), stores nothing, and returns the outcome `aliased` with the winner's ID.
+2. **Begin the attempt.** `store.BeginAttempt` creates the record (PENDING) under a new UUIDv7, or resumes the path's unfinished attempt.
+3. **Store and index.** The chunk pass stores the content, and the index pass runs beside it. Then the evidence becomes FLUSHED, with `PlainHash`, `ContentRoot` and `FileHash` set.
+4. **Commit.** `store.CommitEvidence` decides what the FLUSHED evidence becomes, in one transaction that is retried on conflict:
+   - It removes the path's `EP` key if that key names this attempt.
+   - It looks for a winner: the evidence under `ER|||:<root>`, else the `EH` members of the plain hash, then those of the root. Older evidence has no `ER` key, and its `FileHash` was its plain hash or its root, so both are tried.
+   - A winner must be COMPLETED, have the same size, and not be this attempt.
+   - With a winner, the attempt becomes `duplicate` with `DuplicateOf` set, and an alias is written under the winner. The ingest then runs `store.CleanupDuplicate`.
+   - Without a winner, the attempt becomes COMPLETED and is entered under `ER`, `EH` and `EQ`.
+   - A second commit of the same attempt returns the first outcome.
 
-The temporary UUID idea only works cleanly if the UUID remains the canonical
-key.
+Two ingests of one content that commit at the same time both read the `ER` key. One write succeeds. The other conflicts, retries and finds the winner. So exactly one evidence holds the content.
 
-In Badger, keys are not mutated in place. If we want to turn a temporary UUID
-into a final hash key later, that is not a rename; it is a rekey operation:
+Recovery at a writable open commits a FLUSHED record through the same `CommitEvidence` (`store.RecoverEvidence`).
 
-1. Write the value under the new key.
-2. Delete the old key.
-3. Update every reference that pointed at the old key.
+### Duplicates and aliases
 
-That is why UUID-first with later hash availability is cheap only when the UUID
-stays the stable identity and the hash is stored as metadata or a reverse index.
+- `store.CleanupDuplicate` deletes what a duplicate attempt wrote: its index records, relations, reverse relations, file SimHash, and finally its record. Each step deletes keys whose absence is the goal, so a cleanup that stopped finishes when run again. Chunks are shared, so they stay.
+- An `AliasRecord` keeps the later ingest's `Name`, `Path`, `Size`, `Source` and `At`. `AttemptID` names the deleted duplicate, when there was one.
+- Storing the same path again rewrites the same alias.
+- `dbio.Aliases(db, winner)` lists an evidence's aliases.
 
-If the hash must become the real primary key later, we need an explicit
-migration/rekey plan rather than a simple field update.
+## Looking up a hash or an ID
 
-## Relationship Modeling Options
+`dbio.GuessFileTypes(encoded, db)` turns a base64 string from a user into record keys. It decodes the string to bytes `D`, then probes in this order:
 
-Historically we encoded relationships by embedding evidence/partition identity
-into constructed names like `evi|||parti` and `evi|||parti|||idx`.
+1. `I|||:<D>`: an indexed record with that ID
+2. `P|||:<D>`: a partition with that ID
+3. the members of `PH|||:<encoded>`
+4. the members of `IH|||:<encoded>`
+5. `E|||:<D>`: an evidence with that ID
+6. the members of `EH|||:<encoded>`
 
-That works, but it mixes identity into display names and makes lookup rules
-harder to reason about.
+It returns every match once, in that order. `GuessFileType` returns the last match. So a hash that several records share resolves to the evidence first, then an indexed file, then a partition.
 
-Possible directions:
+- `ER` is not probed. A sync or async evidence is found by its ID or its plain hash, not by its root.
+- The callers are `dues restore`, `near in` (every match counts as an exact match), `near out`, and `dues reindex`.
+- `near out` also calls `store.StoredByIdentity`, so it finds the evidence that holds the file, whatever hash its strategy recorded.
 
-1. Keep the current name format only as a human-readable label.
-2. Store parent UUIDs explicitly as fields or relation edges.
-3. Use reverse indexes for hash lookup, but keep parent-child links UUID-based.
+## Record reference helpers
 
-The current codebase is already moving in that direction for evidence and
-partition linkage.
+`lib/dbio/recordref.go` reads a partition or indexed record's references, from the record's fields or from its older name:
 
-## If We Move Indexed Records to UUID Later
+| Helper | Returns | From a new record | From an older record |
+| --- | --- | --- | --- |
+| `RecordEvidenceID(rec)` | the raw evidence ID | `EvidenceID` | the name's first field (`util.GetEvidenceFileHash`) |
+| `RecordPartitionID(rec)` | an indexed file's raw partition ID | `PartitionID` | the name's second field, base64-decoded |
+| `RecordPath(rec)` | an indexed file's path, or a partition's display name | `Path` | the name's last field; a partition's second field |
 
-If indexed records migrate to UUID primary keys, we should add:
+Older names have these forms:
 
-1. IH reverse index (hash -> UUID).
-2. Clear dedup policy (single canonical UUID per content hash or multi-record
-   strategy).
-3. Migration/backfill plan for existing I namespace keys.
+- partition: `base64(evidence ID)|||<evidence name>_p<n>`
+- indexed file: `<raw 16-byte evidence ID>|||base64(partition ID)|||<path>`
 
-## Invariants to Preserve
+A path may itself contain `|||`, so the helpers split only at the first two separators.
 
-1. UUID is the canonical object identity for evidence and partition records.
-2. Content hash remains queryable in O(1) for all object types.
-3. No silent fallback to full-scan when an index path exists.
-4. API names must reflect semantics (ID getters return IDs, hash getters return
-   content hashes).
-5. Any hash-of-chunks mode must include deterministic chunk ordering and
-   boundary-trim rules.
+The legacy parse is tolerant. A raw evidence ID is recognised by the separator at byte 16, and is checked before base64. A raw ID made only of base64-alphabet bytes would otherwise decode as base64 to the wrong ID (ING-19). A prefix that decodes to nothing is an error.
 
-## Implementation Decision (Current)
+## Older databases
 
-1. Keep B (`asynchash`) as default for evidence.
-2. Keep current behavior for partition/indexed until C is prototyped.
-3. Prototype C (`hash-of-chunks`) as `hash-strategy=hocho` for evidence; keep it
-   additive (no primary-key migration).
-4. Revisit D (`merkle-tree-root`) only when proof-grade verification is a
-   concrete requirement.
-
-## Open Questions
-
-1. Should indexed records stay hash-keyed long-term or move to UUID + IH?
-2. Do we want unique constraints or conflict handling around EH/PH reverse index
-   writes?
-3. Should we add background consistency checks for stale EH/PH entries?
-4. Should we formalize this into ADR files once design stabilizes?
-
-## Update Rule
-
-When we change behavior, update this file in the same PR.
+- **Random IDs.** Older releases gave partitions and indexed files random UUIDv7 IDs. They wrote no `EvidenceID`, `PartitionID` or `Path`, so the record reference helpers read the name. `dues reindex` deletes an evidence's index and writes it again, with deterministic IDs and explicit fields.
+- **No content root.** Older evidence has no `PlainHash`, `ContentRoot`, `Fingerprint` or `ER` key. Its `FileHash` is its plain hash, or its root under `hocho`.
+  - `CommitEvidence` and `StoredByIdentity` find it through `EH`, trying both hashes.
+  - `EQ` does not list it, so the `async` and `hocho` lookups before storing miss it. The commit still finds it.
+- **Edge-form hashes.** Some older partition and indexed records hold the edge form of the content root. Restore verifies it.
+- **Lookup lists.** Older hash lookups are one msgpack list per hash, at the lookup key itself. `HashLookupMembersTxn` reads the list first, then the member keys, and reports each member once. New members are always written as separate keys.
+- **Chunk size.** Older evidence records have no `ChunkSize`. Readers infer it from the relation keys (see [`RESTORE_LLD.md`](RESTORE_LLD.md#older-databases)).

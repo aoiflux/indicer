@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"errors"
 	"os"
+	"strings"
 	"testing"
 
 	"indicer/internal/testutil"
@@ -15,6 +16,7 @@ import (
 	"indicer/lib/util"
 
 	"github.com/dgraph-io/badger/v4"
+	"github.com/klauspost/compress/zstd"
 	"github.com/vmihailenco/msgpack/v5"
 )
 
@@ -169,6 +171,69 @@ func TestValidateEvidenceLevels(t *testing.T) {
 					}
 				}
 			})
+		}
+	}
+}
+
+// TestValidateUsesEachEvidenceChunkSize: a legacy database can hold evidence
+// stored at different chunk sizes. Validation must step through each one's
+// relations at its own chunk size. At a smaller size it finds relations
+// missing, so recovery would fail good evidence; at a larger one it skips
+// chunks, so repair --verify would miss damage.
+func TestValidateUsesEachEvidenceChunkSize(t *testing.T) {
+	db := testdb.Open(t, testdb.Default)
+	util.SetChonkSize(8)
+	big := testutil.RandomBytes(5, 6*8192+3)
+	bigID := runChunkPass(t, ingestChunksBatchOwner, db.DB, "evidence-at-8kib", big)
+	util.SetChonkSize(4)
+	small := testutil.RandomBytes(6, 6*4096+3)
+	smallID := runChunkPass(t, ingestChunksBatchOwner, db.DB, "evidence-at-4kib", small)
+
+	var bigEv, smallEv structs.EvidenceFile
+	bigEv.Size, smallEv.Size = int64(len(big)), int64(len(small))
+	for _, level := range []ValidationLevel{ValidateLocations, ValidateMaterial, ValidateContent} {
+		if err := ValidateEvidence(t.Context(), db.DB, bigID, bigEv, level); err != nil {
+			t.Errorf("8 KiB evidence at 4 KiB, level %d: %v, want valid", level, err)
+		}
+	}
+
+	// Damage the 4 KiB evidence's second chunk, which a validation stepping
+	// at 8 KiB never reads.
+	chash, err := util.GetChonkHash(small[4096:8192], cnst.GetHashAlgo())
+	if err != nil {
+		t.Fatal(err)
+	}
+	path, loc := chunkFile(t, db.DB, util.AppendToBytesSlice(cnst.ChonkNamespace, chash))
+	flipByte(t, path, loc.Offset+loc.EncodedSize/2)
+	util.SetChonkSize(8)
+	if err := ValidateEvidence(t.Context(), db.DB, smallID, smallEv, ValidateContent); !errors.Is(err, ErrMaterialCorrupt) {
+		t.Errorf("4 KiB evidence with a damaged chunk, at 8 KiB: %v, want %v", err, ErrMaterialCorrupt)
+	}
+}
+
+// TestValidateCompressedLegacyContainer: legacy quick mode compressed a full
+// container to <name>.blob.zst, while its chunks' metadata still names
+// <name>.blob. Validation must find the compressed container, as reads do.
+func TestValidateCompressedLegacyContainer(t *testing.T) {
+	db, id, ev, ckey := validationCase(t, testdb.Container)
+	path, _ := chunkFile(t, db.DB, ckey)
+	raw, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	enc, err := zstd.NewWriter(nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(strings.TrimSuffix(path, cnst.BLOBEXT)+cnst.BLOBZSTEXT, enc.EncodeAll(raw, nil), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Remove(path); err != nil {
+		t.Fatal(err)
+	}
+	for _, level := range []ValidationLevel{ValidateLocations, ValidateMaterial, ValidateContent} {
+		if err := ValidateEvidence(t.Context(), db.DB, id, ev, level); err != nil {
+			t.Errorf("level %d: %v, want valid", level, err)
 		}
 	}
 }

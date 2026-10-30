@@ -47,10 +47,22 @@ if ! command -v go > /dev/null 2>&1; then
     exit 1
 fi
 
+# SHA256SUMS is written with GNU coreutils (Linux, Git Bash) or Perl's shasum
+# (macOS). Check for one before building, not after.
+if command -v sha256sum > /dev/null 2>&1; then
+    SHA256_TOOL="sha256sum"
+elif command -v shasum > /dev/null 2>&1; then
+    SHA256_TOOL="shasum -a 256"
+else
+    printf "${C_YELLOW}ERROR: neither sha256sum nor shasum found in PATH; SHA256SUMS cannot be written.${C_RESET}\n" >&2
+    exit 1
+fi
+
 if [ -d "$OUTPUT_DIR" ]; then
     rm -rf "$OUTPUT_DIR"
 fi
 mkdir -p "$OUTPUT_DIR"
+OUTPUT_ABS="$(cd "$OUTPUT_DIR" && pwd)"
 
 LDFLAGS="-s -w -buildid="
 
@@ -72,7 +84,7 @@ done
 
 banner "DUES Release Build"
 label "Repository" "$REPO_ROOT" "$C_CYAN"
-label "Output Dir" "$REPO_ROOT/$OUTPUT_DIR" "$C_CYAN"
+label "Output Dir" "$OUTPUT_ABS" "$C_CYAN"
 label "Targets" "$TARGETS" "$C_YELLOW"
 label "Mode" "Pure-Go static release build (CGO=0)" "$C_GREEN"
 label "PGO" "$PGO_STATUS" "$PGO_COLOR"
@@ -123,13 +135,32 @@ done
 BUILD_END=$(date +%s)
 BUILD_SECONDS=$((BUILD_END - BUILD_START))
 
+# SHA-256 sums of the binaries, to publish with them. The format is the one
+# `sha256sum -c` and `shasum -a 256 -c` read: lowercase hex, two spaces, the
+# file name, LF line endings. build.ps1 writes the same file.
+SUMS_FILE="$OUTPUT_DIR/SHA256SUMS"
+: > "$SUMS_FILE"
+for f in "$OUTPUT_DIR"/${BINARY_NAME}-*; do
+    [ -f "$f" ] || continue
+    # $SHA256_TOOL is unquoted on purpose: "shasum -a 256" is three words.
+    _hash=$($SHA256_TOOL "$f" | cut -d ' ' -f 1)
+    if [ ${#_hash} -ne 64 ]; then
+        printf "${C_RED}ERROR: could not hash %s${C_RESET}\n" "$f" >&2
+        exit 1
+    fi
+    printf "%s  %s\n" "$_hash" "$(basename "$f")" >> "$SUMS_FILE"
+done
+
 banner "Build Complete" "$C_GREEN"
 label "Duration" "${BUILD_SECONDS}s" "$C_GREEN"
 label "Artifacts" "$TARGET_COUNT" "$C_GREEN"
+label "Checksums" "$OUTPUT_ABS/SHA256SUMS" "$C_GREEN"
 printf "\n${C_DARKGRAY}%-32s %s${C_RESET}\n" "Binary" "Size(MB)"
 for f in "$OUTPUT_DIR"/${BINARY_NAME}-*; do
     [ -f "$f" ] || continue
     _sz=$(awk "BEGIN { printf \"%.2f\", $(wc -c < "$f") / 1048576 }")
     printf "${C_WHITE}%-32s %s${C_RESET}\n" "$(basename "$f")" "$_sz"
 done
+printf "\n${C_DARKGRAY}SHA256SUMS${C_RESET}\n"
+cat "$SUMS_FILE"
 printf "\n"

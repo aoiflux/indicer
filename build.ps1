@@ -183,9 +183,21 @@ foreach ($artifact in $artifacts) {
     $count++;
 }
 
+# SHA-256 sums of the binaries, to publish with them. The format is the one
+# `sha256sum -c` and `shasum -a 256 -c` read: lowercase hex, two spaces, the
+# file name, LF line endings, no BOM. build.sh writes the same file.
+$sumsPath = Join-Path (Resolve-Path $OutputDir).Path "SHA256SUMS"
+$sumLines = foreach ($artifact in ($artifacts | Sort-Object Name)) {
+    $hash = (Get-FileHash -Algorithm SHA256 -LiteralPath $artifact.FullName).Hash.ToLowerInvariant()
+    $hash + "  " + $artifact.Name
+}
+$sumText = ($sumLines -join "`n") + "`n"
+[System.IO.File]::WriteAllText($sumsPath, $sumText, (New-Object System.Text.UTF8Encoding $false))
+
 Write-Banner -Title "Build Complete" -Color Green
 Write-Label -Label "Duration" -Value ($buildSeconds.ToString() + "s") -ValueColor Green
 Write-Label -Label "Artifacts" -Value $count -ValueColor Green
+Write-Label -Label "Checksums" -Value $sumsPath -ValueColor Green
 Write-Host ""
 
 $artifacts |
@@ -197,5 +209,9 @@ Select-Object @{
     Expression = { [math]::Round($_.Length / 1MB, 2) }
 }, LastWriteTime |
 Format-Table -AutoSize
+
+Write-Host "SHA256SUMS" -ForegroundColor DarkGray
+Write-Host $sumText -NoNewline -ForegroundColor White
+Write-Host ""
 
 Write-Host "NOTE: Pure-Go cross-compile — every target above is produced from this one host (build.sh is the shell equivalent)." -ForegroundColor DarkYellow

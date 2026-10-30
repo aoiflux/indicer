@@ -42,6 +42,30 @@ The `netgo` and `osusergo` tags select Go's own DNS resolver and user lookup.
 | Choose targets | `-Targets linux/amd64,darwin/arm64` | `TARGETS="linux/amd64 darwin/arm64"` |
 | Other settings | `-BinaryName`, `-MainPackage`, `-OutputDir` | `BINARY_NAME`, `MAIN_PACKAGE`, `OUTPUT_DIR` |
 | Old output | Deleted first, unless `-NoClean` | Always deleted first |
+| Checksums | `dist\SHA256SUMS` | `dist/SHA256SUMS` |
+
+Both scripts end by writing `SHA256SUMS` beside the binaries, to publish with
+them. It has one line for each `dues-*` file in the output directory: the
+lowercase SHA-256, two spaces, the file name. Lines end in LF. With `-NoClean`
+it also covers binaries left there by an earlier run. `build.sh` needs
+`sha256sum` or `shasum` and checks for them before it builds.
+
+The builds are reproducible (`-trimpath`, `-buildid=`), so with the same Go
+toolchain `build.ps1`, `build.sh` and `build.sh` under WSL write the same sums.
+
+To check a download, run one of these in the folder that holds the binary and
+`SHA256SUMS`. Each prints `OK` for a match:
+
+```sh
+grep ' dues-linux-amd64$' SHA256SUMS | sha256sum -c          # Linux
+grep ' dues-darwin-arm64$' SHA256SUMS | shasum -a 256 -c     # macOS
+```
+
+```powershell
+(Get-FileHash .\dues-windows-amd64.exe -Algorithm SHA256).Hash.ToLower()
+```
+
+On Windows, compare the printed hash with the file's line in `SHA256SUMS`.
 
 `build.ps1` also clears `CC` for the build and restores `CC`, `CGO_ENABLED`,
 `GOOS`, `GOARCH` and `GOAMD64` afterwards.

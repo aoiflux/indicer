@@ -199,7 +199,9 @@ go build -o dues.exe .
 ```
 
 `build.ps1` and `build.sh` build release binaries for all six targets into
-`dist/`. DUES is pure Go, so one machine cross-compiles them all.
+`dist/`, with a `SHA256SUMS` file to publish beside them. DUES is pure Go, so
+one machine cross-compiles them all. [docs/TOOLCHAIN_NOTES.md](docs/TOOLCHAIN_NOTES.md)
+says how to check a download against `SHA256SUMS`.
 
 Compression product specific builds:
 

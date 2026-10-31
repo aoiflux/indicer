@@ -8,11 +8,11 @@ import (
 
 	"indicer/internal/console"
 	"indicer/internal/lifecycle"
+	"indicer/internal/ui"
 	"indicer/lib/dbopen"
 	"indicer/lib/logging"
 	"indicer/lib/near"
 
-	"github.com/fatih/color"
 	"go.uber.org/zap"
 )
 
@@ -73,8 +73,9 @@ func nearData(ctx context.Context, opts DBOptions, cmd, query string, no NearOpt
 		logging.GetLogger().Error("NearData ERROR", zap.Error(err))
 		return err
 	}
+	p := ui.For(console.Err())
 	for _, n := range o.Notes {
-		color.New(color.FgHiYellow, color.Bold).Fprintf(console.Err(), "[near] %s\n", n)
+		fmt.Fprintf(console.Err(), "%s %s\n", p.Strong(ui.Info, "[near]"), n)
 	}
 	console.Println(nearSummary(o))
 	console.Printf("Done.... %v\n", time.Since(start))

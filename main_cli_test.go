@@ -5,8 +5,6 @@ import (
 	"os"
 	"strings"
 	"testing"
-
-	"github.com/fatih/color"
 )
 
 func TestPrintHelpForPath_NearInRoutesToNearInHelp(t *testing.T) {
@@ -72,8 +70,6 @@ func TestEveryCommandHasHelp(t *testing.T) {
 func captureStdout(t *testing.T, fn func()) string {
 	t.Helper()
 	oldStdout := os.Stdout
-	oldNoColor := color.NoColor
-	color.NoColor = true
 
 	r, w, err := os.Pipe()
 	if err != nil {
@@ -81,16 +77,27 @@ func captureStdout(t *testing.T, fn func()) string {
 	}
 	os.Stdout = w
 
+	// Read while fn writes: output larger than the pipe's buffer would
+	// otherwise block fn for ever.
+	type result struct {
+		b   []byte
+		err error
+	}
+	read := make(chan result, 1)
+	go func() {
+		b, err := io.ReadAll(r)
+		read <- result{b, err}
+	}()
+
 	fn()
 
 	_ = w.Close()
 	os.Stdout = oldStdout
-	color.NoColor = oldNoColor
 
-	b, err := io.ReadAll(r)
-	if err != nil {
-		t.Fatalf("read stdout failed: %v", err)
+	res := <-read
+	if res.err != nil {
+		t.Fatalf("read stdout failed: %v", res.err)
 	}
 	_ = r.Close()
-	return string(b)
+	return string(res.b)
 }

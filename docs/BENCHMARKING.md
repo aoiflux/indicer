@@ -143,11 +143,13 @@ go tool pprof -top bench/outputs/store_repair_scan.mem.pprof
 
 ## Writing a benchmark
 
-- A benchmark that prints progress must silence it with
-  `defer console.Quiet()()` (`internal/console`). Otherwise the progress bar
-  pushes the result columns off the `Benchmark` line, and `benchstat` and the
-  harness drop the result. Swapping `os.Stdout` does not work, because
-  `internal/console` keeps the writers it captured at start.
+- Library code draws no progress by itself: it reports into the context
+  (`internal/progress`), and only the CLI's `ui.Run` displays it. A benchmark
+  that prints anything else must silence it with `defer console.Quiet()()`
+  (`internal/console`). Otherwise the output pushes the result columns off the
+  `Benchmark` line, and `benchstat` and the harness drop the result. Swapping
+  `os.Stdout` does not work, because `internal/console` keeps the writers it
+  captured at start.
 - A new benchmark that the harness should run needs a `Run-Bench` line in
   `benchmark.ps1` and a `run_bench` line in `benchmark.sh`.
 

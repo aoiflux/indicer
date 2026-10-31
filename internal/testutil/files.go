@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"crypto/sha256"
 	"encoding/hex"
+	"hash"
 	"io"
 	"io/fs"
 	"math/rand/v2"
@@ -13,6 +14,28 @@ import (
 	"strings"
 	"testing"
 )
+
+// HashFile hashes all of f with h, from its start, and leaves f at its
+// start.
+func HashFile(f *os.File, h hash.Hash) ([]byte, error) {
+	if _, err := f.Seek(0, io.SeekStart); err != nil {
+		return nil, err
+	}
+	if _, err := io.Copy(h, f); err != nil {
+		return nil, err
+	}
+	_, err := f.Seek(0, io.SeekStart)
+	return h.Sum(nil), err
+}
+
+// HashRange hashes size bytes of f from offset start with h. A file
+// shorter than start+size is an error.
+func HashRange(f *os.File, h hash.Hash, start, size int64) ([]byte, error) {
+	if _, err := io.CopyN(h, io.NewSectionReader(f, start, size), size); err != nil {
+		return nil, err
+	}
+	return h.Sum(nil), nil
+}
 
 // RandomBytes returns n pseudo-random bytes from seed. The same seed always
 // gives the same bytes, on every platform and Go release.

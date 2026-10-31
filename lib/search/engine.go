@@ -6,9 +6,9 @@ import (
 	"encoding/base64"
 	"errors"
 	"fmt"
+	"indicer/internal/progress"
 	"slices"
 	"sync"
-	"sync/atomic"
 
 	"indicer/internal/faultinject"
 	"indicer/internal/safe"
@@ -49,9 +49,9 @@ type Options struct {
 	// (record keys), as full-text mode does; evidence and partitions are not
 	// read.
 	Candidates map[string]struct{}
-	// Progress, when set, is called after each object with the objects done
-	// and the objects the search will read.
-	Progress func(done, total int64)
+	// Progress, when set, counts each object read; its total becomes the
+	// objects the search will read, and its "read" meter the bytes.
+	Progress *progress.Phase
 }
 
 // Hit is an object whose bytes hold at least one of the terms.
@@ -147,6 +147,7 @@ func Run(ctx context.Context, db *badger.DB, terms []string, opts Options) (*Res
 		return nil, err
 	}
 	s.total = s.plannedObjects(evidence)
+	s.progress.SetTotal(s.total)
 	for _, ev := range evidence {
 		if err := faultinject.Hit(faultinject.SearchMid); err != nil {
 			return nil, err
@@ -203,9 +204,9 @@ type scanner struct {
 	window     int // the largest window of the terms
 	workers    int
 	candidates map[string]struct{}
-	progress   func(done, total int64)
+	progress   *progress.Phase
+	read       *progress.Meter
 	total      int64
-	done       atomic.Int64
 
 	reads  chan struct{} // one token per chunk read in flight, across objects
 	chunks *dbio.ChunkCache
@@ -229,6 +230,7 @@ func newScanner(db *badger.DB, terms []string, opts Options) *scanner {
 		workers:    workers,
 		candidates: opts.Candidates,
 		progress:   opts.Progress,
+		read:       opts.Progress.Meter("read", progress.Bytes),
 		reads:      make(chan struct{}, workers),
 		chunks:     dbio.NewChunkCache(dbio.DefaultChunkCacheBytes),
 		counts:     newCountCache(64 * cnst.MB),
@@ -379,9 +381,7 @@ func (s *scanner) phase(ctx context.Context, level Level, eid []byte, objects []
 	for _, o := range objects {
 		g.Go(safe.Site{Component: "search", Op: "scan", Path: string(o.key)}, func() error {
 			err := s.scanObject(gctx, level, eid, o.key, parallel)
-			if s.progress != nil {
-				s.progress(s.done.Add(1), s.total)
-			}
+			s.progress.Add(1)
 			return err
 		})
 	}
@@ -497,6 +497,7 @@ func (s *scanner) feedSpans(ctx context.Context, l *dbio.Logical, spans []dbio.C
 	}
 	for i, sp := range spans {
 		sl := &slots[i]
+		s.read.Add(sp.Len())
 		if sl.cached != nil {
 			if s.applyCached(ts, sl.cached) {
 				continue

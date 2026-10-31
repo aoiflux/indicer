@@ -6,12 +6,14 @@ import (
 	"encoding/base64"
 	"errors"
 	"fmt"
+	"indicer/internal/ui"
 	"os"
 	"strings"
 	"sync/atomic"
 
 	"indicer/internal/console"
 	"indicer/internal/lifecycle"
+	"indicer/internal/progress"
 	"indicer/lib/cnst"
 	"indicer/lib/dbio"
 	"indicer/lib/dbopen"
@@ -42,6 +44,9 @@ var leftOpen = func(*dbopen.Handle) {}
 
 // TUICmd runs the interactive TUI on a writable open of the database.
 func TUICmd(ctx context.Context, opts DBOptions) (err error) {
+	// The TUI shows its own status; nothing below reports to a terminal
+	// display.
+	ctx = progress.Without(ctx)
 	h, err := Common(ctx, opts, dbopen.ReadWrite, true)
 	if err != nil {
 		return err
@@ -56,7 +61,11 @@ func TUICmd(ctx context.Context, opts DBOptions) (err error) {
 	// Output is silenced once, for the whole session, before any job runs;
 	// silencing it per action raced when actions ran side by side.
 	restore := console.Quiet()
-	err = runTUI(ctx, tui.Config{Info: a.info(), Actions: a.actions()})
+	cfg := tui.Config{Info: a.info(), Actions: a.actions()}
+	if m := ui.Current(); m.Out.TTY {
+		cfg.Profile = m.Out.Profile
+	}
+	err = runTUI(ctx, cfg)
 	if errors.Is(err, tui.ErrJobsRunning) {
 		// A job did not stop. Closing the database under it could damage
 		// it, so it is left for badger to recover at its next open (TUI-3).
@@ -66,7 +75,7 @@ func TUICmd(ctx context.Context, opts DBOptions) (err error) {
 	}
 	restore()
 	if a.stored.Load() {
-		compactValueLog(h, "TUI")
+		compactValueLog(ctx, h, "TUI")
 	}
 	closeDB(h, &err)
 	return err

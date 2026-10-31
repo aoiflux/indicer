@@ -125,10 +125,6 @@ type listing struct {
 func (l *crashLab) list() listing {
 	l.t.Helper()
 	r := l.must("list")
-	i, j := strings.Index(r.Stdout, "{"), strings.LastIndex(r.Stdout, "}")
-	if i < 0 || j < i {
-		l.t.Fatalf("no JSON in list output:\n%s", r.Combined())
-	}
 	var doc struct {
 		Evidence []struct {
 			Name       string `json:"name"`
@@ -148,7 +144,7 @@ func (l *crashLab) list() listing {
 			} `json:"partitions"`
 		} `json:"evidence"`
 	}
-	if err := json.Unmarshal([]byte(r.Stdout[i:j+1]), &doc); err != nil {
+	if err := json.Unmarshal([]byte(r.Stdout), &doc); err != nil {
 		l.t.Fatalf("list: %v\n%s", err, r.Stdout)
 	}
 	out := listing{states: map[string]string{}}

@@ -7,6 +7,7 @@ import (
 	"indicer/internal/console"
 	"indicer/internal/lifecycle"
 	"indicer/internal/termsafe"
+	"indicer/internal/ui"
 	"indicer/lib/cnst"
 	"indicer/lib/dbmeta"
 	"indicer/lib/dbopen"
@@ -79,7 +80,7 @@ func (e *VerifyError) Error() string {
 }
 
 func RepairData(ctx context.Context, opts DBOptions, ro RepairOptions) error {
-	return repairData(ctx, opts, ro, os.Stdin, isTerminal(os.Stdin))
+	return repairData(ctx, opts, ro, os.Stdin, console.Interactive())
 }
 
 func repairData(ctx context.Context, opts DBOptions, ro RepairOptions, in io.Reader, interactive bool) (err error) {
@@ -146,7 +147,7 @@ func repairData(ctx context.Context, opts DBOptions, ro RepairOptions, in io.Rea
 	}
 
 	if ro.Fix || ro.Upgrade {
-		compactValueLog(h, "RepairData")
+		compactValueLog(ctx, h, "RepairData")
 	}
 	logging.GetLogger().Info("RepairData COMPLETE",
 		zap.Int64("duration_ms", time.Since(start).Milliseconds()),
@@ -163,11 +164,12 @@ func verifyEvidence(ctx context.Context, h *dbopen.Handle) error {
 	if err != nil {
 		return err
 	}
+	p := ui.For(console.Out())
 	for _, r := range report.Results {
 		if r.Problem == "" {
-			console.Printf("OK      %s  %s (%d bytes)\n", r.ID, termsafe.Line(r.Name), r.Size)
+			console.Printf("%s %s  %s (%d bytes)\n", p.Strong(ui.Success, "OK     "), p.Paint(ui.Evidence, r.ID), termsafe.Line(r.Name), r.Size)
 		} else {
-			console.Printf("DAMAGED %s  %s (%d bytes): %s\n", r.ID, termsafe.Line(r.Name), r.Size, r.Problem)
+			console.Printf("%s %s  %s (%d bytes): %s\n", p.Strong(ui.Error, "DAMAGED"), p.Paint(ui.Evidence, r.ID), termsafe.Line(r.Name), r.Size, termsafe.Line(r.Problem))
 		}
 	}
 	console.Printf("Verified %d evidence; %d damaged.\n", report.Verified, report.Problems)
@@ -200,7 +202,7 @@ func upgradeBlockIndex(ctx context.Context, h *dbopen.Handle, yes bool, in io.Re
 		report.Files, report.Records, report.Migrated, report.AlreadyStored, report.DamagedCount)
 	if !report.Complete() {
 		for _, d := range report.Damaged {
-			console.Printf("  damaged: %s\n", d)
+			console.Printf("  damaged: %s\n", termsafe.Line(d))
 		}
 		return fmt.Errorf("%d block index records could not be read or verified; the block index is kept and still used", report.DamagedCount)
 	}

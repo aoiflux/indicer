@@ -232,9 +232,21 @@ and boundaries:
 
 | Package | Use it for |
 |---|---|
-| `internal/testutil` | I/O fault injectors (`FailingReaderAt`, `ShortReaderAt`, `NewENOSPCWriter`, `ShortWriter`, `ErrCloser`, slow and blocking readers); deterministic data (`RandomBytes`, `WriteRandomFile`); `TreeHash`, `AssertNoFilesMatching` and `Golden`; environment gates (`RequireEnvDir`, `RequireLinuxNonRoot`, `LongTest`); leak and memory checks (`NoLeakedGoroutines`, `AllocBelow`, `PeakHeap`); `FakeClock`; subprocess scenarios (`RunChildScenarios`, `StartChild`, `WaitForPoint`, `Kill`, `Interrupt`); and the built binary (`BuildDues`, `BuildBinary`, `RunDues`, `RunDuesEnv`, `StartDues`; the build functions take build tags) |
+| `internal/testutil` | I/O fault injectors (`FailingReaderAt`, `ShortReaderAt`, `NewENOSPCWriter`, `ShortWriter`, `ErrCloser`, slow and blocking readers); deterministic data (`RandomBytes`, `WriteRandomFile`); `TreeHash`, `AssertNoFilesMatching` and `Golden`; environment gates (`RequireEnvDir`, `RequireLinuxNonRoot`, `LongTest`); leak and memory checks (`NoLeakedGoroutines`, `AllocBelow`, `PeakHeap`); `FakeClock`; subprocess scenarios (`RunChildScenarios`, `StartChild`, `WaitForPoint`, `Kill`, `Interrupt`); the built binary (`BuildDues`, `BuildBinary`, `RunDues`, `RunDuesEnv`, `StartDues`; the build functions take build tags); `ChildEnv`, the environment a child runs with, without the colour and presentation variables (`NO_COLOR`, `FORCE_COLOR`, `CLICOLOR_FORCE`, `DUES_COLOR`, `DUES_PLAIN`, `DUES_NO_FUN`, `DUES_THEME`); and `HashFile`, `HashRange` |
 | `internal/testutil/testdb` | Opening throwaway databases. `ForEachMode` runs a test once per storage mode (default, encrypted, quick, container). Every helper snapshots and restores the process-wide layout globals, so tests using it must not call `t.Parallel`. |
 | `internal/faultinject` | Making the code fail at named points (see below) |
+
+`RunDuesEnv` also holds every run to the output contract
+([CLI_UX.md](CLI_UX.md)): it fails a test whose piped stdout or stderr holds an
+escape code, unless the run asked for colour (`--color=always`,
+`FORCE_COLOR=1`). Parse `list` and `micro list` stdout as one JSON document;
+the run header and notes are on stderr.
+
+Terminal output itself is tested in `internal/ui` against a small terminal
+emulator (`vtscreen_test.go`). It applies `\r`, `\n`, cursor-up, line erase
+and SGR, fails on any other escape sequence, and lets a test assert the final
+screen. A real-terminal check needs a PTY: under WSL,
+`script -qec "dues store <file> --dbpath <db>" /dev/null`.
 
 ### Fault injection
 

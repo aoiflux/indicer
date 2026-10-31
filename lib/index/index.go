@@ -20,6 +20,7 @@ import (
 	"strings"
 	"sync"
 
+	"indicer/internal/progress"
 	"indicer/lib/dbmeta"
 	"indicer/lib/parser/core"
 	"indicer/lib/parser/scan"
@@ -81,16 +82,23 @@ func Run(ctx context.Context, opts Options) (Result, error) {
 	rep, scanErr := scan.Scan(ix.ctx, opts.Image, ix.visitor(), scan.Options{Limits: opts.Limits})
 	endErr := ix.stop()
 	res := ix.result(rep)
+	var err error
 	switch {
 	case ctx.Err() != nil:
-		return res, context.Cause(ctx)
+		err = context.Cause(ctx)
 	case ix.failure() != nil:
 		// A worker's error is why the scan stopped.
-		return res, ix.failure()
+		err = ix.failure()
 	case scanErr != nil:
-		return res, scanErr
+		err = scanErr
+	default:
+		err = endErr
 	}
-	return res, endErr
+	if res.State == structs.IndexPartial {
+		ix.phase.Warn(res.Reason)
+	}
+	ix.phase.Done(err)
+	return res, err
 }
 
 // indexer is the state of one pass. The visitor callbacks run on the scan's
@@ -106,6 +114,10 @@ type indexer struct {
 
 	mu  sync.Mutex
 	err error
+
+	// phase counts records written; read counts the bytes hashed.
+	phase *progress.Phase
+	read  *progress.Meter
 
 	// Owned by the scan goroutine.
 	part     *openPartition
@@ -126,7 +138,9 @@ func newIndexer(parent context.Context, opts Options) *indexer {
 		cancel:  cancel,
 		newHash: dbmeta.FileHasher(opts.DB),
 		jobs:    make(chan hashJob, 2*n),
+		phase:   progress.Start(parent, "index", progress.Files, progress.Unknown),
 	}
+	ix.read = ix.phase.Meter("read", progress.Bytes)
 	for range n {
 		ix.workers.Add(1)
 		go ix.hashWorker()

@@ -83,12 +83,11 @@ type listedEvidence struct {
 func listEvidence(t *testing.T, bin, work, root string) []listedEvidence {
 	t.Helper()
 	r := duesMust(t, bin, work, "list", "--dbpath", root)
-	i, j := strings.Index(r.Stdout, "{"), strings.LastIndex(r.Stdout, "}")
 	var doc struct {
 		Evidence []listedEvidence `json:"evidence"`
 	}
-	if i < 0 || j < i || json.Unmarshal([]byte(r.Stdout[i:j+1]), &doc) != nil {
-		t.Fatalf("list output:\n%s", r.Combined())
+	if json.Unmarshal([]byte(r.Stdout), &doc) != nil {
+		t.Fatalf("list stdout is not one JSON document:\n%s", r.Combined())
 	}
 	return doc.Evidence
 }

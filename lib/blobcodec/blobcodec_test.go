@@ -14,11 +14,13 @@ import (
 )
 
 // ensureCodecs sets up the process-wide zstd codecs. testdb cannot be used:
-// it imports dbio, which imports this package.
+// it imports dbio, which imports this package. The decoder is the
+// production one: FuzzDecode feeds it crafted frames, and without its
+// memory limit one input can take gigabytes.
 func ensureCodecs(t testing.TB) {
 	t.Helper()
 	if cnst.DECODER == nil {
-		d, err := zstd.NewReader(nil)
+		d, err := cnst.NewDecoder()
 		if err != nil {
 			t.Fatal(err)
 		}

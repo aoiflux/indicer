@@ -3,6 +3,7 @@ package enrichment
 import (
 	"encoding/base64"
 	"errors"
+	"indicer/internal/progress"
 	"path/filepath"
 	"testing"
 
@@ -96,10 +97,18 @@ func TestEnrichAllCreatesFileNodesAtAllLevels(t *testing.T) {
 	// The records have no stored content, so their entropy cannot be read:
 	// the hierarchy is written, and the run says what it could not compute.
 	service := NewService(db, repo)
-	rep, err := service.EnrichAll(t.Context())
+	reporter := progress.New(t.Context(), nil)
+	rep, err := service.EnrichAll(progress.With(t.Context(), reporter))
 	var incomplete *IncompleteError
 	if !errors.As(err, &incomplete) || rep.Unreadable != 3 {
 		t.Fatalf("EnrichAll: %v, %d unreadable; want an IncompleteError for the evidence, partition and file", err, rep.Unreadable)
+	}
+	// The entropy pass could not read the content: a warning, not a
+	// failure. The graph pass counted the file it wrote.
+	if ps := reporter.Snapshot(0).Phases; len(ps) != 2 ||
+		ps[0].Name != "entropy" || ps[0].State != progress.Warning || ps[0].Total != 4096 ||
+		ps[1].Name != "graph" || ps[1].State != progress.OK || ps[1].Done != int64(rep.Files) || ps[1].Total != 1 {
+		t.Fatalf("phases %+v", ps)
 	}
 
 	hierarchy, err := repo.ReadHierarchy()

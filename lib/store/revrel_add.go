@@ -5,6 +5,7 @@ import (
 	"encoding/base64"
 	"errors"
 	"fmt"
+	"indicer/internal/progress"
 	"slices"
 	"strconv"
 
@@ -211,12 +212,19 @@ func AddMissingReverseRelations(ctx context.Context, db *badger.DB) (int, int64,
 		return 0, 0, err
 	}
 	var total int64
+	ph := progress.Start(ctx, "revrel", progress.Evidence, int64(len(ids)))
+	relations := ph.Meter("relations", progress.Records)
 	for _, id := range ids {
 		n, err := AddReverseRelations(ctx, db, id)
 		total += n
+		relations.Add(n)
 		if err != nil {
-			return len(ids), total, fmt.Errorf("add reverse relations to evidence %x: %w", dbio.EvidenceRawID(id), err)
+			err = fmt.Errorf("add reverse relations to evidence %x: %w", dbio.EvidenceRawID(id), err)
+			ph.Done(err)
+			return len(ids), total, err
 		}
+		ph.Add(1)
 	}
+	ph.Done(nil)
 	return len(ids), total, nil
 }

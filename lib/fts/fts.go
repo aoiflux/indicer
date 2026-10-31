@@ -17,6 +17,7 @@ import (
 	"unicode"
 	"unicode/utf8"
 
+	"indicer/internal/progress"
 	"indicer/lib/cnst"
 	"indicer/lib/dbio"
 	"indicer/lib/util"
@@ -178,6 +179,7 @@ func IndexFiles(ctx context.Context, db *badger.DB, jobs []IndexedFileJob) (stat
 		}
 	}()
 	var first error
+	done := progress.CurrentIn(ctx, progress.Files)
 	b := h.idx.NewBatch()
 	for _, job := range jobs {
 		if err := ctx.Err(); err != nil {
@@ -202,6 +204,7 @@ func IndexFiles(ctx context.Context, db *badger.DB, jobs []IndexedFileJob) (stat
 			return stats, err
 		}
 		stats.Files++
+		done.Add(1)
 		if b.Size() >= indexBatch {
 			if err := h.idx.Batch(b); err != nil {
 				return stats, err

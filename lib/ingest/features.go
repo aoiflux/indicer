@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 
+	"indicer/internal/progress"
 	"indicer/lib/dbio"
 	"indicer/lib/enrichment"
 	"indicer/lib/fts"
@@ -22,13 +23,23 @@ import (
 func features(ctx context.Context, db *badger.DB, eid []byte, req Request) error {
 	var errs []error
 	if req.FTS {
+		ph := progress.Start(ctx, "full-text", progress.Files, progress.Unknown)
 		var jobs []fts.IndexedFileJob
 		err := index.ForEachIndexed(ctx, db, eid, func(key []byte, rec structs.IndexedFile) error {
 			jobs = append(jobs, fts.IndexedFileJob{FileID: string(key), Name: rec.Path})
 			return nil
 		})
+		ph.SetTotal(int64(len(jobs)))
 		if err == nil && len(jobs) > 0 {
-			_, err = fts.IndexFiles(ctx, db, jobs)
+			_, err = fts.IndexFiles(progress.Within(ctx, ph), db, jobs)
+		}
+		var unreadable *fts.TextError
+		if errors.As(err, &unreadable) {
+			// Indexed, with some files' text missing: a warning.
+			ph.Warn(unreadable.Error())
+			ph.Done(nil)
+		} else {
+			ph.Done(err)
 		}
 		if err != nil {
 			errs = append(errs, fmt.Errorf("full-text index: %w", err))

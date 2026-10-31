@@ -4,15 +4,19 @@ package main
 
 import (
 	"fmt"
+	"indicer/internal/ui"
 	"indicer/lib/cnst"
+	"os"
 	"strings"
-
-	"github.com/fatih/color"
 )
 
 func getVersionText() string {
+	commit := ""
+	if buildCommit != "" {
+		commit = "  commit " + buildCommit
+	}
 	return fmt.Sprintf(
-		"DUES v%s  (%s)\n"+
+		"DUES v%s  (%s)%s\n"+
 			"Deduplicated Unified Evidence Store\n\n"+
 			"Highlights\n"+
 			"  - Chunk-level deduplication, encrypted when a password is given\n"+
@@ -22,17 +26,27 @@ func getVersionText() string {
 			"For detailed guide: dues version\n",
 		duesVersion,
 		duesCodename,
+		commit,
 	)
 }
 
 func printVersionInfo() {
-	title := color.New(color.FgCyan, color.Bold).SprintFunc()
-	accent := color.New(color.FgBlue, color.Bold).SprintFunc()
-	muted := color.New(color.FgHiBlack).SprintFunc()
+	p := helpPainter()
+	title := func(s string) string { return p.Strong(ui.Forensics, s) }
+	accent := func(s string) string { return p.Strong(ui.Highlight, s) }
+	muted := func(s string) string { return p.Paint(ui.Muted, s) }
 
-	fmt.Println(title("\nDUES"), muted("Deduplicated Unified Evidence Store"))
-	fmt.Println(accent("Version:"), fmt.Sprintf("%s (%s)", duesVersion, duesCodename))
-	fmt.Println(muted("----------------------------------------"))
+	if p.Decorated() {
+		fmt.Println()
+		ui.Banner(os.Stdout, buildInfo())
+	} else {
+		fmt.Println(title("\nDUES"), muted("Deduplicated Unified Evidence Store"))
+		fmt.Println(accent("Version:"), fmt.Sprintf("%s (%s)", duesVersion, duesCodename))
+		if buildCommit != "" {
+			fmt.Println(accent("Commit:"), buildCommit)
+		}
+		fmt.Println(muted("----------------------------------------"))
+	}
 
 	printHelpSection("Overview")
 	fmt.Println("  Built for evidence-heavy workflows where space, speed, and traceability matter.")
@@ -152,19 +166,27 @@ func printHelpForPath(path []string) {
 		printVersionHelp()
 	case cnst.CmdTui:
 		printTuiHelp()
+	case cmdCoffee, cmdFortune, cmdMeow:
+		fmt.Printf("dues %s is one of DUES's hidden extras; --no-fun turns them off.\n", path[0])
 	default:
-		color.Red("Unknown command: %s", strings.Join(path, " "))
+		fmt.Println(helpPainter().Strong(ui.Error, "Unknown command: "+strings.Join(path, " ")))
 		fmt.Println("")
 		printRootHelp()
 	}
 }
 
 func printRootHelp() {
-	title := color.New(color.FgCyan, color.Bold).SprintFunc()
-	cmd := color.New(color.FgBlue, color.Bold).SprintFunc()
-	muted := color.New(color.FgHiBlack).SprintFunc()
+	p := helpPainter()
+	title := func(s string) string { return p.Strong(ui.Forensics, s) }
+	cmd := helpCmd()
+	muted := func(s string) string { return p.Paint(ui.Muted, s) }
 
-	fmt.Println(title("\nDUES - Deduplicated Unified Evidence Store"))
+	if p.Decorated() {
+		fmt.Println()
+		ui.Banner(os.Stdout, buildInfo())
+	} else {
+		fmt.Println(title("\nDUES - Deduplicated Unified Evidence Store"))
+	}
 	fmt.Println(muted("Reliable evidence storage, deduplication, search, and restore."))
 	printHelpSection("Usage")
 	fmt.Println("  dues [global options] <command> [command options]")
@@ -186,6 +208,16 @@ func printRootHelp() {
 	fmt.Printf("  %s, %s   Quick preset convenience alias\n", cmd("--quick-mode"), cmd("-Q"))
 	fmt.Printf("  %s, %s   Performance preset convenience alias\n", cmd("--performance-mode"), cmd("-o"))
 	fmt.Printf("  %s, %s   Low-resource preset convenience alias\n", cmd("--low-resource-mode"), cmd("-L"))
+	fmt.Printf("  %s WHEN      Colour: auto, always, never, or ansi (only the terminal theme's 16 colours)\n", cmd("--color"))
+	fmt.Printf("  %s           Plain output: no colour, ASCII only, no animation (screen readers, logs)\n", cmd("--plain"))
+	fmt.Printf("  %s              Behave as if no terminal is attached: plain output, and prompts refuse\n", cmd("--ci"))
+	fmt.Printf("  %s          No easter eggs\n", cmd("--no-fun"))
+
+	printHelpSection("Output")
+	fmt.Println("  Results go to stdout; the run header, progress, notes, warnings and errors go")
+	fmt.Println("  to stderr, so `dues list | jq` reads pure JSON. On a pipe nothing is coloured.")
+	fmt.Println("  Environment: NO_COLOR, FORCE_COLOR, DUES_COLOR, DUES_PLAIN=1, DUES_NO_FUN=1,")
+	fmt.Println("  DUES_THEME=dark|light. CI services are detected (CI, GITHUB_ACTIONS, ...).")
 
 	printHelpSection("Database Layout")
 	fmt.Println("  Chunk size, hash algorithm, storage and encryption are fixed when a database is")
@@ -204,20 +236,20 @@ func printRootHelp() {
 	fmt.Println("  Tip: start with --preset performance and override only what you need.")
 
 	printHelpSection("Commands")
-	fmt.Printf("  %-20s %s\n", cmd(cnst.CmdTui), "Launch interactive TUI interface")
-	fmt.Printf("  %-20s %s\n", cmd(cnst.CmdStore), "Store file in database")
-	fmt.Printf("  %-20s %s\n", cmd(cnst.CmdRestore), "Restore file from database")
-	fmt.Printf("  %-20s %s\n", cmd(cnst.CmdList), "List saved files")
-	fmt.Printf("  %-20s %s\n", cmd(cnst.CmdSearch), "Search metadata/content index")
-	fmt.Printf("  %-20s %s\n", cmd(cnst.CmdMicro), "Manage micro-artefacts (extract, list)")
-	fmt.Printf("  %-20s %s\n", cmd(cnst.CmdEnrich), "Backfill file hierarchy metadata into graphdb")
-	fmt.Printf("  %-20s %s\n", cmd(cnst.CmdNear), "Find NeAR file objects")
-	fmt.Printf("  %-20s %s\n", cmd(cnst.CmdServer), "Serve the database over Connect/gRPC/gRPC-Web (loopback by default)")
-	fmt.Printf("  %-20s %s\n", cmd(cnst.CmdReset), "Delete database")
-	fmt.Printf("  %-20s %s\n", cmd(cnst.CmdVeresion), "Show version details")
-	fmt.Printf("  %-20s %s\n", cmd(cnst.CmdStats), "Show stats about data")
-	fmt.Printf("  %-20s %s\n", cmd(cnst.CmdRepair), "Inspect, finish, verify or upgrade the database")
-	fmt.Printf("  %-20s %s\n", cmd(cmdReindex), "Rebuild the index of stored evidence")
+	fmt.Printf("  %s %s\n", cmd(pad(cnst.CmdTui, 20)), "Launch interactive TUI interface")
+	fmt.Printf("  %s %s\n", cmd(pad(cnst.CmdStore, 20)), "Store file in database")
+	fmt.Printf("  %s %s\n", cmd(pad(cnst.CmdRestore, 20)), "Restore file from database")
+	fmt.Printf("  %s %s\n", cmd(pad(cnst.CmdList, 20)), "List saved files")
+	fmt.Printf("  %s %s\n", cmd(pad(cnst.CmdSearch, 20)), "Search metadata/content index")
+	fmt.Printf("  %s %s\n", cmd(pad(cnst.CmdMicro, 20)), "Manage micro-artefacts (extract, list)")
+	fmt.Printf("  %s %s\n", cmd(pad(cnst.CmdEnrich, 20)), "Backfill file hierarchy metadata into graphdb")
+	fmt.Printf("  %s %s\n", cmd(pad(cnst.CmdNear, 20)), "Find NeAR file objects")
+	fmt.Printf("  %s %s\n", cmd(pad(cnst.CmdServer, 20)), "Serve the database over Connect/gRPC/gRPC-Web (loopback by default)")
+	fmt.Printf("  %s %s\n", cmd(pad(cnst.CmdReset, 20)), "Delete database")
+	fmt.Printf("  %s %s\n", cmd(pad(cnst.CmdVeresion, 20)), "Show version details")
+	fmt.Printf("  %s %s\n", cmd(pad(cnst.CmdStats, 20)), "Show stats about data")
+	fmt.Printf("  %s %s\n", cmd(pad(cnst.CmdRepair, 20)), "Inspect, finish, verify or upgrade the database")
+	fmt.Printf("  %s %s\n", cmd(pad(cmdReindex, 20)), "Rebuild the index of stored evidence")
 
 	printHelpSection("Exit Codes")
 	fmt.Println("  0 success; 1 failure; 2 usage error, or done with a warning (for example an")
@@ -323,7 +355,7 @@ func printEnrichHelp() {
 
 func printRestoreHelp() {
 	printHelpHeader("restore")
-	fmt.Println("Usage: dues restore HASH [--filepath|-f restored] [--force] [--verify full|chunks|off] [--verify-ewf] [--restore-workers|-y N] [--restore-queue|-U N] [--restore-progress-ms|-m N] [--restore-buffer-mb|-b N] [global options]")
+	fmt.Println("Usage: dues restore HASH [--filepath|-f restored] [--force] [--verify full|chunks|off] [--verify-ewf] [--restore-workers|-y N] [--restore-queue|-U N] [--restore-buffer-mb|-b N] [global options]")
 	fmt.Println("Restores a stored file by its hash. The output is written beside the target and")
 	fmt.Println("renamed into place only when the restore succeeded; an existing file is refused")
 	fmt.Println("without --force. Exits 2 when the content was restored but is incomplete, or an")
@@ -338,12 +370,10 @@ func printRestoreHelp() {
 	fmt.Println("      --verify-ewf          Also check a restored E01 against the MD5/SHA-1 its set recorded")
 	fmt.Println("  -y, --restore-workers     Worker count")
 	fmt.Println("  -U, --restore-queue       Queue depth")
-	fmt.Println("  -m, --restore-progress-ms Progress update interval")
 	fmt.Println("  -b, --restore-buffer-mb   Write buffer size in MB")
 	printHelpSection("Restore Tuning")
 	fmt.Println("  --restore-workers, -y N      Override worker count (0 = adaptive default)")
 	fmt.Println("  --restore-queue, -U N        Override pipeline queue depth (0 = adaptive default)")
-	fmt.Println("  --restore-progress-ms, -m N  Progress refresh interval in milliseconds")
 	fmt.Println("  --restore-buffer-mb, -b N    Output write buffer size (MB, 0 = mode-aware default)")
 	printExamples(
 		"dues restore <hash>",
@@ -533,7 +563,7 @@ func printNearHelp() {
 }
 
 func printNearInHelp() {
-	cmd := color.New(color.FgBlue, color.Bold).SprintFunc()
+	cmd := helpCmd()
 	printHelpHeader("near in")
 	fmt.Println("Usage: dues near in HASH [--deep|-e] [--advanced-deep|-a] [--top-k|-k N] [--out PATH] [--force] [global options]")
 	fmt.Println()
@@ -567,7 +597,7 @@ func printNearInHelp() {
 }
 
 func printNearOutHelp() {
-	cmd := color.New(color.FgBlue, color.Bold).SprintFunc()
+	cmd := helpCmd()
 	printHelpHeader("near out")
 	fmt.Println("Usage: dues near out FILE [--deep|-e] [--explain-exact|-t] [--advanced-deep|-a] [--top-k|-k N] [--out PATH] [--force] [global options]")
 	fmt.Println()
@@ -673,14 +703,25 @@ func printVersionHelp() {
 	)
 }
 
+// helpPainter colours help on a terminal; piped help stays plain text.
+func helpPainter() ui.Painter { return ui.For(os.Stdout) }
+
+// helpCmd styles command and flag names: text to type.
+func helpCmd() func(string) string {
+	p := helpPainter()
+	return func(s string) string { return p.Strong(ui.Highlight, s) }
+}
+
+// pad left-aligns s in width columns before it is coloured, so escape
+// codes do not count toward the alignment.
+func pad(s string, width int) string { return fmt.Sprintf("%-*s", width, s) }
+
 func printHelpHeader(name string) {
-	header := color.New(color.FgCyan, color.Bold).SprintFunc()
-	fmt.Println(header("\nCommand: " + name))
+	fmt.Println("\n" + helpPainter().Strong(ui.Forensics, "Command: "+name))
 }
 
 func printHelpSection(name string) {
-	section := color.New(color.FgBlue, color.Bold).SprintFunc()
-	fmt.Println(section("\n" + name))
+	fmt.Println("\n" + helpPainter().Strong(ui.Forensics, name))
 }
 
 func printExamples(examples ...string) {
@@ -688,10 +729,9 @@ func printExamples(examples ...string) {
 		return
 	}
 
-	label := color.New(color.FgBlue, color.Bold).SprintFunc()
-	cmd := color.New(color.FgWhite).SprintFunc()
-	fmt.Println(label("Examples:"))
+	p := helpPainter()
+	fmt.Println(p.Strong(ui.Forensics, "Examples:"))
 	for _, ex := range examples {
-		fmt.Println("  " + cmd(ex))
+		fmt.Println("  " + p.Paint(ui.Highlight, ex))
 	}
 }

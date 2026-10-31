@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 
+	"indicer/internal/progress"
 	"indicer/lib/blobcodec"
 	"indicer/lib/cnst"
 	"indicer/lib/dbio"
@@ -43,8 +44,7 @@ func (u BlockIndexUpgrade) Complete() bool { return u.DamagedCount == 0 }
 //
 // Errors are returned for what stops the upgrade: a damaged block file, a
 // database error, or ctx ending.
-func UpgradeBlockIndex(ctx context.Context, db *badger.DB) (BlockIndexUpgrade, error) {
-	var report BlockIndexUpgrade
+func UpgradeBlockIndex(ctx context.Context, db *badger.DB) (report BlockIndexUpgrade, err error) {
 	files, err := fio.BlockIndexFiles(dbio.KVDir(db))
 	if err != nil {
 		return report, err
@@ -61,6 +61,9 @@ func UpgradeBlockIndex(ctx context.Context, db *badger.DB) (BlockIndexUpgrade, e
 	defer batch.Cancel()
 	codec := blobcodec.For(db)
 	hashLen := cnst.GetHashAlgo().Size()
+	ph := progress.Start(ctx, "upgrade", progress.Files, int64(len(files)))
+	records := ph.Meter("records", progress.Records)
+	defer func() { ph.Done(err) }()
 
 	for _, path := range files {
 		err := fio.ReadBlockFile(path, hashLen, func(r fio.BlockIndexRecord) error {
@@ -68,6 +71,7 @@ func UpgradeBlockIndex(ctx context.Context, db *badger.DB) (BlockIndexUpgrade, e
 				return err
 			}
 			report.Records++
+			records.Add(1)
 			ckey := util.AppendToBytesSlice(cnst.ChonkNamespace, r.Hash)
 			_, err := dbio.GetNode(ckey, db)
 			if err == nil {
@@ -95,6 +99,7 @@ func UpgradeBlockIndex(ctx context.Context, db *badger.DB) (BlockIndexUpgrade, e
 		if err != nil {
 			return report, fmt.Errorf("upgrade %s: %w", path, err)
 		}
+		ph.Add(1)
 	}
 	if err := batch.Flush(); err != nil {
 		return report, err

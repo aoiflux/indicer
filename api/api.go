@@ -10,11 +10,10 @@ import (
 	"indicer/cli"
 	"indicer/internal/console"
 	"indicer/internal/lifecycle"
+	"indicer/internal/ui"
 	"indicer/lib/dbopen"
 	"indicer/lib/logging"
 	"indicer/lib/server"
-
-	"github.com/fatih/color"
 )
 
 // Options are the server's command-line settings.
@@ -92,30 +91,25 @@ func Server(ctx context.Context, opts cli.DBOptions, so Options) (err error) {
 	return nil
 }
 
-const (
-	iconSuccess = "✓"
-	iconWarn    = "▲"
-	iconError   = "✗"
-)
-
 func printSuccess(title string, lines []string) {
-	printSection(iconSuccess, title, lines, color.New(color.FgGreen, color.Bold))
+	printSection(ui.Success, func(g ui.Glyphs) string { return g.OK }, title, lines)
 }
 
 func printWarn(title string, lines []string) {
-	printSection(iconWarn, title, lines, color.New(color.FgYellow, color.Bold))
+	printSection(ui.Warning, func(g ui.Glyphs) string { return g.Warn }, title, lines)
 }
 
 func printErr(title string, lines []string) {
-	printSection(iconError, title, lines, color.New(color.FgRed, color.Bold))
+	printSection(ui.Error, func(g ui.Glyphs) string { return g.Fail }, title, lines)
 }
 
-func printSection(icon, title string, lines []string, c *color.Color) {
-	c.Printf("  %s  %s\n", icon, title)
-	dim := color.New(color.FgHiBlack)
+func printSection(role ui.Role, mark func(ui.Glyphs) string, title string, lines []string) {
+	p := ui.For(console.Out())
+	g := p.Glyphs()
+	console.Printf("  %s  %s\n", p.Strong(role, mark(g)), p.Strong(role, title))
+	bullet := p.Paint(ui.Muted, "     "+g.Sep+" ")
 	for _, line := range lines {
-		dim.Print("     · ")
-		console.Println(line)
+		console.Println(bullet + line)
 	}
 	console.Println()
 }

@@ -5,14 +5,14 @@ import (
 	"fmt"
 	"hash"
 	"io"
+	"sync/atomic"
 
-	"indicer/internal/console"
+	"indicer/internal/progress"
 	"indicer/lib/cnst"
 	"indicer/lib/dbmeta"
 	"indicer/lib/parser/image"
 
 	"github.com/dgraph-io/badger/v4"
-	"github.com/schollz/progressbar/v3"
 )
 
 // ChunkPass is one object to store through the chunk pipeline: an evidence,
@@ -30,7 +30,7 @@ type ChunkPass struct {
 	Ranges []ByteRange
 	// EWF is the set's stored metadata, whose digests the pass checks.
 	EWF *image.EWFMeta
-	// Quiet shows no progress bar.
+	// Quiet reports no progress.
 	Quiet bool
 }
 
@@ -41,6 +41,10 @@ type ChunkResult struct {
 	Root      []byte // the hocho root over the chunk hashes, in order
 	Ranges    []RangeDigest
 	EWF       *image.DigestResult // nil unless EWF was given
+	// NewChunks and NewBytes are the chunks this pass stored for the first
+	// time and their raw size; every other chunk was already stored, by
+	// this pass or before it (deduplicated).
+	NewChunks, NewBytes int64
 }
 
 // IngestChunks stores every chunk of p.Source, unless the database already
@@ -53,6 +57,9 @@ func IngestChunks(ctx context.Context, p ChunkPass) (ChunkResult, error) {
 	}
 	if p.Size < 0 {
 		return ChunkResult{}, fmt.Errorf("chunk pass: negative size %d", p.Size)
+	}
+	if p.Quiet {
+		ctx = progress.Without(ctx)
 	}
 	if cnst.StorePipelineMode == cnst.StorePipelineStaged {
 		return ingestChunksStaged(ctx, p)
@@ -91,31 +98,49 @@ func (s passShape) feed(ctx context.Context, p ChunkPass, tap *digestTap) *chunk
 	return startChunkFeed(ctx, feedOptions{src: p.Source, end: p.Size, chunk: s.chunk, readers: s.readers, slots: s.slots, tap: tap})
 }
 
-func newPassBar(p ChunkPass) *progressbar.ProgressBar {
-	if p.Quiet {
-		return progressbar.DefaultSilent(p.Size)
-	}
-	return progressbar.NewOptions64(
-		p.Size,
-		progressbar.OptionShowBytes(true),
-		progressbar.OptionSetWriter(console.Progress()),
-		progressbar.OptionSetTheme(cnst.CommonProgressBarTheme),
-	)
+// passMeter counts a chunk pass for its progress phase ("store", in bytes
+// read) and for the command's footer: bytes read, and bytes new to the
+// database. It is safe from every worker; with no reporter it only counts
+// what ChunkResult reports.
+type passMeter struct {
+	phase                *progress.Phase
+	fresh, read, freshes *progress.Meter
+	newChunks, newBytes  atomic.Int64
 }
 
-func finishPassBar(p ChunkPass, bar *progressbar.ProgressBar) {
-	bar.Finish()
-	if !p.Quiet {
-		fmt.Fprintln(console.Err())
+func startPass(ctx context.Context, p ChunkPass) *passMeter {
+	if p.Quiet {
+		return &passMeter{}
 	}
-	// A progress bar error (an empty input has nothing to show) is not the
-	// operation's error.
-	_ = bar.Close()
+	ph := progress.Start(ctx, "store", progress.Bytes, p.Size)
+	return &passMeter{
+		phase:   ph,
+		fresh:   ph.Meter("new", progress.Bytes),
+		read:    progress.Tally(ctx, "read", progress.Bytes),
+		freshes: progress.Tally(ctx, "new", progress.Bytes),
+	}
 }
+
+// fed counts n bytes read through the pass.
+func (m *passMeter) fed(n int64) {
+	m.phase.Add(n)
+	m.read.Add(n)
+}
+
+// stored counts a chunk of n bytes stored for the first time.
+func (m *passMeter) stored(n int64) {
+	m.newChunks.Add(1)
+	m.newBytes.Add(n)
+	m.fresh.Add(n)
+	m.freshes.Add(n)
+}
+
+func (m *passMeter) done(err error) { m.phase.Done(err) }
 
 // passResult assembles the result once the pipeline finished cleanly.
-func passResult(tap *digestTap, root []byte, chunks int64) ChunkResult {
-	res := ChunkResult{Chunks: chunks, PlainHash: tap.plain.Sum(nil), Root: root, Ranges: tap.rangeDigests()}
+func passResult(tap *digestTap, root []byte, chunks int64, m *passMeter) ChunkResult {
+	res := ChunkResult{Chunks: chunks, PlainHash: tap.plain.Sum(nil), Root: root, Ranges: tap.rangeDigests(),
+		NewChunks: m.newChunks.Load(), NewBytes: m.newBytes.Load()}
 	if tap.ewf != nil {
 		r := tap.ewf.Result()
 		res.EWF = &r

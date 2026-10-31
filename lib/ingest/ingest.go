@@ -19,6 +19,7 @@ import (
 	"time"
 
 	"indicer/internal/faultinject"
+	"indicer/internal/progress"
 	"indicer/lib/cnst"
 	"indicer/lib/dbio"
 	"indicer/lib/dbmeta"
@@ -128,6 +129,9 @@ var (
 
 // Run ingests req.Path into db.
 func Run(ctx context.Context, db *badger.DB, req Request) (Result, error) {
+	if req.Quiet {
+		ctx = progress.Without(ctx)
+	}
 	src, err := evidence.Open(ctx, req.Path, evidence.Options{Decode: req.Decode})
 	if err != nil {
 		return Result{}, err
@@ -244,7 +248,7 @@ func hashNames(db *badger.DB) (chunk, file string) {
 // by computing its root.
 func findStored(ctx context.Context, db *badger.DB, src *evidence.Source, fp string) ([]byte, error) {
 	if cnst.StoreHashStrategy == cnst.SyncHashStrategy {
-		sums, err := store.HashContent(ctx, db, src, src.Size(), src.Parallel())
+		sums, err := identify(ctx, db, src)
 		if err != nil {
 			return nil, err
 		}
@@ -264,7 +268,7 @@ func findStored(ctx context.Context, db *badger.DB, src *evidence.Source, fp str
 			continue
 		}
 		if root == "" {
-			sums, err := store.HashContent(ctx, db, src, src.Size(), src.Parallel())
+			sums, err := identify(ctx, db, src)
 			if err != nil {
 				return nil, err
 			}
@@ -277,6 +281,14 @@ func findStored(ctx context.Context, db *badger.DB, src *evidence.Source, fp str
 	return nil, nil
 }
 
+// identify hashes src's content to find it among the stored evidence.
+func identify(ctx context.Context, db *badger.DB, src *evidence.Source) (store.ContentSums, error) {
+	ph := progress.Start(ctx, "identify", progress.Bytes, src.Size())
+	sums, err := store.HashContent(progress.Within(ctx, ph), db, src, src.Size(), src.Parallel())
+	ph.Done(err)
+	return sums, err
+}
+
 // run stores and indexes the attempt eid, then commits it.
 func run(ctx context.Context, db *badger.DB, src *evidence.Source, eid []byte, name string, req Request, res Result) (Result, error) {
 	reason := indexSkipReason(src, req)
@@ -287,6 +299,17 @@ func run(ctx context.Context, db *badger.DB, src *evidence.Source, eid []byte, n
 	}
 	if err := setIndexInfo(db, eid, info); err != nil {
 		return res, err
+	}
+	steps := []string{"store", "index"}
+	if indexing && req.FTS {
+		steps = append(steps, "full-text")
+	}
+	if indexing && req.Enrich {
+		steps = append(steps, "entropy", "graph")
+	}
+	progress.Plan(ctx, steps...)
+	if !indexing {
+		progress.Skip(ctx, "index", reason)
 	}
 
 	// The index pass gets its own cancellation: storage failing stops it,
@@ -474,18 +497,30 @@ func setIndexInfo(db *badger.DB, eid []byte, info *structs.IndexInfo) error {
 // setPartitionHashes records each partition's plain hash: from the chunk
 // pass's range digests, the evidence's own hash for a filesystem spanning
 // the whole device, and otherwise by reading the partition's range.
-func setPartitionHashes(ctx context.Context, db *badger.DB, src *evidence.Source, chunks store.ChunkResult, parts []index.Partition) error {
+func setPartitionHashes(ctx context.Context, db *badger.DB, src *evidence.Source, chunks store.ChunkResult, parts []index.Partition) (err error) {
 	digests := map[store.ByteRange][]byte{{Offset: 0, Length: src.Size()}: chunks.PlainHash}
 	for _, r := range chunks.Ranges {
 		digests[r.ByteRange] = r.Hash
 	}
+	usable := func(p index.Partition) bool { return p.Size > 0 && p.Offset >= 0 && p.Size <= src.Size()-p.Offset }
+	var need int64
 	for _, p := range parts {
-		if p.Size <= 0 || p.Offset < 0 || p.Size > src.Size()-p.Offset {
+		if _, ok := digests[store.ByteRange{Offset: p.Offset, Length: p.Size}]; usable(p) && !ok {
+			need += p.Size
+		}
+	}
+	var ph *progress.Phase
+	if need > 0 {
+		ph = progress.Start(ctx, "partition hashes", progress.Bytes, need)
+		defer func() { ph.Done(err) }()
+	}
+	for _, p := range parts {
+		if !usable(p) {
 			continue
 		}
 		h, ok := digests[store.ByteRange{Offset: p.Offset, Length: p.Size}]
 		if !ok {
-			sums, err := store.HashContent(ctx, db, io.NewSectionReader(src, p.Offset, p.Size), p.Size, src.Parallel())
+			sums, err := store.HashContent(progress.Within(ctx, ph), db, io.NewSectionReader(src, p.Offset, p.Size), p.Size, src.Parallel())
 			if err != nil {
 				return fmt.Errorf("hash partition at %d: %w", p.Offset, err)
 			}

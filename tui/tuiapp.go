@@ -14,6 +14,7 @@ import (
 	"charm.land/bubbles/v2/list"
 	tea "charm.land/bubbletea/v2"
 	"charm.land/lipgloss/v2"
+	"github.com/charmbracelet/colorprofile"
 )
 
 // drainTimeout is how long Run waits for jobs to stop once the program has
@@ -27,6 +28,9 @@ type Config struct {
 	// Options are added to the program's own; tests set its input and
 	// output.
 	Options []tea.ProgramOption
+	// Profile is the colour depth the command line resolved (--color,
+	// NO_COLOR, ...); zero lets bubbletea detect it.
+	Profile colorprofile.Profile
 }
 
 // Run shows the TUI until the user quits or ctx ends, then waits for its
@@ -39,6 +43,9 @@ func Run(ctx context.Context, cfg Config) error {
 	// A signal ends the program through ctx, with its cause (exit 130/143).
 	// bubbletea's own handler would end it without one.
 	opts := append([]tea.ProgramOption{tea.WithContext(ctx), tea.WithoutSignalHandler()}, cfg.Options...)
+	if cfg.Profile != colorprofile.Unknown {
+		opts = append(opts, tea.WithColorProfile(cfg.Profile))
+	}
 	_, runErr := tea.NewProgram(m, opts...).Run()
 
 	// bubbletea does not wait for the commands it started; the jobs are

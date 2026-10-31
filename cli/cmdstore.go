@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"indicer/internal/console"
 	"indicer/internal/lifecycle"
+	"indicer/internal/progress"
 	"indicer/internal/termsafe"
 	"indicer/lib/dbopen"
 	"indicer/lib/evidence"
@@ -17,6 +18,7 @@ import (
 	"indicer/lib/util"
 	"io"
 	"os"
+	"path/filepath"
 	"time"
 
 	"github.com/dgraph-io/badger/v4"
@@ -48,6 +50,9 @@ func StoreData(ctx context.Context, opts DBOptions, evipath string, syncIndex bo
 func StoreDataWithOptions(ctx context.Context, opts DBOptions, evipath string, sopts StoreOptions) (err error) {
 	if ctx == nil {
 		ctx = context.Background()
+	}
+	if sopts.Quiet {
+		ctx = progress.Without(ctx)
 	}
 	start := time.Now()
 	logging.GetLogger().Info("StoreData START",
@@ -82,7 +87,7 @@ func StoreDataWithOptions(ctx context.Context, opts DBOptions, evipath string, s
 		err = storeFile(ctx, console.Out(), h.DB, evipath, sopts)
 	}
 	// What did store is kept, so the value log is compacted either way.
-	compactValueLog(h, "StoreData")
+	compactValueLog(ctx, h, "StoreData")
 	if err != nil {
 		logging.GetLogger().Error("StoreData ERROR", zap.Error(err), zap.String("evidence_path", evipath))
 		return err
@@ -98,12 +103,20 @@ var storeOneFile = storeFile
 // (EWF, split raw) are stored once, as one evidence; files that are not
 // regular are skipped and reported; a file that fails does not stop the rest
 // (ING-11).
-func storeFolder(ctx context.Context, w io.Writer, db *badger.DB, dir string, sopts StoreOptions) error {
+func storeFolder(ctx context.Context, w io.Writer, db *badger.DB, dir string, sopts StoreOptions) (err error) {
+	if sopts.Quiet {
+		ctx = progress.Without(ctx)
+	}
 	start := time.Now()
-	plan, err := evidence.Plan(ctx, dir, sopts.Decode)
+	scan := progress.Start(ctx, "scan folder", progress.Files, progress.Unknown)
+	plan, err := evidence.Plan(progress.Within(ctx, scan), dir, sopts.Decode)
+	scan.Done(err)
 	if err != nil {
 		return err
 	}
+	all := progress.Start(ctx, "evidence", progress.Evidence, int64(len(plan.Items)))
+	failed := all.Meter("failed", progress.Evidence)
+	defer func() { all.Done(err) }()
 	var stored, warned int
 	var failures []string
 	var firstErr error
@@ -125,7 +138,14 @@ func storeFolder(ctx context.Context, w io.Writer, db *badger.DB, dir string, so
 		if err := ctx.Err(); err != nil {
 			return err
 		}
-		err := storeOneFile(ctx, w, db, item.Path, sopts)
+		name := item.Path
+		if rel, rerr := filepath.Rel(dir, item.Path); rerr == nil {
+			name = rel
+		}
+		one := progress.Start(progress.Within(ctx, all), name, progress.None, 0)
+		err := storeOneFile(progress.Within(ctx, one), w, db, item.Path, sopts)
+		one.Done(err)
+		all.Add(1)
 		var warning *lifecycle.WarningError
 		switch {
 		case err == nil:
@@ -139,6 +159,7 @@ func storeFolder(ctx context.Context, w io.Writer, db *badger.DB, dir string, so
 			}
 			logging.GetLogger().Error("StoreFolder STORE_FILE_ERROR", zap.Error(err), zap.String("file_path", item.Path))
 			fail(item.Path, err)
+			failed.Add(1)
 		}
 	}
 
@@ -176,6 +197,9 @@ func storeFile(ctx context.Context, w io.Writer, db *badger.DB, path string, sop
 	if res.Outcome != "" {
 		reportIngest(w, res, time.Since(start))
 	}
+	if ctx.Err() != nil {
+		interruptHint(ctx, res)
+	}
 	logging.GetLogger().Info("StoreFile COMPLETE",
 		zap.String("file_path", path),
 		zap.String("outcome", string(res.Outcome)),
@@ -193,6 +217,18 @@ func storeFile(ctx context.Context, w io.Writer, db *badger.DB, path string, sop
 		return &lifecycle.WarningError{Err: err}
 	}
 	return err
+}
+
+// interruptHint tells the examiner what an interrupted store left and how
+// to finish it, on the progress footer.
+func interruptHint(ctx context.Context, res ingest.Result) {
+	switch {
+	case res.Outcome == "" && len(res.Attempt) > 0:
+		progress.Hint(ctx, "run the same command again to resume: chunks already stored are not stored again")
+	case res.Outcome == store.CommitStored:
+		id := base64.StdEncoding.EncodeToString(res.EvidenceID)
+		progress.Hint(ctx, "the evidence is stored; run `dues reindex "+id+"` to finish its index")
+	}
 }
 
 // reportIngest says how an ingest ended, to w.

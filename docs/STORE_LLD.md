@@ -408,7 +408,7 @@ and `StreamFile`), and the compression product.
 | `NoIndex` | Store without indexing (`--no-index`). |
 | `FTS`, `Enrich` | Run full-text indexing and graph enrichment after the commit (`--fts`, `--enrich`). |
 | `RequireVerified` | Fail an EWF set whose stored digests do not match (`--require-verified`). |
-| `Quiet` | No progress bar. |
+| `Quiet` | Report no progress (`progress.Without`). |
 
 ### Steps
 
@@ -522,7 +522,13 @@ database already holds it intact, and writes the object's relations.
 
 `ChunkResult` holds the chunk count, the plain hash, the content root, the
 range digests and the EWF digest result. All are computed over exactly the
-bytes stored.
+bytes stored. It also holds `NewChunks` and `NewBytes`: the chunks, and their
+raw bytes, that this pass stored for the first time. The run's closing line
+reports them as "new", and the rest of what was read as "deduplicated".
+
+The pass reports a `store` phase in bytes, with a `new` meter, and adds to the
+command's `read` and `new` tallies (`internal/progress`). Workers add outside
+the batch mutex; the counters are atomic.
 
 A source read error is a `*store.SourceReadError` with the offset; it
 matches `store.ErrSourceRead`. The pass then fails.

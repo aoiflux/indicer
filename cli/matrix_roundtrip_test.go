@@ -65,7 +65,7 @@ func plainHashB64(t *testing.T, path string) string {
 		t.Fatal(err)
 	}
 	defer f.Close()
-	h, err := util.GetFileHash(f, cnst.GetHashAlgo(true))
+	h, err := testutil.HashFile(f, cnst.GetHashAlgo(true))
 	if err != nil {
 		t.Fatal(err)
 	}

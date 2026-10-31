@@ -211,7 +211,7 @@ flowchart LR
 - **Writer.** It runs on the caller's goroutine.
   - It writes the next sequence number as soon as it arrives, parks later ones in a map, and drains the map as gaps close.
   - For each written span it updates the digests and the EWF hashes, and frees a slot.
-  - It updates the progress bar every 4 MiB or every progress interval.
+  - It adds each written span to the `restore` phase (`internal/progress`); the display samples it on its own.
 - **End checks.** After the results drain, `Restore` fails if ctx ended, a worker or the producer failed, the written chunk count differs from the count produced, or the written byte count differs from `Size()`. Then it flushes the buffer and evaluates the digests.
 - **Container read cache.** It is enabled for the run. It serves only older compressed containers (see [Older databases](#older-databases)).
 
@@ -257,7 +257,7 @@ flowchart LR
 
 ```
 dues restore HASH [--filepath|-f restored] [--force] [--verify full|chunks|off] [--verify-ewf]
-    [--restore-workers|-y N] [--restore-queue|-U N] [--restore-progress-ms|-m N]
+    [--restore-workers|-y N] [--restore-queue|-U N]
     [--restore-buffer-mb|-b N] [global options]
 ```
 
@@ -271,8 +271,9 @@ dues restore HASH [--filepath|-f restored] [--force] [--verify full|chunks|off] 
 | `--verify-ewf` | off | check an EWF evidence against its stored MD5 and SHA-1 |
 | `-y`, `--restore-workers` | 0 (automatic) | worker count |
 | `-U`, `--restore-queue` | 0 (automatic) | job and result queue depth |
-| `-m`, `--restore-progress-ms` | 120 | progress interval; clamped to 20–2000 with a warning |
 | `-b`, `--restore-buffer-mb` | 0 (automatic) | output buffer: 0 means 256 MiB, or 32 MiB in low-resource mode; at most 256 |
+
+`-m`, `--restore-progress-ms` is retired: it is hidden, has no effect, and draws a warning.
 
 ### Output policy
 

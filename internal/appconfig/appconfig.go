@@ -23,26 +23,25 @@ import (
 
 // Flag names, as the user types them.
 const (
-	FlagChunkSize         = cnst.FlagChonkSize
-	FlagPreset            = cnst.FlagPreset
-	FlagQuickMode         = cnst.FlagQuickMode
-	FlagPerformanceMode   = cnst.FlagPerformanceMode
-	FlagLowResourceMode   = cnst.FlagLowResourceMode
-	FlagLow               = cnst.FlagLowResource
-	FlagQuick             = cnst.FlagFastMode
-	FlagContainer         = cnst.FlagContainerMode
-	FlagHierarchical      = cnst.FlagHierarchicalIndex
-	FlagCompressLevel     = cnst.FlagCompressLevel
-	FlagStoreWorkers      = cnst.FlagStoreWorkers
-	FlagStoreQueue        = cnst.FlagStoreQueue
-	FlagRestoreWorkers    = cnst.FlagRestoreWorkers
-	FlagRestoreQueue      = cnst.FlagRestoreQueue
-	FlagRestoreProgressMs = cnst.FlagRestoreProgressMs
-	FlagRestoreBufferMB   = cnst.FlagRestoreBufferMB
-	FlagListStatus        = cnst.FlagListStatus
-	FlagRankAlpha         = cnst.FlagRankAlpha
-	FlagTopK              = cnst.FlagTopK
-	FlagMicroTopK         = "top-k"
+	FlagChunkSize       = cnst.FlagChonkSize
+	FlagPreset          = cnst.FlagPreset
+	FlagQuickMode       = cnst.FlagQuickMode
+	FlagPerformanceMode = cnst.FlagPerformanceMode
+	FlagLowResourceMode = cnst.FlagLowResourceMode
+	FlagLow             = cnst.FlagLowResource
+	FlagQuick           = cnst.FlagFastMode
+	FlagContainer       = cnst.FlagContainerMode
+	FlagHierarchical    = cnst.FlagHierarchicalIndex
+	FlagCompressLevel   = cnst.FlagCompressLevel
+	FlagStoreWorkers    = cnst.FlagStoreWorkers
+	FlagStoreQueue      = cnst.FlagStoreQueue
+	FlagRestoreWorkers  = cnst.FlagRestoreWorkers
+	FlagRestoreQueue    = cnst.FlagRestoreQueue
+	FlagRestoreBufferMB = cnst.FlagRestoreBufferMB
+	FlagListStatus      = cnst.FlagListStatus
+	FlagRankAlpha       = cnst.FlagRankAlpha
+	FlagTopK            = cnst.FlagTopK
+	FlagMicroTopK       = "top-k"
 )
 
 // Limits.
@@ -75,8 +74,8 @@ type Raw struct {
 
 	StoreWorkers, StoreQueue int
 
-	RestoreWorkers, RestoreQueue       int
-	RestoreProgressMs, RestoreBufferMB int
+	RestoreWorkers, RestoreQueue int
+	RestoreBufferMB              int
 
 	ListStatus string
 	RankAlpha  float64
@@ -112,7 +111,6 @@ type Effective struct {
 
 	StoreWorkers, StoreQueue     int
 	RestoreWorkers, RestoreQueue int
-	RestoreProgressMs            int
 	RestoreBufferMB              int
 
 	ListStatus string
@@ -371,20 +369,8 @@ func (r *resolver) resolveRestoreTuning() {
 	defW, defQ := cnst.DefaultRestoreTuning(r.sys.CPUs, r.eff.Low)
 	r.eff.RestoreWorkers, r.eff.RestoreQueue = r.fitBudget(defW, defQ, raw.RestoreWorkers, raw.RestoreQueue, FlagRestoreWorkers, FlagRestoreQueue)
 
-	// Progress interval and output buffer keep their historical behaviour:
-	// out-of-range values are clamped, with a warning.
-	r.eff.RestoreProgressMs = raw.RestoreProgressMs
-	switch {
-	case raw.RestoreProgressMs < 0:
-		r.eff.RestoreProgressMs = 0
-		r.warn(FlagRestoreProgressMs, "negative; using the default")
-	case raw.RestoreProgressMs > 0 && raw.RestoreProgressMs < 20:
-		r.eff.RestoreProgressMs = 20
-		r.warn(FlagRestoreProgressMs, "%d ms is below the 20 ms minimum; using 20", raw.RestoreProgressMs)
-	case raw.RestoreProgressMs > 2000:
-		r.eff.RestoreProgressMs = 2000
-		r.warn(FlagRestoreProgressMs, "%d ms is above the 2000 ms maximum; using 2000", raw.RestoreProgressMs)
-	}
+	// The output buffer keeps its historical behaviour: out-of-range values
+	// are clamped, with a warning.
 	r.eff.RestoreBufferMB = raw.RestoreBufferMB
 	switch {
 	case raw.RestoreBufferMB < 0:

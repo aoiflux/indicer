@@ -6,6 +6,7 @@ import (
 	"encoding/binary"
 	"errors"
 	"fmt"
+	"indicer/internal/progress"
 	"io"
 	"os"
 	"path/filepath"
@@ -65,15 +66,18 @@ func (q *query) add(hash []byte, at int64) *queryChunk {
 
 // storedQuery is the chunks of the stored object fid, read from its spans:
 // each distinct chunk once (SRC-5), with every place it occurs.
-func storedQuery(ctx context.Context, db *badger.DB, fid []byte, deep bool) (*query, error) {
+func storedQuery(ctx context.Context, db *badger.DB, fid []byte, deep bool) (q *query, err error) {
 	l, err := dbio.OpenLogical(db, fid, dbio.ReadOptions{})
 	if err != nil {
 		return nil, err
 	}
+	ph := progress.Start(ctx, "read query", progress.Bytes, l.Size())
+	defer func() { ph.Done(err) }()
 	owner := string(l.Evidence().ID())
-	q := newQuery()
+	q = newQuery()
 	err = l.Spans(ctx, dbio.SpanBatch(l.ChunkSize()), func(spans []dbio.ChunkSpan) error {
 		for _, s := range spans {
+			ph.Add(s.Len())
 			if !s.Stored() {
 				q.unstored++
 				continue
@@ -106,13 +110,15 @@ func storedQuery(ctx context.Context, db *badger.DB, fid []byte, deep bool) (*qu
 // the database stores content, read in order without mapping the file
 // (SRC-4). A file whose size is a multiple of the chunk size has no empty
 // last chunk (SRC-11). It also returns the file's full-file SimHash.
-func fileQuery(ctx context.Context, db *badger.DB, f io.ReaderAt, size int64, deep bool) (*query, uint64, error) {
+func fileQuery(ctx context.Context, db *badger.DB, f io.ReaderAt, size int64, deep bool) (q *query, sig uint64, err error) {
 	cs := dbmeta.ChunkSize(db)
 	if cs <= 0 {
 		return nil, 0, fmt.Errorf("the database has no chunk size")
 	}
+	ph := progress.Start(ctx, "read query", progress.Bytes, size)
+	defer func() { ph.Done(err) }()
 	newHash := dbmeta.ChunkHasher(db)
-	q := newQuery()
+	q = newQuery()
 	acc := newFileSimHashAccumulator()
 	buf := make([]byte, cs)
 	for off := int64(0); off < size; off += cs {
@@ -130,6 +136,7 @@ func fileQuery(ctx context.Context, db *badger.DB, f io.ReaderAt, size int64, de
 			qc.sig, qc.hasSig = util.ChunkSimHash64(buf[:n]), true
 		}
 		acc.write(buf[:n])
+		ph.Add(int64(n))
 	}
 	return q, acc.finalize(), nil
 }
@@ -156,7 +163,9 @@ func Out(ctx context.Context, db *badger.DB, path string, opts Options) (Outcome
 	}
 	size := info.Size()
 
-	sums, err := store.HashContent(ctx, db, f, size, false)
+	hashing := progress.Start(ctx, "hash file", progress.Bytes, size)
+	sums, err := store.HashContent(progress.Within(ctx, hashing), db, f, size, false)
+	hashing.Done(err)
 	if err != nil {
 		return out, err
 	}
@@ -224,7 +233,7 @@ func exactMatches(db *badger.DB, size int64, plain, root string) ([][]byte, erro
 // equals: one pass over the stored signatures finds each one's closest
 // stored chunk, whose occurrences then count with the similarity as their
 // confidence. Before, every such chunk read every relation in the database.
-func (r *run) deepPass(ctx context.Context, q *query) error {
+func (r *run) deepPass(ctx context.Context, q *query) (err error) {
 	var todo []*queryChunk
 	for _, qc := range q.chunks {
 		if !qc.matched.Load() && qc.hasSig {
@@ -234,10 +243,12 @@ func (r *run) deepPass(ctx context.Context, q *query) error {
 	if len(todo) == 0 {
 		return nil
 	}
+	ph := progress.Start(ctx, "deep", progress.Unit("signatures"), progress.Unknown)
+	defer func() { ph.Done(err) }()
 	best := make([]float64, len(todo))
 	bestHash := make([][]byte, len(todo))
 	prefix := []byte(cnst.ChonkSimhashNamespace)
-	err := r.db.View(func(txn *badger.Txn) error {
+	err = r.db.View(func(txn *badger.Txn) error {
 		opts := badger.DefaultIteratorOptions
 		opts.Prefix = prefix
 		it := txn.NewIterator(opts)
@@ -248,6 +259,7 @@ func (r *run) deepPass(ctx context.Context, q *query) error {
 				if err := ctx.Err(); err != nil {
 					return err
 				}
+				ph.Add(4096)
 			}
 			data, err := it.Item().ValueCopy(nil)
 			if err != nil {

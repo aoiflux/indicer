@@ -3,6 +3,7 @@ package near
 import (
 	"context"
 	"encoding/base64"
+	"indicer/internal/progress"
 	"sort"
 
 	"indicer/lib/cnst"
@@ -108,7 +109,9 @@ func computeDynamicTopKWithReason(matchCount int) (k int, freeGB float64, thread
 // A candidate that cannot be read keeps a zero Phase 2 score, so it sorts to the
 // bottom of the Phase 2 ranking; it does not abort the verification pass.
 func verifyPhase2(ctx context.Context, querySig uint64, topKMatches []nearReportMatch, db *badger.DB) error {
+	done := progress.CurrentIn(ctx, progress.Unit("matches"))
 	for i := range topKMatches {
+		done.Add(1)
 		rawID, err := base64.StdEncoding.DecodeString(topKMatches[i].ID)
 		if err != nil {
 			return err

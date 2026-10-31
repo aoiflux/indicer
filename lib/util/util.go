@@ -10,16 +10,12 @@ import (
 	"fmt"
 	"hash"
 	"hash/fnv"
-	"indicer/internal/console"
 	"indicer/lib/cnst"
-	"io"
 	"os"
 	"path/filepath"
 	"strconv"
 	"strings"
-	"time"
 
-	"github.com/cheggaaa/pb/v3"
 	"github.com/dgraph-io/badger/v4"
 )
 
@@ -58,67 +54,6 @@ func FTSPath(path string) string {
 
 func SetChonkSize(chonkSize int) {
 	cnst.ChonkSize = int64(chonkSize) * cnst.KB
-}
-
-func GetFileHash(fileHandle *os.File, hasher hash.Hash) ([]byte, error) {
-	info, err := os.Stat(fileHandle.Name())
-	if err != nil {
-		return nil, err
-	}
-
-	_, err = fileHandle.Seek(0, io.SeekStart)
-	if err != nil {
-		return nil, err
-	}
-
-	hash, err := getHash(fileHandle, hasher, info.Size(), true)
-	if err != nil {
-		return nil, err
-	}
-
-	_, err = fileHandle.Seek(0, io.SeekStart)
-	return hash, err
-}
-
-func GetLogicalFileHash(fileHandle *os.File, hasher hash.Hash, start, size int64, showBar bool) ([]byte, error) {
-	_, err := fileHandle.Seek(start, io.SeekStart)
-	if err != nil {
-		return nil, err
-	}
-
-	hash, err := getHash(fileHandle, hasher, size, showBar)
-	if err != nil {
-		return nil, err
-	}
-
-	_, err = fileHandle.Seek(0, io.SeekStart)
-	return hash, err
-}
-
-func getHash(fileHandle *os.File, hasher hash.Hash, size int64, showBar bool) ([]byte, error) {
-	var startTime time.Time
-	if showBar {
-		console.Printf("Generating %s hash ....\n", cnst.HASHALGO)
-		startTime = time.Now()
-	}
-
-	bar := pb.New64(100)
-	if showBar {
-		bar = pb.New64(size).SetTemplate(pb.Full).SetWriter(console.Progress()).Start()
-	}
-	barReader := bar.NewProxyReader(fileHandle)
-
-	_, err := io.CopyN(hasher, barReader, size)
-	if err != nil {
-		return nil, err
-	}
-	hash := hasher.Sum(nil)
-
-	if showBar {
-		bar.Finish()
-		console.Printf("Operation completed in: %s\n\n", time.Since(startTime))
-	}
-	return hash, nil
 }
 
 func GetChonkHash(data []byte, hasher hash.Hash) ([]byte, error) {

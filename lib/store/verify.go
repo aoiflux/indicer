@@ -5,6 +5,8 @@ import (
 	"encoding/base64"
 	"errors"
 
+	"fmt"
+	"indicer/internal/progress"
 	"indicer/lib/structs"
 
 	"github.com/dgraph-io/badger/v4"
@@ -29,13 +31,13 @@ type VerifyReport struct {
 // behind `dues repair --verify`. Evidence that is missing material or holds
 // corrupt chunks is reported with its first problem, and the run goes on.
 // An error is returned only when the database cannot be read or ctx ends.
-func VerifyEvidence(ctx context.Context, db *badger.DB) (VerifyReport, error) {
+func VerifyEvidence(ctx context.Context, db *badger.DB) (report VerifyReport, err error) {
 	type evidence struct {
 		id  []byte
 		rec structs.EvidenceFile
 	}
 	var all []evidence
-	err := db.View(func(txn *badger.Txn) error {
+	err = db.View(func(txn *badger.Txn) error {
 		return forEachEvidenceRecord(txn, func(rawID []byte, ev structs.EvidenceFile) error {
 			if ev.Failed || !(ev.Completed || ev.IngestState == structs.IngestStateFlushed) {
 				return nil
@@ -48,22 +50,32 @@ func VerifyEvidence(ctx context.Context, db *badger.DB) (VerifyReport, error) {
 		return VerifyReport{}, err
 	}
 
-	var report VerifyReport
+	var size int64
+	for _, e := range all {
+		size += e.rec.Size
+	}
+	ph := progress.Start(ctx, "verify", progress.Bytes, size)
+	defer func() {
+		if report.Problems > 0 {
+			ph.Warn(fmt.Sprintf("%d damaged", report.Problems))
+		}
+		ph.Done(err)
+	}()
 	for _, e := range all {
 		r := VerifyResult{
 			ID:   base64.StdEncoding.EncodeToString(e.id),
 			Name: firstCleanName(e.rec.Name),
 			Size: e.rec.Size,
 		}
-		err := ValidateEvidence(ctx, db, e.id, e.rec, ValidateContent)
+		verr := ValidateEvidence(progress.Within(ctx, ph), db, e.id, e.rec, ValidateContent)
 		switch {
-		case err == nil:
+		case verr == nil:
 			report.Verified++
-		case errors.Is(err, ErrMaterialMissing), errors.Is(err, ErrMaterialCorrupt):
-			r.Problem = err.Error()
+		case errors.Is(verr, ErrMaterialMissing), errors.Is(verr, ErrMaterialCorrupt):
+			r.Problem = verr.Error()
 			report.Problems++
 		default:
-			return report, err
+			return report, verr
 		}
 		report.Results = append(report.Results, r)
 	}

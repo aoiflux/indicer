@@ -63,6 +63,22 @@ $prevCC = $env:CC
 $prevGoamd64 = $env:GOAMD64
 
 $ldflags = "-s -w -buildid="
+# The commit the build comes from, shown by `dues version` and the banner;
+# "-dirty" marks uncommitted changes. A tree without git builds without it.
+$commit = ""
+try {
+    $commit = (& git -C $repoRoot rev-parse --short HEAD 2>$null)
+    if ($LASTEXITCODE -ne 0) {
+        $commit = ""
+    } elseif (& git -C $repoRoot status --porcelain 2>$null) {
+        $commit = "$commit-dirty"
+    }
+} catch {
+    $commit = ""
+}
+if ($commit) {
+    $ldflags = "$ldflags -X main.buildCommit=$commit"
+}
 $baseArgs = @(
     "build",
     "-trimpath",

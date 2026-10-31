@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
-	"strings"
 	"testing"
 	"time"
 
@@ -39,16 +38,14 @@ type listOutput struct {
 	} `json:"evidence"`
 }
 
-// parseList extracts the JSON document from `dues list` output, which may be
-// preceded by banner lines.
-func parseList(out string) (listOutput, error) {
+// parseList parses the stdout of `dues list`, which is one JSON document
+// and nothing else.
+func parseList(stdout string) (listOutput, error) {
 	var doc listOutput
-	i := strings.Index(out, "{")
-	j := strings.LastIndex(out, "}")
-	if i < 0 || j < i {
-		return doc, fmt.Errorf("no JSON in list output")
+	if err := json.Unmarshal([]byte(stdout), &doc); err != nil {
+		return doc, fmt.Errorf("list stdout is not one JSON document: %w", err)
 	}
-	return doc, json.Unmarshal([]byte(out[i:j+1]), &doc)
+	return doc, nil
 }
 
 // ingestKnownDefects maps "<fixture>|<path>" (or "<fixture>|*") to the

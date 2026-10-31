@@ -5,9 +5,9 @@ import (
 	"encoding/base64"
 	"errors"
 	"fmt"
-	"indicer/internal/console"
 	"indicer/internal/faultinject"
 	"indicer/internal/msgpackx"
+	"indicer/internal/progress"
 	"indicer/lib/cnst"
 	"indicer/lib/dbio"
 	"indicer/lib/entropy"
@@ -17,7 +17,6 @@ import (
 	"strings"
 
 	"github.com/dgraph-io/badger/v4"
-	"github.com/schollz/progressbar/v3"
 )
 
 type Service struct {
@@ -101,15 +100,14 @@ type partitionContext struct {
 // EnrichAll upserts the hierarchy of every completed evidence into graphdb:
 // evidence file -> partition -> indexed file nodes. Each evidence is read in
 // transactions of its own, not under one held for the whole run.
-func (service *Service) EnrichAll(ctx context.Context) (Report, error) {
-	var rep Report
+func (service *Service) EnrichAll(ctx context.Context) (rep Report, err error) {
 	if service == nil || service.db == nil || service.repository == nil {
 		return rep, nil
 	}
 
 	var ids [][]byte
-	var totalWork int64
-	err := service.db.View(func(txn *badger.Txn) error {
+	var totalWork, totalBytes int64
+	err = service.db.View(func(txn *badger.Txn) error {
 		opts := badger.DefaultIteratorOptions
 		opts.PrefetchSize = 100
 		it := txn.NewIterator(opts)
@@ -129,11 +127,8 @@ func (service *Service) EnrichAll(ctx context.Context) (Report, error) {
 				continue
 			}
 			ids = append(ids, it.Item().KeyCopy(nil)[len(prefix):])
-			for partitionHashB64 := range evidata.InternalObjects {
-				if pdata, err := readPartitionFileByHash(txn, partitionHashB64); err == nil {
-					totalWork += int64(dbio.PartitionMemberCount(pdata))
-				}
-			}
+			totalWork += memberCount(txn, evidata)
+			totalBytes += evidata.Size
 		}
 		return nil
 	})
@@ -141,11 +136,9 @@ func (service *Service) EnrichAll(ctx context.Context) (Report, error) {
 		return rep, err
 	}
 
-	bar := newEnrichmentProgressBar(totalWork, "enriching graphdb")
-	defer func() {
-		_ = bar.Finish()
-		fmt.Fprintln(console.Err())
-	}()
+	entropy := progress.Start(ctx, "entropy", progress.Bytes, totalBytes)
+	graph := progress.Start(ctx, "graph", progress.Files, totalWork)
+	defer func() { endPhases(entropy, graph, err) }()
 	for _, eid := range ids {
 		if err := faultinject.Hit(faultinject.EnrichMid); err != nil {
 			return rep, err
@@ -154,18 +147,40 @@ func (service *Service) EnrichAll(ctx context.Context) (Report, error) {
 		if err != nil {
 			return rep, err
 		}
-		if err := service.enrichEvidence(ctx, eid, evidata, &rep, func() { _ = bar.Add(1) }); err != nil {
+		if err := service.enrichEvidence(ctx, eid, evidata, &rep, entropy, graph); err != nil {
 			return rep, err
 		}
 	}
 	return rep, rep.err()
 }
 
+// memberCount is how many indexed files the evidence's partitions hold.
+func memberCount(txn *badger.Txn, evidata structs.EvidenceFile) int64 {
+	var n int64
+	for partitionHashB64 := range evidata.InternalObjects {
+		if pdata, err := readPartitionFileByHash(txn, partitionHashB64); err == nil {
+			n += int64(dbio.PartitionMemberCount(pdata))
+		}
+	}
+	return n
+}
+
+// endPhases ends the entropy and graph phases. Content that could not be
+// read leaves the graph written without some entropy values: a warning.
+func endPhases(entropy, graph *progress.Phase, err error) {
+	var incomplete *IncompleteError
+	if errors.As(err, &incomplete) {
+		entropy.Warn(incomplete.Error())
+		err = nil
+	}
+	entropy.Done(err)
+	graph.Done(err)
+}
+
 // EnrichEvidenceIndex upserts the hierarchy of one completed evidence (raw
 // ID eid) into graphdb: the evidence, its partitions and their indexed files.
 // An ingest runs it once the evidence is committed.
-func (service *Service) EnrichEvidenceIndex(ctx context.Context, eid []byte) (Report, error) {
-	var rep Report
+func (service *Service) EnrichEvidenceIndex(ctx context.Context, eid []byte) (rep Report, err error) {
 	if service == nil || service.db == nil || service.repository == nil {
 		return rep, nil
 	}
@@ -176,7 +191,17 @@ func (service *Service) EnrichEvidenceIndex(ctx context.Context, eid []byte) (Re
 	if !evidata.Completed {
 		return rep, cnst.ErrIncompleteFile
 	}
-	if err := service.enrichEvidence(ctx, eid, evidata, &rep, nil); err != nil {
+	var members int64
+	if err := service.db.View(func(txn *badger.Txn) error {
+		members = memberCount(txn, evidata)
+		return nil
+	}); err != nil {
+		return rep, err
+	}
+	entropy := progress.Start(ctx, "entropy", progress.Bytes, evidata.Size)
+	graph := progress.Start(ctx, "graph", progress.Files, members)
+	defer func() { endPhases(entropy, graph, err) }()
+	if err := service.enrichEvidence(ctx, eid, evidata, &rep, entropy, graph); err != nil {
 		return rep, err
 	}
 	return rep, rep.err()
@@ -189,7 +214,7 @@ type partitionEntry struct {
 	ok    bool
 }
 
-func (service *Service) enrichEvidence(ctx context.Context, eid []byte, evidata structs.EvidenceFile, rep *Report, onProcessed func()) error {
+func (service *Service) enrichEvidence(ctx context.Context, eid []byte, evidata structs.EvidenceFile, rep *Report, entropy, graph *progress.Phase) error {
 	evidence := evidenceContext{
 		evidenceFileID:   base64.StdEncoding.EncodeToString(eid),
 		evidenceFileName: evidata.Name,
@@ -212,7 +237,7 @@ func (service *Service) enrichEvidence(ctx context.Context, eid []byte, evidata 
 		}
 	}
 
-	evEntropy, partEntropy, err := service.evidenceEntropy(ctx, eid, evidata, parts, rep)
+	evEntropy, partEntropy, err := service.evidenceEntropy(ctx, eid, evidata, parts, rep, entropy)
 	if err != nil {
 		return err
 	}
@@ -260,7 +285,7 @@ func (service *Service) enrichEvidence(ctx context.Context, eid []byte, evidata 
 			}
 			continue
 		}
-		if err := service.enrichPartition(ctx, evidence, p, partEntropy[i], cache, rep, onProcessed); err != nil {
+		if err := service.enrichPartition(ctx, evidence, p, partEntropy[i], cache, rep, graph); err != nil {
 			return err
 		}
 	}
@@ -279,7 +304,7 @@ func evidencePath(e structs.EvidenceFile) string {
 // partitions in one pass over the evidence's stored chunks: partitions are
 // ranges of it. Each partition used to be read again, after the evidence.
 // Content that cannot be read is counted in rep; entries for it are nil.
-func (service *Service) evidenceEntropy(ctx context.Context, eid []byte, e structs.EvidenceFile, parts []partitionEntry, rep *Report) (*float64, []*float64, error) {
+func (service *Service) evidenceEntropy(ctx context.Context, eid []byte, e structs.EvidenceFile, parts []partitionEntry, rep *Report, read *progress.Phase) (*float64, []*float64, error) {
 	partValues := make([]*float64, len(parts))
 	if e.Size == 0 {
 		zero := 0.0
@@ -298,6 +323,7 @@ func (service *Service) evidenceEntropy(ctx context.Context, eid []byte, e struc
 				if err != nil {
 					return err
 				}
+				read.Add(int64(len(data)))
 				whole.Add(data)
 				lo, hi := s.Offset, s.Offset+int64(len(data))
 				for i, p := range parts {
@@ -336,7 +362,7 @@ func (service *Service) evidenceEntropy(ctx context.Context, eid []byte, e struc
 	return nil, partValues, nil
 }
 
-func (service *Service) enrichPartition(ctx context.Context, evidence evidenceContext, p partitionEntry, partEntropy *float64, cache map[string]float64, rep *Report, onProcessed func()) error {
+func (service *Service) enrichPartition(ctx context.Context, evidence evidenceContext, p partitionEntry, partEntropy *float64, cache map[string]float64, rep *Report, done *progress.Phase) error {
 	pdata := p.rec
 	name := dbio.RecordPath(pdata.IndexedFile)
 	pc := partitionContext{
@@ -402,23 +428,9 @@ func (service *Service) enrichPartition(ctx context.Context, evidence evidenceCo
 		if pending, err = service.flushIfFull(pending); err != nil {
 			return err
 		}
-		if onProcessed != nil {
-			onProcessed()
-		}
+		done.Add(1)
 	}
 	return service.upsertFiles(pending)
-}
-
-func newEnrichmentProgressBar(total int64, description string) *progressbar.ProgressBar {
-	if total <= 0 {
-		total = 1
-	}
-	return progressbar.NewOptions64(
-		total,
-		progressbar.OptionSetDescription(description),
-		progressbar.OptionSetWriter(console.Progress()),
-		progressbar.OptionSetTheme(cnst.CommonProgressBarTheme),
-	)
 }
 
 // fileBatchSize bounds how many records are held before a commit.

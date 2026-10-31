@@ -7,16 +7,15 @@
 // the host's stdout, and the qwikpak CLI keeps stdout for its JSON. A guard
 // test enforces this.
 //
-// The package also owns fatih/color's output writers, so colored output
-// follows the same configuration.
+// Colour and layout are decided in internal/ui, which writes through this
+// package too.
 package console
 
 import (
 	"fmt"
 	"io"
+	"os"
 	"sync/atomic"
-
-	"github.com/fatih/color"
 )
 
 type sinks struct {
@@ -25,16 +24,14 @@ type sinks struct {
 
 var current atomic.Pointer[sinks]
 
-// The defaults are color's own writers: stdout and stderr, made
-// ANSI-capable on Windows consoles.
-var defaultOut, defaultErr = color.Output, color.Error
+// The defaults are the process's stdout and stderr. Escape processing on
+// Windows consoles is switched on by ui.Setup (EnableVT), not here: a
+// library build must not change its host's console.
+var defaultOut, defaultErr io.Writer = os.Stdout, os.Stderr
 
 func init() { set(&sinks{out: defaultOut, err: defaultErr, progress: defaultErr}) }
 
-func set(s *sinks) {
-	current.Store(s)
-	color.Output, color.Error = s.out, s.err
-}
+func set(s *sinks) { current.Store(s) }
 
 // Out is where results go: listings, reports, anything a script may read.
 func Out() io.Writer { return current.Load().out }
@@ -45,19 +42,37 @@ func Err() io.Writer { return current.Load().err }
 // Progress is where progress bars and spinners go.
 func Progress() io.Writer { return current.Load().progress }
 
-// Configure sends results to out and everything else to err. It must not
-// run while other goroutines print: color's writers are plain variables.
+// Configure sends results to out and everything else to err.
 func Configure(out, err io.Writer) {
 	set(&sinks{out: out, err: err, progress: err})
 }
 
 // Quiet discards all terminal output until the returned function restores
-// the previous configuration. Like Configure, it must not race with printing.
+// the previous configuration.
 func Quiet() (restore func()) {
 	prev := current.Load()
 	set(&sinks{out: io.Discard, err: io.Discard, progress: io.Discard})
 	return func() { set(prev) }
 }
+
+// Wrap replaces the result and notice sinks with what f makes of the
+// current ones, until restore runs. The progress sink stays as it is: the
+// progress display wraps the other two so that their lines and its redraws
+// do not garble each other on one terminal.
+func Wrap(f func(out, err io.Writer) (io.Writer, io.Writer)) (restore func()) {
+	prev := current.Load()
+	out, err := f(prev.out, prev.err)
+	set(&sinks{out: out, err: err, progress: prev.progress})
+	return func() { set(prev) }
+}
+
+// ErrSink writes to whatever Err is at the moment of each write, for
+// writers set up once, such as the log's last-resort warnings.
+var ErrSink io.Writer = errSink{}
+
+type errSink struct{}
+
+func (errSink) Write(p []byte) (int, error) { return Err().Write(p) }
 
 // Reset restores the default stdout/stderr configuration.
 func Reset() { set(&sinks{out: defaultOut, err: defaultErr, progress: defaultErr}) }

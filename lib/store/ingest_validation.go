@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"indicer/internal/progress"
 	"io/fs"
 	"os"
 
@@ -85,6 +86,7 @@ func ValidateEvidence(ctx context.Context, db *badger.DB, fileID []byte, evidenc
 	if err != nil {
 		return err
 	}
+	done := progress.CurrentIn(ctx, progress.Bytes)
 	checked := make(map[string]struct{}, validatedCacheSize)
 	type ref struct {
 		offset int64
@@ -136,6 +138,7 @@ func ValidateEvidence(ctx context.Context, db *badger.DB, fileID []byte, evidenc
 			}
 			checked[string(r.ckey)] = struct{}{}
 		}
+		done.Add(batchEnd - max(batchStart, evidenceFile.Start))
 	}
 	return nil
 }

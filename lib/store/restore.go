@@ -12,19 +12,16 @@ import (
 	"errors"
 	"fmt"
 	"hash"
-	"indicer/internal/console"
 	"indicer/internal/faultinject"
+	"indicer/internal/progress"
 	"indicer/lib/cnst"
 	"indicer/lib/dbio"
 	"indicer/lib/fio"
 	"indicer/lib/structs"
 	"io"
 	"sync"
-	"time"
 
 	"github.com/dgraph-io/badger/v4"
-	"github.com/dustin/go-humanize"
-	"github.com/schollz/progressbar/v3"
 	"github.com/zeebo/blake3"
 )
 
@@ -156,8 +153,8 @@ func Restore(ctx context.Context, db *badger.DB, rhash string, dst io.Writer, op
 // restoreLogical writes the content of l to dst. Chunks are read and checked
 // in parallel and written in order; at most the window is between being read
 // and being written (RST-5).
-func restoreLogical(ctx context.Context, l *dbio.Logical, dst io.Writer, opts RestoreOptions, ewf *structs.EWFCheck) (RestoreReport, error) {
-	report := RestoreReport{Key: l.Key(), Size: l.Size(), RecordedSize: l.RecordedSize(), Truncated: l.Truncated(), Digest: DigestSkipped}
+func restoreLogical(ctx context.Context, l *dbio.Logical, dst io.Writer, opts RestoreOptions, ewf *structs.EWFCheck) (report RestoreReport, err error) {
+	report = RestoreReport{Key: l.Key(), Size: l.Size(), RecordedSize: l.RecordedSize(), Truncated: l.Truncated(), Digest: DigestSkipped}
 	configureRestoreCache()
 
 	fio.EnableContainerReadCache()
@@ -173,12 +170,9 @@ func restoreLogical(ctx context.Context, l *dbio.Logical, dst io.Writer, opts Re
 		ewfMD5, ewfSHA1 = md5.New(), sha1.New()
 	}
 
-	bar := progressbar.NewOptions64(
-		l.Size(),
-		progressbar.OptionShowBytes(true),
-		progressbar.OptionSetWriter(console.Progress()),
-		progressbar.OptionSetTheme(cnst.CommonProgressBarTheme),
-	)
+	ph := progress.Start(ctx, "restore", progress.Bytes, l.Size())
+	written := progress.Tally(ctx, "restored", progress.Bytes)
+	defer func() { ph.Done(err) }()
 
 	workerCount, jobQueueDepth := cnst.GetRestorePipelineTuning()
 	fetchBatchSize, window := restoreWindow(l.ChunkSize())
@@ -264,9 +258,7 @@ func restoreLogical(ctx context.Context, l *dbio.Logical, dst io.Writer, opts Re
 		close(results)
 	}()
 
-	progressInterval := cnst.GetRestoreProgressInterval()
-	lastProgress := time.Now()
-	var pendingProgress, restored int64
+	var restored int64
 	nextSeq := int64(0)
 	pending := make(map[int64]restoreChunkResult)
 	var workerErr error
@@ -283,8 +275,9 @@ func restoreLogical(ctx context.Context, l *dbio.Logical, dst io.Writer, opts Re
 			ewfSHA1.Write(r.data)
 		}
 		<-slots
-		pendingProgress += int64(len(r.data))
 		restored += int64(len(r.data))
+		ph.Add(int64(len(r.data)))
+		written.Add(int64(len(r.data)))
 		nextSeq++
 		return faultinject.Hit(faultinject.RestoreMid)
 	}
@@ -321,11 +314,6 @@ func restoreLogical(ctx context.Context, l *dbio.Logical, dst io.Writer, opts Re
 			notePendingChunks(len(pending))
 		}
 
-		if pendingProgress >= 4*cnst.MB || time.Since(lastProgress) >= progressInterval {
-			bar.Add64(pendingProgress)
-			pendingProgress = 0
-			lastProgress = time.Now()
-		}
 	}
 
 	producerResult := <-producerDone
@@ -346,9 +334,6 @@ func restoreLogical(ctx context.Context, l *dbio.Logical, dst io.Writer, opts Re
 	}
 	report.Chunks = nextSeq
 
-	if pendingProgress > 0 {
-		bar.Add64(pendingProgress)
-	}
 	if err := writer.Flush(); err != nil {
 		return report, err
 	}
@@ -368,12 +353,6 @@ func restoreLogical(ctx context.Context, l *dbio.Logical, dst io.Writer, opts Re
 		}
 	}
 
-	bar.Finish()
-	fmt.Fprintln(console.Err())
-	console.Println("Restored file with size: ", humanize.Bytes(uint64(l.Size())))
-	// A progress bar error (an empty input has nothing to show) is not the
-	// operation's error.
-	_ = bar.Close()
 	return report, nil
 }
 

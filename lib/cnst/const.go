@@ -6,7 +6,6 @@ import (
 	"hash"
 	"runtime"
 	"strings"
-	"time"
 
 	"github.com/klauspost/compress/zstd"
 	"github.com/shirou/gopsutil/v3/mem"
@@ -83,7 +82,6 @@ var StoreWorkerCount = 0
 var StoreTaskQueueDepth = 0
 var RestoreWorkerCount = 0
 var RestoreTaskQueueDepth = 0
-var RestoreProgressIntervalMs = 0
 var RestoreWriteBufferMB = 0
 
 const (
@@ -503,19 +501,6 @@ func GetRestorePipelineTuning() (int, int) {
 	}
 
 	return workers, queueDepth
-}
-
-func GetRestoreProgressInterval() time.Duration {
-	if RestoreProgressIntervalMs <= 0 {
-		return 120 * time.Millisecond
-	}
-	if RestoreProgressIntervalMs < 20 {
-		return 20 * time.Millisecond
-	}
-	if RestoreProgressIntervalMs > 2000 {
-		return 2000 * time.Millisecond
-	}
-	return time.Duration(RestoreProgressIntervalMs) * time.Millisecond
 }
 
 func GetRestoreWriteBufferSize() int {

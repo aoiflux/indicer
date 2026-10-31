@@ -1,20 +1,27 @@
 package tui
 
 import (
+	"image/color"
+	"indicer/internal/ui"
+
 	"charm.land/lipgloss/v2"
 )
 
-// Color scheme
+// Colours follow the CLI's roles (internal/ui, docs/CLI_UX.md), in their
+// dark-background values: the TUI draws on a dark background of its own.
 var (
-	primaryColor   = lipgloss.Color("205") // Magenta
-	secondaryColor = lipgloss.Color("39")  // Cyan
-	successColor   = lipgloss.Color("42")  // Green
-	warningColor   = lipgloss.Color("214") // Orange
-	errorColor     = lipgloss.Color("196") // Red
-	accentColor    = lipgloss.Color("227") // Yellow
-	borderColor    = lipgloss.Color("240") // Dark gray
-	bgColor        = lipgloss.Color("235") // Very dark gray
+	primaryColor   = role(ui.Forensics) // brand accent: headers, selection
+	secondaryColor = role(ui.Highlight) // the active button, info
+	successColor   = role(ui.Success)
+	warningColor   = role(ui.Warning)
+	errorColor     = role(ui.Error)
+	accentColor    = role(ui.Evidence) // titles
+	mutedColor     = role(ui.Muted)    // dim and help text
+	borderColor    = lipgloss.Color("240")
+	bgColor        = lipgloss.Color("235")
 )
+
+func role(r ui.Role) color.Color { return lipgloss.Color(r.Hex(ui.ThemeDark)) }
 
 // Base styles
 var (
@@ -45,10 +52,10 @@ var (
 			Padding(0, 1)
 
 	DimStyle = lipgloss.NewStyle().
-			Foreground(borderColor)
+			Foreground(mutedColor)
 
 	HelpStyle = lipgloss.NewStyle().
-			Foreground(borderColor).
+			Foreground(mutedColor).
 			Italic(true)
 
 	InputStyle = lipgloss.NewStyle().

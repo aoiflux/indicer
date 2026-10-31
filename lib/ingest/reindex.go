@@ -5,6 +5,7 @@ import (
 	"encoding/base64"
 	"errors"
 	"fmt"
+	"indicer/internal/progress"
 	"io"
 	"time"
 
@@ -69,20 +70,21 @@ func Reindex(ctx context.Context, db *badger.DB, eid []byte, opts ReindexOptions
 	}
 	defer closeImg()
 
+	req := Request{FTS: opts.FTS || hasFeature(e, "fts"), Enrich: opts.Enrich || hasFeature(e, "enrich")}
+	steps := []string{"delete old index", "index"}
+	if req.FTS {
+		steps = append(steps, "full-text")
+	}
+	if req.Enrich {
+		steps = append(steps, "entropy", "graph")
+	}
+	progress.Plan(ctx, steps...)
+
 	// The previous index goes first, full-text documents with it, so records
 	// a changed parser no longer finds do not linger.
-	var docs []string
-	if err := store.DeleteEvidenceIndex(ctx, db, eid, func(key []byte) { docs = append(docs, string(key)) }); err != nil {
-		return res, fmt.Errorf("delete the previous index: %w", err)
+	if err := deletePrevious(ctx, db, eid); err != nil {
+		return res, err
 	}
-	if err := fts.DeleteIndexedFiles(db, docs); err != nil {
-		return res, fmt.Errorf("delete the previous full-text documents: %w", err)
-	}
-	// And its graph nodes, which a rebuilt index would otherwise sit beside.
-	if err := deleteGraphIndex(db, eid, true); err != nil {
-		return res, fmt.Errorf("delete the previous index from the graph: %w", err)
-	}
-	req := Request{FTS: opts.FTS || hasFeature(e, "fts"), Enrich: opts.Enrich || hasFeature(e, "enrich")}
 
 	info := &structs.IndexInfo{State: structs.IndexRunning, Started: time.Now().UnixNano()}
 	if err := setIndexInfo(db, eid, info); err != nil {
@@ -164,17 +166,52 @@ func (s storedImage) Size() int64                             { return s.size }
 func (s storedImage) Format() core.ImageFormat                { return core.FormatRaw }
 func (s storedImage) Close() error                            { return nil }
 
+// deletePrevious removes an evidence's previous index: its records, their
+// full-text documents and its graph nodes, which a rebuilt index would
+// otherwise sit beside.
+func deletePrevious(ctx context.Context, db *badger.DB, eid []byte) (err error) {
+	ph := progress.Start(ctx, "delete old index", progress.Files, progress.Unknown)
+	defer func() { ph.Done(err) }()
+	var docs []string
+	if err := store.DeleteEvidenceIndex(ctx, db, eid, func(key []byte) {
+		docs = append(docs, string(key))
+		ph.Add(1)
+	}); err != nil {
+		return fmt.Errorf("delete the previous index: %w", err)
+	}
+	if err := fts.DeleteIndexedFiles(db, docs); err != nil {
+		return fmt.Errorf("delete the previous full-text documents: %w", err)
+	}
+	if err := deleteGraphIndex(db, eid, true); err != nil {
+		return fmt.Errorf("delete the previous index from the graph: %w", err)
+	}
+	return nil
+}
+
 // reindexPartitionHashes hashes each partition's range of the image, except a
 // filesystem spanning the whole device, which is the evidence's own hash.
-func reindexPartitionHashes(ctx context.Context, db *badger.DB, e structs.EvidenceFile, img core.Image, parts []index.Partition) error {
+func reindexPartitionHashes(ctx context.Context, db *badger.DB, e structs.EvidenceFile, img core.Image, parts []index.Partition) (err error) {
 	plain, _ := base64.StdEncoding.DecodeString(e.PlainHash)
+	usable := func(p index.Partition) bool { return p.Size > 0 && p.Offset >= 0 && p.Size <= img.Size()-p.Offset }
+	whole := func(p index.Partition) bool { return p.Offset == 0 && p.Size == img.Size() && len(plain) > 0 }
+	var need int64
 	for _, p := range parts {
-		if p.Size <= 0 || p.Offset < 0 || p.Size > img.Size()-p.Offset {
+		if usable(p) && !whole(p) {
+			need += p.Size
+		}
+	}
+	var ph *progress.Phase
+	if need > 0 {
+		ph = progress.Start(ctx, "partition hashes", progress.Bytes, need)
+		defer func() { ph.Done(err) }()
+	}
+	for _, p := range parts {
+		if !usable(p) {
 			continue
 		}
 		h := plain
-		if p.Offset != 0 || p.Size != img.Size() || len(h) == 0 {
-			sums, err := store.HashContent(ctx, db, io.NewSectionReader(img, p.Offset, p.Size), p.Size, false)
+		if !whole(p) {
+			sums, err := store.HashContent(progress.Within(ctx, ph), db, io.NewSectionReader(img, p.Offset, p.Size), p.Size, false)
 			if err != nil {
 				return fmt.Errorf("hash partition at %d: %w", p.Offset, err)
 			}

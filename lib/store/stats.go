@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"indicer/internal/console"
+	"indicer/internal/ui"
 	"os"
 	"path/filepath"
 	"strings"
@@ -17,7 +18,6 @@ import (
 
 	"github.com/dgraph-io/badger/v4"
 	"github.com/dustin/go-humanize"
-	"github.com/fatih/color"
 )
 
 type DBStats struct {
@@ -164,28 +164,41 @@ func calcBlobDirBytes(dbDir string) int64 {
 }
 
 func printStats(s *DBStats) {
-	sep := strings.Repeat("─", 46)
-	dim := color.New(color.FgHiBlack)
-	sectionHdr := color.New(color.FgMagenta, color.Bold)
-	lbl := color.New(color.FgWhite)
-	val := color.New(color.FgYellow, color.Bold)
-	good := color.New(color.FgGreen, color.Bold)
-	warn := color.New(color.FgRed)
+	p := ui.For(console.Out())
+	g := p.Glyphs()
+	sep := strings.Repeat(g.Rule, 46)
+	dim := func(s string) string { return p.Paint(ui.Muted, s) }
+	val := p.Bold
+	good := func(s string) string { return p.Strong(ui.Success, s) }
+	warn := func(s string) string { return p.Strong(ui.Warning, s) }
+	sectionHdr := func(name string) { console.Println(p.Strong(ui.Forensics, name)) }
 
-	statRow := func(label string, formatted string, c *color.Color) {
-		lbl.Printf("    %-30s", label+":")
-		c.Println(formatted)
+	statRow := func(label string, formatted string, style func(string) string) {
+		console.Printf("    %-30s", label+":")
+		console.Println(style(formatted))
 	}
 
-	color.New(color.FgCyan, color.Bold).Println()
-	color.New(color.FgCyan, color.Bold).Println("  ╔══════════════════════════════════════════════╗")
-	color.New(color.FgCyan, color.Bold).Println("  ║       DUES  Database  Statistics             ║")
-	color.New(color.FgCyan, color.Bold).Println("  ╚══════════════════════════════════════════════╝")
+	box := []string{
+		"  ╔══════════════════════════════════════════════╗",
+		"  ║       DUES  Database  Statistics             ║",
+		"  ╚══════════════════════════════════════════════╝",
+	}
+	if p.GlyphSet() == ui.GlyphsASCII {
+		box = []string{
+			"  +----------------------------------------------+",
+			"  |       DUES  Database  Statistics             |",
+			"  +----------------------------------------------+",
+		}
+	}
+	console.Println()
+	for _, l := range box {
+		console.Println(p.Strong(ui.Forensics, l))
+	}
 
 	// ── FILES ──────────────────────────────────────────────────────────────
 	console.Println()
-	sectionHdr.Println("  FILES")
-	console.Println("  ", dim.Sprint(sep))
+	sectionHdr("  FILES")
+	console.Println("  ", dim(sep))
 
 	statRow("Total files", humanize.Comma(s.TotalFiles), val)
 	statRow("Completed", humanize.Comma(s.CompletedFiles), good)
@@ -200,8 +213,8 @@ func printStats(s *DBStats) {
 
 	// ── CHUNKS ─────────────────────────────────────────────────────────────
 	console.Println()
-	sectionHdr.Println("  CHUNKS")
-	console.Println("  ", dim.Sprint(sep))
+	sectionHdr("  CHUNKS")
+	console.Println("  ", dim(sep))
 
 	statRow("Unique chunks stored", humanize.Comma(s.UniqueChunks), val)
 	statRow("Total chunk references", humanize.Comma(s.TotalChunkRefs), val)
@@ -234,8 +247,8 @@ func printStats(s *DBStats) {
 
 	// ── STRUCTURE ──────────────────────────────────────────────────────────
 	console.Println()
-	sectionHdr.Println("  STRUCTURE")
-	console.Println("  ", dim.Sprint(sep))
+	sectionHdr("  STRUCTURE")
+	console.Println("  ", dim(sep))
 
 	statRow("Partition files", humanize.Comma(s.TotalPartitions), val)
 	statRow("Indexed FS objects", humanize.Comma(s.TotalIndexedFiles), val)
@@ -265,8 +278,8 @@ func printStats(s *DBStats) {
 
 	// ── STORAGE ────────────────────────────────────────────────────────────
 	console.Println()
-	sectionHdr.Println("  STORAGE")
-	console.Println("  ", dim.Sprint(sep))
+	sectionHdr("  STORAGE")
+	console.Println("  ", dim(sep))
 
 	statRow("Logical size", humanize.Bytes(uint64(s.TotalLogicalSize)), val)
 	statRow("On-disk size (blobs)", humanize.Bytes(uint64(s.OnDiskBytes)), val)
@@ -288,8 +301,8 @@ func printStats(s *DBStats) {
 	fioStats := fio.GetWriteBackendStats()
 
 	console.Println()
-	sectionHdr.Println("  WRITE ENGINE (this process)")
-	console.Println("  ", dim.Sprint(sep))
+	sectionHdr("  WRITE ENGINE (this process)")
+	console.Println("  ", dim(sep))
 
 	statRow("Requested engine", fioStats.RequestedEngine, val)
 	statRow("Selected engine", fioStats.SelectedEngine, val)

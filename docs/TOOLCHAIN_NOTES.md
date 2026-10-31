@@ -32,7 +32,10 @@ and `darwin`, each on `amd64` and `arm64`. Every build uses:
   architectures ignore it);
 - `go build -trimpath -buildvcs=false -tags netgo,osusergo -ldflags "-s -w -buildid="`;
 - `-pgo default.pgo` when the repository root has a `default.pgo` (none is
-  committed).
+  committed);
+- `-X main.buildCommit=<short commit>`, with `-dirty` when the tree has
+  uncommitted changes. `dues version` and the banner show it. A tree without
+  git builds without it.
 
 The `netgo` and `osusergo` tags select Go's own DNS resolver and user lookup.
 
@@ -51,7 +54,8 @@ it also covers binaries left there by an earlier run. `build.sh` needs
 `sha256sum` or `shasum` and checks for them before it builds.
 
 The builds are reproducible (`-trimpath`, `-buildid=`), so with the same Go
-toolchain `build.ps1`, `build.sh` and `build.sh` under WSL write the same sums.
+toolchain and the same commit `build.ps1`, `build.sh` and `build.sh` under WSL
+write the same sums.
 
 To check a download, run one of these in the folder that holds the binary and
 `SHA256SUMS`. Each prints `OK` for a match:

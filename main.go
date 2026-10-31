@@ -6,8 +6,10 @@ import (
 	"fmt"
 	"indicer/api"
 	"indicer/cli"
+	"indicer/internal/console"
 	"indicer/internal/crash"
 	"indicer/internal/lifecycle"
+	"indicer/internal/ui"
 	"indicer/lib/cnst"
 	"indicer/lib/logging"
 	"indicer/lib/store"
@@ -15,14 +17,24 @@ import (
 	"path/filepath"
 	"runtime/debug"
 	"strings"
+	"time"
 
 	"go.uber.org/zap"
 )
 
 const (
-	duesVersion  = "0.39"
+	duesVersion  = "0.39.0"
 	duesCodename = "<pineapple> spacebar"
 )
+
+// buildCommit is the short commit the build came from, with "-dirty" for
+// uncommitted changes. The build scripts set it:
+// -ldflags "-X main.buildCommit=<commit>". Other builds leave it empty.
+var buildCommit string
+
+func buildInfo() ui.Build {
+	return ui.Build{Version: duesVersion, Codename: duesCodename, Commit: buildCommit}
+}
 
 func init() {
 	var err error
@@ -42,7 +54,12 @@ func main() {
 // happen on the way out (flushing the log, keeping or removing the crash
 // file) is deferred here, so nothing below may call os.Exit.
 func realMain(args []string) (code int) {
-	if maybeHandleHelp(args) {
+	// Presentation is decided first: help and version print before kingpin
+	// parses, and must already honour --color, --plain and --ci.
+	uiOpts, helpArgs := ui.PreScan(args)
+	defer ui.Setup(uiOpts, os.Environ())()
+
+	if maybeHandleHelp(helpArgs) {
 		return lifecycle.ExitOK
 	}
 
@@ -50,6 +67,9 @@ func realMain(args []string) (code int) {
 		Component: "dues",
 		Dir:       logDirFromArgs(args),
 		Debug:     os.Getenv("DUES_DEBUG") != "",
+		// Warnings about the log itself go through console, so they print
+		// above a progress display instead of through it.
+		Stderr: console.ErrSink,
 	})
 	defer logging.Close()
 
@@ -76,6 +96,7 @@ func realMain(args []string) (code int) {
 	logging.GetLogger().Info("DUES starting",
 		zap.String("version", duesVersion),
 		zap.String("codename", duesCodename),
+		zap.String("commit", buildCommit),
 		zap.Strings("args", logging.RedactArgs(args)))
 
 	err := run(args)
@@ -84,7 +105,11 @@ func realMain(args []string) (code int) {
 	}
 	if err != nil {
 		logging.GetLogger().Error("command failed", zap.Error(err))
-		fmt.Fprintf(os.Stderr, "\ndues: error: %v\n", err)
+		level := ui.LevelError
+		if lifecycle.IsWarning(err) {
+			level = ui.LevelWarning
+		}
+		ui.Message(console.Err(), level, err.Error())
 	}
 	return lifecycle.ExitCode(err)
 }
@@ -136,7 +161,7 @@ func run(args []string) error {
 	}
 	for _, issue := range tuning.issues {
 		logging.GetLogger().Warn("setting adjusted", zap.String("flag", issue.Flag), zap.String("detail", issue.Message))
-		fmt.Fprintln(os.Stderr, "dues: warning:", issue)
+		ui.Warnf("%s", issue)
 	}
 
 	if err := reconfigureEncoderForCompressionLevel(tuning.storeWorkers); err != nil {
@@ -149,11 +174,11 @@ func run(args []string) error {
 	}
 	for _, w := range warnings {
 		logging.GetLogger().Warn("credentials", zap.String("detail", w))
-		fmt.Fprintln(os.Stderr, "dues: warning:", w)
+		ui.Warnf("%s", w)
 	}
 	dbOpts := cli.DBOptions{Path: *cliDef.flags.dbpath, Creds: creds, Layout: tuning.layout}
 
-	printRuntimeBanner(parsed, cliDef, tuning)
+	printRunHeader(parsed, cliDef, tuning)
 
 	// The first SIGINT/SIGTERM cancels ctx and the command winds down; a
 	// second one exits at once (LOG-3).
@@ -176,8 +201,32 @@ func executeCommand(ctx context.Context, parsed string, cliDef cliDefinition, db
 	if !ok {
 		return fmt.Errorf("unsupported command: %s", parsed)
 	}
+	if showsProgress(parsed, cliDef) {
+		handler = func(ctx context.Context) error {
+			start := time.Now()
+			err := ui.Run(ctx, handlers[parsed])
+			if err == nil {
+				ui.MaybeEgg(time.Since(start))
+			}
+			return err
+		}
+	}
 	// A command cut short by a signal exits with the signal's code.
 	return lifecycle.Cause(ctx, handler(ctx))
+}
+
+// showsProgress reports whether a command shows progress: the long
+// operations. Quick commands, the TUI and the server do not.
+func showsProgress(parsed string, cliDef cliDefinition) bool {
+	c, f := cliDef.commands, cliDef.flags
+	switch parsed {
+	case c.store.FullCommand(), c.restore.FullCommand(), c.reindex.FullCommand(), c.enrich.FullCommand(),
+		c.nearIn.FullCommand(), c.nearOut.FullCommand(), c.microExtract.FullCommand(), c.search.FullCommand():
+		return true
+	case c.repair.FullCommand():
+		return *f.repairFix || *f.repairUpg || *f.repairVfy
+	}
+	return false
 }
 
 func buildCommandHandlers(cliDef cliDefinition, dbOpts cli.DBOptions, tuning pipelineTuning) map[string]func(context.Context) error {
@@ -338,6 +387,9 @@ func buildCommandHandlers(cliDef cliDefinition, dbOpts cli.DBOptions, tuning pip
 			logging.GetLogger().Info("Command: reset", zap.String("dbpath", *cliDef.flags.dbpath))
 			return cli.ResetData(*cliDef.flags.dbpath, *cliDef.flags.resetYes)
 		},
+		cliDef.commands.coffee.FullCommand():  func(context.Context) error { ui.Coffee(); return nil },
+		cliDef.commands.fortune.FullCommand(): func(context.Context) error { ui.Fortune(); return nil },
+		cliDef.commands.mew.FullCommand():     func(context.Context) error { ui.Meow(); return nil },
 		cliDef.commands.server.FullCommand(): func(ctx context.Context) error {
 			logging.GetLogger().Info("Command: server", zap.String("dbpath", *cliDef.flags.dbpath), zap.Int("chonksize_kb", *cliDef.flags.chonkSize))
 			token, warnings, err := resolveServerToken(cliDef.flags)
@@ -346,7 +398,7 @@ func buildCommandHandlers(cliDef cliDefinition, dbOpts cli.DBOptions, tuning pip
 			}
 			for _, w := range warnings {
 				logging.GetLogger().Warn("server token", zap.String("detail", w))
-				fmt.Fprintln(os.Stderr, "dues: warning:", w)
+				ui.Warnf("%s", w)
 			}
 			return api.Server(ctx, dbOpts, api.Options{
 				Listen:      *cliDef.flags.serverListen,

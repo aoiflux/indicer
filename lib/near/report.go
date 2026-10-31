@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"indicer/internal/progress"
 	"io/fs"
 	"os"
 	"sort"
@@ -168,7 +169,10 @@ func (r *run) finish(ctx context.Context, out Outcome, input nearReportInput, vc
 		}
 		k = min(k, len(report.Matches))
 		report.VerifyTopK = k
-		if err := verifyPhase2(ctx, vcfg.querySig, report.Matches[:k], r.db); err != nil {
+		ph := progress.Start(ctx, "verify", progress.Unit("matches"), int64(k))
+		err := verifyPhase2(progress.Within(ctx, ph), vcfg.querySig, report.Matches[:k], r.db)
+		ph.Done(err)
+		if err != nil {
 			return out, err
 		}
 		report.VerifyDurationMs = time.Since(verifyStart).Milliseconds()

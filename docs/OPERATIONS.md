@@ -147,6 +147,33 @@ A crash the Go runtime cannot recover from (a stack overflow, say) exits with
 the runtime's own code, 2. The crash file then holds its trace, so check it
 when exit 2 comes with no message.
 
+The message on stderr names the kind: `dues: error: ...` for a failure (exit 1),
+`dues: warning: ...` for an operation that completed but needs attention
+(exit 2). On a terminal the same lines read `✗ error: ...` and
+`▲ warning: ...`.
+
+## Output and the terminal
+
+Results go to stdout and everything else to stderr: the run header, progress,
+notes, warnings and errors. On a pipe nothing holds an escape code, and
+progress is one plain line when a phase starts, one when it ends, and one
+every 15 seconds. Under CI (`CI`, `GITHUB_ACTIONS`, `GITLAB_CI`, `BUILDKITE`,
+`JENKINS_URL`, `TF_BUILD`, `TEAMCITY_VERSION`, or `--ci`) DUES behaves as on a
+pipe, and prompts refuse.
+
+| Variable | Effect |
+|---|---|
+| `DUES_COLOR` | `auto`, `always`, `never` or `ansi`, as `--color` |
+| `DUES_PLAIN=1` | as `--plain` |
+| `DUES_NO_FUN=1` | as `--no-fun` |
+| `DUES_THEME` | `dark` or `light`: the terminal's background |
+| `NO_COLOR` | any value: no colour |
+| `FORCE_COLOR`, `CLICOLOR_FORCE` | colour even on a pipe |
+| `TERM=dumb` | no colour, no redraw, ASCII |
+
+[CLI_UX.md](CLI_UX.md) has the rest: palette, marks, the progress display and
+the accessibility review.
+
 ## Logs and crash files
 
 DUES writes its log to the first directory it can write in, in this order:

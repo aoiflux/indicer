@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"errors"
 	"indicer/internal/console"
+	"indicer/internal/testutil"
 	"io"
 	"os"
 	"path/filepath"
@@ -143,10 +144,10 @@ func TestStoreHashStrategyEvidenceParity(t *testing.T) {
 	if err != nil {
 		t.Fatalf("open input for hash: %v", err)
 	}
-	expectedHashRaw, err := util.GetFileHash(handle, cnst.GetHashAlgo(true))
+	expectedHashRaw, err := testutil.HashFile(handle, cnst.GetHashAlgo(true))
 	closeErr := handle.Close()
 	if err != nil {
-		t.Fatalf("GetFileHash: %v", err)
+		t.Fatalf("HashFile: %v", err)
 	}
 	if closeErr != nil {
 		t.Fatalf("close input handle: %v", closeErr)
@@ -224,10 +225,10 @@ func TestStoreHashStrategyKeyModelContract(t *testing.T) {
 	if err != nil {
 		t.Fatalf("open input for sync hash: %v", err)
 	}
-	syncRaw, err := util.GetFileHash(handle, cnst.GetHashAlgo(true))
+	syncRaw, err := testutil.HashFile(handle, cnst.GetHashAlgo(true))
 	closeErr := handle.Close()
 	if err != nil {
-		t.Fatalf("GetFileHash: %v", err)
+		t.Fatalf("HashFile: %v", err)
 	}
 	if closeErr != nil {
 		t.Fatalf("close input handle: %v", closeErr)
@@ -352,10 +353,10 @@ func TestStoreHashStrategyPartitionIndexedParityAndListVisibility(t *testing.T) 
 	if err != nil {
 		t.Fatalf("open input for hash: %v", err)
 	}
-	expectedEvidenceRaw, err := util.GetFileHash(handle, cnst.GetHashAlgo(true))
+	expectedEvidenceRaw, err := testutil.HashFile(handle, cnst.GetHashAlgo(true))
 	closeErr := handle.Close()
 	if err != nil {
-		t.Fatalf("GetFileHash: %v", err)
+		t.Fatalf("HashFile: %v", err)
 	}
 	if closeErr != nil {
 		t.Fatalf("close input handle: %v", closeErr)
@@ -428,11 +429,11 @@ func attachSyntheticPartitionAndIndexed(t *testing.T, dbPath string, key []byte,
 	indexedStart := int64(64)
 	indexedSize := int64(256)
 
-	partitionRaw, err := util.GetLogicalFileHash(handle, cnst.GetHashAlgo(true), partitionStart, partitionSize, false)
+	partitionRaw, err := testutil.HashRange(handle, cnst.GetHashAlgo(true), partitionStart, partitionSize)
 	if err != nil {
 		t.Fatalf("partition logical hash: %v", err)
 	}
-	indexedRaw, err := util.GetLogicalFileHash(handle, cnst.GetHashAlgo(true), indexedStart, indexedSize, false)
+	indexedRaw, err := testutil.HashRange(handle, cnst.GetHashAlgo(true), indexedStart, indexedSize)
 	if err != nil {
 		t.Fatalf("indexed logical hash: %v", err)
 	}

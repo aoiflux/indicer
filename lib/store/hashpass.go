@@ -5,6 +5,8 @@ import (
 	"io"
 	"sync"
 
+	"indicer/internal/progress"
+
 	"github.com/dgraph-io/badger/v4"
 )
 
@@ -27,6 +29,7 @@ func HashContent(parent context.Context, db *badger.DB, src io.ReaderAt, size in
 	tap := newDigestTap(shape.fileHash, nil, nil)
 	feed := shape.feed(ctx, ChunkPass{Source: src, Size: size}, tap)
 
+	read := progress.CurrentIn(parent, progress.Bytes)
 	var mu sync.Mutex
 	hocho := newHochoAccumulator(shape.fileHash, shape.chunk, 0)
 	var hochoErr error
@@ -41,6 +44,7 @@ func HashContent(parent context.Context, db *badger.DB, src io.ReaderAt, size in
 				h.Write(c.data)
 				chash := h.Sum(nil)
 				off := c.off
+				read.Add(int64(len(c.data)))
 				c.release()
 				mu.Lock()
 				if err := hocho.add(off, chash); err != nil && hochoErr == nil {

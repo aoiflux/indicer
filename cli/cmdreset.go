@@ -5,6 +5,7 @@ import (
 	"errors"
 	"indicer/internal/console"
 	"indicer/internal/lifecycle"
+	"indicer/internal/ui"
 	"indicer/lib/dbopen"
 	"indicer/lib/logging"
 	"io"
@@ -13,9 +14,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/fatih/color"
 	"go.uber.org/zap"
-	"golang.org/x/term"
 )
 
 // ResetData deletes the DUES database at dbpath, and only that: the data
@@ -25,7 +24,7 @@ import (
 // root's folder name; with stdin not a terminal, yes is required, so a
 // script cannot delete a case by piping "y".
 func ResetData(dbpath string, yes bool) error {
-	return resetData(dbpath, yes, os.Stdin, isTerminal(os.Stdin))
+	return resetData(dbpath, yes, os.Stdin, console.Interactive())
 }
 
 func resetData(dbpath string, yes bool, in io.Reader, interactive bool) error {
@@ -38,7 +37,8 @@ func resetData(dbpath string, yes bool, in io.Reader, interactive bool) error {
 
 	entries, err := os.ReadDir(root)
 	if errors.Is(err, os.ErrNotExist) || (err == nil && len(entries) == 0) {
-		color.Blue("Nothing to reset: no data at %s", root)
+		p := ui.For(console.Out())
+		console.Printf("Nothing to reset: no data at %s\n", p.Paint(ui.Evidence, root))
 		return nil
 	}
 	if err != nil {
@@ -53,11 +53,13 @@ func resetData(dbpath string, yes bool, in io.Reader, interactive bool) error {
 			return lifecycle.Usagef("reset of %s needs --yes when stdin is not a terminal", root)
 		}
 		name := filepath.Base(root)
-		color.Red("WARNING! This deletes the DUES database at %s: all stored evidence, indexes, graph and full-text data.", root)
-		console.Printf("Type the folder name (%s) to confirm: ", name)
+		p := ui.For(console.Out())
+		console.Printf("%s This deletes the DUES database at %s: all stored evidence, indexes, graph and full-text data.\n",
+			p.Strong(ui.Warning, "WARNING!"), p.Paint(ui.Evidence, root))
+		console.Printf("Type the folder name (%s) to confirm: ", p.Strong(ui.Highlight, name))
 		line, _ := bufio.NewReader(in).ReadString('\n')
 		if strings.TrimSpace(line) != name {
-			color.Blue("Your data is SAFE!")
+			console.Println(p.Strong(ui.Success, "Your data is SAFE!"))
 			logging.GetLogger().Info("ResetData CANCELLED", zap.Int64("duration_ms", time.Since(start).Milliseconds()))
 			return nil
 		}
@@ -68,17 +70,12 @@ func resetData(dbpath string, yes bool, in io.Reader, interactive bool) error {
 		logging.GetLogger().Error("ResetData DELETE_ERROR", zap.Error(err), zap.String("root", root))
 		return err
 	}
-	color.Red("Deleted %s from %s", strings.Join(removed, ", "), root)
+	p := ui.For(console.Out())
+	console.Printf("%s %s from %s\n", p.Strong(ui.Success, "Deleted"), strings.Join(removed, ", "), p.Paint(ui.Evidence, root))
 	logging.GetLogger().Info("ResetData COMPLETE",
 		zap.Int64("duration_ms", time.Since(start).Milliseconds()),
 		zap.String("root", root),
 		zap.Strings("removed", removed),
 	)
 	return nil
-}
-
-// isTerminal reports whether f is an interactive terminal. A character
-// device is not enough: the null device is one.
-func isTerminal(f *os.File) bool {
-	return term.IsTerminal(int(f.Fd()))
 }

@@ -17,7 +17,7 @@ func openDBIOTestDB(t testing.TB) *badger.DB {
 	t.Helper()
 
 	if cnst.DECODER == nil {
-		decoder, err := zstd.NewReader(nil, zstd.WithDecoderConcurrency(0))
+		decoder, err := cnst.NewDecoder()
 		if err != nil {
 			t.Fatalf("zstd.NewReader: %v", err)
 		}

@@ -7,16 +7,18 @@ import (
 	"errors"
 	"fmt"
 	"indicer/internal/appconfig"
+	"indicer/internal/console"
 	"indicer/internal/lifecycle"
+	"indicer/internal/ui"
 	"indicer/lib/cnst"
 	"indicer/lib/dbmeta"
 	"indicer/lib/dbopen"
 	"io"
 	"os"
+	"strconv"
 	"strings"
 
 	"github.com/alecthomas/kingpin/v2"
-	"github.com/fatih/color"
 )
 
 type pipelineTuning struct {
@@ -143,7 +145,6 @@ func applyRuntimeConfig(parsed string, args []string, cliDef cliDefinition) (pip
 		StoreQueue:        *f.storeQueue,
 		RestoreWorkers:    *f.restoreWorkers,
 		RestoreQueue:      *f.restoreQueue,
-		RestoreProgressMs: *f.restoreProgressMs,
 		RestoreBufferMB:   *f.restoreBufferMB,
 		ListStatus:        *f.listStatus,
 		RankAlpha:         *f.rankAlpha,
@@ -237,10 +238,16 @@ func applyRuntimeConfig(parsed string, args []string, cliDef cliDefinition) (pip
 		cnst.StoreTaskQueueDepth = eff.StoreQueue
 		tuning.storeWorkers, tuning.storeQueue = cnst.GetStorePipelineTuning(cnst.CONTAINERMODE)
 	}
+	if parsed == cliDef.commands.restore.FullCommand() && set[cnst.FlagRestoreProgressMs] {
+		// Retired with the progress display, which samples on its own.
+		tuning.issues = append(tuning.issues, appconfig.Issue{
+			Flag:    cnst.FlagRestoreProgressMs,
+			Message: "is retired and has no effect; the progress display updates on its own",
+		})
+	}
 	if eff.RestoreWorkers > 0 {
 		cnst.RestoreWorkerCount = eff.RestoreWorkers
 		cnst.RestoreTaskQueueDepth = eff.RestoreQueue
-		cnst.RestoreProgressIntervalMs = eff.RestoreProgressMs
 		cnst.RestoreWriteBufferMB = eff.RestoreBufferMB
 		tuning.restoreWorkers, tuning.restoreQueue = cnst.GetRestorePipelineTuning()
 	}
@@ -276,42 +283,104 @@ func reconfigureEncoderForCompressionLevel(workers int) error {
 	return err
 }
 
-func printRuntimeBanner(parsed string, cliDef cliDefinition, tuning pipelineTuning) {
-	if parsed == cliDef.commands.tui.FullCommand() || parsed == cliDef.commands.version.FullCommand() {
+// printRunHeader opens a long operation on stderr: what runs, on what,
+// into which database, and the settings in effect. Quick commands (list,
+// stats, version, ...) print none, so their output stays as it was; nothing
+// here reaches stdout, so JSON on stdout stays pure.
+func printRunHeader(parsed string, cliDef cliDefinition, tuning pipelineTuning) {
+	f, c := cliDef.flags, cliDef.commands
+	h := ui.Header{Version: duesVersion, Command: parsed}
+	switch parsed {
+	case c.store.FullCommand():
+		h.Subject = *f.evipath
+	case c.restore.FullCommand():
+		h.Subject = *f.rhash
+	case c.reindex.FullCommand():
+		switch {
+		case *f.reindexAll:
+			h.Subject = "all evidence"
+		case *f.reindexFailed:
+			h.Subject = "evidence with a failed index"
+		default:
+			h.Subject = strings.Join(*f.reindexIDs, ", ")
+		}
+	case c.nearIn.FullCommand():
+		h.Subject = *f.inhash
+	case c.nearOut.FullCommand():
+		h.Subject = *f.outpath
+	case c.search.FullCommand():
+		h.Subject = *f.query
+	case c.repair.FullCommand():
+		if !*f.repairFix && !*f.repairUpg && !*f.repairVfy {
+			return
+		}
+		var modes []string
+		for _, m := range []struct {
+			on   bool
+			flag string
+		}{{*f.repairVfy, "--verify"}, {*f.repairUpg, "--upgrade"}, {*f.repairFix, "--fix"}, {*f.repairRevrel, "--revrel"}, {*f.repairReindex, "--reindex-failed"}} {
+			if m.on {
+				modes = append(modes, m.flag)
+			}
+		}
+		h.Subject = strings.Join(modes, " ")
+	case c.server.FullCommand():
+		h.Subject = strings.Join(*f.serverListen, ", ")
+	case c.enrich.FullCommand(), c.microExtract.FullCommand():
+	default:
 		return
 	}
-	if tuning.activePreset != "" {
-		color.Cyan("🎛 active preset: %s", tuning.activePreset)
-	}
-
-	if cnst.MEMOPT {
-		color.Green("🍃 running in LOW RESOURCE mode 🍃")
+	if root, err := dbopen.ResolveRoot(*f.dbpath); err == nil {
+		h.Target = root
 	} else {
-		color.Cyan("⚡ running in HIGH PERFORMANCE mode (CPU x2 workers) ⚡")
+		h.Target = *f.dbpath
+	}
+	h.Settings = runSettings(parsed, cliDef, tuning)
+	ui.RunHeader(console.Err(), h)
+}
+
+// runSettings lists the settings in effect for a long operation.
+func runSettings(parsed string, cliDef cliDefinition, tuning pipelineTuning) []ui.Setting {
+	on := func(key, phrase string) ui.Setting { return ui.Setting{Key: key, Value: "on", Phrase: phrase} }
+	var s []ui.Setting
+	if tuning.activePreset != "" {
+		s = append(s, ui.Setting{Key: "preset", Value: tuning.activePreset, Phrase: "preset " + tuning.activePreset})
+	}
+	if cnst.MEMOPT {
+		s = append(s, ui.Setting{Key: "mode", Value: "low-resource", Phrase: "low-resource"})
+	} else {
+		s = append(s, ui.Setting{Key: "mode", Value: "performance", Phrase: "performance"})
 	}
 	if cnst.QUICKOPT {
-		color.Magenta("🛫 quick mode enabled 🛬")
+		s = append(s, on("quick", "quick"))
 	}
 	if cnst.CONTAINERMODE {
-		color.Yellow("📦 container mode enabled 📦")
+		s = append(s, on("container", "container"))
 	}
 	if cnst.CompressLevel != "default" {
-		color.Yellow("🗜  chunk compression level: %s", cnst.CompressLevel)
+		s = append(s, ui.Setting{Key: "compress", Value: cnst.CompressLevel, Phrase: "zstd " + cnst.CompressLevel})
 	}
 	if cnst.ENABLESIMHASH {
-		color.Yellow("🔍 simhash enabled (--simhash)")
+		s = append(s, on("simhash", "simhash"))
 	}
 	if cnst.ENABLEREVREL {
-		color.Yellow("↩ reverse relations enabled (--%s)", cnst.FlagEnableRevRel)
+		s = append(s, on("revrel", "revrel"))
 	}
-
-	if parsed == cliDef.commands.store.FullCommand() {
-		color.Cyan("⚙ store pipeline: workers=%d queue=%d", tuning.storeWorkers, tuning.storeQueue)
-		color.Cyan("⚙ store pipeline mode: %s", cnst.StorePipelineMode)
-		color.Cyan("⚙ store io engine: %s", cnst.StoreIOEngine)
+	n := func(key string, v int, phrase string) ui.Setting {
+		return ui.Setting{Key: key, Value: strconv.Itoa(v), Phrase: fmt.Sprintf(phrase, v)}
 	}
-
-	if parsed == cliDef.commands.restore.FullCommand() {
-		color.Cyan("⚙ restore pipeline: workers=%d queue=%d progress=%s buffer=%dMB", tuning.restoreWorkers, tuning.restoreQueue, cnst.GetRestoreProgressInterval(), cnst.GetRestoreWriteBufferSize()/(1024*1024))
+	switch parsed {
+	case cliDef.commands.store.FullCommand():
+		s = append(s,
+			n("workers", tuning.storeWorkers, "%d workers"),
+			n("queue", tuning.storeQueue, "queue %d"),
+			ui.Setting{Key: "pipeline", Value: cnst.StorePipelineMode, Phrase: "pipeline " + cnst.StorePipelineMode},
+			ui.Setting{Key: "io", Value: cnst.StoreIOEngine, Phrase: cnst.StoreIOEngine + " io"})
+	case cliDef.commands.restore.FullCommand():
+		s = append(s,
+			n("workers", tuning.restoreWorkers, "%d workers"),
+			n("queue", tuning.restoreQueue, "queue %d"),
+			n("buffer_mib", cnst.GetRestoreWriteBufferSize()/(1024*1024), "%d MiB buffer"))
 	}
+	return s
 }

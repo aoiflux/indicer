@@ -13,7 +13,6 @@ import (
 
 	"github.com/dgraph-io/badger/v4"
 	"github.com/google/uuid"
-	"github.com/schollz/progressbar/v3"
 )
 
 const stagedDiskBatchSize = 128
@@ -69,7 +68,9 @@ type stageErr struct {
 // feed -> hashing -> dedup -> batched disk writer.
 func ingestChunksStaged(parentCtx context.Context, p ChunkPass) (res ChunkResult, err error) {
 	shape := shapeFor(p)
-	bar := newPassBar(p)
+	meter := startPass(parentCtx, p)
+	// Registered first, so it runs last: after the simhash writer drained.
+	defer func() { meter.done(err) }()
 
 	var simhashWriter *simhashAsyncWriter
 	if cnst.ENABLESIMHASH {
@@ -122,7 +123,7 @@ func ingestChunksStaged(parentCtx context.Context, p ChunkPass) (res ChunkResult
 	writerWG.Add(1)
 	go func() {
 		defer writerWG.Done()
-		root, werr := stagedDiskWriterLoop(p.ID, shape, batchSize, p.DB, containerMgr, writeCh)
+		root, werr := stagedDiskWriterLoop(p.ID, shape, batchSize, p.DB, containerMgr, writeCh, meter)
 		writerResCh <- stagedWriterResult{root: root, err: werr}
 		if werr != nil {
 			reportErr(werr)
@@ -159,7 +160,7 @@ func ingestChunksStaged(parentCtx context.Context, p ChunkPass) (res ChunkResult
 	go func() {
 		defer ingestWG.Done()
 		defer close(hashCh)
-		n, ierr := ingestStageLoop(ctx, feed, hashCh, bar)
+		n, ierr := ingestStageLoop(ctx, feed, hashCh, meter)
 		chunks = n
 		if ierr != nil {
 			reportErr(ierr)
@@ -179,8 +180,6 @@ func ingestChunksStaged(parentCtx context.Context, p ChunkPass) (res ChunkResult
 	default:
 	}
 
-	finishPassBar(p, bar)
-
 	select {
 	case serr := <-stageErrCh:
 		if firstErr == nil {
@@ -195,7 +194,7 @@ func ingestChunksStaged(parentCtx context.Context, p ChunkPass) (res ChunkResult
 	if writerRes.err != nil {
 		return ChunkResult{}, writerRes.err
 	}
-	return passResult(tap, writerRes.root, chunks), nil
+	return passResult(tap, writerRes.root, chunks, meter), nil
 }
 
 // ingestStageLoop hands the feed's chunks to the hash stage and returns how
@@ -205,7 +204,7 @@ func ingestStageLoop(
 	ctx context.Context,
 	feed *chunkFeed,
 	hashCh chan<- ingestedChunk,
-	bar *progressbar.ProgressBar,
+	meter *passMeter,
 ) (int64, error) {
 	var n int64
 	var err error
@@ -223,7 +222,7 @@ func ingestStageLoop(
 		payload := ingestedChunk{chunk: Chunk{ID: chunkID, Data: c.data}, offset: c.off, fc: c}
 		select {
 		case hashCh <- payload:
-			bar.Add64(int64(len(c.data)))
+			meter.fed(int64(len(c.data)))
 			n++
 		case <-ctx.Done():
 			c.release()
@@ -311,6 +310,7 @@ func stagedDiskWriterLoop(
 	db *badger.DB,
 	containerMgr *fio.ContainerManager,
 	writeCh <-chan stagedWriteChunk,
+	meter *passMeter,
 ) ([]byte, error) {
 	batch, err := util.InitBatch(db)
 	if err != nil {
@@ -343,6 +343,9 @@ func stagedDiskWriterLoop(
 				var err error
 				if cmeta, err = materializeChunkMeta(ckey, item.data, db, containerMgr); err != nil {
 					return err
+				}
+				if cmeta != nil {
+					meter.stored(int64(len(item.data)))
 				}
 			}
 			if err := barrier.record(ckey, cmeta, int64(len(item.data))); err != nil {

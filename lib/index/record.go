@@ -247,6 +247,7 @@ func (ix *indexer) write(op *openPartition, iid []byte, f *structs.IndexedFile, 
 		}
 	}
 	op.indexed.Add(1)
+	ix.phase.Add(1)
 	return nil
 }
 

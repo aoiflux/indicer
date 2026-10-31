@@ -3,6 +3,7 @@ package main
 // The command-line definition: flags and commands.
 
 import (
+	"indicer/internal/ui"
 	"indicer/lib/cnst"
 
 	"github.com/alecthomas/kingpin/v2"
@@ -14,6 +15,14 @@ const flagLogDir = "log-dir"
 
 // cmdReindex names the reindex command.
 const cmdReindex = "reindex"
+
+// The hidden commands: not in help or completion, documented only as
+// extras that --no-fun turns off.
+const (
+	cmdCoffee  = "coffee"
+	cmdFortune = "fortune"
+	cmdMeow    = "mew"
+)
 
 type cliFlags struct {
 	logDir            *string
@@ -31,6 +40,10 @@ type cliFlags struct {
 	containerMode     *bool
 	hierarchicalIndex *bool
 	compressLevel     *string
+	color             *string
+	plain             *bool
+	ci                *bool
+	noFun             *bool
 
 	evipath             *string
 	syncIndex           *bool
@@ -127,6 +140,11 @@ type cliCommands struct {
 	enrich       *kingpin.CmdClause
 	server       *kingpin.CmdClause
 	reset        *kingpin.CmdClause
+
+	// The hidden extras; see docs/CLI_UX.md.
+	coffee  *kingpin.CmdClause
+	fortune *kingpin.CmdClause
+	mew     *kingpin.CmdClause
 }
 
 type cliDefinition struct {
@@ -157,6 +175,12 @@ func newCLIDefinition() cliDefinition {
 	flags.containerMode = app.Flag(cnst.FlagContainerMode, "Use container-based storage (packs multiple chunks into 1GB containers)").Short(cnst.FlagContainerModeShort).Default("false").Bool()
 	flags.hierarchicalIndex = app.Flag(cnst.FlagHierarchicalIndex, "RETIRED: has no effect; chunk locations are always kept in the database").Short(cnst.FlagHierarchicalShort).Hidden().Default("false").Bool()
 	flags.compressLevel = app.Flag(cnst.FlagCompressLevel, "Per-chunk zstd compression level [fast|default|best] (default: best)").Short(cnst.FlagCompressLevelShort).Default("best").String()
+	// The presentation flags are read before parsing too, by ui.PreScan,
+	// because help prints before kingpin runs; kingpin validates them.
+	flags.color = app.Flag(ui.FlagColor, "Colour: auto, always, never, or ansi (only the terminal theme's 16 colours)").Default(string(ui.ColorAuto)).Enum(ui.ColorPolicies...)
+	flags.plain = app.Flag(ui.FlagPlain, "Plain output: no colour, ASCII only, no animation (for screen readers and logs)").Bool()
+	flags.ci = app.Flag(ui.FlagCI, "Behave as if no terminal is attached: plain output, and prompts refuse").Bool()
+	flags.noFun = app.Flag(ui.FlagNoFun, "No easter eggs").Bool()
 
 	commands := cliCommands{}
 	commands.version = app.Command(cnst.CmdVeresion, "Show version details and quick feature overview")
@@ -188,7 +212,7 @@ func newCLIDefinition() cliDefinition {
 	flags.restoreVerifyEWF = commands.restore.Flag("verify-ewf", "Also check a restored E01 evidence against the MD5 and SHA-1 its set recorded at acquisition").Default("false").Bool()
 	flags.restoreWorkers = commands.restore.Flag(cnst.FlagRestoreWorkers, "Override restore worker count (0 = adaptive default)").Short(cnst.FlagRestoreWorkersShort).Default("0").Int()
 	flags.restoreQueue = commands.restore.Flag(cnst.FlagRestoreQueue, "Override restore pipeline queue depth (0 = adaptive default)").Short(cnst.FlagRestoreQueueShort).Default("0").Int()
-	flags.restoreProgressMs = commands.restore.Flag(cnst.FlagRestoreProgressMs, "Restore progress update interval in milliseconds (default: 120)").Short(cnst.FlagRestoreProgressMsShort).Default("120").Int()
+	flags.restoreProgressMs = commands.restore.Flag(cnst.FlagRestoreProgressMs, "RETIRED: has no effect; the progress display samples on its own").Short(cnst.FlagRestoreProgressMsShort).Hidden().Default("0").Int()
 	flags.restoreBufferMB = commands.restore.Flag(cnst.FlagRestoreBufferMB, "Restore output buffer size in MB (0 = mode-aware default: low=32, high=256)").Short(cnst.FlagRestoreBufferMBShort).Default("0").Int()
 	flags.rhash = commands.restore.Arg(cnst.OperandHash, "Hash or ID of the object to restore, as list shows it").String()
 
@@ -254,6 +278,9 @@ func newCLIDefinition() cliDefinition {
 	flags.serverCORSOrigins = commands.server.Flag(flagCORSOrigin, "Also let pages from this origin call the server, as scheme://host[:port] (repeatable)").Strings()
 
 	commands.reset = app.Command(cnst.CmdReset, "Delete the database").Alias(cnst.CmdPurge).Alias(cnst.CmdDelete).Alias(cnst.CmdDestroy)
+	commands.coffee = app.Command(cmdCoffee, "").Hidden()
+	commands.fortune = app.Command(cmdFortune, "").Hidden()
+	commands.mew = app.Command(cmdMeow, "").Hidden()
 	flags.resetYes = commands.reset.Flag("yes", "Delete without asking for the folder name (required when stdin is not a terminal)").Default("false").Bool()
 
 	return cliDefinition{app: app, flags: flags, commands: commands}

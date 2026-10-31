@@ -5,6 +5,7 @@ import (
 	"errors"
 	"indicer/internal/console"
 	"indicer/internal/lifecycle"
+	"indicer/internal/termsafe"
 	"indicer/lib/dbopen"
 	"indicer/lib/enrichment"
 	"indicer/lib/logging"
@@ -55,7 +56,7 @@ func EnrichData(ctx context.Context, opts DBOptions) (err error) {
 	}
 	if incomplete != nil {
 		for _, p := range rep.Problems {
-			console.Errorf("unreadable: %s\n", p)
+			console.Errorf("unreadable: %s\n", termsafe.Line(p))
 		}
 		return &lifecycle.WarningError{Err: incomplete}
 	}

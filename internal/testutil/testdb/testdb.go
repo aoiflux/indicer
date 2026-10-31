@@ -62,33 +62,32 @@ type Globals struct {
 	EnableSimhash, EnableRevrel                           bool
 	StoreIOUringQueueDepth, StoreWorkerCount              int
 	StoreTaskQueueDepth, RestoreWorkerCount               int
-	RestoreTaskQueueDepth, RestoreProgressIntervalMs      int
+	RestoreTaskQueueDepth                                 int
 	RestoreWriteBufferMB                                  int
 }
 
 // Snapshot captures the current globals.
 func Snapshot() Globals {
 	return Globals{
-		HashAlgo:                  cnst.HASHALGO,
-		CompressLevel:             cnst.CompressLevel,
-		StoreHashStrategy:         cnst.StoreHashStrategy,
-		HochoMode:                 cnst.HochoMode,
-		StorePipelineMode:         cnst.StorePipelineMode,
-		StoreIOEngine:             cnst.StoreIOEngine,
-		ChonkSize:                 cnst.ChonkSize,
-		MemOpt:                    cnst.MEMOPT,
-		QuickOpt:                  cnst.QUICKOPT,
-		ContainerMode:             cnst.CONTAINERMODE,
-		LegacyBlockIndex:          cnst.LegacyBlockIndex,
-		EnableSimhash:             cnst.ENABLESIMHASH,
-		EnableRevrel:              cnst.ENABLEREVREL,
-		StoreIOUringQueueDepth:    cnst.StoreIOUringQueueDepth,
-		StoreWorkerCount:          cnst.StoreWorkerCount,
-		StoreTaskQueueDepth:       cnst.StoreTaskQueueDepth,
-		RestoreWorkerCount:        cnst.RestoreWorkerCount,
-		RestoreTaskQueueDepth:     cnst.RestoreTaskQueueDepth,
-		RestoreProgressIntervalMs: cnst.RestoreProgressIntervalMs,
-		RestoreWriteBufferMB:      cnst.RestoreWriteBufferMB,
+		HashAlgo:               cnst.HASHALGO,
+		CompressLevel:          cnst.CompressLevel,
+		StoreHashStrategy:      cnst.StoreHashStrategy,
+		HochoMode:              cnst.HochoMode,
+		StorePipelineMode:      cnst.StorePipelineMode,
+		StoreIOEngine:          cnst.StoreIOEngine,
+		ChonkSize:              cnst.ChonkSize,
+		MemOpt:                 cnst.MEMOPT,
+		QuickOpt:               cnst.QUICKOPT,
+		ContainerMode:          cnst.CONTAINERMODE,
+		LegacyBlockIndex:       cnst.LegacyBlockIndex,
+		EnableSimhash:          cnst.ENABLESIMHASH,
+		EnableRevrel:           cnst.ENABLEREVREL,
+		StoreIOUringQueueDepth: cnst.StoreIOUringQueueDepth,
+		StoreWorkerCount:       cnst.StoreWorkerCount,
+		StoreTaskQueueDepth:    cnst.StoreTaskQueueDepth,
+		RestoreWorkerCount:     cnst.RestoreWorkerCount,
+		RestoreTaskQueueDepth:  cnst.RestoreTaskQueueDepth,
+		RestoreWriteBufferMB:   cnst.RestoreWriteBufferMB,
 	}
 }
 
@@ -112,7 +111,6 @@ func (g Globals) Restore() {
 	cnst.StoreTaskQueueDepth = g.StoreTaskQueueDepth
 	cnst.RestoreWorkerCount = g.RestoreWorkerCount
 	cnst.RestoreTaskQueueDepth = g.RestoreTaskQueueDepth
-	cnst.RestoreProgressIntervalMs = g.RestoreProgressIntervalMs
 	cnst.RestoreWriteBufferMB = g.RestoreWriteBufferMB
 }
 

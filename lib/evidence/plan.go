@@ -3,6 +3,7 @@ package evidence
 import (
 	"context"
 	"fmt"
+	"indicer/internal/progress"
 	"io/fs"
 	"os"
 	"path/filepath"
@@ -48,6 +49,7 @@ type FolderPlan struct {
 func Plan(ctx context.Context, root string, decode bool) (FolderPlan, error) {
 	var plan FolderPlan
 	var files []string
+	seen := progress.CurrentIn(ctx, progress.Files)
 	err := filepath.WalkDir(root, func(path string, d fs.DirEntry, err error) error {
 		if cerr := ctx.Err(); cerr != nil {
 			return cerr
@@ -63,6 +65,7 @@ func Plan(ctx context.Context, root string, decode bool) (FolderPlan, error) {
 		case d.IsDir():
 		case d.Type().IsRegular():
 			files = append(files, path)
+			seen.Add(1)
 		default:
 			plan.Skipped = append(plan.Skipped, PlanSkip{Path: path, Reason: "not a regular file (" + d.Type().String() + ")"})
 		}

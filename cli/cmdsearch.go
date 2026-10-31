@@ -9,12 +9,12 @@ import (
 	"indicer/internal/console"
 	"indicer/internal/lifecycle"
 	"indicer/internal/termsafe"
+	"indicer/internal/ui"
 	"indicer/lib/cnst"
 	"indicer/lib/dbopen"
 	"indicer/lib/logging"
 	"indicer/lib/search"
 
-	"github.com/fatih/color"
 	"go.uber.org/zap"
 )
 
@@ -53,10 +53,11 @@ func SearchCmd(ctx context.Context, opts DBOptions, so SearchOptions) (err error
 	if so.FullText {
 		mode = "full-text candidates, then scan"
 	}
-	color.New(color.FgHiWhite, color.Bold).Fprintf(console.Err(), "[search] Mode: %s\n", mode)
+	p := ui.For(console.Err())
+	fmt.Fprintf(console.Err(), "%s Mode: %s\n", p.Strong(ui.Info, "[search]"), mode)
 	o, err := search.SearchReport(ctx, h.DB, search.Request{
 		Query: so.Query, FullText: so.FullText, RankAlpha: so.RankAlpha,
-		Out: so.Out, Force: so.Force, Progress: true,
+		Out: so.Out, Force: so.Force,
 	})
 	if errors.Is(err, search.ErrReportExists) || errors.Is(err, cnst.ErrSmallQuery) || errors.Is(err, search.ErrQueryTooLong) {
 		return lifecycle.Usagef("%v", err)
@@ -66,7 +67,7 @@ func SearchCmd(ctx context.Context, opts DBOptions, so SearchOptions) (err error
 		return err
 	}
 	for _, n := range o.Notes {
-		color.New(color.FgHiYellow, color.Bold).Fprintf(console.Err(), "[search] %s\n", n)
+		fmt.Fprintf(console.Err(), "%s %s\n", p.Strong(ui.Info, "[search]"), n)
 	}
 	reportSearch(o)
 	console.Println("Done....", time.Since(start))
@@ -86,8 +87,9 @@ func reportSearch(o search.Outcome) {
 	for _, l := range lines {
 		console.Println(l)
 	}
+	pt := ui.For(console.Err())
 	for _, p := range problems {
-		color.New(color.FgHiRed).Fprintf(console.Err(), "[search] not searched: %s\n", termsafe.Line(p))
+		fmt.Fprintf(console.Err(), "%s %s %s\n", pt.Strong(ui.Warning, "[search]"), pt.Strong(ui.Warning, "not searched:"), termsafe.Line(p))
 	}
 }
 

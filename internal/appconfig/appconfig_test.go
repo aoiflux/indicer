@@ -222,14 +222,13 @@ func TestHierarchicalRetired(t *testing.T) {
 
 func TestRestoreClampsWithWarnings(t *testing.T) {
 	eff, issues, err := Resolve(with(base(cnst.CmdRestore), func(r *Raw) {
-		r.RestoreProgressMs = 5
 		r.RestoreBufferMB = 4096
 	}), machine)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if eff.RestoreProgressMs != 20 || eff.RestoreBufferMB != 256 || len(issues) != 2 {
-		t.Fatalf("eff %+v issues %v; want clamped to 20 ms and 256 MB with two warnings", eff, issues)
+	if eff.RestoreBufferMB != 256 || len(issues) != 1 {
+		t.Fatalf("eff %+v issues %v; want clamped to 256 MB with a warning", eff, issues)
 	}
 }
 

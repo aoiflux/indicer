@@ -4,7 +4,8 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"indicer/internal/console"
+	"indicer/internal/progress"
+	"indicer/internal/ui"
 	"indicer/lib/cnst"
 	"indicer/lib/dbio"
 	"indicer/lib/dbmeta"
@@ -12,7 +13,6 @@ import (
 	"indicer/lib/logging"
 	"indicer/lib/store"
 
-	"github.com/fatih/color"
 	"go.uber.org/zap"
 )
 
@@ -51,15 +51,12 @@ func Common(ctx context.Context, opts DBOptions, mode dbopen.Mode, recover bool)
 		return nil, err
 	}
 	for _, n := range h.Notices {
-		fmt.Fprintln(console.Err(), "dues: note:", n)
+		ui.Notef("%s", n)
 	}
 
-	// Recommend container mode for small chunk sizes
+	// Recommend container mode for small chunk sizes.
 	if l := h.Manifest.Layout; h.Created && l.ChunkKiB < 128 && !cnst.CONTAINERMODE {
-		color.Yellow("\n⚠️  RECOMMENDATION: You're using a chunk size of %dKB (< 128KB).", l.ChunkKiB)
-		color.Yellow("   Consider using --container flag for better filesystem efficiency.")
-		color.Yellow("   Container mode packs many small chunks into container files of up to 1 GB.\n")
-		console.Println()
+		ui.Notef("the chunk size is %d KiB (under 128 KiB); --container packs small chunks into container files of up to 1 GB, which suits filesystems better", l.ChunkKiB)
 	}
 
 	if h.ReadOnly || !recover {
@@ -88,11 +85,16 @@ func closeDB(h *dbopen.Handle, errp *error) {
 }
 
 // compactValueLog reclaims value-log space after a command that wrote. The
-// data is already committed, so a failure is only logged (CFG-9).
-func compactValueLog(h *dbopen.Handle, command string) {
+// data is already committed, so a failure is only logged (CFG-9), and shown
+// as a warning on the compaction's progress phase. It can take up to half a
+// minute, so it shows as a phase of its own.
+func compactValueLog(ctx context.Context, h *dbopen.Handle, command string) {
+	ph := progress.Start(ctx, "compact", progress.None, 0)
+	defer ph.Done(nil)
 	n, err := dbio.CompactValueLog(h.DB)
 	if err != nil {
 		logging.GetLogger().Warn(command+" VALUE_LOG_GC_ERROR", zap.Error(err))
+		ph.Warn("the value log was not compacted: " + err.Error())
 		return
 	}
 	logging.GetLogger().Info(command+" VALUE_LOG_GC", zap.Int("files_rewritten", n))
@@ -102,6 +104,6 @@ func compactValueLog(h *dbopen.Handle, command string) {
 // unencrypted database.
 func encryptionNotice(h *dbopen.Handle) {
 	if !h.Manifest.Encrypted() {
-		fmt.Fprintf(console.Err(), "dues: note: database %s is not encrypted\n", h.Root)
+		ui.Notef("database %s is not encrypted", h.Root)
 	}
 }

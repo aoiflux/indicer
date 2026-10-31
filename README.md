@@ -395,7 +395,6 @@ Most-used shortcuts for day-to-day operations:
 | Restore | --filepath            | -f    |
 | Restore | --restore-workers     | -y    |
 | Restore | --restore-queue       | -U    |
-| Restore | --restore-progress-ms | -m    |
 | Restore | --restore-buffer-mb   | -b    |
 | Search  | --rank-alpha          | -r    |
 | Near    | --deep                | -e    |
@@ -426,6 +425,26 @@ Tip: run `dues help <command>` for command-specific short flags and examples.
 Chunk size, hash algorithm, storage and encryption are fixed when a database
 is created. A flag that contradicts an existing database is an error.
 
+### Output
+
+Results (JSON, reports, help) go to stdout; the run header, progress, notes,
+warnings and errors go to stderr, so `dues list | jq` reads pure JSON. On a
+terminal DUES shows colour and a live progress display; on a pipe it writes
+plain lines with no escape codes.
+
+- --color: auto (default), always, never, or ansi (the terminal theme's 16
+  colours only)
+- --plain: no colour, ASCII only, no redraw or animation (for screen readers
+  and logs)
+- --ci: behave as if no terminal is attached; set by itself when `CI`,
+  `GITHUB_ACTIONS` and similar variables are present
+- --no-fun: turn off the hidden extras
+
+The environment variables `DUES_COLOR`, `DUES_PLAIN=1`, `DUES_NO_FUN=1`,
+`DUES_THEME=dark|light`, `NO_COLOR`, `FORCE_COLOR`, `CLICOLOR_FORCE` and
+`TERM=dumb` are honoured. A flag beats a `DUES_*` variable, which beats the
+standard ones. See [docs/CLI_UX.md](docs/CLI_UX.md).
+
 ### Store-specific highlights
 
 - --no-index, -N: store without indexing
@@ -447,7 +466,6 @@ is created. A flag that contradicts an existing database is an error.
 - --verify: full (default), chunks or off
 - --verify-ewf: also check a restored E01 against its stored MD5/SHA-1
 - --restore-workers, -y and --restore-queue, -U: pipeline tuning
-- --restore-progress-ms, -m: progress update interval
 - --restore-buffer-mb, -b: write buffer sizing
 
 ### Search-specific highlights

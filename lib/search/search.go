@@ -7,12 +7,11 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"indicer/internal/progress"
 	"io/fs"
 	"os"
 	"strings"
-	"sync"
 
-	"indicer/internal/console"
 	"indicer/lib/cnst"
 	"indicer/lib/dbio"
 	"indicer/lib/fsx"
@@ -20,7 +19,6 @@ import (
 	"indicer/lib/structs"
 
 	"github.com/dgraph-io/badger/v4"
-	"github.com/schollz/progressbar/v3"
 )
 
 // DefaultReportPath is where a search writes its report when no path is
@@ -67,8 +65,6 @@ type Request struct {
 	// file is replaced only with Force.
 	Out   string
 	Force bool
-	// Progress shows a progress bar.
-	Progress bool
 }
 
 // Outcome is what a search found and where its report went.
@@ -106,8 +102,6 @@ func SearchReport(ctx context.Context, db *badger.DB, req Request) (Outcome, err
 
 	var scores map[string]float64
 	opts := Options{}
-	bar := newProgress(req.Progress)
-	opts.Progress = bar.update
 	if req.FullText {
 		var notes []string
 		var cands map[string]struct{}
@@ -117,15 +111,22 @@ func SearchReport(ctx context.Context, db *badger.DB, req Request) (Outcome, err
 			opts.Candidates, out.Mode = cands, ModeFullText
 		}
 	}
+	name := "search"
+	if out.Mode == ModeFullText {
+		name = "full-text search"
+	}
+	ph := progress.Start(ctx, name, progress.Objects, progress.Unknown)
+	opts.Progress = ph
 	res, err := Run(ctx, db, pq.terms, opts)
 	if err == nil && out.Mode == ModeFullText && len(res.Hits) == 0 {
 		out.Notes = append(out.Notes, "the full-text candidates hold no match; searched every stored object instead")
 		out.Mode, opts.Candidates, scores = ModeScan, nil, nil
-		bar = newProgress(req.Progress)
-		opts.Progress = bar.update
+		ph.Done(nil)
+		ph = progress.Start(ctx, "search", progress.Objects, progress.Unknown)
+		opts.Progress = ph
 		res, err = Run(ctx, db, pq.terms, opts)
 	}
-	bar.finish()
+	ph.Done(err)
 	if err != nil {
 		return out, err
 	}
@@ -401,40 +402,4 @@ func rawID(key []byte) []byte {
 		}
 	}
 	return key
-}
-
-// progress is a progress bar a search fills as objects are read.
-type progress struct {
-	mu  sync.Mutex
-	on  bool
-	bar *progressbar.ProgressBar
-}
-
-func newProgress(on bool) *progress { return &progress{on: on} }
-
-func (p *progress) update(done, total int64) {
-	if !p.on {
-		return
-	}
-	p.mu.Lock()
-	defer p.mu.Unlock()
-	if p.bar == nil {
-		p.bar = progressbar.NewOptions64(max(total, 1),
-			progressbar.OptionSetDescription("Searching...."),
-			progressbar.OptionSetWriter(console.Progress()),
-			progressbar.OptionSetTheme(cnst.CommonProgressBarTheme),
-		)
-	}
-	_ = p.bar.Set64(done)
-}
-
-func (p *progress) finish() {
-	p.mu.Lock()
-	defer p.mu.Unlock()
-	if p.bar != nil {
-		// A progress bar error (an empty input has nothing to show) is not
-		// the search's error.
-		_ = p.bar.Finish()
-		fmt.Fprintln(console.Err())
-	}
 }

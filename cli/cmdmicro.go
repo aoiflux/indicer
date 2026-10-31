@@ -8,7 +8,9 @@ import (
 	"indicer/internal/console"
 	"indicer/internal/faultinject"
 	"indicer/internal/lifecycle"
+	"indicer/internal/progress"
 	"indicer/internal/termsafe"
+	"indicer/internal/ui"
 	"indicer/lib/cnst"
 	"indicer/lib/dbio"
 	"indicer/lib/dbopen"
@@ -160,9 +162,12 @@ func MicroArtefactCmd(ctx context.Context, opts DBOptions, mo MicroOptions) (err
 
 // extractAll extracts from every completed evidence in turn. Evidence whose
 // index is quarantined is skipped, as list and search skip it.
-func extractAll(ctx context.Context, db *badger.DB, service *microartefact.Service, repo *microartefact.GrapheneRepository, force bool, rep *microReport) error {
+func extractAll(ctx context.Context, db *badger.DB, service *microartefact.Service, repo *microartefact.GrapheneRepository, force bool, rep *microReport) (err error) {
+	ph := progress.Start(ctx, "micro", progress.Files, 0)
+	defer func() { ph.Done(err) }()
+	ctx = progress.Within(ctx, ph)
 	var ids [][]byte
-	err := db.View(func(txn *badger.Txn) error {
+	err = db.View(func(txn *badger.Txn) error {
 		opts := badger.DefaultIteratorOptions
 		opts.PrefetchValues = false
 		prefix := []byte(cnst.EviFileNamespace)
@@ -222,6 +227,10 @@ func extractEvidence(ctx context.Context, db *badger.DB, service *microartefact.
 		return err
 	}
 
+	// The total grows by each evidence's files as extraction reaches it.
+	files := progress.CurrentIn(ctx, progress.Files)
+	files.Note(e.Name)
+	files.SetTotal(files.Total() + int64(len(members)))
 	backfilled := false
 	for _, m := range members {
 		if err := ctx.Err(); err != nil {
@@ -246,11 +255,13 @@ func extractEvidence(ctx context.Context, db *badger.DB, service *microartefact.
 		}
 		if !has {
 			rep.fail(m.iid, errors.New("no indexed-file node in the graph after enrichment"))
+			files.Add(1)
 			continue
 		}
 		if err := extractFile(ctx, db, service, repo, evidenceID, e.Name, m.pid, m.pname, m.iid, force, rep); err != nil {
 			return err
 		}
+		files.Add(1)
 	}
 	return nil
 }
@@ -384,17 +395,19 @@ func fileArtefacts(f *microartefact.IndexedFileArtefactView) int {
 }
 
 // printTopFiles renders, after extraction, the files with the most
-// micro-artefacts as an ASCII tree, and says how many more there are.
+// micro-artefacts as a tree, and says how many more there are.
 func printTopFiles(top *graphrepo.TopFiles) {
 	if top == nil || top.Tree == nil || len(top.Tree.EvidenceFiles) == 0 {
 		console.Println("\n  (no micro-artefacts found)")
 		return
 	}
+	p := ui.For(console.Out())
+	g := p.Glyphs()
 	tree := top.Tree
-	console.Printf("\n🔬 Micro-artefacts: %d file(s) hold %d artefact(s); the %d with the most:\n\n", top.Files, top.Artefacts, top.Shown)
+	console.Printf("\n%s %d file(s) hold %d artefact(s); the %d with the most:\n\n", p.Strong(ui.Forensics, "Micro-artefacts:"), top.Files, top.Artefacts, top.Shown)
 	defer func() {
 		if more := top.Files - top.Shown; more > 0 {
-			console.Printf("\n… and %d more file(s) with artefacts; `dues micro list` lists them all.\n", more)
+			console.Printf("\n%s and %d more file(s) with artefacts; %s lists them all.\n", g.Ellipsis, more, p.Paint(ui.Highlight, "`dues micro list`"))
 		}
 	}()
 
@@ -411,27 +424,31 @@ func printTopFiles(top *graphrepo.TopFiles) {
 		if diskName == "" {
 			diskName = disk.ID
 		}
-		console.Printf("🖥  %s  [%d artefact(s)]\n", termsafe.Line(diskName), totalForDisk)
+		console.Printf("%s  [%d artefact(s)]\n", p.Strong(ui.Evidence, termsafe.Line(diskName)), totalForDisk)
 
 		for pi, part := range disk.Partitions {
 			isLastPart := pi == len(disk.Partitions)-1
-			partPfx := cliLevelPfx(isLastDisk)
-			console.Printf("%s%s🗂  %s\n", partPfx, cliBranch(isLastPart), termsafe.Line(partDisplayNameCLI(part.Name, part.ID)))
+			partPfx := cliLevelPfx(g, isLastDisk)
+			console.Printf("%s%s%s\n", partPfx, cliBranch(g, isLastPart), p.Paint(ui.Forensics, termsafe.Line(partDisplayNameCLI(part.Name, part.ID))))
 
 			for fi, file := range part.Files {
 				isLastFile := fi == len(part.Files)-1
-				filePfx := partPfx + cliLevelPfx(isLastPart)
-				console.Printf("%s%s📄 %s  (%s · %d artefact(s))\n",
-					filePfx, cliBranch(isLastFile), termsafe.Line(file.Name),
-					humanReadableSize(file.Size), fileArtefacts(file))
+				filePfx := partPfx + cliLevelPfx(g, isLastPart)
+				console.Printf("%s%s%s  %s\n",
+					filePfx, cliBranch(g, isLastFile), termsafe.Line(file.Name),
+					p.Paint(ui.Muted, fmt.Sprintf("(%s %s %d artefact(s))", humanReadableSize(file.Size), g.Sep, fileArtefacts(file))))
 
 				grouped := cliGroupByKind(file.Artefacts)
 				kinds := cliSortedKinds(grouped)
 				for ki, kind := range kinds {
 					isLastKind := ki == len(kinds)-1
-					kindPfx := filePfx + cliLevelPfx(isLastFile)
+					kindPfx := filePfx + cliLevelPfx(g, isLastFile)
 					arts := grouped[kind]
-					console.Printf("%s%s%s %s  ×%d\n", kindPfx, cliBranch(isLastKind), cliKindIcon(kind), kind, len(arts))
+					role := ui.Forensics
+					if kind == "ioc" {
+						role = ui.Warning
+					}
+					console.Printf("%s%s%s  %s%d\n", kindPfx, cliBranch(g, isLastKind), p.Strong(role, kind), g.Times, len(arts))
 
 					limit := len(arts)
 					truncated := 0
@@ -439,18 +456,18 @@ func printTopFiles(top *graphrepo.TopFiles) {
 						truncated = limit - 3
 						limit = 3
 					}
-					valPfx := kindPfx + cliLevelPfx(isLastKind)
+					valPfx := kindPfx + cliLevelPfx(g, isLastKind)
 					for vi, a := range arts[:limit] {
 						isLastVal := vi == limit-1 && truncated == 0
 						val := a.Value
 						if len(val) > 100 {
-							val = val[:99] + "…"
+							val = val[:99] + g.Ellipsis
 						}
 						// Artefact values are strings found in evidence content.
-						console.Printf("%s%s%s\n", valPfx, cliBranch(isLastVal), termsafe.Line(val))
+						console.Printf("%s%s%s\n", valPfx, cliBranch(g, isLastVal), termsafe.Line(val))
 					}
 					if truncated > 0 {
-						console.Printf("%s└─ … %d more\n", valPfx, truncated)
+						console.Printf("%s%s%s %d more\n", valPfx, g.TreeEnd, g.Ellipsis, truncated)
 					}
 				}
 			}
@@ -463,18 +480,18 @@ func printTopFiles(top *graphrepo.TopFiles) {
 	console.Println()
 }
 
-func cliLevelPfx(isLast bool) string {
+func cliLevelPfx(g ui.Glyphs, isLast bool) string {
 	if isLast {
 		return "    "
 	}
-	return "│   "
+	return g.TreeBar
 }
 
-func cliBranch(isLast bool) string {
+func cliBranch(g ui.Glyphs, isLast bool) string {
 	if isLast {
-		return "└─ "
+		return g.TreeEnd
 	}
-	return "├─ "
+	return g.TreeMid
 }
 
 func partDisplayNameCLI(name, id string) string {
@@ -485,37 +502,6 @@ func partDisplayNameCLI(name, id string) string {
 		return id
 	}
 	return "(unknown)"
-}
-
-func cliKindIcon(kind string) string {
-	switch kind {
-	case "url":
-		return "🌐"
-	case "key_value":
-		return "🔑"
-	case "ioc":
-		return "⚠️ "
-	case "hash", "file_hash":
-		return "🔢"
-	case "pe_metadata":
-		return "⚙️ "
-	case "registry_hive":
-		return "🗃️ "
-	case "evtx":
-		return "📋"
-	case "scheduled_task":
-		return "⏰"
-	case "service":
-		return "🔧"
-	case "browser":
-		return "🌍"
-	case "log_line":
-		return "📜"
-	case "windows_event":
-		return "🪟"
-	default:
-		return "◈ "
-	}
 }
 
 func cliGroupByKind(arts []*microartefact.MicroArtefactNode) map[string][]*microartefact.MicroArtefactNode {

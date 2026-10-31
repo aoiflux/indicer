@@ -24,6 +24,7 @@ package store
 import (
 	"context"
 	"encoding/binary"
+	"errors"
 	"fmt"
 	"hash"
 	"indicer/lib/cnst"
@@ -31,6 +32,7 @@ import (
 	"indicer/lib/fio"
 	"indicer/lib/util"
 	"sync"
+	"sync/atomic"
 
 	"github.com/dgraph-io/badger/v4"
 )
@@ -104,7 +106,9 @@ func (h *hochoAccumulator) finalize() ([]byte, error) {
 // ingestChunksBatchOwner is the production chunk pass.
 func ingestChunksBatchOwner(parentCtx context.Context, p ChunkPass) (res ChunkResult, err error) {
 	shape := shapeFor(p)
-	bar := newPassBar(p)
+	meter := startPass(parentCtx, p)
+	// Registered first, so it runs last: after the simhash writer drained.
+	defer func() { meter.done(err) }()
 
 	var simhashWriter *simhashAsyncWriter
 	if cnst.ENABLESIMHASH {
@@ -138,7 +142,7 @@ func ingestChunksBatchOwner(parentCtx context.Context, p ChunkPass) (res ChunkRe
 
 	var mu sync.Mutex
 	var firstWorkerErr error
-	var chunks int64
+	var chunks atomic.Int64
 	var wg sync.WaitGroup
 	for range shape.workers {
 		wg.Add(1)
@@ -147,17 +151,20 @@ func ingestChunksBatchOwner(parentCtx context.Context, p ChunkPass) (res ChunkRe
 			h := shape.chunkHash()
 			for c := range feed.chunks() {
 				n := int64(len(c.data))
-				werr := batchOwnerHashWorker(ctx, c.off, c.data, h, p.DB, containerMgr, seenChunks, taskCh, simhashWriter)
+				isNew, werr := batchOwnerHashWorker(ctx, c.off, c.data, h, p.DB, containerMgr, seenChunks, taskCh, simhashWriter)
 				c.release()
-				mu.Lock()
 				if werr != nil {
+					mu.Lock()
 					captureFirstWorkerErr(werr, &firstWorkerErr)
+					mu.Unlock()
 					cancel()
-				} else {
-					chunks++
-					bar.Add64(n)
+					continue
 				}
-				mu.Unlock()
+				chunks.Add(1)
+				meter.fed(n)
+				if isNew {
+					meter.stored(n)
+				}
 			}
 		}()
 	}
@@ -166,15 +173,17 @@ func ingestChunksBatchOwner(parentCtx context.Context, p ChunkPass) (res ChunkRe
 
 	close(taskCh)
 	writerRes := <-writerResCh
-	finishPassBar(p, bar)
 
-	if err := passErr(parentCtx, feedErr, firstWorkerErr); err != nil {
+	workerErr := firstWorkerErr
+	if writerRes.err != nil && (workerErr == nil || errors.Is(workerErr, context.Canceled)) {
+		// The writer failing cancelled the workers: its error explains
+		// theirs, and is the one to report.
+		workerErr = writerRes.err
+	}
+	if err := passErr(parentCtx, feedErr, workerErr); err != nil {
 		return ChunkResult{}, err
 	}
-	if writerRes.err != nil {
-		return ChunkResult{}, writerRes.err
-	}
-	return passResult(tap, writerRes.root, chunks), nil
+	return passResult(tap, writerRes.root, chunks.Load(), meter), nil
 }
 
 func mergeDeferredErr(target *error, incoming error) {
@@ -209,7 +218,7 @@ func runBatchOwnerWriter(
 
 // batchOwnerHashWorker hashes the chunk data at idx, stores it unless this
 // pass or the database already did, and hands the result to the writer. h is
-// the worker's own chunk hasher.
+// the worker's own chunk hasher. isNew is true when it stored the chunk.
 func batchOwnerHashWorker(
 	ctx context.Context,
 	idx int64,
@@ -220,7 +229,7 @@ func batchOwnerHashWorker(
 	seenChunks *shardedChunkSet,
 	taskCh chan<- chunkTask,
 	simhashWriter *simhashAsyncWriter,
-) error {
+) (isNew bool, err error) {
 	h.Reset()
 	h.Write(chunkBytes)
 	chash := h.Sum(nil)
@@ -232,17 +241,16 @@ func batchOwnerHashWorker(
 	var cmeta []byte
 	if !seenChunks.loadOrStore(chash) {
 		ckey := util.AppendToBytesSlice(cnst.ChonkNamespace, chash)
-		var err error
 		if cmeta, err = materializeChunkMeta(ckey, chunkBytes, db, containerMgr); err != nil {
-			return err
+			return false, err
 		}
 	}
 
 	select {
 	case taskCh <- chunkTask{index: idx, chash: chash, cmeta: cmeta, size: int64(len(chunkBytes))}:
-		return nil
+		return cmeta != nil, nil
 	case <-ctx.Done():
-		return context.Canceled
+		return false, context.Canceled
 	}
 }
 

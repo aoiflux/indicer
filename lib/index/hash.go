@@ -76,6 +76,7 @@ func (ix *indexer) hashAndWrite(j hashJob, buf []byte) error {
 			head = bytes.Clone(buf[:min(m, headLen)])
 		}
 		h.Write(buf[:m])
+		ix.read.Add(int64(m))
 		if counts != nil {
 			counts.Add(buf[:m])
 		}

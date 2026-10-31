@@ -12,7 +12,9 @@ import (
 	"fmt"
 	"os"
 	"os/signal"
+	"slices"
 	"sync"
+	"time"
 )
 
 // Exit codes. Scripts and the FFI rely on these values; they never change.
@@ -59,9 +61,51 @@ func (e *InternalError) Unwrap() error { return e.Err }
 // forceExit ends the process on a second signal. Tests replace it.
 var forceExit = os.Exit
 
+// forceExitBudget is how long the force-exit hooks may take in all.
+var forceExitBudget = 200 * time.Millisecond
+
+var (
+	hooksMu   sync.Mutex
+	exitHooks []*func()
+)
+
+// OnForceExit registers fn to run when a second signal ends the process at
+// once, so the terminal is left usable: cursor shown, console modes back.
+// Hooks run last registered first, and get forceExitBudget in all before
+// the process exits anyway. remove unregisters fn.
+func OnForceExit(fn func()) (remove func()) {
+	h := &fn
+	hooksMu.Lock()
+	exitHooks = append(exitHooks, h)
+	hooksMu.Unlock()
+	return func() {
+		hooksMu.Lock()
+		defer hooksMu.Unlock()
+		exitHooks = slices.DeleteFunc(exitHooks, func(x *func()) bool { return x == h })
+	}
+}
+
+func runForceExitHooks() {
+	hooksMu.Lock()
+	hooks := slices.Clone(exitHooks)
+	hooksMu.Unlock()
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		for _, h := range slices.Backward(hooks) {
+			(*h)()
+		}
+	}()
+	select {
+	case <-done:
+	case <-time.After(forceExitBudget):
+	}
+}
+
 // Context returns a context cancelled by the first interrupt or termination
 // signal, and a stop function that releases the signal handlers. A second
-// signal exits the process immediately with the matching code.
+// signal runs the OnForceExit hooks and exits the process at once with the
+// matching code.
 func Context(parent context.Context) (context.Context, func()) {
 	ctx, cancel := context.WithCancelCause(parent)
 	ch := make(chan os.Signal, 2)
@@ -69,29 +113,34 @@ func Context(parent context.Context) (context.Context, func()) {
 
 	done := make(chan struct{})
 	var once sync.Once
-	go func() {
-		var first os.Signal
-		for {
-			select {
-			case sig := <-ch:
-				if first == nil {
-					first = sig
-					cancel(&SignalError{Signal: sig})
-					continue
-				}
-				forceExit(CodeForSignal(sig))
-				return
-			case <-done:
-				return
-			}
-		}
-	}()
+	go watch(ch, cancel, done)
 	return ctx, func() {
 		once.Do(func() {
 			signal.Stop(ch)
 			close(done)
 			cancel(nil)
 		})
+	}
+}
+
+// watch cancels the command on the first signal and ends the process on the
+// second.
+func watch(ch <-chan os.Signal, cancel context.CancelCauseFunc, done <-chan struct{}) {
+	var first os.Signal
+	for {
+		select {
+		case sig := <-ch:
+			if first == nil {
+				first = sig
+				cancel(&SignalError{Signal: sig})
+				continue
+			}
+			runForceExitHooks()
+			forceExit(CodeForSignal(sig))
+			return
+		case <-done:
+			return
+		}
 	}
 }
 
@@ -114,6 +163,18 @@ func ExitCode(err error) int {
 		return ExitUsage
 	}
 	return ExitFailure
+}
+
+// IsWarning reports whether err only says that a completed operation needs
+// attention: it exits with ExitUsage because of a WarningError, not because
+// of how DUES was invoked.
+func IsWarning(err error) bool {
+	if ExitCode(err) != ExitUsage {
+		return false
+	}
+	var usage *UsageError
+	var warning *WarningError
+	return errors.As(err, &warning) && !errors.As(err, &usage)
 }
 
 // Cause returns the reason ctx ended: the SignalError for a signal, or err

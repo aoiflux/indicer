@@ -6,6 +6,7 @@ import (
 	"encoding/base64"
 	"errors"
 	"fmt"
+	"indicer/internal/progress"
 	"time"
 
 	"indicer/internal/console"
@@ -46,7 +47,7 @@ func ReindexData(ctx context.Context, opts DBOptions, ro ReindexOptions) (err er
 	}
 	defer closeDB(h, &err)
 	err = reindexEvidence(ctx, h.DB, ro)
-	compactValueLog(h, "ReindexData")
+	compactValueLog(ctx, h, "ReindexData")
 	return err
 }
 
@@ -57,7 +58,7 @@ type reindexTarget struct {
 
 // reindexEvidence reindexes each selected evidence in turn. One that fails
 // does not stop the rest; an index left incomplete exits 2.
-func reindexEvidence(ctx context.Context, db *badger.DB, ro ReindexOptions) error {
+func reindexEvidence(ctx context.Context, db *badger.DB, ro ReindexOptions) (err error) {
 	targets, err := reindexTargets(db, ro)
 	if err != nil {
 		return err
@@ -72,13 +73,19 @@ func reindexEvidence(ctx context.Context, db *badger.DB, ro ReindexOptions) erro
 	var warned int
 	var failures []string
 	var firstErr error
+	all := progress.Start(ctx, "evidence", progress.Evidence, int64(len(targets)))
+	failed := all.Meter("failed", progress.Evidence)
+	defer func() { all.Done(err) }()
 	for _, t := range targets {
 		if err := ctx.Err(); err != nil {
 			return err
 		}
 		start := time.Now()
 		console.Printf("\nReindexing %s (%s)\n", termsafe.Line(t.name), base64.StdEncoding.EncodeToString(t.id))
-		res, err := ingest.Reindex(ctx, db, t.id, ingest.ReindexOptions{Source: ro.Source, FTS: ro.FTS, Enrich: ro.Enrich})
+		one := progress.Start(progress.Within(ctx, all), t.name, progress.None, 0)
+		res, err := ingest.Reindex(progress.Within(ctx, one), db, t.id, ingest.ReindexOptions{Source: ro.Source, FTS: ro.FTS, Enrich: ro.Enrich})
+		one.Done(err)
+		all.Add(1)
 		if res.Index != nil {
 			reportIngest(console.Out(), res, time.Since(start))
 		}
@@ -97,6 +104,7 @@ func reindexEvidence(ctx context.Context, db *badger.DB, ro ReindexOptions) erro
 				return cerr
 			}
 			failures = append(failures, fmt.Sprintf("%s: %v", t.name, err))
+			failed.Add(1)
 			if firstErr == nil {
 				firstErr = err
 			}

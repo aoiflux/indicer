@@ -13,8 +13,13 @@ stop, and the rules its screens follow.
    runs and the root lock is held for the session.
 2. Silences terminal output once, for the whole session (`console.Quiet`):
    anything the storage code prints would draw over the TUI. It used to be
-   silenced per action, which raced when actions ran side by side.
-3. Runs `tui.Run(ctx, tui.Config{Info, Actions})` with the command's context.
+   silenced per action, which raced when actions ran side by side. It also
+   removes any progress reporter from the context (`progress.Without`), so
+   actions report no progress.
+3. Runs `tui.Run(ctx, tui.Config{Info, Actions, Profile})` with the command's
+   context. `Profile` is the colour depth the command line resolved
+   (`--color`, `NO_COLOR`, ...; see [CLI_UX.md](CLI_UX.md)) when stdout is a
+   terminal, so the TUI follows the same switches.
 4. When `Run` returns, restores output, compacts the value log if anything
    was stored, and closes the database. If `Run` returned `tui.ErrJobsRunning`,
    it does none of this: the database is left unclosed (and output silenced)
@@ -144,6 +149,9 @@ These are the defects the W11 rewrite fixed; keep them fixed.
   typed, and `Enter` in that field moves to No. A restore over an existing
   file asks first (TUI-2).
 - **Cancel goes back; it never quits** (TUI-4).
+- **Colours come from the CLI's roles** (`tui/tuistyles.go`, `internal/ui`),
+  in their dark-background values, because the TUI assumes a dark background.
+  Light-background support and replacing the menu's emoji are follow-ups.
 
 ## Tests
 

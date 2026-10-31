@@ -12,6 +12,7 @@ import (
 	"encoding/base64"
 	"errors"
 	"fmt"
+	"indicer/internal/progress"
 	"io/fs"
 	"os"
 	"sync"
@@ -270,6 +271,7 @@ func (r *run) matchQuery(ctx context.Context, q *query) error {
 		return err
 	}
 	r.cov.QueryChunks, r.cov.DistinctChunks, r.cov.UnstoredSpans = q.occurrences, len(q.chunks), q.unstored
+	ph := progress.Start(ctx, "match", progress.Unit("chunks"), int64(len(q.chunks)))
 	g, gctx := safe.WithContext(ctx)
 	g.SetLimit(r.workers)
 	for _, qc := range q.chunks {
@@ -278,10 +280,13 @@ func (r *run) matchQuery(ctx context.Context, q *query) error {
 			if found {
 				qc.matched.Store(true)
 			}
+			ph.Add(1)
 			return err
 		})
 	}
-	if err := g.Wait(); err != nil {
+	err := g.Wait()
+	ph.Done(err)
+	if err != nil {
 		return err
 	}
 	if r.opts.Deep {

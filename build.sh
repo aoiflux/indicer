@@ -65,6 +65,14 @@ mkdir -p "$OUTPUT_DIR"
 OUTPUT_ABS="$(cd "$OUTPUT_DIR" && pwd)"
 
 LDFLAGS="-s -w -buildid="
+# The commit the build comes from, shown by `dues version` and the banner;
+# "-dirty" marks uncommitted changes. A tree without git builds without it.
+if COMMIT=$(git -C "$REPO_ROOT" rev-parse --short HEAD 2>/dev/null); then
+    if [ -n "$(git -C "$REPO_ROOT" status --porcelain 2>/dev/null)" ]; then
+        COMMIT="$COMMIT-dirty"
+    fi
+    LDFLAGS="$LDFLAGS -X main.buildCommit=$COMMIT"
+fi
 
 PGO_FILE="$REPO_ROOT/default.pgo"
 if [ -f "$PGO_FILE" ]; then

@@ -62,6 +62,24 @@ func (p Painter) Strong(r Role, s string) string { return p.style(r, true, s) }
 // Bold is bold text in the terminal's own colour.
 func (p Painter) Bold(s string) string { return p.style(Plain, true, s) }
 
+// Faint is secondary text that only passes by: the detail rows under a live
+// progress display, a bar's empty track. On a known background it is the
+// muted colour. On an unknown one it is faint (SGR 2), which dims the
+// terminal's own colour and so is never invisible; a terminal that ignores
+// it shows normal text. NO_COLOR keeps it, as it keeps bold.
+func (p Painter) Faint(s string) string {
+	if s == "" || p.profile < colorprofile.ASCII {
+		return s
+	}
+	codes := "2"
+	if p.theme != ThemeUnknown {
+		if c := sgr(p.profile, p.theme, Muted); c != "" {
+			codes = c
+		}
+	}
+	return "\x1b[" + codes + "m" + s + "\x1b[0m"
+}
+
 func (p Painter) style(r Role, bold bool, s string) string {
 	if s == "" || p.profile < colorprofile.ASCII {
 		return s

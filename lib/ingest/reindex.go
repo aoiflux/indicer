@@ -71,14 +71,10 @@ func Reindex(ctx context.Context, db *badger.DB, eid []byte, opts ReindexOptions
 	defer closeImg()
 
 	req := Request{FTS: opts.FTS || hasFeature(e, "fts"), Enrich: opts.Enrich || hasFeature(e, "enrich")}
-	steps := []string{"delete old index", "index"}
-	if req.FTS {
-		steps = append(steps, "full-text")
-	}
-	if req.Enrich {
-		steps = append(steps, "entropy", "graph")
-	}
-	progress.Plan(ctx, steps...)
+	progress.PlanSteps(ctx, append([]progress.Step{
+		{Name: "delete old index", Unit: progress.Files, Total: progress.Unknown},
+		{Name: "index", Unit: progress.Files, Total: progress.Unknown},
+	}, featureSteps(req, e.Size)...)...)
 
 	// The previous index goes first, full-text documents with it, so records
 	// a changed parser no longer finds do not linger.
@@ -106,6 +102,8 @@ func Reindex(ctx context.Context, db *badger.DB, eid []byte, opts ReindexOptions
 		if err := features(ctx, db, eid, req); err != nil {
 			info.State, info.Reason, idxErr = structs.IndexPartial, err.Error(), err
 		}
+	} else {
+		skipFeatures(ctx, req, "index "+string(info.State))
 	}
 	if err := setIndexInfo(db, eid, info); err != nil {
 		return res, err

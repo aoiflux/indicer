@@ -233,6 +233,7 @@ and boundaries:
 | Package | Use it for |
 |---|---|
 | `internal/testutil` | I/O fault injectors (`FailingReaderAt`, `ShortReaderAt`, `NewENOSPCWriter`, `ShortWriter`, `ErrCloser`, slow and blocking readers); deterministic data (`RandomBytes`, `WriteRandomFile`); `TreeHash`, `AssertNoFilesMatching` and `Golden`; environment gates (`RequireEnvDir`, `RequireLinuxNonRoot`, `LongTest`); leak and memory checks (`NoLeakedGoroutines`, `AllocBelow`, `PeakHeap`); `FakeClock`; subprocess scenarios (`RunChildScenarios`, `StartChild`, `WaitForPoint`, `Kill`, `Interrupt`); the built binary (`BuildDues`, `BuildBinary`, `RunDues`, `RunDuesEnv`, `StartDues`; the build functions take build tags); `ChildEnv`, the environment a child runs with, without the colour and presentation variables (`NO_COLOR`, `FORCE_COLOR`, `CLICOLOR_FORCE`, `DUES_COLOR`, `DUES_PLAIN`, `DUES_NO_FUN`, `DUES_THEME`); and `HashFile`, `HashRange` |
+| `internal/testutil/vtscreen` | A small terminal for asserting what a person would see (below) |
 | `internal/testutil/testdb` | Opening throwaway databases. `ForEachMode` runs a test once per storage mode (default, encrypted, quick, container). Every helper snapshots and restores the process-wide layout globals, so tests using it must not call `t.Parallel`. |
 | `internal/faultinject` | Making the code fail at named points (see below) |
 
@@ -242,11 +243,31 @@ escape code, unless the run asked for colour (`--color=always`,
 `FORCE_COLOR=1`). Parse `list` and `micro list` stdout as one JSON document;
 the run header and notes are on stderr.
 
-Terminal output itself is tested in `internal/ui` against a small terminal
-emulator (`vtscreen_test.go`). It applies `\r`, `\n`, cursor-up, line erase
-and SGR, fails on any other escape sequence, and lets a test assert the final
-screen. A real-terminal check needs a PTY: under WSL,
-`script -qec "dues store <file> --dbpath <db>" /dev/null`.
+Terminal output itself is tested against a small terminal emulator,
+`internal/testutil/vtscreen`:
+- It applies `\r`, `\n`, cursor-up, line and display erase, cursor show and
+  hide, and SGR, and lets a test assert the final screen, the cursor and the
+  raw bytes.
+- It fails the test on any other escape sequence, on one left unfinished
+  (`Finish`), and on text that would wrap at the right margin.
+- `AllowTaskbar` accepts OSC 9;4 taskbar progress ended by ST (never BEL)
+  and records the states; `AllowWrap` wraps text as a terminal does, for a
+  whole run whose report lines may be long.
+
+The `internal/ui` tests draw every frame on it. Two tests in `internal/e2e`
+run the binary on a real pseudo-terminal through util-linux
+`script -qec "stty cols N rows 30; exec dues ..." /dev/null`:
+- `TestLiveDisplayInPTY` stores a file at 100 and 50 columns and checks the
+  screen a person is left with: the report once, each step's row once, the
+  footer last, nothing left of the live display, the cursor shown. It also
+  checks `dues version` (the banner) and `dues --version` (one line).
+- `TestTaskbarInPTY` (`-tags faultinject`) holds a store for two seconds
+  before its commit, so the display redraws, and checks that under
+  `WT_SESSION` the taskbar progress ends cleared, and that elsewhere there is
+  none.
+
+They skip without util-linux `script` (Windows, macOS, `-short`). The WSL
+suite sets `DUES_REQUIRE_PTY=1`, which turns that skip into a failure.
 
 ### Fault injection
 

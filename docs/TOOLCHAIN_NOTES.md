@@ -34,8 +34,9 @@ and `darwin`, each on `amd64` and `arm64`. Every build uses:
 - `-pgo default.pgo` when the repository root has a `default.pgo` (none is
   committed);
 - `-X main.buildCommit=<short commit>`, with `-dirty` when the tree has
-  uncommitted changes. `dues version` and the banner show it. A tree without
-  git builds without it.
+  uncommitted changes. The banner shows it, and the identity line
+  (`dues --version`, and `dues version` on a pipe) carries it as semver build
+  metadata: `0.39.0+74431db`. A tree without git builds without it.
 
 The `netgo` and `osusergo` tags select Go's own DNS resolver and user lookup.
 

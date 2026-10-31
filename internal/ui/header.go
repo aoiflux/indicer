@@ -5,6 +5,7 @@ import (
 	"io"
 	"strings"
 
+	"indicer/internal/console"
 	"indicer/internal/termsafe"
 )
 
@@ -62,12 +63,14 @@ func RunHeader(w io.Writer, h Header) {
 	if target != "" {
 		b.WriteString(" " + p.Paint(Muted, g.Arrow) + " " + p.Paint(Evidence, target))
 	}
-	fmt.Fprintln(w, b.String())
+	// Broken at spaces to fit the terminal, so a long path never wraps.
+	width, _ := console.Size()
+	fmt.Fprintln(w, wrapLine(b.String(), width-1, "  "))
 	if len(h.Settings) > 0 {
 		ph := make([]string, len(h.Settings))
 		for i, s := range h.Settings {
 			ph[i] = s.Phrase
 		}
-		fmt.Fprintln(w, "  "+p.Paint(Muted, strings.Join(ph, " "+g.Sep+" ")))
+		fmt.Fprintln(w, wrapLine("  "+p.Paint(Muted, strings.Join(ph, " "+g.Sep+" ")), width-1, "  "))
 	}
 }

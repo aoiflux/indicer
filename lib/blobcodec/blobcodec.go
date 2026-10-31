@@ -211,6 +211,17 @@ func Register(db *badger.DB, c Codec) { registry.Store(db, c) }
 // Unregister forgets db's codec. dbopen calls it when the database closes.
 func Unregister(db *badger.DB) { registry.Delete(db) }
 
+// Sealed reports whether db's chunks are encrypted.
+func Sealed(db *badger.DB) bool {
+	switch c := For(db).(type) {
+	case v2:
+		return c.aead != nil
+	case legacySealed:
+		return len(c.key) > 0
+	}
+	return false
+}
+
 // For returns db's codec. A database dbopen did not open gets the legacy codec
 // the globals imply: raw in quick mode, otherwise sealed with badger's key.
 func For(db *badger.DB) Codec {

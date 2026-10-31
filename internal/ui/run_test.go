@@ -12,8 +12,7 @@ import (
 	"time"
 
 	"indicer/internal/progress"
-
-	"github.com/charmbracelet/x/ansi"
+	"indicer/internal/testutil/vtscreen"
 )
 
 type fakeClock struct {
@@ -43,8 +42,22 @@ type harness struct {
 }
 
 func newHarness(t *testing.T, mode renderMode, width, height int, shared bool) *harness {
+	return newHarnessWith(t, mode, width, height, shared, false)
+}
+
+// newTaskbarHarness is a live harness on a terminal that shows progress on
+// its tab, from a second in.
+func newTaskbarHarness(t *testing.T) *harness {
+	return newHarnessWith(t, renderLive, 100, 24, true, true)
+}
+
+func newHarnessWith(t *testing.T, mode renderMode, width, height int, shared, taskbar bool) *harness {
 	h := &harness{t: t, clock: &fakeClock{t: time.Date(2026, 10, 30, 12, 0, 0, 0, time.UTC)}, stdout: new(bytes.Buffer), plain: new(bytes.Buffer)}
-	h.scr = newScreen(t, width)
+	var opts []vtscreen.Option
+	if taskbar {
+		opts = append(opts, vtscreen.AllowTaskbar())
+	}
+	h.scr = newScreen(t, width, opts...)
 	var progressW io.Writer = h.scr
 	var errRaw io.Writer = h.scr
 	outRaw := io.Writer(h.stdout)
@@ -58,7 +71,7 @@ func newHarness(t *testing.T, mode renderMode, width, height int, shared bool) *
 		mode: mode, now: h.clock.now, tick: 100 * time.Millisecond, heartbeat: 15 * time.Second, hold: 250 * time.Millisecond,
 		size:     func() (int, int) { return width, height },
 		painter:  Painter{glyphs: GlyphsFull, decorated: mode == renderLive},
-		progress: progressW, shared: shared, manual: true,
+		progress: progressW, shared: shared, manual: true, taskbar: taskbar, taskbarDelay: time.Second,
 		wrap: func(f func(out, err io.Writer) (io.Writer, io.Writer)) func() {
 			h.out, h.errw = f(outRaw, errRaw)
 			return func() { h.restored = true }
@@ -100,8 +113,8 @@ func TestLiveSinglePhase(t *testing.T) {
 		fresh.Add(1 << 29)
 		h.step(time.Second)
 	}
-	h.screenHas("store", "75%", "3.00/4.00 GiB", "ETA")
-	if !h.scr.hidden {
+	h.screenHas("storing", "75%", "3.00/4.00 GiB", "ETA")
+	if !h.scr.Hidden() {
 		t.Error("cursor not hidden while drawing")
 	}
 	p.Add(1 << 30)
@@ -109,7 +122,7 @@ func TestLiveSinglePhase(t *testing.T) {
 	p.Done(nil)
 	h.clock.add(time.Second)
 	h.rn.stop(nil)
-	lines := h.scr.text()
+	lines := h.scr.Text()
 	if len(lines) != 2 {
 		t.Fatalf("final screen:\n%s", h.scr)
 	}
@@ -120,7 +133,7 @@ func TestLiveSinglePhase(t *testing.T) {
 		!strings.Contains(lines[1], "new 1.50 GiB") || !strings.Contains(lines[1], "deduplicated 2.50 GiB (62%)") {
 		t.Errorf("footer %q", lines[1])
 	}
-	if h.scr.hidden || !h.restored {
+	if h.scr.Hidden() || !h.restored {
 		t.Error("cursor left hidden or sinks not restored")
 	}
 }
@@ -155,7 +168,7 @@ func TestLiveWritesGoAboveTheRegion(t *testing.T) {
 	p.Done(nil)
 	h.rn.stop(nil)
 	want := []string{"Storing a.dd", "dues: note: half a line, then the rest", "Stored as evidence X"}
-	lines := h.scr.text()
+	lines := h.scr.Text()
 	if len(lines) < 5 {
 		t.Fatalf("screen:\n%s", h.scr)
 	}
@@ -180,7 +193,7 @@ func TestLivePromptHoldsTheScreen(t *testing.T) {
 		t.Fatal("a partial line showed before the hold time")
 	}
 	h.step(300 * time.Millisecond)
-	if !strings.HasSuffix(h.scr.String(), "Delete the block files? [y/N]") || h.scr.hidden {
+	if !strings.HasSuffix(h.scr.String(), "Delete the block files? [y/N]") || h.scr.Hidden() {
 		t.Fatalf("prompt not shown with the cursor:\n%s", h.scr)
 	}
 	before := h.scr.String()
@@ -193,7 +206,7 @@ func TestLivePromptHoldsTheScreen(t *testing.T) {
 	p.Done(nil)
 	h.step(time.Second)
 	h.rn.stop(nil)
-	lines := h.scr.text()
+	lines := h.scr.Text()
 	if lines[len(lines)-1][:len("✓ done")] != "✓ done" || !strings.Contains(h.scr.String(), "[y/N]") {
 		t.Fatalf("after the prompt:\n%s", h.scr)
 	}
@@ -226,7 +239,7 @@ func TestPlainLines(t *testing.T) {
 		"dues: store: start, 4.00 GiB\n",
 		"dues: index: start\n",
 		"dues: store: 25%, 1.00 of 4.00 GiB, ",
-		"dues: index: 1,200 files, ",
+		"; index 1,200 files\n",
 		"partial line\n",
 		"dues: store: done, 4.00 GiB in 16.0s, ",
 		"dues: index: failed after 1,200 files: no partitions\n",
@@ -240,41 +253,49 @@ func TestPlainLines(t *testing.T) {
 	if strings.ContainsAny(got, "\x1b\r{}") {
 		t.Errorf("plain output has an escape, a carriage return or a brace:\n%q", got)
 	}
+	if strings.Contains(got, "dues: index: 1,200") {
+		t.Errorf("a second heartbeat line for the step beside the focus:\n%s", got)
+	}
 }
 
-func TestRowWidths(t *testing.T) {
-	h := newHarness(t, renderLive, 120, 24, false)
-	p := progress.Start(h.ctx, "store", progress.Bytes, 4<<30)
-	p.Meter("new", progress.Bytes).Add(1 << 30)
-	p.Add(2 << 30)
-	h.step(3 * time.Second)
-	snap := h.rn.rep.Snapshot(0)
-	v := snap.Phases[0]
-	cases := []struct {
-		width     int
-		want, not []string
-	}{
-		{119, []string{"━", "50%", "2.00/4.00 GiB", "/s", "new 1.00 GiB", "ETA"}, nil},
-		{79, []string{"━", "50%", "ETA"}, []string{"new 1.00 GiB"}},
-		{59, []string{"━", "50%", "ETA"}, []string{"new", "2.00/4.00"}},
-		{39, []string{"50%", "ETA"}, nil},
-		{29, []string{"50%"}, nil},
+// Plain heartbeats come every 15 seconds at first, then every tenth of the
+// time run, and never more than five minutes apart: a two-hour store prints
+// a few dozen, not hundreds.
+func TestPlainCadence(t *testing.T) {
+	h := newHarness(t, renderPlain, 80, 24, false)
+	s := progress.Start(h.ctx, "store", progress.Bytes, 1<<40)
+	var beats []time.Duration
+	start := h.clock.now()
+	for range 2 * 3600 {
+		s.Add(1 << 26)
+		before := h.plain.Len()
+		h.step(time.Second)
+		if chunk := h.plain.String()[before:]; strings.Contains(chunk, "dues: store: ") && strings.Contains(chunk, "%, ") {
+			beats = append(beats, h.clock.now().Sub(start))
+		}
 	}
-	for _, c := range cases {
-		row := h.rn.row(v, 0, 5, h.clock.now(), c.width)
-		if w := ansi.StringWidth(row); w > c.width {
-			t.Errorf("width %d: row is %d wide: %q", c.width, w, row)
+	if len(beats) < 30 || len(beats) > 70 || beats[0] != 15*time.Second {
+		t.Fatalf("%d beats, first at %v", len(beats), beats[0])
+	}
+	for i := 1; i < len(beats); i++ {
+		if gap := beats[i] - beats[i-1]; gap < 15*time.Second || gap > 5*time.Minute+time.Second {
+			t.Errorf("beat %d comes %v after the one before", i, gap)
 		}
-		for _, s := range c.want {
-			if !strings.Contains(row, s) {
-				t.Errorf("width %d: row %q lacks %q", c.width, row, s)
-			}
-		}
-		for _, s := range c.not {
-			if strings.Contains(row, s) {
-				t.Errorf("width %d: row %q has %q", c.width, row, s)
-			}
-		}
+	}
+	h.rn.stop(nil)
+}
+
+// A folder's heartbeat names the item's step and counts the items.
+func TestPlainItemsBeat(t *testing.T) {
+	h := newHarness(t, renderPlain, 80, 24, false)
+	all := progress.Start(h.ctx, "evidence", progress.Evidence, 4)
+	item := progress.Start(progress.Within(h.ctx, all), "b.dd", progress.None, 0)
+	st := progress.Start(progress.Within(h.ctx, item), "store", progress.Bytes, 100)
+	st.Add(50)
+	h.step(16 * time.Second)
+	if got := h.plain.String(); !strings.Contains(got, "dues: evidence / b.dd / store: 50%, 50 of 100 B, ") ||
+		!strings.Contains(got, ", overall 12% (0 of 4 evidence)") {
+		t.Fatalf("plain output:\n%s", got)
 	}
 	h.rn.stop(nil)
 }
@@ -295,7 +316,7 @@ func TestFolderItemsGoToScrollback(t *testing.T) {
 	}
 	all.Done(nil)
 	h.rn.stop(nil)
-	lines := h.scr.text()
+	lines := h.scr.Text()
 	if len(lines) != 4 || !strings.HasPrefix(lines[0], "    ✓ a.dd") || !strings.HasPrefix(lines[1], "    ✓ b.dd") ||
 		!strings.HasPrefix(lines[2], "  ✓ evidence") || !strings.HasPrefix(lines[3], "✓ done") {
 		t.Fatalf("folder screen:\n%s", h.scr)
@@ -317,8 +338,8 @@ func TestPanicRestoresTheTerminal(t *testing.T) {
 		if recover() == nil {
 			t.Fatal("the panic did not go on")
 		}
-		if scr.hidden || !restored || !strings.Contains(scr.String(), "failed") {
-			t.Fatalf("after a panic: hidden %v restored %v\n%s", scr.hidden, restored, scr)
+		if scr.Hidden() || !restored || !strings.Contains(scr.String(), "failed") {
+			t.Fatalf("after a panic: hidden %v restored %v\n%s", scr.Hidden(), restored, scr)
 		}
 	}()
 	_ = run(context.Background(), cfg, func(ctx context.Context) error {
@@ -334,7 +355,7 @@ func TestEmergency(t *testing.T) {
 	h.step(time.Second)
 	h.rn.emergency()
 	h.screenHas("■ store", "interrupted", "stopped at once")
-	if h.scr.hidden {
+	if h.scr.Hidden() {
 		t.Fatal("cursor hidden after a forced exit")
 	}
 	h.rn.stop(nil) // a later stop changes nothing

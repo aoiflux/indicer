@@ -10,8 +10,9 @@ of `internal/console` (the only writer to the terminal).
 
 1. **Results on stdout, everything else on stderr.** Results are JSON
    (`list`, `micro list`), reports (`store`, `restore`, `reindex`, `stats`),
-   help and version text. The run header, progress, notes, warnings, errors
-   and the occasional extra go to stderr. `dues list | jq` reads pure JSON.
+   help and version text, including the identity line `dues --version`
+   prints. The run header, progress, notes, warnings, errors and the
+   occasional extra go to stderr. `dues list | jq` reads pure JSON.
 2. **Piped output is the contract.** On a terminal stdout differs from piped
    stdout only by colour codes; marks, art and layout appear on stderr, or in
    help and version on a terminal. Nothing on a pipe holds an escape code
@@ -74,6 +75,15 @@ counts); sentences stay in the terminal's own foreground.
   - the unknown-background palette reaches 3:1 on all eleven. It is used bold,
     on marks and short tokens.
 - Muted text keeps the terminal's own colour when the background is unknown.
+- **Faint** is only for the progress display's passing details: the step
+  rows under the overall row, the `next:` row and a bar's empty track.
+  - On a known background it is the muted colour. On an unknown one it is
+    SGR 2 (faint), which dims the terminal's own colour, so it is never
+    invisible.
+  - A terminal that ignores SGR 2 shows normal text. `NO_COLOR` keeps it, as
+    it keeps bold.
+  - Results, warnings, errors, the overall row, the final rows and the closing
+    line are never faint.
 
 ## Marks
 
@@ -87,42 +97,118 @@ No emoji anywhere. Every mark is one column wide.
 
 ## The banner
 
-Bare `dues`, `dues help` and `dues version` open with the wordmark when
-stdout is a terminal:
+Bare `dues`, `dues help` and `dues version` open with the banner when stdout
+is a terminal:
 
 ```
-┌─╮ ╷ ╷ ┌─╴ ╭─╴   Deduplicated Unified Evidence Store
-│ │ │ │ ├─  ╰─╮   v0.39.0 "<pineapple> spacebar"
-└─╯ ╰─╯ └─╴ ╶─╯   42e2ded · windows/amd64 · go1.27.3
+●─●─●  ┌─╮ ╷ ╷ ┌─╴ ╭─╴  Deduplicated Unified Evidence Store
+ ╲│╱   │ │ │ │ ├─  ╰─╮  v0.39.0 "<pineapple> spacebar"
+  ●    └─╯ ╰─╯ └─╴ ╶─╯  74431db · windows/amd64 · go1.27.3
 ```
 
-The console and ASCII sets use an ASCII wordmark. Below 60 columns only the
-wordmark shows. Piped help and version text has no art. Long operations open
-with a run header on stderr instead: what runs, on what, into which
-database, and the settings in effect.
+- The emblem is a relationship graph: three nodes joined to one.
+- The console and ASCII sets draw both the emblem and the wordmark in ASCII
+  (`o-o-o`).
+- The build line shows the commit, the platform and the Go version as far as
+  they fit; a `-dirty` commit leaves the Go version out.
+- From 61 columns all of it shows, from 23 the emblem and wordmark, below that
+  the wordmark alone.
+
+Long operations open with a run header on stderr instead: what runs, on
+what, into which database, and the settings in effect. On a narrow terminal
+it breaks at spaces.
+
+Where stdout is not a terminal there is no art. DUES names itself in one
+line, the identity line, with the commit as semver build metadata:
+
+```
+DUES 0.39.0+74431db (<pineapple> spacebar) - Deduplicated Unified Evidence Store
+```
+
+Piped help opens with it, piped `dues version` prints it alone, and
+`dues --version` (or `-v`) prints it anywhere, on stdout. Under `--plain` on a
+terminal, `dues version` keeps its overview under that line.
 
 ## Progress
 
 Long operations (store, restore, reindex, enrich, NeAR, micro extract,
-search, and repair with `--verify`, `--upgrade` or `--fix`) show their phases.
+search, and repair with `--verify`, `--upgrade` or `--fix`) show their
+progress.
 
-- **On a terminal:** a live display redrawn ten times a second:
-  - a bar, percent, amounts, rate and ETA for work of known size;
-  - a spinner, count and rate for work of unknown size.
-  Phases that run together (storage and indexing) show together. Lines other
-  code prints go above the display, and a prompt pauses it.
-- **On a pipe, under `--plain` or `--ci`:** plain lines. One when a phase
-  starts, one when it ends, and one every 15 seconds while it runs:
+### On a terminal
 
-  ```
-  dues: store: start, 4.20 GiB
-  dues: store: 31%, 1.30 of 4.20 GiB, 110 MiB/s, eta 27s
-  dues: store: done, 4.20 GiB in 38.2s, 112 MiB/s
-  dues: done in 38.2s, read 4.20 GiB, new 2.88 GiB, deduplicated 1.32 GiB (31%)
-  ```
+A live display of at most seven lines, redrawn ten times a second: one
+overall row for the whole command and, under it, a faint row for each step,
+as docker draws its layers.
 
-- **In the TUI, the server, the FFI library and the compression product:**
-  nothing.
+```
+⠹ ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━╸──────────  81%  step 2/2  2.61/4.20 GiB  148 MiB/s  ETA ~11s
+  ✓ identify     4.20 GiB in 4.1s · 1.02 GiB/s
+  ⠼ storing      62% · new 1.80 GiB · 31% dedup · encrypted
+  ⠼ indexing     121,804 files · 3,120 files/s · partition 2, ntfs · …\config\SOFTWARE
+  · next: full-text · graph
+```
+
+- **The overall row** measures the whole command:
+  - Work that counts bytes (identify, store, entropy, partition hashes) is one
+    fraction of all its bytes, steps still to come included, so the % never
+    goes back when one step ends and the next begins. `step 2/2` says which
+    step runs; the amounts and the rate are that step's.
+  - A folder, or several evidence at once: items done plus the running item's
+    share (`12/340 evidence`).
+  - One step of known size (full-text, graph): its own fraction.
+  - Work of unknown size (the index's tail, compact): a sweep, a count and the
+    time it has run, with no %.
+- **The ETA** covers the rest of the command. It shows once the last work step
+  runs: identify hashes several times faster than store, so an estimate made
+  during identify would run short. Until then the step's own row says how
+  long it has left (`11s left`). `~` marks an ETA that other running work may
+  move.
+- **Step rows** read as what they do (`storing`, `indexing`) and keep their
+  names once ended. They show the step's %, the new bytes and how much was
+  stored already (`31% dedup`), whether the chunks are encrypted, the
+  partition, and the file being read, cut from the left so its name stays.
+  Steps still to come fold into one `next:` row; when rows do not fit,
+  finished ones go first.
+- A step that ends OK shows its `✓` in highlight for 300 ms, then in green.
+- Lines other code prints go above the display, and a prompt pauses it.
+- When the command ends, the scrollback keeps one row per top-level step, by
+  name and at full contrast, the steps that never ran on one line
+  (`– not run: index, full-text`), and the closing line.
+- **Windows Terminal and ConEmu** also show the progress on the tab and in the
+  taskbar (OSC 9;4):
+  - after a second, so short commands never flicker it, and at most twice a
+    second;
+  - paused while a prompt waits or after Ctrl-C, red after a failure;
+  - cleared on every way out, a second Ctrl-C and a panic included.
+  Not under tmux or screen, which pass it to the terminal they run in, nor in
+  a terminal that sets `TERM_PROGRAM` (VS Code, mintty, iTerm2).
+
+### On a pipe, under `--plain` or `--ci`
+
+Plain lines: one when a phase starts, one when it ends, and, while the
+command runs, one heartbeat line. It reports the step in focus, how far the
+whole command is when it has several work steps or items, and what runs
+beside it.
+
+```
+dues: store: start, 4.20 GiB
+dues: store: 62%, 2.61 of 4.20 GiB, 148 MiB/s, eta 11s, overall 81% (step 2 of 2); index 121,804 files
+dues: store: done, 4.20 GiB in 38.2s, 112 MiB/s
+dues: done in 38.2s, read 4.20 GiB, new 2.88 GiB, deduplicated 1.32 GiB (31%)
+```
+
+The heartbeat comes every 15 seconds at first, then every tenth of the time
+the command has run, never more than 5 minutes apart: a two-hour store prints
+about 55, and a CI log never goes silent for long.
+
+### Elsewhere
+
+In the TUI, the server, the FFI library and the compression product: nothing.
+`internal/progress` measures the command as a whole (`Tracker`) for any
+renderer, so a later TUI can show the same overall row.
+
+### Endings, rates and units
 
 The closing line says how the command ended and what it read, stored new and
 found already stored. "new" counts raw bytes before compression, not size on
@@ -149,10 +235,13 @@ validated, this is what they are allowed to do:
   least ten seconds, with a 2% chance, at most once per process.
 - They last at most 1.5 seconds and draw on stderr only. They erase
   themselves, and Ctrl-C ends one at once.
+- Which one plays depends on the command that ran. None follows repair,
+  whose output scripts read.
 - They never touch evidence processing, output files, logs, stdout or exit
   codes.
 - `--no-fun`, `DUES_NO_FUN=1`, `--plain`, `--ci` or a build with
-  `funDefault=off` turn them off.
+  `funDefault=off` turn them off. The hidden commands still run when asked
+  for by name; `dues mew` then prints its cat without animating.
 
 ## Accessibility review
 
@@ -160,6 +249,9 @@ validated, this is what they are allowed to do:
 - **Contrast:** AA (4.5:1) with a known background. With an unknown background,
   3:1 on bold tokens and marks, under WCAG 1.4.11. Sentences are always in the
   terminal's own colour.
+- **Faint text** is only on the progress display's passing details. It can
+  fall below 4.5:1 on some themes, so it never carries a state alone (marks
+  and words do), and never holds a result, a warning or an error.
 - **Colour blindness:** success and error differ in mark (`✓`/`✗`), word and
   luminance. `--color=ansi` hands colour to the terminal theme, so
   colour-blind and high-contrast themes apply.
@@ -173,26 +265,54 @@ validated, this is what they are allowed to do:
   2.3.1).
 - **Copy and paste:** hashes, IDs and paths are single tokens, never split by
   an escape code or cut on stdout.
-- **Width:** layout is measured in display columns. Rows are cut to the
-  terminal's width so they never wrap. East Asian locales get the ASCII set,
+- **Width:** layout is measured in display columns. The live display's rows
+  are cut to the terminal's width so they never wrap; the run header and the
+  closing line break at spaces instead. East Asian locales get the ASCII set,
   because their terminals often draw box characters two columns wide.
+
+## Human review
+
+The tests cover what a test can see. Before a release, look at these by hand:
+- Windows Terminal, dark and light themes: the overall row, the faint step
+  rows, and the tab and taskbar progress (normal, paused at a prompt, red
+  after a failure, cleared at the end).
+- The Windows console host (`conhost.exe cmd`): console marks, the ASCII
+  emblem, normal text where faint is asked for.
+- The VS Code terminal: no taskbar progress.
+- tmux and screen, and SSH to Linux (`TERM=xterm-256color`).
+- A 50-column window: rows cut, the header and the closing line broken at
+  spaces.
+- `NO_COLOR=1` (bold and faint only), `TERM=dumb`, and `--plain` with a screen
+  reader (NVDA).
+- Ctrl-C once (the bar holds, the tab shows paused) and twice (the cursor is
+  back, the tab cleared).
 
 ## Tests
 
 - `internal/ui`:
-  - the mode-resolution matrix;
-  - palette contrast;
-  - glyph widths;
+  - the mode-resolution matrix, including when the taskbar is allowed;
+  - palette contrast, and faint per theme and colour depth;
+  - glyph widths, and the banner at every width and glyph set;
   - painter, message and header formats;
-  - renderer frames at several widths, against a small terminal emulator
-    (`vtscreen_test.go`) that also rejects any escape sequence DUES must not
-    write;
+  - the overall row in each mode and the step rows, at widths 119 to 29;
+  - live frames, the final frame and plain heartbeats with a fake clock,
+    drawn on `internal/testutil/vtscreen`, a small terminal that rejects any
+    escape sequence DUES must not write and any row that wraps;
+  - taskbar states, their rate limit, and their clearing on stop, a second
+    Ctrl-C and a panic;
   - prompt holding, panic and force-exit cleanup;
+  - which extras follow which command;
   - a race test.
-- `internal/progress`: classification and concurrency.
-- Each instrumented package: tests that assert its phases.
+- `internal/progress`: classification and concurrency, and the tracker:
+  every mode, the fraction that never goes back, the ETA rules, and an
+  `Update` that allocates nothing.
+- Each instrumented package: tests that assert its phases, its plan and its
+  notes.
 - `internal/e2e/output_contract_test.go`:
   - pure JSON on stdout;
-  - colour only when asked for;
+  - the identity line from `version`, `--version` and piped help;
+  - colour only when asked for, and no taskbar progress on a pipe;
   - `NO_COLOR` and `--color=never` beat `FORCE_COLOR`.
   `testutil.RunDuesEnv` fails any piped run that writes an escape code.
+- `internal/e2e/pty_test.go` and `pty_faultinject_test.go`: the binary on a
+  real pseudo-terminal under WSL (see [TESTING.md](TESTING.md)).

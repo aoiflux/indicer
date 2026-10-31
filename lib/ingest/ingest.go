@@ -152,12 +152,14 @@ func Run(ctx context.Context, db *badger.DB, req Request) (Result, error) {
 		return res, err
 	}
 
+	planned := planIngest(ctx, src, req)
 	// D1: content already stored is an alias, and nothing is stored again.
 	winner, err := findStored(ctx, db, src, fp)
 	if err != nil {
 		return res, err
 	}
 	if winner != nil {
+		progress.Unplan(ctx, planned...)
 		path := src.Path()
 		if req.SourcePath != "" {
 			path = req.SourcePath
@@ -179,6 +181,52 @@ func Run(ctx context.Context, db *badger.DB, req Request) (Result, error) {
 		return res, fail(db, eid, err)
 	}
 	return run(ctx, db, src, eid, name, req, res)
+}
+
+// planIngest lists the steps an ingest of src will run, with the work each
+// expects, before the first starts, so the overall measure weighs them from
+// the beginning. It returns their names.
+func planIngest(ctx context.Context, src *evidence.Source, req Request) []string {
+	size := src.Size()
+	var steps []progress.Step
+	if cnst.StoreHashStrategy == cnst.SyncHashStrategy {
+		steps = append(steps, progress.Step{Name: "identify", Unit: progress.Bytes, Total: size})
+	}
+	steps = append(steps,
+		progress.Step{Name: "store", Unit: progress.Bytes, Total: size},
+		progress.Step{Name: "index", Unit: progress.Files, Total: progress.Unknown})
+	if indexSkipReason(src, req) == "" {
+		steps = append(steps, featureSteps(req, size)...)
+	}
+	progress.PlanSteps(ctx, steps...)
+	names := make([]string, len(steps))
+	for i, s := range steps {
+		names[i] = s.Name
+	}
+	return names
+}
+
+// featureSteps are the steps the features of req add after the index;
+// entropy reads about size bytes.
+func featureSteps(req Request, size int64) []progress.Step {
+	var steps []progress.Step
+	if req.FTS {
+		steps = append(steps, progress.Step{Name: "full-text", Unit: progress.Files, Total: progress.Unknown})
+	}
+	if req.Enrich {
+		steps = append(steps,
+			progress.Step{Name: "entropy", Unit: progress.Bytes, Total: size},
+			progress.Step{Name: "graph", Unit: progress.Files, Total: progress.Unknown})
+	}
+	return steps
+}
+
+// skipFeatures shows the planned features as not run, and why: the index
+// they read did not finish.
+func skipFeatures(ctx context.Context, req Request, why string) {
+	for _, s := range featureSteps(req, 0) {
+		progress.Skip(ctx, s.Name, why)
+	}
 }
 
 // attemptPath is the path an attempt is keyed by: the first source member the
@@ -300,14 +348,6 @@ func run(ctx context.Context, db *badger.DB, src *evidence.Source, eid []byte, n
 	if err := setIndexInfo(db, eid, info); err != nil {
 		return res, err
 	}
-	steps := []string{"store", "index"}
-	if indexing && req.FTS {
-		steps = append(steps, "full-text")
-	}
-	if indexing && req.Enrich {
-		steps = append(steps, "entropy", "graph")
-	}
-	progress.Plan(ctx, steps...)
 	if !indexing {
 		progress.Skip(ctx, "index", reason)
 	}
@@ -398,6 +438,8 @@ func run(ctx context.Context, db *badger.DB, src *evidence.Source, eid []byte, n
 			if err := features(ctx, db, eid, req); err != nil {
 				info.State, info.Reason, idxErr = structs.IndexPartial, err.Error(), err
 			}
+		} else {
+			skipFeatures(ctx, req, "index "+string(info.State))
 		}
 		if info.State != structs.IndexComplete {
 			incomplete = &IndexIncompleteError{EvidenceID: eid, State: info.State, Reason: info.Reason, Err: idxErr}

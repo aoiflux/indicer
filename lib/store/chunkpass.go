@@ -8,6 +8,7 @@ import (
 	"sync/atomic"
 
 	"indicer/internal/progress"
+	"indicer/lib/blobcodec"
 	"indicer/lib/cnst"
 	"indicer/lib/dbmeta"
 	"indicer/lib/parser/image"
@@ -113,6 +114,9 @@ func startPass(ctx context.Context, p ChunkPass) *passMeter {
 		return &passMeter{}
 	}
 	ph := progress.Start(ctx, "store", progress.Bytes, p.Size)
+	if blobcodec.Sealed(p.DB) {
+		ph.Note("encrypted")
+	}
 	return &passMeter{
 		phase:   ph,
 		fresh:   ph.Meter("new", progress.Bytes),

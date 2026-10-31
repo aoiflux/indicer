@@ -56,6 +56,8 @@ fuzz_run() {
 	return $rc
 }
 
+# The pseudo-terminal tests (internal/e2e) must run here, not skip.
+export DUES_REQUIRE_PTY=1
 step "test (race)" go test -race -count=1 ./...
 step "test (faultinject)" go test -count=1 -tags faultinject ./...
 step "filesystem failures" fs_suite

@@ -187,3 +187,32 @@ func splitNUL(s string) []string {
 	}
 	return append(out, s[start:])
 }
+
+// Taskbar progress goes only to terminals that show it, never under tmux or
+// screen, another terminal program, CI, a piped stderr or --plain.
+func TestTaskbarGate(t *testing.T) {
+	stderrPiped := console.Terminal{InTTY: true, OutTTY: true}
+	for _, c := range []struct {
+		env  []string
+		tty  console.Terminal
+		want bool
+	}{
+		{[]string{"WT_SESSION=x"}, allTTY, true},
+		{[]string{"ConEmuANSI=ON"}, allTTY, true},
+		{[]string{"ConEmuANSI=OFF"}, allTTY, false},
+		{nil, allTTY, false},
+		{[]string{"WT_SESSION=x", "TERM_PROGRAM=vscode"}, allTTY, false},
+		{[]string{"WT_SESSION=x", "TMUX=/tmp/tmux-1000/default,1,0"}, allTTY, false},
+		{[]string{"WT_SESSION=x", "STY=1234.pts-0.host"}, allTTY, false},
+		{[]string{"WT_SESSION=x", "CI=true"}, allTTY, false},
+		{[]string{"WT_SESSION=x", "TERM=dumb"}, allTTY, false},
+		{[]string{"WT_SESSION=x"}, stderrPiped, false},
+	} {
+		if m := Resolve(Options{}, c.env, c.tty, "windows"); m.Taskbar != c.want {
+			t.Errorf("%q, %+v: Taskbar %v, want %v", c.env, c.tty, m.Taskbar, c.want)
+		}
+	}
+	if m := Resolve(Options{Plain: true}, []string{"WT_SESSION=x"}, allTTY, "windows"); m.Taskbar {
+		t.Error("taskbar progress under --plain")
+	}
+}

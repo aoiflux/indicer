@@ -14,6 +14,7 @@ package progress
 import (
 	"context"
 	"errors"
+	"slices"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -123,6 +124,28 @@ func CurrentIn(ctx context.Context, unit Unit) *Phase {
 // Plan lists phases that will run, in display order, so they show as
 // pending before they start.
 func Plan(ctx context.Context, names ...string) {
+	if From(ctx) == nil {
+		return
+	}
+	steps := make([]Step, len(names))
+	for i, n := range names {
+		steps[i] = Step{Name: n, Total: Unknown}
+	}
+	PlanSteps(ctx, steps...)
+}
+
+// Step is a phase a command expects to run: its name, and the unit and
+// total it is expected to count (Total may be Unknown).
+type Step struct {
+	Name  string
+	Unit  Unit
+	Total int64
+}
+
+// PlanSteps is Plan with the work each step expects, so the overall measure
+// can weigh steps before they start. A step still pending takes the new
+// expectation; Start replaces it with the real figures.
+func PlanSteps(ctx context.Context, steps ...Step) {
 	r := From(ctx)
 	if r == nil {
 		return
@@ -130,11 +153,37 @@ func Plan(ctx context.Context, names ...string) {
 	parent := Current(ctx)
 	r.mu.Lock()
 	defer r.mu.Unlock()
-	for _, n := range names {
-		if r.find(parent, n, false) == nil {
-			r.add(parent, n)
+	for _, s := range steps {
+		p := r.find(parent, s.Name, false)
+		if p == nil {
+			p = r.add(parent, s.Name)
+			p.planned = true
+		}
+		if p.state == Pending {
+			p.unit = s.Unit
+			p.total.Store(s.Total)
 		}
 	}
+}
+
+// Unplan removes pending phases as if they had never been planned: work
+// that turned out not to be needed (the content was already stored) leaves
+// no "not run" rows. Phases that started stay.
+func Unplan(ctx context.Context, names ...string) {
+	r := From(ctx)
+	if r == nil {
+		return
+	}
+	parent := Current(ctx)
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	list := &r.phases
+	if parent != nil {
+		list = &parent.kids
+	}
+	*list = slices.DeleteFunc(*list, func(p *Phase) bool {
+		return p.state == Pending && slices.Contains(names, p.name)
+	})
 }
 
 // Skip shows that a planned phase will not run, and why.
@@ -221,9 +270,10 @@ type Phase struct {
 	name   string
 
 	done, total atomic.Int64
-	note        atomic.Pointer[string]
+	note, item  atomic.Pointer[string]
 
 	// Guarded by r.mu.
+	planned        bool // listed by Plan before it started
 	unit           Unit
 	state          State
 	warn, reason   string
@@ -259,6 +309,15 @@ func (p *Phase) SetTotal(n int64) {
 func (p *Phase) Note(s string) {
 	if p != nil {
 		p.note.Store(&s)
+	}
+}
+
+// Item says which item the phase works on now, such as the file it reads;
+// "" clears it. It is lock-free but allocates, so a hot loop calls it only
+// now and then. The text may come from evidence; the renderer sanitises it.
+func (p *Phase) Item(s string) {
+	if p != nil {
+		p.item.Store(&s)
 	}
 }
 
@@ -494,8 +553,10 @@ type View struct {
 	Name           string
 	Unit           Unit
 	State          State
-	Done, Total    int64
+	Planned        bool  // listed by Plan before it started
+	Done, Total    int64 // a pending phase's Total is what it expects
 	Note           string
+	Item           string // what it works on now, such as a file
 	Warn           string
 	Reason         string // why it failed, was interrupted or skipped
 	Started, Ended time.Time
@@ -537,12 +598,15 @@ type Snapshot struct {
 // keeps a short display and bounded memory.
 func (p *Phase) view(kids bool) View {
 	v := View{
-		ID: p.id, Name: p.name, Unit: p.unit, State: p.state,
+		ID: p.id, Name: p.name, Unit: p.unit, State: p.state, Planned: p.planned,
 		Done: p.done.Load(), Total: p.total.Load(),
 		Warn: p.warn, Reason: p.reason, Started: p.started, Ended: p.ended,
 	}
 	if n := p.note.Load(); n != nil {
 		v.Note = *n
+	}
+	if n := p.item.Load(); n != nil {
+		v.Item = *n
 	}
 	for _, m := range p.meters {
 		v.Meters = append(v.Meters, MeterView{m.name, m.unit, m.v.Load()})

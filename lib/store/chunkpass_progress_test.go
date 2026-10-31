@@ -1,6 +1,7 @@
 package store
 
 import (
+	"bytes"
 	"context"
 	"os"
 	"testing"
@@ -9,6 +10,7 @@ import (
 	"indicer/internal/progress"
 	"indicer/internal/testutil"
 	"indicer/internal/testutil/testdb"
+	"indicer/lib/blobcodec"
 	"indicer/lib/util"
 )
 
@@ -97,6 +99,38 @@ func TestChunkPassInterrupted(t *testing.T) {
 			v := r.Snapshot(0).Phases[0]
 			if v.State != progress.Interrupted || v.Done >= v.Total {
 				t.Fatalf("store phase %+v", v)
+			}
+		})
+	}
+}
+
+// The store phase says when the chunks it writes are encrypted, and says
+// nothing when they are not. The codecs are the ones dbopen registers for a
+// new database with and without a password.
+func TestChunkPassNotesEncryption(t *testing.T) {
+	for name, key := range map[string][]byte{"unencrypted": nil, "encrypted": bytes.Repeat([]byte{7}, 32)} {
+		t.Run(name, func(t *testing.T) {
+			db := testdb.Open(t, testdb.Default)
+			if err := util.EnsureBlobPath(db.DB.Opts().Dir); err != nil {
+				t.Fatal(err)
+			}
+			codec, err := blobcodec.NewV2(key)
+			if err != nil {
+				t.Fatal(err)
+			}
+			blobcodec.Register(db.DB, codec)
+			t.Cleanup(func() { blobcodec.Unregister(db.DB) })
+			r := progress.New(t.Context(), nil)
+			content := testutil.RandomBytes(7, 64<<10)
+			if _, err := IngestChunks(progress.With(t.Context(), r), ChunkPass{DB: db.DB, ID: []byte("e"), Source: byteReaderAt(content), Size: int64(len(content))}); err != nil {
+				t.Fatal(err)
+			}
+			want := ""
+			if key != nil {
+				want = "encrypted"
+			}
+			if v := r.Snapshot(0).Phases[0]; v.Note != want {
+				t.Errorf("note %q, want %q", v.Note, want)
 			}
 		})
 	}

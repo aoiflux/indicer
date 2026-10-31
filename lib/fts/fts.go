@@ -181,9 +181,12 @@ func IndexFiles(ctx context.Context, db *badger.DB, jobs []IndexedFileJob) (stat
 	var first error
 	done := progress.CurrentIn(ctx, progress.Files)
 	b := h.idx.NewBatch()
-	for _, job := range jobs {
+	for i, job := range jobs {
 		if err := ctx.Err(); err != nil {
 			return stats, err
+		}
+		if i%64 == 0 {
+			done.Item(job.Name)
 		}
 		text, terr := extractText(ctx, db, []byte(job.FileID))
 		if terr != nil {

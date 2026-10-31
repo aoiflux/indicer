@@ -17,7 +17,8 @@ const flagLogDir = "log-dir"
 const cmdReindex = "reindex"
 
 // The hidden commands: not in help or completion, documented only as
-// extras that --no-fun turns off.
+// extras. They run under --no-fun too, because they are asked for by name;
+// --no-fun only stops the surprises and mew's animation.
 const (
 	cmdCoffee  = "coffee"
 	cmdFortune = "fortune"
@@ -155,8 +156,12 @@ type cliDefinition struct {
 
 func newCLIDefinition() cliDefinition {
 	app := kingpin.New("DUES", "Deduplicated Unified Evidence Store")
-	app.Version(getVersionText())
-	app.VersionFlag.Short('v')
+	// --version is DUES's own flag. kingpin's printed a block on stderr and,
+	// with no command, went on to print its whole usage.
+	app.Flag("version", "Show the version line").Short('v').PreAction(func(*kingpin.ParseContext) error {
+		printIdentity()
+		return errVersionShown
+	}).Bool()
 	app.HelpFlag.Short('h')
 
 	flags := cliFlags{}

@@ -135,8 +135,8 @@ func logDirFromArgs(args []string) string {
 func run(args []string) error {
 	cliDef := newCLIDefinition()
 
-	// kingpin exits the process itself after --version and --help. Record the
-	// code instead, so realMain's deferred cleanup still runs.
+	// kingpin exits the process itself after its own help and usage output.
+	// Record the code instead, so realMain's deferred cleanup still runs.
 	terminated := -1
 	cliDef.app.Terminate(func(code int) {
 		if terminated < 0 {
@@ -144,6 +144,9 @@ func run(args []string) error {
 		}
 	})
 	parsed, err := cliDef.app.Parse(args)
+	if errors.Is(err, errVersionShown) {
+		return nil
+	}
 	if terminated == 0 {
 		return nil
 	}
@@ -205,14 +208,20 @@ func executeCommand(ctx context.Context, parsed string, cliDef cliDefinition, db
 		handler = func(ctx context.Context) error {
 			start := time.Now()
 			err := ui.Run(ctx, handlers[parsed])
-			if err == nil {
-				ui.MaybeEgg(time.Since(start))
+			if err == nil && eggsAllowed(parsed, cliDef) {
+				ui.MaybeEgg(parsed, time.Since(start))
 			}
 			return err
 		}
 	}
 	// A command cut short by a signal exits with the signal's code.
 	return lifecycle.Cause(ctx, handler(ctx))
+}
+
+// eggsAllowed reports whether an extra may follow a command: not repair,
+// whose --fix, --upgrade and --verify write JSON to stdout.
+func eggsAllowed(parsed string, cliDef cliDefinition) bool {
+	return parsed != cliDef.commands.repair.FullCommand()
 }
 
 // showsProgress reports whether a command shows progress: the long

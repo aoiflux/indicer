@@ -144,6 +144,8 @@ type Mode struct {
 	Plain       bool
 	// Fun allows the rare easter eggs. Whether one plays is decided later.
 	Fun bool
+	// Taskbar allows progress on the terminal's tab and taskbar (OSC 9;4).
+	Taskbar bool
 }
 
 // funDefault turns the easter eggs off for a whole build:
@@ -187,7 +189,18 @@ func Resolve(o Options, env []string, t console.Terminal, goos string) Mode {
 	m.Interactive = t.InTTY
 	m.Fun = m.Err.Motion && t.InTTY && t.OutTTY && !o.NoFun &&
 		!truthy(e.get("DUES_NO_FUN")) && funDefault != "off"
+	m.Taskbar = m.Err.Motion && taskbarTerminal(e)
 	return m
+}
+
+// taskbarTerminal reports whether the terminal shows OSC 9;4 progress:
+// Windows Terminal and ConEmu do. Not inside tmux or screen, which pass it
+// on to whatever terminal they run in, and not under another terminal that
+// set TERM_PROGRAM: VS Code or mintty started from Windows Terminal inherit
+// WT_SESSION, and iTerm2 takes OSC 9 for a notification.
+func taskbarTerminal(e environ) bool {
+	return (e.get("WT_SESSION") != "" || e.get("ConEmuANSI") == "ON") &&
+		e.get("TERM_PROGRAM") == "" && e.get("TMUX") == "" && e.get("STY") == ""
 }
 
 // profile picks a stream's colour depth. Precedence: --color, DUES_COLOR,

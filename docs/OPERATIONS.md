@@ -156,8 +156,10 @@ The message on stderr names the kind: `dues: error: ...` for a failure (exit 1),
 
 Results go to stdout and everything else to stderr: the run header, progress,
 notes, warnings and errors. On a pipe nothing holds an escape code, and
-progress is one plain line when a phase starts, one when it ends, and one
-every 15 seconds. Under CI (`CI`, `GITHUB_ACTIONS`, `GITLAB_CI`, `BUILDKITE`,
+progress is one plain line when a phase starts, one when it ends, and, while
+the command runs, one heartbeat line: every 15 seconds at first, then every
+tenth of the time it has run, never more than 5 minutes apart (a two-hour
+store prints about 55). Under CI (`CI`, `GITHUB_ACTIONS`, `GITLAB_CI`, `BUILDKITE`,
 `JENKINS_URL`, `TF_BUILD`, `TEAMCITY_VERSION`, or `--ci`) DUES behaves as on a
 pipe, and prompts refuse.
 

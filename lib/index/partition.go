@@ -78,6 +78,8 @@ func (ix *indexer) beginPartition(p core.PartitionInfo) error {
 	op.batch = ix.opts.DB.NewWriteBatch()
 	ix.part = op
 	ix.phase.Note(fmt.Sprintf("partition %d, %s", p.Index, p.FSType))
+	ix.phase.Item("")
+	ix.seen = 0
 	ix.parts = append(ix.parts, Partition{ID: id, Ordinal: p.Index, Offset: p.Offset, Size: p.Size, FSType: p.FSType, Status: p.Status})
 	return nil
 }

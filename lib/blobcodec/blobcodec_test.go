@@ -194,3 +194,27 @@ func TestForFallsBackToGlobals(t *testing.T) {
 		t.Fatalf("unregistered quick DB uses %s, want %s", got, LegacyRaw)
 	}
 }
+
+// Sealed tells a database whose chunks are encrypted from one whose are
+// not, whatever codec it has.
+func TestSealed(t *testing.T) {
+	prevQuick := cnst.QUICKOPT
+	t.Cleanup(func() { cnst.QUICKOPT = prevQuick })
+	cnst.QUICKOPT = false
+	db, err := badger.Open(badger.DefaultOptions("").WithInMemory(true).WithLogger(nil))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { db.Close() })
+	cs := codecs(t)
+	for name, want := range map[string]bool{"v2": false, "v2-sealed": true, "legacy-sealed": true, "legacy-raw": false} {
+		Register(db, cs[name])
+		if got := Sealed(db); got != want {
+			t.Errorf("%s: Sealed = %v, want %v", name, got, want)
+		}
+	}
+	Unregister(db)
+	if Sealed(db) {
+		t.Error("an unregistered database without a key is sealed")
+	}
+}

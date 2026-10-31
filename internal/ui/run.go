@@ -13,8 +13,6 @@ import (
 	"indicer/internal/console"
 	"indicer/internal/lifecycle"
 	"indicer/internal/progress"
-
-	"github.com/charmbracelet/x/ansi"
 )
 
 type renderMode uint8
@@ -36,8 +34,12 @@ type runConfig struct {
 	painter   Painter   // for the progress stream
 	progress  io.Writer // where frames and lines go: the raw stderr
 	shared    bool      // stdout is the same terminal as stderr
-	wrap      func(func(out, err io.Writer) (io.Writer, io.Writer)) func()
-	manual    bool // tests call step themselves
+	// taskbar shows progress on the terminal's tab once a command has run
+	// for taskbarDelay, so quick commands never flicker it.
+	taskbar      bool
+	taskbarDelay time.Duration
+	wrap         func(func(out, err io.Writer) (io.Writer, io.Writer)) func()
+	manual       bool // tests call step themselves
 }
 
 func defaultRunConfig() runConfig {
@@ -46,7 +48,7 @@ func defaultRunConfig() runConfig {
 		mode: renderPlain, now: time.Now, tick: 250 * time.Millisecond,
 		heartbeat: 15 * time.Second, hold: 250 * time.Millisecond,
 		size: console.Size, painter: For(console.Progress()), progress: console.Progress(),
-		wrap: console.Wrap,
+		wrap: console.Wrap, taskbarDelay: time.Second,
 	}
 	switch {
 	case console.Progress() == io.Discard:
@@ -54,6 +56,7 @@ func defaultRunConfig() runConfig {
 	case m.Err.Motion:
 		cfg.mode, cfg.tick = renderLive, 100*time.Millisecond
 		cfg.shared = m.Out.TTY && console.Detect().Shared
+		cfg.taskbar = m.Taskbar
 	}
 	return cfg
 }
@@ -104,7 +107,12 @@ type runner struct {
 	queue     []string // plain: lines waiting for a held partial line
 	lastSeq   uint64
 	frame     int
-	rates     map[uint64]*rateEst
+	track     *progress.Tracker
+	est       progress.Estimate // the command as a whole, as of the last sample
+	pulse     map[uint64]int    // live: steps that ended OK, and the frame their pulse ends
+	lastOver  string            // live: the last overall row with something running
+	noneSince time.Time         // live: since when nothing has run
+	tb        taskbar           // live: what the terminal's tab shows
 	lastBeat  time.Time
 	stopped   bool
 
@@ -117,7 +125,7 @@ type runner struct {
 func newRunner(cfg runConfig, rep *progress.Reporter) *runner {
 	return &runner{
 		cfg: cfg, rep: rep, p: cfg.painter, g: cfg.painter.Glyphs(),
-		rates: map[uint64]*rateEst{}, lastBeat: cfg.now(),
+		track: progress.NewTracker(), pulse: map[uint64]int{}, lastBeat: cfg.now(),
 		quit: make(chan struct{}), exited: make(chan struct{}),
 	}
 }
@@ -160,7 +168,7 @@ func (rn *runner) step() {
 	now := rn.cfg.now()
 	snap := rn.rep.Snapshot(rn.lastSeq)
 	rn.lastSeq = snap.Seq
-	rn.sample(snap.Phases, now)
+	rn.est = rn.track.Update(snap, now)
 	rn.checkHolds(now)
 	switch rn.cfg.mode {
 	case renderLive:
@@ -168,35 +176,17 @@ func (rn *runner) step() {
 		if rn.paused == nil {
 			rn.drawLocked(rn.frameLines(snap, now, false))
 		}
+		rn.updateTaskbar(snap, now)
 		rn.frame++
 	case renderPlain:
 		rn.plainEvents(snap)
-		if now.Sub(rn.lastBeat) >= rn.cfg.heartbeat {
+		if now.Sub(rn.lastBeat) >= beatEvery(now.Sub(snap.Start), rn.cfg.heartbeat) {
 			rn.lastBeat = now
-			for _, v := range snap.Phases {
-				if v.State == progress.Running {
-					rn.plainLine(v.Name, plainBeat(v, rn.rates[v.ID].rate, now))
-				}
-			}
+			rn.plainBeatLine(now)
 		}
 		rn.flushQueue()
 	}
 	rn.rep.Prune()
-}
-
-// sample updates the rate of every running phase.
-func (rn *runner) sample(views []progress.View, now time.Time) {
-	for _, v := range views {
-		if v.State == progress.Running {
-			e := rn.rates[v.ID]
-			if e == nil {
-				e = &rateEst{}
-				rn.rates[v.ID] = e
-			}
-			e.sample(v, now)
-		}
-		rn.sample(v.Kids, now)
-	}
 }
 
 // stop ends the display: the last frame (or the last plain lines), the
@@ -214,7 +204,7 @@ func (rn *runner) stop(err error) {
 	now := rn.cfg.now()
 	snap := rn.rep.Snapshot(rn.lastSeq)
 	rn.lastSeq = snap.Seq
-	rn.sample(snap.Phases, now)
+	rn.est = rn.track.Update(snap, now)
 	switch rn.cfg.mode {
 	case renderLive:
 		rn.paused = nil
@@ -240,6 +230,7 @@ func (rn *runner) stop(err error) {
 		rn.write(l)
 	}
 	rn.queue = nil
+	rn.clearTaskbar()
 	rn.showCursor()
 	rn.stopped = true
 	rn.restore()
@@ -250,7 +241,11 @@ func (rn *runner) stop(err error) {
 // the terminal usable and says what happened.
 func (rn *runner) emergency() {
 	if !rn.mu.TryLock() {
-		_, _ = rn.cfg.progress.Write([]byte("\r\n\x1b[?25h"))
+		clear := ""
+		if rn.cfg.taskbar {
+			clear = osc94(tbClear, 0)
+		}
+		_, _ = rn.cfg.progress.Write([]byte("\r\n" + clear + "\x1b[?25h"))
 		return
 	}
 	defer rn.mu.Unlock()
@@ -268,8 +263,51 @@ func (rn *runner) emergency() {
 	} else {
 		rn.write("dues: " + msg + "\n")
 	}
+	rn.clearTaskbar()
 	rn.showCursor()
 	rn.stopped = true
+}
+
+// updateTaskbar shows the command's progress on the terminal's tab: the
+// percentage of measured work, a busy state for work of unknown size, a
+// paused state while a prompt waits or after an interrupt, an error state
+// after a failure. Between two steps it keeps what it showed.
+func (rn *runner) updateTaskbar(snap progress.Snapshot, now time.Time) {
+	if !rn.cfg.taskbar || now.Sub(snap.Start) < rn.cfg.taskbarDelay {
+		return
+	}
+	st := tbIndeterminate
+	switch {
+	case rn.paused != nil:
+		st = tbPaused
+	case anyTop(snap.Phases, progress.Failed):
+		st = tbError
+	case anyTop(snap.Phases, progress.Interrupted):
+		st = tbPaused
+	case rn.est.Mode == progress.ModeWork, rn.est.Mode == progress.ModeItems, rn.est.Mode == progress.ModeStep:
+		st = tbNormal
+	case rn.est.Mode == progress.ModeNone && !rn.noneSince.IsZero() && now.Sub(rn.noneSince) < time.Second:
+		return
+	}
+	if s := rn.tb.next(st, pct(rn.est.Fraction), now); s != "" {
+		rn.write(s)
+	}
+}
+
+// clearTaskbar takes the progress off the terminal's tab.
+func (rn *runner) clearTaskbar() {
+	if s := rn.tb.clear(); s != "" {
+		rn.write(s)
+	}
+}
+
+func anyTop(vs []progress.View, s progress.State) bool {
+	for _, v := range vs {
+		if v.State == s {
+			return true
+		}
+	}
+	return false
 }
 
 func (rn *runner) interruptAll(vs []progress.View) {
@@ -338,65 +376,61 @@ func (rn *runner) aboveLocked(w io.Writer, s []byte) {
 	}
 }
 
-type rowItem struct {
-	v     progress.View
-	depth int
+// view is the live layout for one frame.
+func (rn *runner) view(now time.Time) liveView {
+	return liveView{p: rn.p, g: rn.g, frame: rn.frame, pulse: rn.pulse, rate: rn.track.Rate, now: now}
 }
 
-// frameLines lays out the region: every top-level phase, and the running
-// or pending phases under them (ended ones went to the scrollback). At most
-// height-2 rows; the rest fold into one line.
+// frameLines lays out the region: the overall row and the steps under it,
+// or, once the command ends, the top-level steps alone. Between two steps,
+// when nothing runs, the last overall row stays up to a second.
 func (rn *runner) frameLines(snap progress.Snapshot, now time.Time, final bool) []string {
 	width, height := rn.cfg.size()
 	width = max(width-1, 20)
-	var items []rowItem
-	var walk func(vs []progress.View, depth int)
-	walk = func(vs []progress.View, depth int) {
-		for _, v := range vs {
-			if depth > 0 && v.State.Ended() {
-				continue
-			}
-			items = append(items, rowItem{v, depth})
-			walk(v.Kids, depth+1)
-		}
-	}
-	walk(snap.Phases, 0)
+	lv := rn.view(now)
 	if final {
-		// Only the top level stays on screen once the command ends.
-		top := items[:0]
-		for _, it := range items {
-			if it.depth == 0 {
-				top = append(top, it)
-			}
+		return lv.final(snap, width)
+	}
+	if len(snap.Phases) == 0 {
+		return nil
+	}
+	over := lv.overall(rn.est, width)
+	if rn.est.Mode == progress.ModeNone && rn.lastOver != "" {
+		if rn.noneSince.IsZero() {
+			rn.noneSince = now
 		}
-		items = top
-	}
-	nameW := 0
-	for _, it := range items {
-		nameW = max(nameW, min(ansi.StringWidth(clean(it.v.Name)), 24))
-	}
-	maxRows := max(height-2, 2)
-	var lines []string
-	for i, it := range items {
-		if len(lines) == maxRows-1 && len(items)-i > 1 {
-			lines = append(lines, "  "+rn.p.Paint(Muted, rn.g.Ellipsis+" "+itoa(len(items)-i)+" more"))
-			break
+		if now.Sub(rn.noneSince) < time.Second {
+			over = rn.lastOver
 		}
-		lines = append(lines, rn.row(it.v, it.depth, nameW, now, width))
+	} else {
+		rn.noneSince, rn.lastOver = time.Time{}, over
 	}
-	return lines
+	return lv.lines(rn.est, over, width, height)
 }
 
 // liveEvents prints, above the region, the phases below the top level that
 // ended: each item of a folder, and anything deeper that did not end OK.
+// On a terminal stdout shares, the items' reports already say they were
+// stored, so only items that did not end OK print. Steps that ended OK
+// start their pulse.
 func (rn *runner) liveEvents(snap progress.Snapshot) {
+	width, _ := rn.cfg.size()
+	lv := rn.view(rn.cfg.now())
 	for _, e := range snap.Events {
-		if !e.Ended || len(e.Path) == 0 || (len(e.Path) > 1 && e.Phase.State == progress.OK) {
+		ok := e.Phase.State == progress.OK
+		if e.Ended && ok {
+			rn.pulse[e.Phase.ID] = rn.frame + 3
+		}
+		if !e.Ended || len(e.Path) == 0 || (ok && (len(e.Path) > 1 || rn.cfg.shared)) {
 			continue
 		}
-		width, _ := rn.cfg.size()
-		line := rn.row(e.Phase, len(e.Path), 0, rn.cfg.now(), max(width-1, 20))
+		line := lv.itemDone(e.Phase, len(e.Path), max(width-1, 20))
 		rn.aboveLocked(rn.cfg.progress, []byte(line+"\n"))
+	}
+	for id, until := range rn.pulse {
+		if rn.frame >= until {
+			delete(rn.pulse, id)
+		}
 	}
 }
 
@@ -450,6 +484,58 @@ func (rn *runner) plainEvents(snap progress.Snapshot) {
 			rn.plainLine(path, plainEnd(e.Phase))
 		}
 	}
+}
+
+// beatEvery is how often plain output says how a command is going: every
+// heartbeat at first, then a tenth of the time it has run, at most every
+// five minutes, so a long run prints a few dozen lines and a CI log never
+// goes silent for long.
+func beatEvery(elapsed, heartbeat time.Duration) time.Duration {
+	return min(max(elapsed/10, heartbeat), 5*time.Minute)
+}
+
+// plainBeatLine queues the heartbeat: one line on the focus step, how far
+// the whole command is when it has several work steps or items, and what
+// else runs beside it.
+func (rn *runner) plainBeatLine(now time.Time) {
+	e := rn.est
+	f := e.Focus
+	path := append([]string{}, e.FocusPath...)
+	switch {
+	case f.State == progress.Running:
+		path = append(path, f.Name)
+	case e.Mode == progress.ModeItems:
+		// Between two items, or two steps of one: the count of items.
+		f = *e.Group
+		path = []string{f.Name}
+	default:
+		return
+	}
+	text := plainBeat(f, rn.track.Rate(f.ID), now)
+	switch {
+	case e.Mode == progress.ModeWork && e.Steps > 1:
+		text += ", overall " + itoa(pct(e.Fraction)) + "% (step " + itoa(e.Step) + " of " + itoa(e.Steps) + ")"
+	case e.Mode == progress.ModeItems && f.ID != e.Group.ID:
+		text += ", overall " + itoa(pct(e.Fraction)) + "% (" + fmtCount(e.Done) + " of " + fmtAmount(e.Total, e.Unit) + ")"
+	}
+	for _, v := range e.Scope {
+		if v.State != progress.Running || v.ID == f.ID || (e.Group != nil && v.ID == e.Group.ID) {
+			continue
+		}
+		text += "; " + clean(v.Name) + " " + plainCount(v)
+	}
+	rn.plainLine(strings.Join(path, " / "), text)
+}
+
+// plainCount is how far a step beside the focus is, in a few words.
+func plainCount(v progress.View) string {
+	switch {
+	case v.Total > 0:
+		return itoa(percent(v.Done, v.Total, true)) + "%"
+	case v.Unit != progress.None:
+		return fmtAmount(v.Done, v.Unit)
+	}
+	return "running"
 }
 
 // plainLine queues "dues: <what>: <text>". Lines wait while another writer

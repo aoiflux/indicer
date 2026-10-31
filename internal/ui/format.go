@@ -162,5 +162,5 @@ func bar(p Painter, g Glyphs, done, total int64, width int, fill Role) string {
 	if n >= width {
 		return p.Paint(fill, strings.Repeat(g.BarFull, width))
 	}
-	return p.Paint(fill, strings.Repeat(g.BarFull, n)+g.BarTip) + p.Paint(Muted, strings.Repeat(g.BarEmpty, width-n-1))
+	return p.Paint(fill, strings.Repeat(g.BarFull, n)+g.BarTip) + p.Faint(strings.Repeat(g.BarEmpty, width-n-1))
 }

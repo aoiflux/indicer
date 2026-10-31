@@ -121,6 +121,7 @@ type indexer struct {
 
 	// Owned by the scan goroutine.
 	part     *openPartition
+	seen     int // records of the partition so far, for the progress item
 	parts    []Partition
 	cov      structs.IndexCoverage
 	problems []string

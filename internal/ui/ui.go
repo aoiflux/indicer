@@ -33,12 +33,17 @@ func Setup(o Options, env []string) (teardown func()) {
 		}
 		if !errOK {
 			m.Err = noEscapes(m.Err)
-			m.Fun = false
+			m.Fun, m.Taskbar = false, false
 		}
 	}
 	console.SetNonInteractive(m.CI)
 	current.Store(&m)
 	return func() {
+		// A display that could not stop (a panic in a worker) may have left
+		// progress on the tab.
+		if taskbarShown.Swap(false) {
+			_, _ = console.Progress().Write([]byte(osc94(tbClear, 0)))
+		}
 		restoreVT()
 		console.SetNonInteractive(false)
 		current.Store(prev)

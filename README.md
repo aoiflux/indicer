@@ -430,7 +430,9 @@ is created. A flag that contradicts an existing database is an error.
 Results (JSON, reports, help) go to stdout; the run header, progress, notes,
 warnings and errors go to stderr, so `dues list | jq` reads pure JSON. On a
 terminal DUES shows colour and a live progress display; on a pipe it writes
-plain lines with no escape codes.
+plain lines with no escape codes. `dues --version` (or `-v`) prints one line,
+for scripts and bug reports:
+`DUES 0.39.0+74431db (<pineapple> spacebar) - Deduplicated Unified Evidence Store`.
 
 - --color: auto (default), always, never, or ansi (the terminal theme's 16
   colours only)
@@ -438,7 +440,8 @@ plain lines with no escape codes.
   and logs)
 - --ci: behave as if no terminal is attached; set by itself when `CI`,
   `GITHUB_ACTIONS` and similar variables are present
-- --no-fun: turn off the hidden extras
+- --no-fun: no surprise extras after long commands (the hidden commands still
+  run when asked for by name)
 
 The environment variables `DUES_COLOR`, `DUES_PLAIN=1`, `DUES_NO_FUN=1`,
 `DUES_THEME=dark|light`, `NO_COLOR`, `FORCE_COLOR`, `CLICOLOR_FORCE` and

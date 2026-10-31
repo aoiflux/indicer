@@ -47,6 +47,9 @@ func TestNilSafety(t *testing.T) {
 	Tally(bg, "read", Bytes).Add(1)
 	Hint(bg, "h")
 	Plan(bg, "a")
+	PlanSteps(bg, Step{Name: "a", Unit: Bytes, Total: 1})
+	Unplan(bg, "a")
+	p.Item("i")
 	Skip(bg, "a", "why")
 	if Within(bg, nil) != bg {
 		t.Fatal("Within(nil) changed the context")
@@ -93,6 +96,82 @@ func TestPlanStartSkip(t *testing.T) {
 	}
 	if got := fmt.Sprint(names); got != "[store partition hashes index graph]" {
 		t.Errorf("order %s", got)
+	}
+}
+
+// PlanSteps gives pending phases the work they expect; Start replaces it
+// with the real figures. Only planned phases say so.
+func TestPlanSteps(t *testing.T) {
+	ctx, r, _ := newTest(t)
+	PlanSteps(ctx, Step{"identify", Bytes, 100}, Step{"store", Bytes, 100}, Step{"index", Files, Unknown})
+	Plan(ctx, "full-text")
+	vs := r.Snapshot(0).Phases
+	if len(vs) != 4 {
+		t.Fatalf("%d phases: %+v", len(vs), vs)
+	}
+	for i, w := range []struct {
+		unit  Unit
+		total int64
+	}{{Bytes, 100}, {Bytes, 100}, {Files, Unknown}, {None, Unknown}} {
+		if v := vs[i]; v.State != Pending || !v.Planned || v.Unit != w.unit || v.Total != w.total {
+			t.Errorf("%s: %+v, want pending planned %q of %d", v.Name, v, w.unit, w.total)
+		}
+	}
+
+	// A later plan updates a step still pending, never one that started.
+	Start(ctx, "identify", Bytes, 120)
+	PlanSteps(ctx, Step{"identify", Bytes, 5}, Step{"store", Bytes, 90})
+	extra := Start(ctx, "partition hashes", Bytes, 10)
+	vs = r.Snapshot(0).Phases
+	if vs[0].Total != 120 || vs[0].State != Running || !vs[0].Planned {
+		t.Errorf("started identify: %+v", vs[0])
+	}
+	if vs[2].Name != "store" || vs[2].Total != 90 {
+		t.Errorf("pending store: %+v", vs[2])
+	}
+	if vs[1].ID != extra.id || vs[1].Planned {
+		t.Errorf("an unplanned phase says it was planned: %+v", vs[1])
+	}
+}
+
+// Unplan drops pending phases without a trace: no event, no "not run".
+func TestUnplan(t *testing.T) {
+	ctx, r, _ := newTest(t)
+	Plan(ctx, "identify", "store", "index")
+	Start(ctx, "identify", Bytes, 10).Done(nil)
+	seq := r.Snapshot(0).Seq
+	Unplan(ctx, "identify", "store", "index", "graph")
+	r.Finish(nil)
+	snap := r.Snapshot(seq)
+	if len(snap.Phases) != 1 || snap.Phases[0].Name != "identify" || snap.Phases[0].State != OK {
+		t.Fatalf("phases after Unplan: %+v", snap.Phases)
+	}
+	if len(snap.Events) != 0 {
+		t.Errorf("Unplan made events: %+v", snap.Events)
+	}
+
+	// Under a group, only the group's pending kids go.
+	ctx, r, _ = newTest(t)
+	Plan(ctx, "compact")
+	group := Start(ctx, "evidence", Evidence, 1)
+	Plan(Within(ctx, group), "store", "index")
+	Unplan(Within(ctx, group), "store", "compact")
+	vs := r.Snapshot(0).Phases
+	if len(vs) != 2 || vs[1].Name != "compact" || len(vs[0].Kids) != 1 || vs[0].Kids[0].Name != "index" {
+		t.Errorf("Unplan under a group: %+v", vs)
+	}
+}
+
+func TestItem(t *testing.T) {
+	ctx, r, _ := newTest(t)
+	p := Start(ctx, "index", Files, Unknown)
+	p.Item(`Windows\System32\config\SOFTWARE`)
+	if v := r.Snapshot(0).Phases[0]; v.Item != `Windows\System32\config\SOFTWARE` {
+		t.Errorf("item %q", v.Item)
+	}
+	p.Item("")
+	if v := r.Snapshot(0).Phases[0]; v.Item != "" {
+		t.Errorf("item not cleared: %q", v.Item)
 	}
 }
 

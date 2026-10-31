@@ -6,6 +6,7 @@ import (
 	"math/rand/v2"
 	"os"
 	"os/signal"
+	"slices"
 	"strings"
 	"sync/atomic"
 	"time"
@@ -26,13 +27,55 @@ const (
 // Test seams.
 var (
 	eggRand  = rand.Float64
+	eggPick  = rand.IntN
 	eggSleep = sleeper(sleepCtx)
 	eggDone  atomic.Bool
 )
 
-// MaybeEgg perhaps plays one of the extras after a command that succeeded
-// and ran for ran.
-func MaybeEgg(ran time.Duration) {
+// extra is one of the extras: what it plays, and after which commands.
+type extra struct {
+	name  string
+	after []string                // kingpin FullCommand names; empty: any
+	anim  func(Painter) Animation // nil: the sign-off line
+}
+
+// extras are chosen by the command that ran, so each fits what was done.
+var extras = []extra{
+	{name: "cat_in_box", after: []string{"store", "restore"}, anim: catInBox},
+	{name: "evidence_ghost", after: []string{"store", "reindex"}, anim: ghost},
+	{name: "magnifying_glass", after: []string{"search", "near in", "near out"}, anim: magnifier},
+	{name: "artefact_found", after: []string{"micro extract", "search", "enrich"}, anim: artefactFound},
+	{name: "sign_off"},
+}
+
+// extrasFor are the extras that may follow command.
+func extrasFor(command string) []extra {
+	var out []extra
+	for _, x := range extras {
+		if len(x.after) == 0 || slices.Contains(x.after, command) {
+			out = append(out, x)
+		}
+	}
+	return out
+}
+
+// EggCommands are the commands the extras are chosen by, so a test can
+// check each is still a command.
+func EggCommands() []string {
+	var out []string
+	for _, x := range extras {
+		for _, c := range x.after {
+			if !slices.Contains(out, c) {
+				out = append(out, c)
+			}
+		}
+	}
+	return out
+}
+
+// MaybeEgg perhaps plays one of the extras after command succeeded and ran
+// for ran.
+func MaybeEgg(command string, ran time.Duration) {
 	m := Current()
 	if !m.Fun || ran < eggAfter || eggDone.Load() || eggRand() >= eggChance {
 		return
@@ -45,22 +88,22 @@ func MaybeEgg(ran time.Duration) {
 	if width, _ := console.Size(); width < maxCols+2 {
 		return
 	}
-	extras := []func(Painter) Animation{catInBox, magnifier, ghost}
-	pick := int(eggRand() * float64(len(extras)+1))
-	if pick >= len(extras) {
+	fit := extrasFor(command)
+	x := fit[eggPick(len(fit))]
+	if x.anim == nil {
 		signOff(p)
 		return
 	}
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt)
 	defer stop()
-	play(ctx, w, extras[pick](p), eggSleep)
+	play(ctx, w, x.anim(p), eggSleep)
 }
 
 // signOff is the quiet extra: one line from `dues fortune` under the
 // footer, which is how anyone finds the command.
 func signOff(p Painter) {
 	width, _ := console.Size()
-	line := "  " + fortuneLine(p, fortunes[rand.IntN(len(fortunes))]) + " " + p.Paint(Muted, p.Glyphs().Sep+" dues fortune")
+	line := "  " + fortuneLine(p, fortunes[eggPick(len(fortunes))]) + " " + p.Paint(Muted, p.Glyphs().Sep+" dues fortune")
 	fmt.Fprintln(console.Err(), wrapLine(line, width-1, "    "))
 }
 
@@ -125,6 +168,21 @@ func ghost(p Painter) Animation {
 	}}
 }
 
+// artefactFound: a gem glints where an artefact was found. It says no word
+// that could be read as a finding.
+func artefactFound(p Painter) Animation {
+	dim, gem, glint := "◇", "◆", "·◆·"
+	if p.GlyphSet() != GlyphsFull {
+		dim, gem, glint = "o", "*", ".*."
+	}
+	return Animation{Name: "artefact_found", Frames: []Frame{
+		{Rows: []string{" " + p.Paint(Muted, dim)}, Hold: 200 * time.Millisecond},
+		{Rows: []string{" " + p.Strong(Forensics, gem)}, Hold: 200 * time.Millisecond},
+		{Rows: []string{p.Strong(Forensics, glint)}, Hold: 300 * time.Millisecond},
+		{Rows: []string{" " + p.Paint(Muted, gem)}, Hold: 200 * time.Millisecond},
+	}}
+}
+
 // Meow is `dues mew`: the cat in the box, now, whatever the odds. Where
 // it may not animate (a pipe, --plain, --no-fun) the cat is printed.
 func Meow() {
@@ -145,7 +203,7 @@ func Coffee() { fmt.Fprintln(console.Out(), "Forensic caffeine levels nominal.")
 // Fortune is `dues fortune`: one line from the list.
 func Fortune() {
 	p := For(console.Out())
-	fmt.Fprintln(console.Out(), fortuneLine(p, fortunes[rand.IntN(len(fortunes))]))
+	fmt.Fprintln(console.Out(), fortuneLine(p, fortunes[eggPick(len(fortunes))]))
 }
 
 func fortuneLine(p Painter, f fortune) string {

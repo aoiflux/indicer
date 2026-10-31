@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"testing"
 	"time"
@@ -36,6 +37,11 @@ func TestOutputContract(t *testing.T) {
 	}
 	if strings.Contains(r.Stdout, "dues: store:") || !strings.Contains(r.Stdout, "Stored as evidence ") {
 		t.Errorf("store stdout is not the report alone:\n%s", r.Stdout)
+	}
+	// Under a terminal that shows taskbar progress, a pipe still gets none:
+	// RunDuesEnv fails any escape code on it.
+	if r := testutil.RunDuesEnv(t, bin, work, time.Minute, []string{"WT_SESSION=e2e"}, "store", ev, "--dbpath", db); r.ExitCode != 0 {
+		t.Errorf("store under WT_SESSION: exit %d\n%s", r.ExitCode, r.Combined())
 	}
 
 	for _, args := range [][]string{{"list"}, {"micro", "list"}} {
@@ -94,6 +100,22 @@ func TestOutputContract(t *testing.T) {
 	for _, hidden := range []string{"coffee", "fortune", "mew"} {
 		if strings.Contains(help, hidden) {
 			t.Errorf("help mentions the hidden %q", hidden)
+		}
+	}
+
+	// On a pipe, DUES names itself in one line: the whole of version and
+	// --version, and the first line of help. BuildDues sets no commit.
+	identity := regexp.MustCompile(`^DUES \d+\.\d+\.\d+(\+[0-9A-Za-z.-]+)? \([^)]*\) - Deduplicated Unified Evidence Store$`)
+	for _, args := range [][]string{{"version"}, {"--version"}, {"-v"}} {
+		r := duesMust(t, bin, work, args...)
+		if line, ok := strings.CutSuffix(r.Stdout, "\n"); !ok || !identity.MatchString(line) || r.Stderr != "" {
+			t.Errorf("dues %s: stdout %q, stderr %q", strings.Join(args, " "), r.Stdout, r.Stderr)
+		}
+	}
+	for _, args := range [][]string{{"--help"}, {"help"}, {}} {
+		first, _, _ := strings.Cut(duesMust(t, bin, work, args...).Stdout, "\n")
+		if !identity.MatchString(first) {
+			t.Errorf("dues %s: help starts %q", strings.Join(args, " "), first)
 		}
 	}
 }

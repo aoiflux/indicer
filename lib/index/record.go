@@ -45,6 +45,11 @@ func (ix *indexer) file(_ core.PartitionInfo, rec core.FileRecord) error {
 	if rec.IsDeleted {
 		ix.cov.Deleted++
 	}
+	// The file being indexed, for the progress display: the partition's
+	// first, every 64th after it, and any large one, which takes a while.
+	if ix.seen++; ix.seen%64 == 1 || rec.Size >= 4<<20 {
+		ix.phase.Item(rec.Path)
+	}
 	iid := op.nextID(ix.opts.EvidenceID, rec)
 	f := ix.newRecord(op, rec)
 

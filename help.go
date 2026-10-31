@@ -3,6 +3,7 @@ package main
 // Help and version text.
 
 import (
+	"errors"
 	"fmt"
 	"indicer/internal/ui"
 	"indicer/lib/cnst"
@@ -10,42 +11,29 @@ import (
 	"strings"
 )
 
-func getVersionText() string {
-	commit := ""
-	if buildCommit != "" {
-		commit = "  commit " + buildCommit
-	}
-	return fmt.Sprintf(
-		"DUES v%s  (%s)%s\n"+
-			"Deduplicated Unified Evidence Store\n\n"+
-			"Highlights\n"+
-			"  - Chunk-level deduplication, encrypted when a password is given\n"+
-			"  - Fast restore, NeAR similarity analysis, and search\n"+
-			"  - Short flags + presets for faster daily usage\n\n"+
-			"Try: dues --help\n"+
-			"For detailed guide: dues version\n",
-		duesVersion,
-		duesCodename,
-		commit,
-	)
-}
+// errVersionShown ends parsing after --version printed the identity line.
+var errVersionShown = errors.New("version shown")
 
+// printIdentity prints DUES's one-line identity: `dues --version`, and
+// `dues version` where stdout is not a terminal.
+func printIdentity() { fmt.Println(ui.Identity(buildInfo())) }
+
+// printVersionInfo is `dues version`: on a terminal the banner (or, under
+// --plain, the identity line) and an overview; elsewhere the identity line
+// alone, for scripts and bug reports.
 func printVersionInfo() {
+	if !ui.Current().Out.TTY {
+		printIdentity()
+		return
+	}
 	p := helpPainter()
-	title := func(s string) string { return p.Strong(ui.Forensics, s) }
-	accent := func(s string) string { return p.Strong(ui.Highlight, s) }
 	muted := func(s string) string { return p.Paint(ui.Muted, s) }
 
 	if p.Decorated() {
 		fmt.Println()
 		ui.Banner(os.Stdout, buildInfo())
 	} else {
-		fmt.Println(title("\nDUES"), muted("Deduplicated Unified Evidence Store"))
-		fmt.Println(accent("Version:"), fmt.Sprintf("%s (%s)", duesVersion, duesCodename))
-		if buildCommit != "" {
-			fmt.Println(accent("Commit:"), buildCommit)
-		}
-		fmt.Println(muted("----------------------------------------"))
+		printIdentity()
 	}
 
 	printHelpSection("Overview")
@@ -167,7 +155,8 @@ func printHelpForPath(path []string) {
 	case cnst.CmdTui:
 		printTuiHelp()
 	case cmdCoffee, cmdFortune, cmdMeow:
-		fmt.Printf("dues %s is one of DUES's hidden extras; --no-fun turns them off.\n", path[0])
+		fmt.Printf("dues %s is one of DUES's hidden extras. It runs under --no-fun too:\n", path[0])
+		fmt.Println("--no-fun only turns off the surprises after long commands and mew's animation.")
 	default:
 		fmt.Println(helpPainter().Strong(ui.Error, "Unknown command: "+strings.Join(path, " ")))
 		fmt.Println("")
@@ -177,7 +166,6 @@ func printHelpForPath(path []string) {
 
 func printRootHelp() {
 	p := helpPainter()
-	title := func(s string) string { return p.Strong(ui.Forensics, s) }
 	cmd := helpCmd()
 	muted := func(s string) string { return p.Paint(ui.Muted, s) }
 
@@ -185,7 +173,7 @@ func printRootHelp() {
 		fmt.Println()
 		ui.Banner(os.Stdout, buildInfo())
 	} else {
-		fmt.Println(title("\nDUES - Deduplicated Unified Evidence Store"))
+		printIdentity()
 	}
 	fmt.Println(muted("Reliable evidence storage, deduplication, search, and restore."))
 	printHelpSection("Usage")
@@ -193,7 +181,7 @@ func printRootHelp() {
 
 	printHelpSection("Global Options")
 	fmt.Printf("  %s, %s   Show this help\n", cmd("--help"), cmd("-h"))
-	fmt.Printf("  %s, %s   Show version and highlights\n", cmd("--version"), cmd("-v"))
+	fmt.Printf("  %s, %s   Show the version line\n", cmd("--version"), cmd("-v"))
 	fmt.Printf("  %s, %s   Custom path for DUES database\n", cmd("--dbpath"), cmd("-d"))
 	fmt.Printf("  %s       Directory for log and crash files\n", cmd("--log-dir"))
 	fmt.Printf("  %s, %s   Password for the DUES database (visible to other users)\n", cmd("--password"), cmd("-p"))
@@ -696,7 +684,8 @@ func printTuiHelp() {
 func printVersionHelp() {
 	printHelpHeader("version")
 	fmt.Println("Usage: dues version")
-	fmt.Println("Shows version details, codename, quick feature overview, and preset guidance.")
+	fmt.Println("On a terminal, shows the banner, a feature overview and preset guidance. Piped, it")
+	fmt.Println("prints one line: version, commit and codename. dues -v prints that line anywhere.")
 	printExamples(
 		"dues version",
 		"dues -v",

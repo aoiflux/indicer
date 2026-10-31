@@ -191,4 +191,15 @@ func TestRunHeader(t *testing.T) {
 			t.Fatalf("header has a brace (the backcompat test parses list output by braces): %q", out)
 		}
 	}
+
+	// On a narrow terminal the lines break at spaces; none is wider.
+	t.Setenv("COLUMNS", "30")
+	errb.Reset()
+	h.Target = "/tmp/TestLiveDisplayInPTY2895467/001/db"
+	RunHeader(console.Err(), h)
+	for _, l := range strings.Split(strings.TrimSuffix(ansi.Strip(errb.String()), "\n"), "\n") {
+		if ansi.StringWidth(l) > 29 {
+			t.Errorf("header line %q is wider than the terminal", l)
+		}
+	}
 }

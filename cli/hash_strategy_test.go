@@ -26,7 +26,7 @@ import (
 func ensureZstdReadyForTests(t *testing.T) {
 	t.Helper()
 	if cnst.DECODER == nil {
-		decoder, err := zstd.NewReader(nil, zstd.WithDecoderConcurrency(0))
+		decoder, err := cnst.NewDecoder()
 		if err != nil {
 			t.Fatalf("init zstd decoder: %v", err)
 		}

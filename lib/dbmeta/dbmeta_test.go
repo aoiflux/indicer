@@ -16,7 +16,6 @@ import (
 
 	"github.com/dgraph-io/badger/v4"
 	"github.com/dgraph-io/badger/v4/options"
-	"github.com/klauspost/compress/zstd"
 )
 
 // fastKDF keeps tests quick; production uses DefaultKDF.
@@ -137,7 +136,7 @@ func TestKeys(t *testing.T) {
 func ensureCodecs(t *testing.T) {
 	t.Helper()
 	if cnst.DECODER == nil {
-		d, err := zstd.NewReader(nil)
+		d, err := cnst.NewDecoder()
 		if err != nil {
 			t.Fatal(err)
 		}

@@ -24,7 +24,7 @@ func ensureBenchCodec(tb testing.TB) {
 	tb.Helper()
 	benchCodecInit.Do(func() {
 		var err error
-		cnst.DECODER, err = zstd.NewReader(nil, zstd.WithDecoderConcurrency(0))
+		cnst.DECODER, err = cnst.NewDecoder()
 		if err != nil {
 			tb.Fatalf("decoder init failed: %v", err)
 		}

@@ -35,6 +35,10 @@ summary:
 
 Tool versions live only in `scripts/tools.env`. Fuzz targets are listed in
 `scripts/fuzz-targets.txt`, and each runs for `FUZZTIME` (default 60s).
+Each new-coverage input or failing input is minimised for at most 5s
+(`-fuzzminimizetime 5s`). Go's own default is 60s, which in a 60s smoke
+kept every worker minimising, so the run reported 0 execs/sec and explored
+almost nothing.
 
 Practical notes:
 - Do not edit the tree while the Windows steps run. Editing is safe once the

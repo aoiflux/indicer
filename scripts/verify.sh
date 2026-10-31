@@ -89,7 +89,9 @@ fuzz_run() {
 	while read -r pkg fn; do
 		case "$pkg" in "" | \#*) continue ;; esac
 		echo "-- fuzz $pkg $fn"
-		go test "$pkg" -run '^$' -fuzz "^$fn\$" -fuzztime "${FUZZTIME:-60s}" || rc=1
+		# A short minimise time keeps the smoke fuzzing; see scripts/wsl/suite.sh.
+		go test "$pkg" -run '^$' -fuzz "^$fn\$" -fuzztime "${FUZZTIME:-60s}" \
+			-fuzzminimizetime 5s || rc=1
 	done <scripts/fuzz-targets.txt
 	return $rc
 }

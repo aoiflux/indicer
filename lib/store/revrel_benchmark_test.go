@@ -170,7 +170,7 @@ func BenchmarkProcessRevRel(b *testing.B) {
 
 func ensureBenchmarkCodecs(b *testing.B) {
 	if cnst.DECODER == nil {
-		decoder, err := zstd.NewReader(nil, zstd.WithDecoderConcurrency(0))
+		decoder, err := cnst.NewDecoder()
 		if err != nil {
 			b.Fatalf("init zstd decoder: %v", err)
 		}

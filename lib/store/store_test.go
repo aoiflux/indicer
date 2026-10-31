@@ -81,9 +81,9 @@ func openTestDB(t testing.TB) *badger.DB {
 	prevQuick := cnst.QUICKOPT
 	cnst.QUICKOPT = true
 	if cnst.DECODER == nil {
-		decoder, err := zstd.NewReader(nil, zstd.WithDecoderConcurrency(0))
+		decoder, err := cnst.NewDecoder()
 		if err != nil {
-			t.Fatalf("zstd.NewReader: %v", err)
+			t.Fatalf("cnst.NewDecoder: %v", err)
 		}
 		cnst.DECODER = decoder
 	}

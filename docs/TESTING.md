@@ -15,10 +15,25 @@ scripts\verify.ps1 -Fast      # format, vet, builds and tests only
 ```
 
 `-NoWSL`, `-NoVuln` (govulncheck needs network access) and `-NoFuzz` skip
-those parts.
+those parts. `-FuzzTime 10s` shortens each fuzz target's run.
 
 On Linux, or inside WSL, run `scripts/verify.sh` instead. It accepts `--fast`,
-`--no-vuln`, `--no-race` and `--no-fuzz`.
+`--no-vuln`, `--no-race`, `--no-fuzz` and `--fuzztime DURATION`.
+
+The scripts and tests read no environment variables. Test settings are build
+tags and `go test` flags:
+
+| Setting | How | Effect |
+|---|---|---|
+| Long tests | `-tags long` | Run the scale and soak tests (see Long tests) |
+| Pseudo-terminal tests must run | `-tags requirepty` | Their skip becomes a failure (the WSL suite) |
+| A Windows console is attached | `-tags winconsole` | Run the Ctrl-Break test in `internal/faultinject` |
+| Strict panics | `-tags safestrict` | A panic `internal/safe` would contain crashes the test (the fuzz smoke) |
+| Special mounts | `-args -dues.enospc-dir=DIR` and the rest | Run the filesystem-failure tests (see below) |
+| The real corpus | `-args -dues.corpus-vhd=DIR` and the rest | Run the corpus tests (see below) |
+
+A test binary refuses a flag it does not define, so a run that passes
+`-args` names its packages rather than `./...`.
 
 The gate runs these steps and prints one PASS or FAIL line per step, then a
 summary:
@@ -26,15 +41,15 @@ summary:
 | Step | What it checks |
 |---|---|
 | format | `go run ./internal/tools/fmtcheck`. Plain `gofmt -l` flags every file on a CRLF checkout, so fmtcheck normalises line endings before comparing. |
-| vet | `go vet ./...`, once without and once with `-tags faultinject` |
+| vet | `go vet ./...` without tags, with `-tags faultinject`, and with every test tag (`faultinject,long,requirepty,safestrict,winconsole`) |
 | cross build | Release builds for windows, linux and darwin on amd64 and arm64, for `.` and `./cmd/compression`. A binary built with the `faultinject` tag fails the step. |
 | staticcheck | Without and with `-tags faultinject`, under the toolchain pinned in `scripts/tools.env` (older staticcheck cannot read newer export data). The target is 0 findings. The faultinject run is skipped when the plain run fails, so after a fix run both by hand. |
 | govulncheck | Source mode, plus binary mode on the Linux build. The target is 0 reachable vulnerabilities. |
-| test | `go test ./...`, once without and once with `-tags faultinject`; with `-Long`, the long tests too |
+| test | `go test ./...`, once without and once with `-tags faultinject`; with `-Long`, the first run uses `-tags long` |
 | WSL suite | `scripts/wsl/sync.sh` copies the working tree to ext4 with LF line endings. `scripts/wsl/suite.sh` then runs the race tests, the fault-injection tests, the filesystem-failure tests, the fuzz smoke and, with `--long`, the long tests. |
 
 Tool versions live only in `scripts/tools.env`. Fuzz targets are listed in
-`scripts/fuzz-targets.txt`, and each runs for `FUZZTIME` (default 60s).
+`scripts/fuzz-targets.txt`, and each runs for `--fuzztime` (default 60s).
 Each new-coverage input or failing input is minimised for at most 5s
 (`-fuzzminimizetime 5s`). Go's own default is 60s, which in a 60s smoke
 kept every worker minimising, so the run reported 0 execs/sec and explored
@@ -114,9 +129,9 @@ wsl -u root --exec bash lib/parser/testdata/gen/gen_ntfs_extra.sh
 
 The scripts share `gen/lib.sh`. They need dosfstools, mtools, exfatprogs,
 xfsprogs, e2fsprogs, ntfs-3g, hfsutils, hfsprogs, gdisk, ewf-tools,
-qemu-utils, zstd and python3, plus fsagen through WSL interop (`$FSAGEN`).
-They also leave uncompressed copies under `$DUES_DATASET_DIR` (default
-`/mnt/e/dataset/dues_synth`).
+qemu-utils, zstd and python3, plus fsagen through WSL interop (`--fsagen
+PATH`). They also leave uncompressed copies under `--dataset-dir DIR`
+(default `/mnt/e/dataset/dues_synth`).
 
 Tests load fixtures through `internal/testutil/fsfixture`:
 
@@ -192,18 +207,17 @@ The large evidence corpus is not in the repository. It consists of:
 - `E:\dataset`: raw images with oracle TSVs, and the jean E01 set;
 - `E:\hyper\vhd`: Hyper-V VHDX disks with snapshot chains.
 
-Treat both as read-only evidence. Tests that use the corpus skip unless it is
-named:
+Treat both as read-only evidence. Tests that use the corpus skip unless a
+`go test` flag names it:
 
-| Variable | Test | What it checks |
+| Flag | Test | What it checks |
 |---|---|---|
-| `DUES_CORPUS_VHD` (a directory) | `lib/parser/image` | Differencing disks resolve their parents from their own directory only; an incomplete chain refuses to open; reads that start inside a sector of a partially present block, and reads of a disk's partial last chunk, return the bytes libyal `vhdimount` returns |
-| `DUES_CORPUS_NTFS` (an image) | `lib/parser/fs/ntfs` `TestDecoderMatchesLibntfs` | DUES's LZNT1 decoder and libntfs agree on every live compressed file (8,463 on `jean.e01`) |
-| `DUES_TEST_CORPUS_LIST` (a file of image paths) and `DUES_TEST_CORPUS_SCRATCH` (a directory) | `internal/e2e` `TestCorpusRoundTrip` | Each image is stored with `--no-index`, then restored with full verification (and the EWF check for E01). Raw images must match their own SHA-256. Images too large for the scratch volume are skipped. |
+| `-dues.corpus-vhd` (a directory) | `lib/parser/image` | Differencing disks resolve their parents from their own directory only; an incomplete chain refuses to open; reads that start inside a sector of a partially present block, and reads of a disk's partial last chunk, return the bytes libyal `vhdimount` returns |
+| `-dues.corpus-ntfs` (images, separated as in `PATH`) | `lib/parser/fs/ntfs` `TestDecoderMatchesLibntfs` | DUES's LZNT1 decoder and libntfs agree on every live compressed file (8,463 on `jean.e01`) |
+| `-dues.corpus-list` (a file of image paths) and `-dues.corpus-scratch` (a directory) | `internal/e2e` `TestCorpusRoundTrip` | Each image is stored with `--no-index`, then restored with full verification (and the EWF check for E01). Raw images must match their own SHA-256. Images too large for the scratch volume are skipped. |
 
 ```powershell
-$env:DUES_CORPUS_VHD = 'E:\hyper\vhd'
-go test ./lib/parser/image/
+go test ./lib/parser/image/ -args '-dues.corpus-vhd=E:\hyper\vhd'
 ```
 
 `cmd/dues-parsemanifest` writes a JSONL manifest of every partition and file
@@ -221,8 +235,8 @@ Two corpus cautions:
 
 ## Long tests
 
-Tests that take minutes call `testutil.LongTest(t)` and run only with
-`DUES_LONG_TESTS=1` (`verify.ps1 -Long`, `suite.sh --long`). They cover scale
+Tests that take minutes call `testutil.LongTest(t)` and run only in a build
+with `-tags long` (`verify.ps1 -Long`, `suite.sh --long`). They cover scale
 and boundaries:
 - chunk sizes up to 64 MiB in `lib/ingest` `TestChunkBoundaryMatrix` (the
   smaller sizes run always);
@@ -236,15 +250,14 @@ and boundaries:
 
 | Package | Use it for |
 |---|---|
-| `internal/testutil` | I/O fault injectors (`FailingReaderAt`, `ShortReaderAt`, `NewENOSPCWriter`, `ShortWriter`, `ErrCloser`, slow and blocking readers); deterministic data (`RandomBytes`, `WriteRandomFile`); `TreeHash`, `AssertNoFilesMatching` and `Golden`; environment gates (`RequireEnvDir`, `RequireLinuxNonRoot`, `LongTest`); leak and memory checks (`NoLeakedGoroutines`, `AllocBelow`, `PeakHeap`); `FakeClock`; subprocess scenarios (`RunChildScenarios`, `StartChild`, `WaitForPoint`, `Kill`, `Interrupt`); the built binary (`BuildDues`, `BuildBinary`, `RunDues`, `RunDuesEnv`, `StartDues`; the build functions take build tags); `ChildEnv`, the environment a child runs with, without the colour and presentation variables (`NO_COLOR`, `FORCE_COLOR`, `CLICOLOR_FORCE`, `DUES_COLOR`, `DUES_PLAIN`, `DUES_NO_FUN`, `DUES_THEME`); and `HashFile`, `HashRange` |
+| `internal/testutil` | I/O fault injectors (`FailingReaderAt`, `ShortReaderAt`, `NewENOSPCWriter`, `ShortWriter`, `ErrCloser`, slow and blocking readers); deterministic data (`RandomBytes`, `WriteRandomFile`); `TreeHash` and `AssertNoFilesMatching`; gates (`NewDirFlag` and the mount flags `ENOSPCDir`, `LowSpaceDir`, `ReadOnlySrc` and `ReadOnlyDB`; `RequireLinuxNonRoot`; `LongTest`); leak and memory checks (`NoLeakedGoroutines`, `AllocBelow`, `PeakHeap`); `FakeClock`; subprocess scenarios (`RunChildScenarios`, `StartChild`, `NotifyPoint`, `ChildNotifyFile`, `WaitForPoint`, `Kill`, `Interrupt`), which get their settings as arguments; the built binary (`BuildDues`, `BuildBinary`, `RunDues`, `StartDues`, `FaultArgs`; the build functions take build tags); and `HashFile`, `HashRange` |
 | `internal/testutil/vtscreen` | A small terminal for asserting what a person would see (below) |
 | `internal/testutil/testdb` | Opening throwaway databases. `ForEachMode` runs a test once per storage mode (default, encrypted, quick, container). Every helper snapshots and restores the process-wide layout globals, so tests using it must not call `t.Parallel`. |
 | `internal/faultinject` | Making the code fail at named points (see below) |
 
-`RunDuesEnv` also holds every run to the output contract
+`RunDues` also holds every run to the output contract
 ([CLI_UX.md](CLI_UX.md)): it fails a test whose piped stdout or stderr holds an
-escape code, unless the run asked for colour (`--color=always`,
-`FORCE_COLOR=1`). Parse `list` and `micro list` stdout as one JSON document;
+escape code, unless the run asked for colour (`--color=always`). Parse `list` and `micro list` stdout as one JSON document;
 the run header and notes are on stderr.
 
 Terminal output itself is tested against a small terminal emulator,
@@ -266,21 +279,24 @@ run the binary on a real pseudo-terminal through util-linux
   footer last, nothing left of the live display, the cursor shown. It also
   checks `dues version` (the banner) and `dues --version` (one line).
 - `TestTaskbarInPTY` (`-tags faultinject`) holds a store for two seconds
-  before its commit, so the display redraws, and checks that under
-  `WT_SESSION` the taskbar progress ends cleared, and that elsewhere there is
+  before its commit, so the display redraws, and checks that with
+  `--taskbar` the taskbar progress ends cleared, and that without it there is
   none.
 
 They skip without util-linux `script` (Windows, macOS, `-short`). The WSL
-suite sets `DUES_REQUIRE_PTY=1`, which turns that skip into a failure.
+suite builds them with `-tags requirepty`, which turns that skip into a
+failure.
 
 ### Fault injection
 
 Code marks a point with `faultinject.Hit(faultinject.SomePoint)`. Normal
 builds compile the call to nothing, and the gate fails a release binary that
-carries the tag. A build with `-tags faultinject` reads `DUES_FAULTS`:
+carries the tag. A build with `-tags faultinject` takes a spec from the
+hidden `--faults` flag of dues and compression (compression takes it before
+the command), and tests in the process call `faultinject.Set`:
 
 ```
-DUES_FAULTS="ingest.before_commit=exit:9@2,restore.mid=enospc"
+dues --faults=ingest.before_commit=exit:9@2,restore.mid=enospc store ...
 ```
 
 The actions are:
@@ -293,8 +309,9 @@ The actions are:
 - `signal:INT` (Ctrl-Break on Windows) and `signal:TERM` (Unix only).
 
 `@N` fires on the Nth hit only, and `@N+` from the Nth hit on. When
-`DUES_FAULTS_NOTIFY` names a file, the first hit of each point is written to
-it, so a parent test can wait for the child to get there.
+`--faults-notify` names a file, the first hit of each point is written to
+it, so a parent test can wait for the child to get there. A release build has
+neither flag, so passing one is a usage error.
 
 The points are listed in `internal/faultinject/points.go`, so a misspelt point
 is an error, not a silent no-op. There are 20 of them:
@@ -323,29 +340,36 @@ The suites that use them, in `internal/e2e` (tag `faultinject`):
 - `TestConcurrentProcesses` runs read commands in parallel processes, and
   checks that a second writer is refused while a store holds the database.
 
-A kill-point test written by hand runs the scenario in a child process and
+A kill-point test written by hand runs the binary in a child process and
 waits for it to reach the point:
 
 ```go
-c := testutil.StartChild(t, "store", "DUES_FAULTS=ingest.before_commit=block")
+c := testutil.StartDues(t, bin, work, "ingest.before_commit=block", "store", src, "--dbpath", db)
 c.WaitForPoint(t, "ingest.before_commit#blocked", time.Minute)
 c.Kill(t)
 // reopen the database and check that recovery is correct
 ```
 
+A scenario in a test binary is started the same way with
+`testutil.StartChild(t, "store", spec)`; the child passes its first argument
+and `testutil.ChildNotifyFile()` to `faultinject.Configure`.
+
 ### Filesystem-failure tests
 
 `scripts/wsl/mounts.sh up` (run as root) mounts four filesystems:
 
-| Mount | Variable | Use |
+| Mount | Flag | Use |
 |---|---|---|
-| `/mnt/dues-enospc`, a 16 MB tmpfs | `DUES_TEST_ENOSPC_DIR` | Real disk-full errors |
-| `/mnt/dues-lowspace`, a 384 MB tmpfs | `DUES_TEST_LOWSPACE_DIR` | Room for a database and DUES's 128 MiB free-space reserve, so a store fills the volume part way |
-| `/mnt/dues-ro`, a read-only tmpfs | `DUES_TEST_RO_DIR` | A read-only directory |
-| `/mnt/dues-ro-db`, a read-only bind of `/var/tmp/dues-ro-src` | `DUES_TEST_RO_SRC`, `DUES_TEST_RO_DB` | A test builds a database in the source and reads it through the bind, as from write-protected media |
+| `/mnt/dues-enospc`, a 16 MB tmpfs | `-dues.enospc-dir` | Real disk-full errors |
+| `/mnt/dues-lowspace`, a 384 MB tmpfs | `-dues.lowspace-dir` | Room for a database and DUES's 128 MiB free-space reserve, so a store fills the volume part way |
+| `/mnt/dues-ro-db`, a read-only bind of `/var/tmp/dues-ro-src` | `-dues.ro-src`, `-dues.ro-db` | A test builds a database in the source and reads it through the bind, as from write-protected media |
 
-`mounts.sh env` prints the export lines, which `suite.sh` sources. Tests skip
-when the variables are unset. Permission tests call `RequireLinuxNonRoot`,
+`mounts.sh args` prints the flags, one per line. `suite.sh` passes them after
+`-args` to the packages that use them (`internal/e2e`, `internal/diskspace`
+and `internal/products/compression_product`); a package that starts using a
+mount must be added to its list. The flags are defined in `internal/testutil`
+(`testutil.ENOSPCDir.Require(t)` and the rest), and a test skips when its flag
+is not given. Permission tests call `RequireLinuxNonRoot`,
 because root ignores file modes, so run `suite.sh` as a normal user.
 
 `internal/e2e/fsfail_test.go` covers, for the commands that write:
@@ -367,7 +391,7 @@ because root ignores file modes, so run `suite.sh` as a normal user.
 - configuration, the fault spec, terminal sanitising, log redaction and the
   search matcher.
 
-The fuzz smoke runs each with `DUES_SAFE_STRICT=1`, so a panic that
+The fuzz smoke builds each with `-tags safestrict`, so a panic that
 `internal/safe` would contain is still a finding. The exception is
 `FuzzExtract`: it feeds third-party parsers, whose contained panics are
 expected, so only a crash past containment, a hang or unbounded output counts.

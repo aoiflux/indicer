@@ -1,7 +1,6 @@
 package testutil
 
 import (
-	"bytes"
 	"crypto/sha256"
 	"encoding/hex"
 	"hash"
@@ -158,30 +157,5 @@ func AssertNoFilesMatching(tb testing.TB, root, pattern string) {
 	tb.Helper()
 	if left := FilesMatching(tb, root, pattern); len(left) > 0 {
 		tb.Fatalf("files matching %q left under %s: %s", pattern, root, strings.Join(left, ", "))
-	}
-}
-
-// Golden compares got with testdata/<name> after normalising CRLF to LF on
-// both sides. With DUES_UPDATE_GOLDEN=1 it rewrites the file instead.
-func Golden(tb testing.TB, name string, got []byte) {
-	tb.Helper()
-	path := filepath.Join("testdata", filepath.FromSlash(name))
-	got = bytes.ReplaceAll(got, []byte("\r\n"), []byte("\n"))
-	if os.Getenv("DUES_UPDATE_GOLDEN") == "1" {
-		if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
-			tb.Fatal(err)
-		}
-		if err := os.WriteFile(path, got, 0o644); err != nil {
-			tb.Fatal(err)
-		}
-		return
-	}
-	want, err := os.ReadFile(path)
-	if err != nil {
-		tb.Fatalf("read golden %s (set DUES_UPDATE_GOLDEN=1 to create it): %v", path, err)
-	}
-	want = bytes.ReplaceAll(want, []byte("\r\n"), []byte("\n"))
-	if !bytes.Equal(got, want) {
-		tb.Fatalf("output differs from %s (set DUES_UPDATE_GOLDEN=1 to accept):\n--- got ---\n%s\n--- want ---\n%s", path, got, want)
 	}
 }

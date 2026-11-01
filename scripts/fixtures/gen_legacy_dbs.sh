@@ -15,14 +15,21 @@
 #   golden.json      per mode: flags, password, inputs and their sha256, the
 #                    `dues list` JSON, and what restoring each object returned
 #
-# Usage: scripts/fixtures/gen_legacy_dbs.sh [COMMIT]
+# Usage: scripts/fixtures/gen_legacy_dbs.sh [--keep] [COMMIT]
+#
+# --keep leaves the work directory (/tmp/dues-legacyfx.*) for inspection.
 set -euo pipefail
 
+keep=0
+if [ "${1:-}" = --keep ]; then
+  keep=1
+  shift
+fi
 commit="${1:-41dbc74}"
 repo="$(cd "$(dirname "$0")/../.." && pwd)"
 out="$repo/internal/testutil/legacyfixture/testdata"
-work="$(mktemp -d "${TMPDIR:-/tmp}/dues-legacyfx.XXXXXX")"
-trap '[ -n "${KEEP:-}" ] || rm -rf "$work"' EXIT
+work="$(mktemp -d /tmp/dues-legacyfx.XXXXXX)"
+trap '[ "$keep" = 1 ] || rm -rf "$work"' EXIT
 
 # Git Bash rewrites arguments that look like POSIX paths; WSL paths must reach
 # wsl.exe untouched.

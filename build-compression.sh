@@ -2,17 +2,36 @@
 # Build script for compression product artifacts.
 # - CLI binary from ./cmd/compression
 # - Optional FFI c-shared/c-archive from ./cmd/ffi
+#
+#   ./build-compression.sh [--mode cli|ffi|all] [--targets OS/ARCH,...]
+#       [--ffi-build-mode auto|c-shared|c-archive] [--build-profile debug|release]
+#       [--output-dir DIR] [--product-name NAME] [--cli-package PKG] [--ffi-package PKG]
 
 set -e
 
-PRODUCT_NAME="${PRODUCT_NAME:-compression}"
-CLI_PACKAGE="${CLI_PACKAGE:-./cmd/compression}"
-FFI_PACKAGE="${FFI_PACKAGE:-./cmd/ffi}"
-OUTPUT_DIR="${OUTPUT_DIR:-dist/compression}"
-TARGETS="${TARGETS:-linux/amd64}"
-MODE="${MODE:-all}" # cli | ffi | all
-FFI_BUILD_MODE="${FFI_BUILD_MODE:-auto}" # auto | c-shared | c-archive
-BUILD_PROFILE="${BUILD_PROFILE:-debug}" # debug | release
+PRODUCT_NAME=compression
+CLI_PACKAGE=./cmd/compression
+FFI_PACKAGE=./cmd/ffi
+OUTPUT_DIR=dist/compression
+TARGETS=linux/amd64 # comma-separated
+MODE=all # cli | ffi | all
+FFI_BUILD_MODE=auto # auto | c-shared | c-archive
+BUILD_PROFILE=debug # debug | release
+
+need() { [ "$#" -ge 2 ] || { echo "ERROR: $1 needs a value" >&2; exit 2; }; }
+while [ "$#" -gt 0 ]; do
+  case "$1" in
+    --mode) need "$@"; MODE="$2"; shift 2 ;;
+    --targets) need "$@"; TARGETS="$2"; shift 2 ;;
+    --ffi-build-mode) need "$@"; FFI_BUILD_MODE="$2"; shift 2 ;;
+    --build-profile) need "$@"; BUILD_PROFILE="$2"; shift 2 ;;
+    --output-dir) need "$@"; OUTPUT_DIR="$2"; shift 2 ;;
+    --product-name) need "$@"; PRODUCT_NAME="$2"; shift 2 ;;
+    --cli-package) need "$@"; CLI_PACKAGE="$2"; shift 2 ;;
+    --ffi-package) need "$@"; FFI_PACKAGE="$2"; shift 2 ;;
+    *) echo "ERROR: unknown argument '$1'" >&2; exit 2 ;;
+  esac
+done
 
 REPO_ROOT="$(cd "$(dirname "$0")" && pwd)"
 cd "$REPO_ROOT"
@@ -34,7 +53,7 @@ case "$BUILD_PROFILE" in
     GO_LDFLAGS="-s -w"
     ;;
   *)
-    echo "ERROR: Invalid BUILD_PROFILE '$BUILD_PROFILE'. Use debug|release." >&2
+    echo "ERROR: Invalid --build-profile '$BUILD_PROFILE'. Use debug|release." >&2
     exit 1
     ;;
 esac
@@ -89,11 +108,11 @@ build_ffi() {
   echo "[FFI:$_resolved_ffi_build_mode] $_goos/$_goarch -> $_out"
   if [ "$_goos" = "windows" ] && [ "$_resolved_ffi_build_mode" = "c-archive" ]; then
     echo "WARN: windows c-archive output is GNU .a and is typically not linkable by MSVC toolchains." >&2
-    echo "WARN: For Flutter on Windows, prefer FFI_BUILD_MODE=c-shared and load the DLL via dart:ffi." >&2
+    echo "WARN: For Flutter on Windows, prefer --ffi-build-mode c-shared and load the DLL via dart:ffi." >&2
   fi
 
   if [ "$_resolved_ffi_build_mode" != "c-shared" ] && [ "$_resolved_ffi_build_mode" != "c-archive" ]; then
-    echo "ERROR: Invalid FFI_BUILD_MODE '$FFI_BUILD_MODE'. Use auto|c-shared|c-archive." >&2
+    echo "ERROR: Invalid --ffi-build-mode '$FFI_BUILD_MODE'. Use auto|c-shared|c-archive." >&2
     exit 1
   fi
 
@@ -131,7 +150,7 @@ for target in $TARGETS; do
       build_ffi "$goos" "$goarch"
       ;;
     *)
-      echo "ERROR: Invalid MODE '$MODE'. Use cli|ffi|all." >&2
+      echo "ERROR: Invalid --mode '$MODE'. Use cli|ffi|all." >&2
       exit 1
       ;;
   esac

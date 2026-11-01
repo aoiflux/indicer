@@ -17,8 +17,7 @@ dues tui --dbpath ./caseA --password-file ./caseA.key
 
 The TUI opens the database for writing and holds its lock until it ends, so
 no other DUES process can write to it meanwhile. The password comes from
-`--password-file`, `--password-stdin`, `DUES_PASSWORD` or `--password`, as for
-every command (`--password` is visible to other users).
+`--password-file` or `--password-stdin`, as for every command.
 
 The chunk size and chunk hash are part of the database's layout, fixed when it
 was created. The menu shows them; the TUI cannot change them. A database

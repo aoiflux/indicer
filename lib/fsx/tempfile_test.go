@@ -9,23 +9,20 @@ import (
 )
 
 func TestMain(m *testing.M) {
-	os.Exit(testutil.RunChildScenarios(m, map[string]func() int{
-		// Creates a delete-on-close temporary file, reports it, and waits to
-		// be killed.
-		"hold-temp": func() int {
-			f, err := CreateTempDeleteOnClose(os.Getenv("DUES_TEST_DIR"), "spill-*")
+	os.Exit(testutil.RunChildScenarios(m, map[string]func(args []string) int{
+		// Creates a delete-on-close temporary file in the directory args[0],
+		// reports it, and waits to be killed.
+		"hold-temp": func(args []string) int {
+			f, err := CreateTempDeleteOnClose(args[0], "spill-*")
 			if err != nil {
 				return 1
 			}
 			if _, err := f.Write([]byte("evidence bytes")); err != nil {
 				return 1
 			}
-			n, err := os.OpenFile(os.Getenv(testutil.EnvFaultsNotify), os.O_APPEND|os.O_WRONLY, 0)
-			if err != nil {
+			if err := testutil.NotifyPoint("created"); err != nil {
 				return 1
 			}
-			_, _ = n.WriteString("created\n")
-			_ = n.Close()
 			time.Sleep(time.Minute)
 			return 0
 		},
@@ -80,7 +77,7 @@ func TestCreateTempDeleteOnCloseNeedsDir(t *testing.T) {
 // evidence.
 func TestCreateTempDeleteOnCloseAfterCrash(t *testing.T) {
 	dir := t.TempDir()
-	child := testutil.StartChild(t, "hold-temp", "DUES_TEST_DIR="+dir)
+	child := testutil.StartChild(t, "hold-temp", dir)
 	child.WaitForPoint(t, "created", 30*time.Second)
 	child.Kill(t)
 	child.Wait(t, 30*time.Second)

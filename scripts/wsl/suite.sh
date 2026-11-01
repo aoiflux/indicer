@@ -3,22 +3,31 @@
 # tree sync.sh copied. Run it as the normal user (permission tests need a
 # non-root user); it calls root only to set up mounts.
 #
-#   scripts/wsl/suite.sh [--no-fuzz] [--long]
+#   scripts/wsl/suite.sh [--fuzztime DURATION] [--no-fuzz] [--long]
 #
 # Steps: race tests, faultinject tests (including subprocess kill points),
-# filesystem-failure tests on the special mounts, fuzz smoke, and with --long
-# the long tests (DUES_LONG_TESTS=1, without the race detector).
+# filesystem-failure tests on the special mounts, fuzz smoke (each target for
+# --fuzztime, default 60s), and with --long the long tests (-tags long,
+# without the race detector). The race and faultinject steps build with
+# -tags requirepty, so the pseudo-terminal tests fail rather than skip.
 set -uo pipefail
 
 cd "$(dirname "$0")/../.."
 fuzz=1
 long=0
-for arg in "$@"; do
-	case "$arg" in
+fuzztime=60s
+while [ $# -gt 0 ]; do
+	case "$1" in
+	--fuzztime)
+		[ $# -ge 2 ] || { echo "suite.sh: --fuzztime needs a duration" >&2; exit 2; }
+		fuzztime="$2"
+		shift
+		;;
 	--no-fuzz) fuzz=0 ;;
 	--long) long=1 ;;
-	*) echo "suite.sh: unknown argument $arg" >&2; exit 2 ;;
+	*) echo "suite.sh: unknown argument $1" >&2; exit 2 ;;
 	esac
+	shift
 done
 
 results=()
@@ -39,11 +48,17 @@ mounts_up() {
 	fi
 }
 
+# The packages whose tests use the mounts. A test binary refuses a flag it
+# does not define, so the run names them; a package that starts using a
+# mount (testutil.ENOSPCDir and the rest) must be added here, or its test
+# skips.
+fs_packages=(./internal/e2e ./internal/diskspace ./internal/products/compression_product)
+
 fs_suite() {
 	mounts_up || return 1
-	eval "$(bash scripts/wsl/mounts.sh env)"
-	export DUES_TEST_ENOSPC_DIR DUES_TEST_LOWSPACE_DIR DUES_TEST_RO_DIR DUES_TEST_RO_SRC DUES_TEST_RO_DB
-	go test -count=1 -run 'ENOSPC|ReadOnly|Permission|DiskFull' ./...
+	local args
+	mapfile -t args < <(bash scripts/wsl/mounts.sh args) || return 1
+	go test -count=1 -run 'ENOSPC|ReadOnly|Permission|DiskFull' "${fs_packages[@]}" -args "${args[@]}"
 }
 
 fuzz_run() {
@@ -55,18 +70,16 @@ fuzz_run() {
 		# 60s by default. In a 60s smoke that kept every worker minimising
 		# (0 execs/sec), and the unfinished inputs never reached the cache,
 		# so every run repeated it.
-		go test -tags safestrict "$pkg" -run '^$' -fuzz "^$fn\$" -fuzztime "${FUZZTIME:-60s}" \
+		go test -tags safestrict "$pkg" -run '^$' -fuzz "^$fn\$" -fuzztime "$fuzztime" \
 			-fuzzminimizetime 5s || rc=1
 	done <scripts/fuzz-targets.txt
 	return $rc
 }
 
-# The pseudo-terminal tests (internal/e2e) must run here, not skip.
-export DUES_REQUIRE_PTY=1
-step "test (race)" go test -race -count=1 ./...
-step "test (faultinject)" go test -count=1 -tags faultinject ./...
+step "test (race)" go test -race -count=1 -tags requirepty ./...
+step "test (faultinject)" go test -count=1 -tags faultinject,requirepty ./...
 step "filesystem failures" fs_suite
-[ $long = 1 ] && step "long tests" env DUES_LONG_TESTS=1 go test -count=1 -timeout 90m ./...
+[ $long = 1 ] && step "long tests" go test -count=1 -timeout 90m -tags long ./...
 [ $fuzz = 1 ] && step "fuzz smoke" fuzz_run
 
 echo

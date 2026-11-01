@@ -3,6 +3,7 @@ package testutil
 import (
 	"bytes"
 	"errors"
+	"flag"
 	"fmt"
 	"os"
 	"os/exec"
@@ -13,35 +14,52 @@ import (
 	"time"
 )
 
-// Env names the subprocess harness uses.
-const (
-	// EnvChildScenario names the scenario a re-executed test binary runs.
-	EnvChildScenario = "DUES_CHILD_SCENARIO"
-	// EnvFaultsNotify is the file a child appends "<point>\n" to whenever it
-	// reaches a fault point; internal/faultinject writes it.
-	EnvFaultsNotify = "DUES_FAULTS_NOTIFY"
+// The flags StartChild starts a test binary with. Every test binary that
+// imports testutil has them.
+var (
+	childScenario = flag.String("dues.child", "", "run this child scenario instead of the tests (set by StartChild)")
+	childNotify   = flag.String("dues.notify", "", "the file a child scenario reports the points it reaches to (set by StartChild)")
 )
 
 // RunChildScenarios lets one test binary act as its own subprocess. Call it
 // first in TestMain: when the binary was started by StartChild it runs the
-// named scenario and exits with its return code; otherwise it runs the tests.
+// named scenario with StartChild's arguments and exits with its return
+// code; otherwise it runs the tests.
 //
 //	func TestMain(m *testing.M) {
-//		os.Exit(testutil.RunChildScenarios(m, map[string]func() int{
-//			"store": func() int { ... },
+//		os.Exit(testutil.RunChildScenarios(m, map[string]func(args []string) int{
+//			"store": func(args []string) int { ... },
 //		}))
 //	}
-func RunChildScenarios(m *testing.M, scenarios map[string]func() int) int {
-	name := os.Getenv(EnvChildScenario)
-	if name == "" {
+func RunChildScenarios(m *testing.M, scenarios map[string]func(args []string) int) int {
+	flag.Parse()
+	if *childScenario == "" {
 		return m.Run()
 	}
-	fn, ok := scenarios[name]
+	fn, ok := scenarios[*childScenario]
 	if !ok {
-		fmt.Fprintf(os.Stderr, "testutil: unknown child scenario %q\n", name)
+		fmt.Fprintf(os.Stderr, "testutil: unknown child scenario %q\n", *childScenario)
 		return 99
 	}
-	return fn()
+	return fn(flag.Args())
+}
+
+// ChildNotifyFile is, in a child scenario, the file the parent's
+// WaitForPoint watches. A scenario that injects faults passes it to
+// faultinject.Configure.
+func ChildNotifyFile() string { return *childNotify }
+
+// NotifyPoint reports, from a child scenario, that it reached point.
+func NotifyPoint(point string) error {
+	f, err := os.OpenFile(*childNotify, os.O_APPEND|os.O_WRONLY, 0)
+	if err != nil {
+		return err
+	}
+	if _, err := f.WriteString(point + "\n"); err != nil {
+		_ = f.Close()
+		return err
+	}
+	return f.Close()
 }
 
 // Child is a running scenario subprocess.
@@ -54,40 +72,50 @@ type Child struct {
 	err  error
 }
 
-// StartChild re-executes the current test binary to run scenario, with the
-// given extra environment ("K=V"). The child's output is captured, and a
-// fresh notification file is passed in DUES_FAULTS_NOTIFY.
-func StartChild(tb testing.TB, scenario string, env ...string) *Child {
+// StartChild re-executes the current test binary to run scenario with args.
+// The child's output is captured, and it reports the points it reaches to a
+// fresh notification file.
+func StartChild(tb testing.TB, scenario string, args ...string) *Child {
 	tb.Helper()
 	exe, err := os.Executable()
 	if err != nil {
 		tb.Fatal(err)
 	}
-	notify := filepath.Join(tb.TempDir(), "points.log")
-	if err := os.WriteFile(notify, nil, 0o644); err != nil {
-		tb.Fatal(err)
-	}
-	cmd := exec.Command(exe, "-test.run=^$")
-	cmd.Env = append(os.Environ(), EnvChildScenario+"="+scenario, EnvFaultsNotify+"="+notify)
-	cmd.Env = append(cmd.Env, env...)
+	notify := newNotifyFile(tb)
+	flags := []string{"-test.run=^$", "-dues.child=" + scenario, "-dues.notify=" + notify, "--"}
+	return startChild(tb, exec.Command(exe, append(flags, args...)...), notify)
+}
+
+// StartDues starts bin, a faultinject build of dues or compression, in dir
+// with the fault spec faults ("" for none) and args, as StartChild starts a
+// scenario: output captured, the first hit of each point reported to a
+// fresh notification file, killed at the end of the test if still running.
+func StartDues(tb testing.TB, bin, dir, faults string, args ...string) *Child {
+	tb.Helper()
+	notify := newNotifyFile(tb)
+	flags := append(FaultArgs(faults), "--faults-notify="+notify)
+	cmd := exec.Command(bin, append(flags, args...)...)
+	cmd.Dir = dir
 	return startChild(tb, cmd, notify)
 }
 
-// StartDues starts the dues binary bin in dir with args and the given extra
-// environment ("K=V"), as StartChild starts a scenario: output captured, a
-// fresh notification file in DUES_FAULTS_NOTIFY, killed at the end of the
-// test if still running.
-func StartDues(tb testing.TB, bin, dir string, env []string, args ...string) *Child {
+// FaultArgs is the hidden flag that gives a faultinject build of dues or
+// compression its fault spec, or nothing for an empty spec. Put it before
+// the command, where compression takes its global options.
+func FaultArgs(spec string) []string {
+	if spec == "" {
+		return nil
+	}
+	return []string{"--faults=" + spec}
+}
+
+func newNotifyFile(tb testing.TB) string {
 	tb.Helper()
 	notify := filepath.Join(tb.TempDir(), "points.log")
 	if err := os.WriteFile(notify, nil, 0o644); err != nil {
 		tb.Fatal(err)
 	}
-	cmd := exec.Command(bin, args...)
-	cmd.Dir = dir
-	cmd.Env = append(os.Environ(), EnvFaultsNotify+"="+notify)
-	cmd.Env = append(cmd.Env, env...)
-	return startChild(tb, cmd, notify)
+	return notify
 }
 
 func startChild(tb testing.TB, cmd *exec.Cmd, notify string) *Child {

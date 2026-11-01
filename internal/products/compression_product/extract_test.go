@@ -356,7 +356,7 @@ func TestExtractTarSpecialEntries(t *testing.T) {
 
 // TestExtractDiskFullRefusedUpFront runs against a small tmpfs (scripts/wsl/mounts.sh).
 func TestExtractDiskFullRefusedUpFront(t *testing.T) {
-	small := testutil.RequireEnvDir(t, "DUES_TEST_ENOSPC_DIR")
+	small := testutil.ENOSPCDir.Require(t)
 	dir := t.TempDir()
 	archive := filepath.Join(dir, "big.zip")
 	makeZip(t, archive, []entry{{name: "big.bin", content: string(make([]byte, 64<<20))}})

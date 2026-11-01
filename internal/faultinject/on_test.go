@@ -4,6 +4,7 @@ package faultinject
 
 import (
 	"errors"
+	"fmt"
 	"os"
 	"os/signal"
 	"path/filepath"
@@ -15,9 +16,16 @@ import (
 )
 
 func TestMain(m *testing.M) {
-	os.Exit(testutil.RunChildScenarios(m, map[string]func() int{
-		// hit reaches the self-test point once and exits 0 if nothing fired.
-		"hit": func() int {
+	os.Exit(testutil.RunChildScenarios(m, map[string]func(args []string) int{
+		// hit configures the spec it is given, if any, reaches the self-test
+		// point once and exits 0 if nothing fired.
+		"hit": func(args []string) int {
+			if len(args) > 0 {
+				if err := Configure(args[0], testutil.ChildNotifyFile()); err != nil {
+					fmt.Fprintln(os.Stderr, err)
+					return 2
+				}
+			}
 			sig := make(chan os.Signal, 1)
 			signal.Notify(sig, os.Interrupt)
 			if err := Hit(SelfTest); err != nil {
@@ -151,25 +159,36 @@ func TestHitUnknownPointPanics(t *testing.T) {
 }
 
 func TestHitExitInChild(t *testing.T) {
-	c := testutil.StartChild(t, "hit", "DUES_FAULTS="+SelfTest+"=exit:42")
+	c := testutil.StartChild(t, "hit", SelfTest+"=exit:42")
 	if code := c.Wait(t, 30*time.Second); code != 42 {
 		t.Fatalf("exit code %d, want 42\n%s", code, c.Output())
 	}
 }
 
+// TestChildIgnoresEnvironment: a process that configured nothing injects
+// nothing, whatever DUES_FAULTS, which DUES once read, says.
+func TestChildIgnoresEnvironment(t *testing.T) {
+	t.Setenv("DUES_FAULTS", SelfTest+"=exit:42")
+	t.Setenv("DUES_FAULTS_NOTIFY", filepath.Join(t.TempDir(), "points.log"))
+	c := testutil.StartChild(t, "hit")
+	if code := c.Wait(t, 30*time.Second); code != 0 {
+		t.Fatalf("exit code %d, want 0\n%s", code, c.Output())
+	}
+}
+
 func TestHitBlockNotifiesAndKill(t *testing.T) {
-	c := testutil.StartChild(t, "hit", "DUES_FAULTS="+SelfTest+"=block")
+	c := testutil.StartChild(t, "hit", SelfTest+"=block")
 	c.WaitForPoint(t, SelfTest+"#blocked", 30*time.Second)
 	c.Kill(t)
 }
 
 func TestHitSignalInChild(t *testing.T) {
-	if runtime.GOOS == "windows" && os.Getenv("DUES_TEST_CONSOLE") == "" {
+	if runtime.GOOS == "windows" && !winConsole {
 		// Ctrl-Break needs the child attached to a console; CI runners
 		// without one deliver nothing.
-		t.Skip("set DUES_TEST_CONSOLE=1 when running in a console")
+		t.Skip("needs a console; run with -tags winconsole in one")
 	}
-	c := testutil.StartChild(t, "hit", "DUES_FAULTS="+SelfTest+"=signal:INT")
+	c := testutil.StartChild(t, "hit", SelfTest+"=signal:INT")
 	if code := c.Wait(t, 30*time.Second); code != 130 {
 		t.Fatalf("exit code %d, want 130\n%s", code, c.Output())
 	}

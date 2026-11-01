@@ -96,7 +96,7 @@ func listEvidence(t *testing.T, bin, work, root string) []listedEvidence {
 // reserve, a store fails before writing anything. badger used to crash the
 // process with SIGBUS when the disk filled under one of its mapped files.
 func TestStoreDiskFullRefusedUpFront(t *testing.T) {
-	small := testutil.RequireEnvDir(t, "DUES_TEST_ENOSPC_DIR")
+	small := testutil.ENOSPCDir.Require(t)
 	bin := testutil.BuildDues(t)
 	work := t.TempDir()
 	src := testutil.WriteRandomFile(t, work, "a.bin", 1, 200<<10)
@@ -113,7 +113,7 @@ func TestStoreDiskFullRefusedUpFront(t *testing.T) {
 // with a clear error, the database stays whole, and earlier evidence still
 // restores verified.
 func TestStoreDiskFullMidway(t *testing.T) {
-	low := testutil.RequireEnvDir(t, "DUES_TEST_LOWSPACE_DIR")
+	low := testutil.LowSpaceDir.Require(t)
 	bin := testutil.BuildDues(t)
 	work := t.TempDir()
 	root := filepath.Join(tempIn(t, low), "db")
@@ -152,7 +152,7 @@ func TestStoreDiskFullMidway(t *testing.T) {
 // full volume: each fails, leaves no output or temporary file there, and the
 // database (elsewhere) is untouched.
 func TestOutputsDiskFull(t *testing.T) {
-	small := testutil.RequireEnvDir(t, "DUES_TEST_ENOSPC_DIR")
+	small := testutil.ENOSPCDir.Require(t)
 	bin := testutil.BuildDues(t)
 	work := t.TempDir()
 	root := filepath.Join(work, "db")
@@ -190,7 +190,7 @@ func TestOutputsDiskFull(t *testing.T) {
 
 // TestLogDirDiskFull: a full log volume does not stop a command.
 func TestLogDirDiskFull(t *testing.T) {
-	small := testutil.RequireEnvDir(t, "DUES_TEST_ENOSPC_DIR")
+	small := testutil.ENOSPCDir.Require(t)
 	bin := testutil.BuildDues(t)
 	work := t.TempDir()
 	logs := tempIn(t, small)
@@ -203,8 +203,8 @@ func TestLogDirDiskFull(t *testing.T) {
 // from write-protected media: every read command works, every write command
 // fails with an error, and nothing changes.
 func TestReadOnlyMediaDatabase(t *testing.T) {
-	srcDir := testutil.RequireEnvDir(t, "DUES_TEST_RO_SRC")
-	roDir := testutil.RequireEnvDir(t, "DUES_TEST_RO_DB")
+	srcDir := testutil.ReadOnlySrc.Require(t)
+	roDir := testutil.ReadOnlyDB.Require(t)
 	bin := testutil.BuildDues(t)
 	work := t.TempDir()
 	case_ := tempIn(t, srcDir)

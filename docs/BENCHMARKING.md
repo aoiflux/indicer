@@ -48,23 +48,23 @@ root.
 
 ```sh
 sh ./benchmark.sh
-PROFILES=1 sh ./benchmark.sh
-COUNT=7 BENCHTIME=3s sh ./benchmark.sh
+sh ./benchmark.sh --profiles
+sh ./benchmark.sh --count 7 --benchtime 3s
 ```
 
 ### Options
 
 | `benchmark.ps1` | `benchmark.sh` | Default | Meaning |
 |---|---|---|---|
-| `-Count` | `COUNT` | `5` | `go test -count` |
-| `-Benchtime` | `BENCHTIME` | `2s` | `go test -benchtime` |
-| `-Profiles` | `PROFILES=1` | off | Also write a CPU and a memory profile for each benchmark |
-| `-OutputDir` | `OUTPUT_DIR` | `bench\outputs` / `bench/outputs` | Where the outputs go |
-| `-StoreDataset` | `STORE_DATASET` | empty | Run the io_uring queue-depth sweep on this evidence file |
-| `-StoreExe` | `STORE_EXE` | empty | The `dues` binary for the sweep |
-| `-StoreCount` | `STORE_COUNT` | `3` | Sweep runs for each depth |
-| `-IOUringQueueDepths` | `IO_URING_DEPTHS` | `256,512,1024,2048` / `"256 512 1024 2048"` | Queue depths to sweep |
-| `-StoreDbRoot` | `STORE_DB_ROOT` | `bench\store_matrix` / `bench/store_matrix` | Where the sweep's databases go |
+| `-Count` | `--count` | `5` | `go test -count` |
+| `-Benchtime` | `--benchtime` | `2s` | `go test -benchtime` |
+| `-Profiles` | `--profiles` | off | Also write a CPU and a memory profile for each benchmark |
+| `-OutputDir` | `--output-dir` | `bench\outputs` / `bench/outputs` | Where the outputs go |
+| `-StoreDataset` | `--store-dataset` | empty | Run the io_uring queue-depth sweep on this evidence file |
+| `-StoreExe` | `--store-exe` | empty | The `dues` binary for the sweep |
+| `-StoreCount` | `--store-count` | `3` | Sweep runs for each depth |
+| `-IOUringQueueDepths` | `--io-uring-depths` | `256,512,1024,2048` / `"256 512 1024 2048"` | Queue depths to sweep |
+| `-StoreDbRoot` | `--store-db-root` | `bench\store_matrix` / `bench/store_matrix` | Where the sweep's databases go |
 
 ### Outputs
 
@@ -75,7 +75,7 @@ The `bench/` directory is ignored by git.
 | `<name>.txt` | The output of one benchmark, for example `store_restore_path.txt` |
 | `full_run.txt` | Every benchmark's output, plus the summary |
 | `summary.txt` | The summary sections below |
-| `<name>.cpu.pprof`, `<name>.mem.pprof` | Profiles, with `-Profiles` or `PROFILES=1` |
+| `<name>.cpu.pprof`, `<name>.mem.pprof` | Profiles, with `-Profiles` or `--profiles` |
 
 `summary.txt` starts with a "Reverse-Relation Dual-Write Mode Summary". It
 looks for the `process_revrel_dual_write_unbuffered` and

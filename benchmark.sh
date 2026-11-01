@@ -1,16 +1,38 @@
 #!/bin/sh
+# Runs the DUES benchmarks; docs/BENCHMARKING.md describes the options and
+# outputs.
+#
+#   sh ./benchmark.sh [--count N] [--benchtime D] [--profiles] [--output-dir DIR]
+#       [--store-dataset FILE] [--store-exe PATH] [--store-count N]
+#       [--io-uring-depths "N ..."] [--store-db-root DIR]
 
 set -e
 
-COUNT="${COUNT:-5}"
-BENCHTIME="${BENCHTIME:-2s}"
-PROFILES="${PROFILES:-0}"
-OUTPUT_DIR="${OUTPUT_DIR:-bench/outputs}"
-STORE_DATASET="${STORE_DATASET:-}"
-STORE_EXE="${STORE_EXE:-}"
-STORE_COUNT="${STORE_COUNT:-3}"
-IO_URING_DEPTHS="${IO_URING_DEPTHS:-256 512 1024 2048}"
-STORE_DB_ROOT="${STORE_DB_ROOT:-bench/store_matrix}"
+COUNT=5
+BENCHTIME=2s
+PROFILES=0
+OUTPUT_DIR=bench/outputs
+STORE_DATASET=
+STORE_EXE=
+STORE_COUNT=3
+IO_URING_DEPTHS="256 512 1024 2048"
+STORE_DB_ROOT=bench/store_matrix
+
+need() { [ "$#" -ge 2 ] || { echo "ERROR: $1 needs a value" >&2; exit 2; }; }
+while [ "$#" -gt 0 ]; do
+    case "$1" in
+        --count) need "$@"; COUNT="$2"; shift 2 ;;
+        --benchtime) need "$@"; BENCHTIME="$2"; shift 2 ;;
+        --profiles) PROFILES=1; shift ;;
+        --output-dir) need "$@"; OUTPUT_DIR="$2"; shift 2 ;;
+        --store-dataset) need "$@"; STORE_DATASET="$2"; shift 2 ;;
+        --store-exe) need "$@"; STORE_EXE="$2"; shift 2 ;;
+        --store-count) need "$@"; STORE_COUNT="$2"; shift 2 ;;
+        --io-uring-depths) need "$@"; IO_URING_DEPTHS="$2"; shift 2 ;;
+        --store-db-root) need "$@"; STORE_DB_ROOT="$2"; shift 2 ;;
+        *) echo "unknown argument '$1'" >&2; exit 2 ;;
+    esac
+done
 FULL_RUN_FILE="$OUTPUT_DIR/full_run.txt"
 SUMMARY_FILE="$OUTPUT_DIR/summary.txt"
 
@@ -110,7 +132,7 @@ write_io_uring_depth_summary() {
         exit 1
     fi
     if [ "$STORE_COUNT" -lt 1 ]; then
-        echo "STORE_COUNT must be >= 1" >&2
+        echo "--store-count must be >= 1" >&2
         exit 1
     fi
 
@@ -135,7 +157,7 @@ write_io_uring_depth_summary() {
 
     for depth in $IO_URING_DEPTHS; do
         if [ "$depth" -le 0 ] 2>/dev/null; then
-            echo "All IO_URING_DEPTHS must be > 0. Invalid value: $depth" >&2
+            echo "Every --io-uring-depths value must be > 0. Invalid value: $depth" >&2
             exit 1
         fi
 

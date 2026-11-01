@@ -43,8 +43,8 @@ The `netgo` and `osusergo` tags select Go's own DNS resolver and user lookup.
 | | `build.ps1` | `build.sh` |
 |---|---|---|
 | Output | `dist\dues-<os>-<arch>[.exe]` | `dist/dues-<os>-<arch>[.exe]` |
-| Choose targets | `-Targets linux/amd64,darwin/arm64` | `TARGETS="linux/amd64 darwin/arm64"` |
-| Other settings | `-BinaryName`, `-MainPackage`, `-OutputDir` | `BINARY_NAME`, `MAIN_PACKAGE`, `OUTPUT_DIR` |
+| Choose targets | `-Targets linux/amd64,darwin/arm64` | `--targets "linux/amd64 darwin/arm64"` |
+| Other settings | `-BinaryName`, `-MainPackage`, `-OutputDir` | `--binary-name`, `--main-package`, `--output-dir` |
 | Old output | Deleted first, unless `-NoClean` | Always deleted first |
 | Checksums | `dist\SHA256SUMS` | `dist/SHA256SUMS` |
 
@@ -84,10 +84,52 @@ No build tag chooses a parser or a C dependency. The tags in the tree are:
 
 | Tag | Used by | Purpose |
 |---|---|---|
-| `faultinject` | `internal/faultinject`, `internal/e2e`, `lib/store` tests | Turns on named failure points for tests. The verify gate fails a release binary that carries this tag. |
+| `faultinject` | `internal/faultinject`, `internal/e2e`, `lib/store` tests, root and `cmd/compression` | Turns on named failure points, and the hidden `--faults` and `--faults-notify` flags. The verify gate fails a release binary that carries this tag. |
+| `safestrict` | `internal/safe` | A panic `internal/safe` would contain crashes instead; the fuzz smoke builds with it. The verify gate fails a release binary that carries it. |
+| `long` | `internal/testutil` | Runs the long tests. |
+| `requirepty` | `internal/e2e` tests | The pseudo-terminal tests fail rather than skip. |
+| `winconsole` | `internal/faultinject` tests | Runs the Ctrl-Break test, which needs a Windows console. |
 | `fixturegen` | `lib/graph/fixturegen_test.go` | Regenerates a legacy graph fixture. Read the file's header before you run it. |
 
 The rest are the standard `windows` and `linux` platform constraints.
+
+## Environment variables
+
+DUES reads none: every setting is a flag (or, for the FFI library, its
+`DuesConfigure` document), and `internal/osdirs` finds the default
+directories from the operating system. `internal/osdirs/noenv_guard_test.go`
+fails on any environment read in DUES's code, tests included.
+`internal/e2e/environment_test.go` checks that a run prints the same with
+the old variables set.
+
+The build scripts set Go's own variables (`GOOS`, `GOARCH`, `CGO_ENABLED`,
+`GOAMD64`, `CC`, `GOTOOLCHAIN`), the toolchain's interface, and
+`scripts/fixtures/gen_legacy_dbs.sh` sets `MSYS_NO_PATHCONV` for Git Bash.
+
+Some dependencies read the environment inside their own code, which DUES
+does not change. As of this writing (checked in the module sources):
+
+| Dependency | Variables | What they change, for DUES |
+|---|---|---|
+| `github.com/charmbracelet/x/ansi` | `RUNEWIDTH_EASTASIAN` | At start-up, `1` makes East Asian ambiguous-width characters two columns wide. DUES measures and cuts its live display with this package, so on a terminal the rows may be cut at other columns. Pipes and `--plain` are not affected. The setting is not exported, so DUES cannot undo it. |
+| `github.com/mattn/go-runewidth` | `RUNEWIDTH_EASTASIAN`, the locale (`LC_ALL`, `LC_CTYPE`, `LANG`), `WT_SESSION` on Windows | Its package defaults, which DUES does not use; `x/ansi` passes its own options. |
+| `charm.land/lipgloss/v2` | the colour variables, at start-up | Only its `Print` functions, which DUES never calls (a guard test bans them). |
+| `charm.land/bubbletea/v2`, `github.com/charmbracelet/ultraviolet` | `TEA_DEBUG`, `TEA_TRACE`, the terminal variables | The TUI only. |
+| `github.com/xo/terminfo` | `TERM`, `TERMINFO`, `COLORTERM` and the like | Only when called; DUES does not call it. |
+| `google.golang.org/grpc` | `GRPC_GO_*` and xDS variables | Logging and xDS features of the gRPC library. |
+| `google.golang.org/protobuf` | `GOPROTODEBUG`, the registry conflict policy | Debug behaviour. |
+| `golang.org/x/net/http2`, `golang.org/x/sys/cpu` | `GODEBUG`, `DEBUG_HTTP2_GOROUTINES` | Debugging and CPU feature detection. |
+| `github.com/zeebo/blake3` | `BLAKE3_PUREGO`, `BLAKE3_DISABLE_AVX2`, `BLAKE3_DISABLE_SSE41` | Which implementation runs; the hash is the same. |
+| `go.etcd.io/bbolt` | its verification switch | Extra checks. |
+| `github.com/shirou/gopsutil/v3` | `HOST_PROC`, `HOST_SYS` and the like | Where it reads system information. |
+| `go.opentelemetry.io/otel`, `go.opentelemetry.io/auto/sdk` | span limits | Tracing, which DUES does not export. |
+| `www.velocidex.com/golang/evtx` (Windows) | `SystemRoot`, `WinDir`, `ProgramFiles` | Where it looks for message files. |
+| `www.velocidex.com/golang/go-pe`, `regparser` | their debug switches | Debug output. |
+| `github.com/alecthomas/kingpin/v2` | a flag's `Envar` | Nothing: DUES gives no flag one, and the guard bans it. |
+
+The Go runtime reads `GODEBUG`, `GOMAXPROCS`, `GOTRACEBACK`, `GOGC`,
+`GOMEMLIMIT` and `TZ`, and `os.Getwd` uses `PWD` after checking it names the
+working directory.
 
 ## Evidence parsing
 

@@ -1,4 +1,4 @@
-# Fuzz targets run by the verify gate for FUZZTIME each (default 60s),
+# Fuzz targets run by the verify gate for --fuzztime each (default 60s),
 # minimising inputs for at most 5s.
 # One per line: <package> <FuzzFunction>. Lines starting with # are ignored.
 ./internal/faultinject FuzzParseSpec

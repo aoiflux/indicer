@@ -1,13 +1,29 @@
 # lib.sh holds what the fixture generators share: paths, the work directory,
-# and the helpers that publish an image and its ground truth. Source it from
-# a generator; it expects to run in WSL as root.
+# the options, and the helpers that publish an image and its ground truth.
+# Source it from a generator; it expects to run in WSL as root. It reads the
+# generator's arguments:
+#
+#   --dataset-dir DIR  where the uncompressed copies go
+#                      (default /mnt/e/dataset/dues_synth)
+#   --fsagen PATH      fsagen.exe, run through WSL interop
+#                      (default /mnt/o/research/fsagen/fsagen.exe)
 set -euo pipefail
 
 here="$(cd "$(dirname "$0")" && pwd)"
 repo="$(cd "$here/../../../.." && pwd)"
 out="$repo/lib/parser/testdata/fixtures"
-dataset="${DUES_DATASET_DIR:-/mnt/e/dataset/dues_synth}"
-fsagen="${FSAGEN:-/mnt/o/research/fsagen/fsagen.exe}"
+dataset=/mnt/e/dataset/dues_synth
+fsagen=/mnt/o/research/fsagen/fsagen.exe
+while [ $# -gt 0 ]; do
+	case "$1" in
+	--dataset-dir | --fsagen)
+		[ $# -ge 2 ] || { echo "$1 needs a value" >&2; exit 2; }
+		if [ "$1" = --dataset-dir ]; then dataset="$2"; else fsagen="$2"; fi
+		shift 2
+		;;
+	*) echo "unknown option $1" >&2; exit 2 ;;
+	esac
+done
 py="python3 $here/fixtures.py"
 work="$(mktemp -d /tmp/dues-fx.XXXXXX)"
 mnt="$work/mnt"

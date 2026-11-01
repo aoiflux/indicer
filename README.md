@@ -138,7 +138,7 @@ Behaviour that changed:
 - Connect, gRPC and gRPC-Web on port 50051, served on 127.0.0.1 and [::1]
   only unless `--listen` says otherwise.
 - A non-loopback address needs a bearer token of at least 32 characters
-  (`--token-file` or `DUES_TOKEN`). Once set, the token is required on every
+  (`--token-file`). Once set, the token is required on every
   request but the health checks. Traffic is plain HTTP; use a TLS proxy or an
   SSH tunnel for remote clients.
 - Browser pages from loopback origins, and from `--cors-origin` origins, may
@@ -226,13 +226,13 @@ command does not.
 
 ```bash
 # Linux compression CLI artifact
-MODE=cli TARGETS=linux/amd64 ./build-compression.sh
+./build-compression.sh --mode cli --targets linux/amd64
 
 # Linux compression CLI + FFI c-archive artifacts
-MODE=all FFI_BUILD_MODE=c-archive TARGETS=linux/amd64 ./build-compression.sh
+./build-compression.sh --mode all --ffi-build-mode c-archive --targets linux/amd64
 
 # Linux compression FFI shared library (Flutter-friendly)
-MODE=ffi FFI_BUILD_MODE=c-shared TARGETS=linux/amd64 ./build-compression.sh
+./build-compression.sh --mode ffi --ffi-build-mode c-shared --targets linux/amd64
 ```
 
 Product wrapper builds (routes to product-specific scripts):
@@ -247,10 +247,10 @@ Product wrapper builds (routes to product-specific scripts):
 
 ```bash
 # Build compression CLI using root wrapper
-PRODUCT=compression MODE=cli TARGETS=linux/amd64 ./build-product.sh
+./build-product.sh --product compression --mode cli --targets linux/amd64
 
 # Build compression FFI shared library using root wrapper
-PRODUCT=compression MODE=ffi FFI_BUILD_MODE=c-shared TARGETS=linux/amd64 ./build-product.sh
+./build-product.sh --product compression --mode ffi --ffi-build-mode c-shared --targets linux/amd64
 ```
 
 FFI ABI for Flutter/native callers:
@@ -383,7 +383,6 @@ Most-used shortcuts for day-to-day operations:
 | Area    | Long form             | Short |
 | ------- | --------------------- | ----- |
 | Global  | --dbpath              | -d    |
-| Global  | --password            | -p    |
 | Global  | --chonksize           | -c    |
 | Global  | --preset              | -P    |
 | Global  | --quick-mode          | -Q    |
@@ -408,10 +407,11 @@ Tip: run `dues help <command>` for command-specific short flags and examples.
 
 - --dbpath, -d: data root (default `~/.dues`)
 - --log-dir: directory for log and crash files
+- --temp-dir: directory for temporary files (default `/tmp`, or
+  `AppData\Local\Temp` under the user's profile on Windows)
+- --debug: write debug entries to the log
 - --password-file: read the password from the first line of a file
 - --password-stdin: read the password from standard input
-- --password, -p: password (visible to other users; the `DUES_PASSWORD`
-  environment variable is another option)
 - --chonksize, -c: chunk size in KB of a new database (default 256)
 - --low, -l: low-resource mode
 - --quick, -q: a new database without table compression; encryption is unchanged
@@ -425,6 +425,21 @@ Tip: run `dues help <command>` for command-specific short flags and examples.
 Chunk size, hash algorithm, storage and encryption are fixed when a database
 is created. A flag that contradicts an existing database is an error.
 
+DUES reads no environment variables: every setting is a flag, so a run does
+the same whatever the shell holds, and each run logs its settings and where
+each came from. The variables earlier releases read are ignored now:
+- `DUES_PASSWORD` and `DUES_TOKEN`: use `--password-file`, `--password-stdin`
+  or `--token-file`;
+- `DUES_LOG_DIR` and `DUES_DEBUG`: use `--log-dir` and `--debug`;
+- `DUES_COLOR`, `DUES_PLAIN`, `DUES_NO_FUN` and `DUES_THEME`: use `--color`,
+  `--plain`, `--no-fun` and `--theme`;
+- `NO_COLOR`, `FORCE_COLOR`, `CLICOLOR_FORCE`, `TERM`, `CI` and the other CI
+  variables: use `--color`, `--plain` and `--ci`.
+
+`--password`/`-p` and `--token` were removed as well, because a secret on the
+command line is visible to other users of the machine. Passing one is a usage
+error that names its replacement.
+
 ### Output
 
 Results (JSON, reports, help) go to stdout; the run header, progress, notes,
@@ -434,19 +449,18 @@ plain lines with no escape codes. `dues --version` (or `-v`) prints one line,
 for scripts and bug reports:
 `DUES 0.39.0+74431db (<pineapple> spacebar) - Deduplicated Unified Evidence Store`.
 
-- --color: auto (default), always, never, or ansi (the terminal theme's 16
-  colours only)
-- --plain: no colour, ASCII only, no redraw or animation (for screen readers
-  and logs)
-- --ci: behave as if no terminal is attached; set by itself when `CI`,
-  `GITHUB_ACTIONS` and similar variables are present
+- --color: auto (default: 256 colours on a terminal, none on a pipe), always,
+  never, ansi (the terminal theme's 16 colours only) or truecolor
+- --plain: no colour, ASCII only, no redraw or animation (for screen readers,
+  logs and terminals without Unicode)
+- --ci: behave as if no terminal is attached, for CI logs
+- --theme: the terminal's background, auto (default), dark or light
+- --taskbar: show progress on the terminal's tab and taskbar (Windows
+  Terminal, ConEmu)
 - --no-fun: no surprise extras after long commands (the hidden commands still
   run when asked for by name)
 
-The environment variables `DUES_COLOR`, `DUES_PLAIN=1`, `DUES_NO_FUN=1`,
-`DUES_THEME=dark|light`, `NO_COLOR`, `FORCE_COLOR`, `CLICOLOR_FORCE` and
-`TERM=dumb` are honoured. A flag beats a `DUES_*` variable, which beats the
-standard ones. See [docs/CLI_UX.md](docs/CLI_UX.md).
+See [docs/CLI_UX.md](docs/CLI_UX.md).
 
 ### Store-specific highlights
 

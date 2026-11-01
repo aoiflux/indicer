@@ -44,8 +44,7 @@ func (l *crashLab) interrupt(sig signalCase, point, at string, args ...string) s
 
 func interruptBinary(t *testing.T, bin, work string, sig signalCase, point, at string, args ...string) string {
 	t.Helper()
-	env := []string{"DUES_FAULTS=" + spec(point, "signal:"+sig.name+at)}
-	c := testutil.StartDues(t, bin, work, env, args...)
+	c := testutil.StartDues(t, bin, work, spec(point, "signal:"+sig.name+at), args...)
 	code := c.Wait(t, 2*time.Minute)
 	b, _ := os.ReadFile(c.Notify)
 	if !strings.Contains(string(b), point) {
@@ -182,8 +181,7 @@ func TestInterruptedServer(t *testing.T) {
 			l := newCrashLab(t)
 			l.must("store", l.files[1])
 			addr := freeAddr(t)
-			env := []string{"DUES_FAULTS=" + spec(faultinject.UploadBeforeIngest, "signal:"+sig.name)}
-			srv := testutil.StartDues(t, l.bin, l.work, env, "server", "--listen", addr, "--dbpath", l.root, "-c", "64")
+			srv := testutil.StartDues(t, l.bin, l.work, spec(faultinject.UploadBeforeIngest, "signal:"+sig.name), "server", "--listen", addr, "--dbpath", l.root, "-c", "64")
 			waitHealthy(t, addr, srv)
 			// A draining server lets the request in flight finish, so the
 			// upload may or may not be stored.
@@ -216,7 +214,7 @@ func TestInterruptedArchiveCommands(t *testing.T) {
 
 			interruptBinary(t, bin, work, sig, faultinject.IngestAfterPending, "", "create-archive", "--input", src, "--output", archive)
 			noFiles(t, archive)
-			if r := testutil.RunDuesEnv(t, bin, work, 2*time.Minute, nil, "create-archive", "--input", src, "--output", archive); r.ExitCode != 0 {
+			if r := testutil.RunDues(t, bin, work, 2*time.Minute, "create-archive", "--input", src, "--output", archive); r.ExitCode != 0 {
 				t.Fatalf("create-archive: exit %d\n%s", r.ExitCode, r.Combined())
 			}
 
@@ -225,7 +223,7 @@ func TestInterruptedArchiveCommands(t *testing.T) {
 			if entries, err := os.ReadDir(dst); err == nil && len(entries) > 0 {
 				t.Fatalf("an interrupted extraction left %d entries in its output", len(entries))
 			}
-			if r := testutil.RunDuesEnv(t, bin, work, 2*time.Minute, nil, "extract-archive", "--input", archive, "--output", dst); r.ExitCode != 0 {
+			if r := testutil.RunDues(t, bin, work, 2*time.Minute, "extract-archive", "--input", archive, "--output", dst); r.ExitCode != 0 {
 				t.Fatalf("extract-archive: exit %d\n%s", r.ExitCode, r.Combined())
 			}
 			if testutil.TreeHash(t, dst) != testutil.TreeHash(t, src) {
@@ -270,7 +268,7 @@ func TestConcurrentProcesses(t *testing.T) {
 
 	big := testutil.WriteRandomFile(t, l.work, "big.bin", 5, 4<<20)
 	l.sums[testutil.FileSHA256(t, big)] = true
-	w := testutil.StartDues(t, l.bin, l.work, []string{"DUES_FAULTS=" + spec(faultinject.IngestAfterPending, "sleep:4s")},
+	w := testutil.StartDues(t, l.bin, l.work, spec(faultinject.IngestAfterPending, "sleep:4s"),
 		"store", big, "--dbpath", l.root, "-c", "64")
 	w.WaitForPoint(t, faultinject.IngestAfterPending, time.Minute)
 	for _, args := range [][]string{{"store", l.files[0]}, {"list"}, {"repair", "--fix"}, {"reset", "--yes"}} {

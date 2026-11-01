@@ -4,7 +4,6 @@ import (
 	"bytes"
 	"context"
 	"errors"
-	"os"
 	"os/exec"
 	"regexp"
 	"runtime"
@@ -18,13 +17,13 @@ import (
 )
 
 // ptyScript returns util-linux script(1), which runs a command on a
-// pseudo-terminal, or skips the test where there is none. With
-// DUES_REQUIRE_PTY=1, which the WSL suite sets, a skip is a failure.
+// pseudo-terminal, or skips the test where there is none. Built with -tags
+// requirepty, as the WSL suite builds it, a skip is a failure.
 func ptyScript(t *testing.T) string {
 	t.Helper()
 	skip := func(why string) {
 		t.Helper()
-		if os.Getenv("DUES_REQUIRE_PTY") == "1" {
+		if requirePTY {
 			t.Fatalf("no pseudo-terminal test: %s", why)
 		}
 		t.Skip(why)

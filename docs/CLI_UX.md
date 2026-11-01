@@ -16,14 +16,16 @@ of `internal/console` (the only writer to the terminal).
 2. **Piped output is the contract.** On a terminal stdout differs from piped
    stdout only by colour codes; marks, art and layout appear on stderr, or in
    help and version on a terminal. Nothing on a pipe holds an escape code
-   unless `--color=always` or `FORCE_COLOR` asks for colour.
+   unless `--color=always` asks for colour.
 3. **Colour is added where text is written, never stored in a report.**
 4. **Text from evidence is sanitised before it is styled.** File names,
    partition labels and error text pass through `internal/termsafe`, so a
    hostile name cannot move the cursor or change the terminal's title.
 5. **No terminal queries.** DUES never asks the terminal for its background
    colour or capabilities: such queries are slow over SSH and leave stray
-   bytes in the shell. It reads flags and environment variables only.
+   bytes in the shell. It reads its flags and what the operating system
+   says about each stream (a terminal or not, and its width); it reads no
+   environment variable.
 6. **Extras never touch evidence processing, output files, logs, stdout or
    exit codes.**
 
@@ -33,20 +35,19 @@ warning (exit 2) says `warning`, not `error`.
 
 ## Switches
 
-| Flag | Environment | Effect |
-|---|---|---|
-| `--color auto\|always\|never\|ansi` | `DUES_COLOR` | Colour policy for stdout and stderr. `ansi` keeps colour but only the terminal theme's 16 colours. |
-| `--plain` | `DUES_PLAIN=1` | Keep the terminal, drop decoration: no colour or escape codes at all, ASCII only, no redraw, no spinner, no art, no extras. The mode for screen readers, reduced motion and copying logs. |
-| `--ci` | any of `CI`, `GITHUB_ACTIONS`, `GITLAB_CI`, `BUILDKITE`, `JENKINS_URL`, `TF_BUILD`, `TEAMCITY_VERSION` | Behave as if no terminal is attached: plain output on every stream, and prompts refuse as they do on a pipe. |
-| `--no-fun` | `DUES_NO_FUN=1` | No extras; everything else unchanged. |
-| | `DUES_THEME=dark\|light` | The terminal's background, for the tuned palettes. |
-| | `NO_COLOR` (any value) | No colour; bold stays. |
-| | `FORCE_COLOR`, `CLICOLOR_FORCE` | Colour even on a pipe. |
-| | `TERM=dumb` | No colour, no motion, ASCII. |
+| Flag | Effect |
+|---|---|
+| `--color auto\|always\|never\|ansi\|truecolor` | Colour policy for stdout and stderr. `auto` gives 256 colours on a terminal and none on a pipe; `always` colours a pipe too; `ansi` keeps colour but only the terminal theme's 16 colours; `truecolor` uses 24-bit colour. |
+| `--plain` | Keep the terminal, drop decoration: no colour or escape codes at all, ASCII only, no redraw, no spinner, no art, no extras. The mode for screen readers, reduced motion, copying logs, and terminals without Unicode or colour. |
+| `--ci` | Behave as if no terminal is attached: plain output on every stream, and prompts refuse as they do on a pipe. For CI logs. |
+| `--theme auto\|dark\|light` | The terminal's background, for the tuned palettes; `auto` means unknown. |
+| `--taskbar` | Progress on the terminal's tab and taskbar (OSC 9;4). |
+| `--no-fun` | No extras; everything else unchanged. |
 
-Precedence: flag, then `DUES_*`, then the standard variables, then what the
-streams are. A build for an organisation that wants no extras sets
-`-ldflags "-X indicer/internal/ui.funDefault=off"`.
+DUES reads no environment variable, so the standard ones (`NO_COLOR`,
+`FORCE_COLOR`, `CLICOLOR_FORCE`, `TERM`, `CI` and the like) change nothing;
+the flags above cover what they did. A build for an organisation that wants
+no extras sets `-ldflags "-X indicer/internal/ui.funDefault=off"`.
 
 ## Colour
 
@@ -65,9 +66,9 @@ counts); sentences stay in the terminal's own foreground.
 | evidence | evidence identity: names, IDs, hashes | `#F0A93A` | `#8A5300` | `#C56C05` | 93 |
 | muted | units, separators, timings | `#9DA3AD` | `#575E68` | terminal colour | 90 |
 
-- The background is read from `DUES_THEME`, then `COLORFGBG`. Otherwise it is
-  unknown, which is the common case: macOS Terminal and xterm start light,
-  Windows Terminal and VS Code dark.
+- The background comes from `--theme`. Without it, it is unknown, which is
+  the common case: macOS Terminal and xterm start light, Windows Terminal and
+  VS Code dark.
 - `internal/ui/palette_test.go` checks the contrast of every value, and of the
   nearest xterm-256 colour a 256-colour terminal shows instead:
   - the dark and light palettes reach WCAG AA (4.5:1) on six dark and five light
@@ -80,8 +81,8 @@ counts); sentences stay in the terminal's own foreground.
   - On a known background it is the muted colour. On an unknown one it is
     SGR 2 (faint), which dims the terminal's own colour, so it is never
     invisible.
-  - A terminal that ignores SGR 2 shows normal text. `NO_COLOR` keeps it, as
-    it keeps bold.
+  - A terminal that ignores SGR 2 shows normal text. `--color=never` keeps
+    it, as it keeps bold.
   - Results, warnings, errors, the overall row, the final rows and the closing
     line are never faint.
 
@@ -89,9 +90,12 @@ counts); sentences stay in the terminal's own foreground.
 
 | Set | Used on | Marks | Spinner | Bar |
 |---|---|---|---|---|
-| Full | Windows Terminal, VS Code, macOS, Linux UTF-8 locales | `✓ ✗ ▲ ● ■ · – ◆` | braille | `━╸─` |
-| Console | the Windows console host without a modern terminal | `+ x ! * # . -` | `\|/-\` | `█░` |
-| ASCII | `--plain`, `TERM=dumb`, non-UTF-8 and East Asian locales | `+ x ! * # . -` | `\|/-\` | `#>-` |
+| Full | every terminal, unless `--plain` | `✓ ✗ ▲ ● ■ · – ◆` | braille | `━╸─` |
+| ASCII | `--plain` | `+ x ! * # . -` | `\|/-\` | `#>-` |
+
+The Windows console host, a terminal whose font lacks these characters, a
+non-UTF-8 locale and East Asian terminals that draw box characters two
+columns wide need `--plain`.
 
 No emoji anywhere. Every mark is one column wide.
 
@@ -107,8 +111,7 @@ is a terminal:
 ```
 
 - The emblem is a relationship graph: three nodes joined to one.
-- The console and ASCII sets draw both the emblem and the wordmark in ASCII
-  (`o-o-o`).
+- The ASCII set draws both the emblem and the wordmark in ASCII (`o-o-o`).
 - The build line shows the commit, the platform and the Go version as far as
   they fit; a `-dirty` commit leaves the Go version out.
 - From 61 columns all of it shows, from 23 the emblem and wordmark, below that
@@ -175,14 +178,14 @@ as docker draws its layers.
 - When the command ends, the scrollback keeps one row per top-level step, by
   name and at full contrast, the steps that never ran on one line
   (`– not run: index, full-text`), and the closing line.
-- **Windows Terminal and ConEmu** also show the progress on the tab and in the
-  taskbar (OSC 9;4):
+- With `--taskbar`, Windows Terminal and ConEmu also show the progress on the
+  tab and in the taskbar (OSC 9;4):
   - after a second, so short commands never flicker it, and at most twice a
     second;
   - paused while a prompt waits or after Ctrl-C, red after a failure;
   - cleared on every way out, a second Ctrl-C and a panic included.
-  Not under tmux or screen, which pass it to the terminal they run in, nor in
-  a terminal that sets `TERM_PROGRAM` (VS Code, mintty, iTerm2).
+  Leave it off under tmux or screen, which pass it to the terminal they run
+  in, and in terminals that read OSC 9 as a notification (iTerm2).
 
 ### On a pipe, under `--plain` or `--ci`
 
@@ -239,7 +242,7 @@ validated, this is what they are allowed to do:
   whose output scripts read.
 - They never touch evidence processing, output files, logs, stdout or exit
   codes.
-- `--no-fun`, `DUES_NO_FUN=1`, `--plain`, `--ci` or a build with
+- `--no-fun`, `--plain`, `--ci` or a build with
   `funDefault=off` turn them off. The hidden commands still run when asked
   for by name; `dues mew` then prints its cat without animating.
 
@@ -255,7 +258,7 @@ validated, this is what they are allowed to do:
 - **Colour blindness:** success and error differ in mark (`✓`/`✗`), word and
   luminance. `--color=ansi` hands colour to the terminal theme, so
   colour-blind and high-contrast themes apply.
-- **Screen readers:** `--plain` and `TERM=dumb` print discrete lines, with no
+- **Screen readers:** `--plain` prints discrete lines, with no
   redraw, no spinner and no box drawing. Screen readers read box-drawing
   characters aloud one by one.
 - **Reduced motion:** under `--plain` nothing moves. `--no-fun` removes the
@@ -267,23 +270,24 @@ validated, this is what they are allowed to do:
   an escape code or cut on stdout.
 - **Width:** layout is measured in display columns. The live display's rows
   are cut to the terminal's width so they never wrap; the run header and the
-  closing line break at spaces instead. East Asian locales get the ASCII set,
+  closing line break at spaces instead. In East Asian locales use `--plain`,
   because their terminals often draw box characters two columns wide.
 
 ## Human review
 
 The tests cover what a test can see. Before a release, look at these by hand:
-- Windows Terminal, dark and light themes: the overall row, the faint step
-  rows, and the tab and taskbar progress (normal, paused at a prompt, red
-  after a failure, cleared at the end).
-- The Windows console host (`conhost.exe cmd`): console marks, the ASCII
-  emblem, normal text where faint is asked for.
-- The VS Code terminal: no taskbar progress.
+- Windows Terminal, dark and light themes, with `--theme` and without: the
+  overall row, the faint step rows, and with `--taskbar` the tab and taskbar
+  progress (normal, paused at a prompt, red after a failure, cleared at the
+  end).
+- The Windows console host (`conhost.exe cmd`) with `--plain`: ASCII marks
+  and emblem; without it, boxes where its font has no glyph.
+- The VS Code terminal.
 - tmux and screen, and SSH to Linux (`TERM=xterm-256color`).
 - A 50-column window: rows cut, the header and the closing line broken at
   spaces.
-- `NO_COLOR=1` (bold and faint only), `TERM=dumb`, and `--plain` with a screen
-  reader (NVDA).
+- `--color=never` (bold and faint only), `--color=ansi`, and `--plain` with a
+  screen reader (NVDA).
 - Ctrl-C once (the bar holds, the tab shows paused) and twice (the cursor is
   back, the tab cleared).
 
@@ -311,8 +315,10 @@ The tests cover what a test can see. Before a release, look at these by hand:
 - `internal/e2e/output_contract_test.go`:
   - pure JSON on stdout;
   - the identity line from `version`, `--version` and piped help;
-  - colour only when asked for, and no taskbar progress on a pipe;
-  - `NO_COLOR` and `--color=never` beat `FORCE_COLOR`.
-  `testutil.RunDuesEnv` fails any piped run that writes an escape code.
+  - colour only when asked for, and no taskbar progress on a pipe.
+  `testutil.RunDues` fails any piped run that writes an escape code.
+- `internal/e2e/environment_test.go`: store, list, help and version print the
+  same with an empty environment and with every variable DUES once read set,
+  and nothing lands where those variables point.
 - `internal/e2e/pty_test.go` and `pty_faultinject_test.go`: the binary on a
   real pseudo-terminal under WSL (see [TESTING.md](TESTING.md)).

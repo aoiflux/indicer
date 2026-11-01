@@ -36,7 +36,7 @@ func TestIsNoSpace(t *testing.T) {
 // TestIsNoSpaceOnRealDevice fills the tmpfs that scripts/wsl/mounts.sh
 // provides, so the error comes from the kernel rather than a fake.
 func TestIsNoSpaceOnRealDevice(t *testing.T) {
-	dir := testutil.RequireEnvDir(t, "DUES_TEST_ENOSPC_DIR")
+	dir := testutil.ENOSPCDir.Require(t)
 	f, err := os.CreateTemp(dir, "fill-*")
 	if err != nil {
 		t.Fatal(err)

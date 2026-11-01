@@ -4,11 +4,11 @@
 
 set -e
 
-PRODUCT="${PRODUCT:-compression}"
-MODE="${MODE:-all}"
-TARGETS="${TARGETS:-linux/amd64}"
-OUTPUT_DIR="${OUTPUT_DIR:-}"
-FFI_BUILD_MODE="${FFI_BUILD_MODE:-auto}"
+PRODUCT=compression
+MODE=all
+TARGETS=linux/amd64
+OUTPUT_DIR=
+FFI_BUILD_MODE=auto
 
 while [ "$#" -gt 0 ]; do
   case "$1" in
@@ -57,8 +57,8 @@ if [ ! -f "$SCRIPT" ]; then
   exit 1
 fi
 
+set -- --product-name "$PRODUCT" --mode "$MODE" --targets "$TARGETS" --ffi-build-mode "$FFI_BUILD_MODE"
 if [ -n "$OUTPUT_DIR" ]; then
-  PRODUCT_NAME="$PRODUCT" MODE="$MODE" TARGETS="$TARGETS" FFI_BUILD_MODE="$FFI_BUILD_MODE" OUTPUT_DIR="$OUTPUT_DIR" sh "$SCRIPT"
-else
-  PRODUCT_NAME="$PRODUCT" MODE="$MODE" TARGETS="$TARGETS" FFI_BUILD_MODE="$FFI_BUILD_MODE" sh "$SCRIPT"
+  set -- "$@" --output-dir "$OUTPUT_DIR"
 fi
+sh "$SCRIPT" "$@"

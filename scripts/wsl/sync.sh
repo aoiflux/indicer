@@ -3,13 +3,22 @@
 # directory inside WSL and normalises text files to LF, so Linux tests run on
 # a native filesystem with the line endings the repository stores.
 #
-#   scripts/wsl/sync.sh [DEST]     (default ~/.cache/dues-verify/src)
+#   scripts/wsl/sync.sh [DEST]
+#
+# DEST defaults to .cache/dues-verify/src under the account's home directory,
+# as the password database records it.
 #
 # Run it inside WSL from the repository checkout under /mnt.
 set -euo pipefail
 
 src="$(cd "$(dirname "$0")/../.." && pwd)"
-dest="${1:-$HOME/.cache/dues-verify/src}"
+if [ $# -ge 1 ]; then
+	dest="$1"
+else
+	home="$(getent passwd "$(id -u)" | cut -d: -f6)"
+	[ -n "$home" ] || { echo "sync.sh: no home directory for uid $(id -u); pass DEST" >&2; exit 1; }
+	dest="$home/.cache/dues-verify/src"
+fi
 mkdir -p "$dest"
 
 rsync -a --delete \

@@ -100,9 +100,9 @@ of a fixed text under the check key. `dbmeta.DeriveKeys` compares it, so a
 wrong password is reported before badger is opened. The manifest holds no
 secret.
 
-Passwords come from the first source that has one: `--password-file`,
-`--password-stdin`, `DUES_PASSWORD`, then `--password` (which prints a
-warning). An empty password is no password. A password given for an
+Passwords come from `--password-file` or `--password-stdin`; DUES reads no
+environment variable, and the plain `--password` flag was removed. An empty
+password is no password. A password given for an
 unencrypted database prints a notice and is not used.
 
 ### Per-database registries

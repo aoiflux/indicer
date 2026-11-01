@@ -24,19 +24,16 @@ import (
 )
 
 func TestMain(m *testing.M) {
-	os.Exit(testutil.RunChildScenarios(m, map[string]func() int{
+	os.Exit(testutil.RunChildScenarios(m, map[string]func(args []string) int{
 		"open-read-only": childOpenReadOnly,
 	}))
 }
 
-// envChildRoot names the data root a child scenario opens.
-const envChildRoot = "DUES_TEST_ROOT"
-
 const rotationPassword = "pw"
 
-// childOpenReadOnly opens the database at DUES_TEST_ROOT read-only and reads
-// every value, as a read command does.
-func childOpenReadOnly() int {
+// childOpenReadOnly opens the database at the data root args[0] read-only
+// and reads every value, as a read command does.
+func childOpenReadOnly(args []string) int {
 	var err error
 	if cnst.DECODER, err = cnst.NewDecoder(); err != nil {
 		fmt.Fprintln(os.Stderr, err)
@@ -46,7 +43,7 @@ func childOpenReadOnly() int {
 		fmt.Fprintln(os.Stderr, err)
 		return 1
 	}
-	h, err := Open(context.Background(), Request{Path: os.Getenv(envChildRoot), Mode: ReadOnly, Creds: dbmeta.Password(rotationPassword)})
+	h, err := Open(context.Background(), Request{Path: args[0], Mode: ReadOnly, Creds: dbmeta.Password(rotationPassword)})
 	if err != nil {
 		fmt.Fprintln(os.Stderr, err)
 		return 1
@@ -96,7 +93,7 @@ func TestReadOnlyOpenOfAnOldEncryptedDatabase(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	c := testutil.StartChild(t, "open-read-only", envChildRoot+"="+root)
+	c := testutil.StartChild(t, "open-read-only", root)
 	if code := c.Wait(t, 2*time.Minute); code != 0 || !strings.Contains(c.Output(), "read ") {
 		t.Fatalf("read-only open of a database whose data key is 30 days old: exit %d\n%s", code, c.Output())
 	}

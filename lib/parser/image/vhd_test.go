@@ -9,8 +9,6 @@ import (
 
 	"github.com/aoiflux/libvhdi"
 	"github.com/aoiflux/libvhdi/types"
-
-	"indicer/internal/testutil"
 )
 
 func writeFile(t *testing.T, path string, data string) {
@@ -99,7 +97,7 @@ const (
 )
 
 func TestOpenVHDFileResolvesSiblingChain(t *testing.T) {
-	dir := testutil.RequireEnvDir(t, "DUES_CORPUS_VHD")
+	dir := corpusVHD.Require(t)
 	im, err := OpenVHDFile(filepath.Join(dir, corpusChild))
 	if err != nil {
 		t.Fatal(err)
@@ -118,7 +116,7 @@ func TestOpenVHDFileResolvesSiblingChain(t *testing.T) {
 // cannot be completed from its own directory is refused, even when the
 // absolute parent path recorded in the image exists on this machine.
 func TestOpenVHDFileFailsClosed(t *testing.T) {
-	dir := testutil.RequireEnvDir(t, "DUES_CORPUS_VHD")
+	dir := corpusVHD.Require(t)
 
 	t.Run("missing ancestor", func(t *testing.T) {
 		im, err := OpenVHDFile(filepath.Join(dir, corpusBrokenLeaf))

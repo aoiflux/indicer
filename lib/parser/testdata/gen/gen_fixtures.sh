@@ -9,17 +9,17 @@
 #
 # Run it in WSL as root (loop mounts need root):
 #
-#   wsl -u root --exec bash lib/parser/testdata/gen/gen_fixtures.sh
+#   wsl -u root --exec bash lib/parser/testdata/gen/gen_fixtures.sh [--dataset-dir DIR] [--fsagen PATH]
 #
 # Outputs:
 #   lib/parser/testdata/fixtures/<group>/<name>.img.zst   compressed image
 #   lib/parser/testdata/fixtures/<group>/<name>.manifest.json
-#   $DUES_DATASET_DIR/<group>/<name>.*                     uncompressed copies
+#   <dataset-dir>/<group>/<name>.*                         uncompressed copies
 #                                                          (default /mnt/e/dataset/dues_synth)
 #
 # Requires: dosfstools mtools exfatprogs xfsprogs e2fsprogs hfsutils hfsprogs
 # gdisk ewf-tools qemu-utils zstd python3, and fsagen.exe through WSL interop
-# ($FSAGEN, default /mnt/o/research/fsagen/fsagen.exe).
+# (--fsagen, default /mnt/o/research/fsagen/fsagen.exe).
 set -euo pipefail
 
 here="$(cd "$(dirname "$0")" && pwd)"

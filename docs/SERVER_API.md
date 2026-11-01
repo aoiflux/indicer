@@ -11,10 +11,7 @@ dues server [--listen HOST:PORT]... [--token-file PATH] [--cors-origin ORIGIN]..
 ```
 
 - **Addresses.** By default the server listens on `127.0.0.1:50051` and `[::1]:50051` only. If the host has no IPv6 loopback, the IPv6 address is skipped and a note is printed. `--listen` replaces the defaults and may be given more than once.
-- **Token.** A non-loopback address (`0.0.0.0`, `::`, `:50051`, a LAN address or a host name) is refused unless a bearer token is set. The token must be at least 32 visible ASCII characters. The server takes the first token it finds, in this order:
-  1. `--token-file PATH` (the file's first line)
-  2. the `DUES_TOKEN` environment variable
-  3. `--token` (prints a warning: other users can see the command line)
+- **Token.** A non-loopback address (`0.0.0.0`, `::`, `:50051`, a LAN address or a host name) is refused unless a bearer token is set. The token must be at least 32 visible ASCII characters. It comes from `--token-file PATH` (the file's first line) only. `--token` was removed, because other users can see a command line; passing it is a usage error that names `--token-file`. The `DUES_TOKEN` environment variable is ignored.
 
   Once a token is set, every listener requires it, loopback included.
 - **Encryption.** The server speaks plain HTTP. A warning is printed when it listens on a non-loopback address. To serve remote clients, put a TLS-terminating proxy or an SSH tunnel in front of it.
@@ -24,7 +21,7 @@ Examples:
 
 ```
 dues server --dbpath ./caseA
-DUES_TOKEN="$(cat ./token)" dues server --listen 0.0.0.0:50051
+dues server --listen 0.0.0.0:50051 --token-file ./token
 dues server --listen 192.168.1.10:50051 --token-file ./token --cors-origin https://ui.example.org
 ```
 

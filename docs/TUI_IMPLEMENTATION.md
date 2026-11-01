@@ -18,7 +18,7 @@ stop, and the rules its screens follow.
    actions report no progress.
 3. Runs `tui.Run(ctx, tui.Config{Info, Actions, Profile})` with the command's
    context. `Profile` is the colour depth the command line resolved
-   (`--color`, `NO_COLOR`, ...; see [CLI_UX.md](CLI_UX.md)) when stdout is a
+   (`--color`, `--plain`, ...; see [CLI_UX.md](CLI_UX.md)) when stdout is a
    terminal, so the TUI follows the same switches.
 4. When `Run` returns, restores output, compacts the value log if anything
    was stored, and closes the database. If `Run` returned `tui.ErrJobsRunning`,

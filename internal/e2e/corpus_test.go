@@ -5,6 +5,7 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
+	"flag"
 	"io"
 	"os"
 	"path/filepath"
@@ -21,9 +22,17 @@ import (
 	"indicer/lib/structs"
 )
 
+// The real-image corpus, which only some machines have:
+//
+//	go test ./internal/e2e -run TestCorpusRoundTrip -args -dues.corpus-list=FILE -dues.corpus-scratch=DIR
+var (
+	corpusList    = flag.String("dues.corpus-list", "", "a file naming one evidence image per line (TestCorpusRoundTrip)")
+	corpusScratch = testutil.NewDirFlag("dues.corpus-scratch", "a directory with room for the corpus round trip's databases")
+)
+
 // TestCorpusRoundTrip stores each image of the real corpus (one path per
-// line of the file DUES_TEST_CORPUS_LIST) in a fresh database under
-// DUES_TEST_CORPUS_SCRATCH, restores it with full verification into a hash,
+// line of the -dues.corpus-list file) in a fresh database under
+// -dues.corpus-scratch, restores it with full verification into a hash,
 // and compares that with a digest that does not come from DUES's ingest:
 //
 //   - a raw image: the SHA-256 of the file itself;
@@ -35,11 +44,11 @@ import (
 // An image whose files would not fit the scratch volume is skipped and
 // named. A differencing disk whose ancestor is missing must be refused.
 func TestCorpusRoundTrip(t *testing.T) {
-	list := os.Getenv("DUES_TEST_CORPUS_LIST")
+	list := *corpusList
 	if list == "" {
-		t.Skip("DUES_TEST_CORPUS_LIST is not set")
+		t.Skip("pass -args -dues.corpus-list=FILE to run it")
 	}
-	scratch := testutil.RequireEnvDir(t, "DUES_TEST_CORPUS_SCRATCH")
+	scratch := corpusScratch.Require(t)
 	bin := testutil.BuildDues(t)
 	testdb.EnsureCodecs(t)
 	f, err := os.Open(list)

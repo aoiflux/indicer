@@ -2,15 +2,28 @@
 # Builds dues for every supported platform. The binary is pure Go (no CGO, no
 # libtusk), so a single host cross-compiles the whole matrix with no C toolchain.
 #
-# Override the target list with the TARGETS env var (space-separated os/arch),
-# e.g. TARGETS="linux/amd64 darwin/arm64" ./build.sh
+#   ./build.sh [--targets "OS/ARCH ..."] [--output-dir DIR] [--binary-name NAME] [--main-package PKG]
+#
+# --targets builds a subset (space-separated), e.g.
+# ./build.sh --targets "linux/amd64 darwin/arm64"
 
 set -e
 
-BINARY_NAME="${BINARY_NAME:-dues}"
-MAIN_PACKAGE="${MAIN_PACKAGE:-.}"
-OUTPUT_DIR="${OUTPUT_DIR:-dist}"
-TARGETS="${TARGETS:-windows/amd64 windows/arm64 linux/amd64 linux/arm64 darwin/amd64 darwin/arm64}"
+BINARY_NAME=dues
+MAIN_PACKAGE=.
+OUTPUT_DIR=dist
+TARGETS="windows/amd64 windows/arm64 linux/amd64 linux/arm64 darwin/amd64 darwin/arm64"
+
+need() { [ "$#" -ge 2 ] || { echo "ERROR: $1 needs a value" >&2; exit 2; }; }
+while [ "$#" -gt 0 ]; do
+    case "$1" in
+        --targets) need "$@"; TARGETS="$2"; shift 2 ;;
+        --output-dir) need "$@"; OUTPUT_DIR="$2"; shift 2 ;;
+        --binary-name) need "$@"; BINARY_NAME="$2"; shift 2 ;;
+        --main-package) need "$@"; MAIN_PACKAGE="$2"; shift 2 ;;
+        *) echo "ERROR: unknown argument '$1'" >&2; exit 2 ;;
+    esac
+done
 
 REPO_ROOT="$(cd "$(dirname "$0")" && pwd)"
 cd "$REPO_ROOT"

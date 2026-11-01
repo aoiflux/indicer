@@ -25,6 +25,8 @@ import (
 	"testing"
 
 	"github.com/klauspost/compress/zstd"
+
+	"indicer/internal/osdirs"
 )
 
 // Stream is a named data stream of a file (an NTFS alternate data stream).
@@ -146,7 +148,11 @@ func Open(tb testing.TB, m Manifest) string {
 		return p
 	}
 	if cacheDir == "" {
-		d, err := os.MkdirTemp("", "dues-parser-fixtures-")
+		temp, err := osdirs.Temp()
+		if err != nil {
+			tb.Fatal(err)
+		}
+		d, err := os.MkdirTemp(temp, "dues-parser-fixtures-")
 		if err != nil {
 			tb.Fatal(err)
 		}

@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"crypto/sha256"
+	"flag"
 	"io"
 	"os"
 	"path/filepath"
@@ -16,12 +17,18 @@ import (
 	"indicer/lib/parser/partition"
 )
 
+// corpusNTFS names real images to check, separated as PATH is (';' on
+// Windows, ':' elsewhere):
+//
+//	go test ./lib/parser/fs/ntfs -run TestDecoderMatchesLibntfs -args -dues.corpus-ntfs=IMAGE
+var corpusNTFS = flag.String("dues.corpus-ntfs", "", "real images whose NTFS partitions TestDecoderMatchesLibntfs checks, as a path list")
+
 // TestDecoderMatchesLibntfs: DUES decodes NTFS-compressed streams itself,
 // because libntfs will not open a deleted record, and because libntfs v0.3.5
 // decoded every compression unit at a quarter of its size (PAR-27). libntfs
 // v0.3.6 reads them right, so each live compressed file of the fixtures must
-// read the same through both decoders. DUES_CORPUS_NTFS adds images of the
-// real corpus (a path list), each NTFS partition of which is checked too.
+// read the same through both decoders. -dues.corpus-ntfs adds images of the
+// real corpus, each NTFS partition of which is checked too.
 func TestDecoderMatchesLibntfs(t *testing.T) {
 	compressed := 0
 	for _, m := range fsfixture.All(t) {
@@ -39,7 +46,7 @@ func TestDecoderMatchesLibntfs(t *testing.T) {
 	}
 	t.Logf("fixtures: %d compressed files", compressed)
 
-	for _, path := range filepath.SplitList(os.Getenv("DUES_CORPUS_NTFS")) {
+	for _, path := range filepath.SplitList(*corpusNTFS) {
 		src, err := image.OpenSource(context.Background(), path, image.Options{})
 		if err != nil {
 			t.Fatalf("%s: %v", path, err)

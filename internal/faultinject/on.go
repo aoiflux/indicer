@@ -32,30 +32,11 @@ func newConfig(spec, notify string) (*config, error) {
 }
 
 var (
-	fallback    sync.Once
-	fallbackErr error
-
 	mu       sync.Mutex
 	active   *config // nil injects nothing
 	hits     = map[string]int{}
 	notified = map[string]bool{}
 )
-
-// loadFallback reads DUES_FAULTS and DUES_FAULTS_NOTIFY when nothing called
-// Configure or Set before the first hit. The child-process tests still
-// configure faults this way; it goes once they pass --faults.
-func loadFallback() {
-	spec := os.Getenv("DUES_FAULTS")
-	notify := os.Getenv("DUES_FAULTS_NOTIFY")
-	c, err := newConfig(spec, notify)
-	if err != nil {
-		fallbackErr = err
-		return
-	}
-	mu.Lock()
-	active = c
-	mu.Unlock()
-}
 
 // Configure installs spec, a list of point=action rules, and the file each
 // point's first hit is reported to ("" for none). The binaries call it with
@@ -85,8 +66,6 @@ func Set(spec string) (restore func(), err error) {
 }
 
 func install(c *config) {
-	// Once configured, the process never reads the environment.
-	fallback.Do(func() {})
 	mu.Lock()
 	defer mu.Unlock()
 	active = c
@@ -96,11 +75,6 @@ func install(c *config) {
 
 // Hit marks a fault point and performs whatever the configuration sets there.
 func Hit(point string) error {
-	fallback.Do(loadFallback)
-	if fallbackErr != nil {
-		// A bad spec is a test bug; fail loudly at the first point reached.
-		panic(fallbackErr)
-	}
 	if !Known(point) {
 		panic(fmt.Sprintf("faultinject: Hit(%q): unregistered point", point))
 	}

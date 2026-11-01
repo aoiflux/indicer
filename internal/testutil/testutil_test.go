@@ -3,6 +3,7 @@ package testutil
 import (
 	"bytes"
 	"errors"
+	"flag"
 	"fmt"
 	"io"
 	"os"
@@ -14,14 +15,21 @@ import (
 )
 
 func TestMain(m *testing.M) {
-	os.Exit(RunChildScenarios(m, map[string]func() int{
-		"exit3": func() int { return 3 },
+	os.Exit(RunChildScenarios(m, map[string]func(args []string) int{
+		"exit3": func([]string) int { return 3 },
+		// args prints its arguments, one per line.
+		"args": func(args []string) int {
+			for _, a := range args {
+				fmt.Println(a)
+			}
+			return 0
+		},
 		// point reports a fault point, then waits for an interrupt and exits
 		// 130, as DUES commands will.
-		"point": func() int {
+		"point": func([]string) int {
 			sig := make(chan os.Signal, 1)
 			signal.Notify(sig, os.Interrupt)
-			if err := notifyPoint("ready"); err != nil {
+			if err := NotifyPoint("ready"); err != nil {
 				fmt.Fprintln(os.Stderr, err)
 				return 98
 			}
@@ -35,16 +43,17 @@ func TestMain(m *testing.M) {
 	}))
 }
 
-func notifyPoint(name string) error {
-	f, err := os.OpenFile(os.Getenv(EnvFaultsNotify), os.O_APPEND|os.O_WRONLY, 0)
-	if err != nil {
-		return err
+// TestChildArgs: a child gets its arguments as given, flag-like ones
+// included, and not its parent's scenario flags.
+func TestChildArgs(t *testing.T) {
+	args := []string{"a dir", "-dues.child=exit3", "--faults=x", ""}
+	c := StartChild(t, "args", args...)
+	if code := c.Wait(t, 30*time.Second); code != 0 {
+		t.Fatalf("exit code %d\n%s", code, c.Output())
 	}
-	if _, err := f.WriteString(name + "\n"); err != nil {
-		_ = f.Close()
-		return err
+	if got, want := c.Output(), strings.Join(args, "\n")+"\n"; got != want {
+		t.Fatalf("child printed %q, want %q", got, want)
 	}
-	return f.Close()
 }
 
 func TestChildExitCode(t *testing.T) {
@@ -200,14 +209,39 @@ func TestPeakHeapAndAllocBelow(t *testing.T) {
 	AllocBelow(t, 1<<20, func() { _ = make([]byte, 1024) })
 }
 
-func TestRequireEnvDir(t *testing.T) {
-	dir := t.TempDir()
-	t.Setenv("DUES_TEST_SOMEDIR", dir)
-	if got := RequireEnvDir(t, "DUES_TEST_SOMEDIR"); got != dir {
-		t.Fatalf("got %q", got)
+var testDir = NewDirFlag("dues.test-dir", "a directory for TestDirFlag")
+
+func TestDirFlag(t *testing.T) {
+	set := func(v string) {
+		t.Helper()
+		if err := flag.Set("dues.test-dir", v); err != nil {
+			t.Fatal(err)
+		}
 	}
-	if err := os.WriteFile(filepath.Join(dir, "f"), nil, 0o644); err != nil {
+	t.Cleanup(func() { set("") })
+
+	ft := &fakeTB{TB: t}
+	testDir.Require(ft)
+	if !ft.skipped {
+		t.Fatal("no skip without the flag")
+	}
+
+	dir := t.TempDir()
+	set(dir)
+	if got := testDir.Require(t); got != dir {
+		t.Fatalf("got %q, want %q", got, dir)
+	}
+
+	if err := os.WriteFile(filepath.Join(dir, "file"), nil, 0o644); err != nil {
 		t.Fatal(err)
+	}
+	for _, bad := range []string{filepath.Join(dir, "missing"), filepath.Join(dir, "file")} {
+		set(bad)
+		ft := &fakeTB{TB: t}
+		testDir.Require(ft)
+		if !ft.failed || ft.skipped {
+			t.Errorf("-dues.test-dir=%s: failed %t, skipped %t; want a failure", bad, ft.failed, ft.skipped)
+		}
 	}
 }
 
@@ -215,14 +249,15 @@ func TestRequireEnvDir(t *testing.T) {
 // helper's failure path can be tested.
 type fakeTB struct {
 	testing.TB
-	failed   bool
-	cleanups []func()
+	failed, skipped bool
+	cleanups        []func()
 }
 
 func (f *fakeTB) Helper()               {}
 func (f *fakeTB) Cleanup(fn func())     { f.cleanups = append(f.cleanups, fn) }
 func (f *fakeTB) Errorf(string, ...any) { f.failed = true }
 func (f *fakeTB) Fatalf(string, ...any) { f.failed = true }
+func (f *fakeTB) Skipf(string, ...any)  { f.skipped = true }
 func (f *fakeTB) runCleanups() {
 	for i := len(f.cleanups) - 1; i >= 0; i-- {
 		f.cleanups[i]()

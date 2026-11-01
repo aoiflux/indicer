@@ -4,7 +4,7 @@
 
 .DESCRIPTION
   Runs, in order: CRLF-tolerant format check, go vet (normal and faultinject
-  builds), the six-target release build with a check that no binary carries
+  builds, and every test tag), the six-target release build with a check that no binary carries
   the faultinject tag, staticcheck, govulncheck (source and binary), the test
   suite (normal and faultinject builds), then in WSL: race tests,
   faultinject tests, filesystem-failure tests and fuzz smoke.
@@ -20,15 +20,22 @@
 .PARAMETER NoVuln
   Skip govulncheck (it needs network access to the vulnerability database).
 
+.PARAMETER NoFuzz
+  Skip the fuzz smoke in WSL.
+
+.PARAMETER FuzzTime
+  How long each fuzz target runs in WSL, as a Go duration (default 60s).
+
 .PARAMETER Long
-  Also run the long tests (scale and soak; DUES_LONG_TESTS=1), on Windows and
-  in WSL. They add some twenty minutes.
+  Also run the long tests (scale and soak; -tags long), on Windows and in
+  WSL. They add some twenty minutes.
 #>
 param(
     [switch]$Fast,
     [switch]$NoWSL,
     [switch]$NoVuln,
     [switch]$NoFuzz,
+    [string]$FuzzTime = "60s",
     [switch]$Long
 )
 
@@ -58,6 +65,9 @@ function Step([string]$Name, [scriptblock]$Body) {
     if ($ok) { $results.Add("PASS  $Name") } else { $results.Add("FAIL  $Name"); $script:failed = $true }
 }
 
+# With-Env sets Go's own variables (GOOS, GOARCH, CGO_ENABLED, GOTOOLCHAIN),
+# the toolchain's interface, for the commands in Body. DUES and its tests take
+# their settings from flags and build tags.
 function With-Env([hashtable]$Vars, [scriptblock]$Body) {
     $saved = @{}
     foreach ($k in $Vars.Keys) {
@@ -72,6 +82,9 @@ function With-Env([hashtable]$Vars, [scriptblock]$Body) {
 Step "format" { go run ./internal/tools/fmtcheck }
 Step "vet" { go vet ./... }
 Step "vet (faultinject)" { go vet -tags faultinject ./... }
+# Every build tag the tests use, so vet compiles each tagged file at least
+# once: the files for a tag's absence build in the normal vet.
+Step "vet (test tags)" { go vet -tags faultinject,long,requirepty,safestrict,winconsole ./... }
 
 Step "cross build (6 targets)" {
     $tmp = Join-Path ([IO.Path]::GetTempPath()) ("dues-verify-" + [Guid]::NewGuid())
@@ -121,7 +134,7 @@ if (-not $Fast -and -not $NoVuln) {
 }
 
 if ($Long) {
-    Step "test (with long tests)" { With-Env @{ DUES_LONG_TESTS = "1" } { go test -count=1 -timeout 90m ./... } }
+    Step "test (with long tests)" { go test -count=1 -timeout 90m -tags long ./... }
 } else {
     Step "test" { go test -count=1 ./... }
 }
@@ -129,11 +142,15 @@ Step "test (faultinject)" { go test -count=1 -tags faultinject ./... }
 
 if (-not $Fast -and -not $NoWSL) {
     $wslRepo = (wsl.exe --exec wslpath -a ($repo -replace '\\', '/')).Trim()
-    Step "WSL sync" { wsl.exe --exec bash "$wslRepo/scripts/wsl/sync.sh" }
-    $suiteArgs = @()
+    # The copy goes under the WSL account's home, as its password database
+    # records it.
+    $wslHome = (wsl.exe --exec bash -c 'getent passwd "$(id -u)" | cut -d: -f6').Trim()
+    $wslSrc = "$wslHome/.cache/dues-verify/src"
+    Step "WSL sync" { wsl.exe --exec bash "$wslRepo/scripts/wsl/sync.sh" $wslSrc }
+    $suiteArgs = @("--fuzztime", $FuzzTime)
     if ($NoFuzz) { $suiteArgs += "--no-fuzz" }
     if ($Long) { $suiteArgs += "--long" }
-    Step "WSL suite" { wsl.exe --exec bash -lc "cd ~/.cache/dues-verify/src && bash scripts/wsl/suite.sh $suiteArgs" }
+    Step "WSL suite" { wsl.exe --exec bash -lc "cd '$wslSrc' && bash scripts/wsl/suite.sh $suiteArgs" }
 }
 
 Write-Host ""

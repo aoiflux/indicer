@@ -78,12 +78,8 @@ func (l *crashLab) add(path string) {
 // for this run only.
 func (l *crashLab) dues(faults string, args ...string) testutil.Result {
 	l.t.Helper()
-	var env []string
-	if faults != "" {
-		env = []string{"DUES_FAULTS=" + faults}
-	}
-	args = append(append(args, "--dbpath", l.root, "-c", "64"), l.layout...)
-	return testutil.RunDuesEnv(l.t, l.bin, l.work, 2*time.Minute, env, args...)
+	args = append(append(append(testutil.FaultArgs(faults), args...), "--dbpath", l.root, "-c", "64"), l.layout...)
+	return testutil.RunDues(l.t, l.bin, l.work, 2*time.Minute, args...)
 }
 
 // must runs a command that has to succeed.
@@ -270,7 +266,7 @@ func TestKilledDuringIndexing(t *testing.T) {
 	l := newCrashLab(t)
 	l.must("store", l.files[0])
 	args := []string{"store", l.files[1], "--dbpath", l.root, "-c", "64"}
-	c := testutil.StartDues(t, l.bin, l.work, []string{"DUES_FAULTS=" + spec(faultinject.IndexMid, "block@3")}, args...)
+	c := testutil.StartDues(t, l.bin, l.work, spec(faultinject.IndexMid, "block@3"), args...)
 	c.WaitForPoint(t, faultinject.IndexMid+"#blocked", time.Minute)
 	c.Kill(t)
 	l.recoverAndCheck(ref)
@@ -375,7 +371,7 @@ func TestCrashDuringUpload(t *testing.T) {
 			l := newCrashLab(t)
 			l.must("store", l.files[1])
 			addr := freeAddr(t)
-			srv := testutil.StartDues(t, l.bin, l.work, []string{"DUES_FAULTS=" + spec(point, "exit:3")},
+			srv := testutil.StartDues(t, l.bin, l.work, spec(point, "exit:3"),
 				"server", "--listen", addr, "--dbpath", l.root, "-c", "64")
 			waitHealthy(t, addr, srv)
 			if err := upload(addr, l.files[0]); err == nil {
@@ -489,13 +485,13 @@ func TestCrashWritingAnArchive(t *testing.T) {
 		t.Run(format, func(t *testing.T) {
 			out := filepath.Join(work, "out", "case."+format)
 			args := []string{"create-archive", "--input", src, "--output", out, "--format", format}
-			fault := []string{"DUES_FAULTS=" + spec(faultinject.QwikpakArchiveBeforeClose, "exit:3")}
+			fault := testutil.FaultArgs(spec(faultinject.QwikpakArchiveBeforeClose, "exit:3"))
 			for _, earlier := range []bool{false, true} {
 				var before string
 				if earlier {
 					before = testutil.FileSHA256(t, out)
 				}
-				if r := testutil.RunDuesEnv(t, bin, work, 2*time.Minute, fault, args...); r.ExitCode != crashExit {
+				if r := testutil.RunDues(t, bin, work, 2*time.Minute, append(fault, args...)...); r.ExitCode != crashExit {
 					t.Fatalf("create-archive: exit %d, want %d\n%s", r.ExitCode, crashExit, r.Combined())
 				}
 				switch _, err := os.Stat(out); {
@@ -504,7 +500,7 @@ func TestCrashWritingAnArchive(t *testing.T) {
 				case earlier && testutil.FileSHA256(t, out) != before:
 					t.Fatal("a killed archive write changed the archive it was replacing")
 				}
-				if r := testutil.RunDuesEnv(t, bin, work, 2*time.Minute, nil, args...); r.ExitCode != 0 {
+				if r := testutil.RunDues(t, bin, work, 2*time.Minute, args...); r.ExitCode != 0 {
 					t.Fatalf("create-archive: exit %d\n%s", r.ExitCode, r.Combined())
 				}
 				if left := testutil.FilesMatching(t, filepath.Dir(out), "*.dues-tmp-*"); len(left) > 0 {
@@ -512,7 +508,7 @@ func TestCrashWritingAnArchive(t *testing.T) {
 				}
 			}
 			dst := filepath.Join(work, "extracted-"+format)
-			if r := testutil.RunDuesEnv(t, bin, work, 2*time.Minute, nil, "extract-archive", "--input", out, "--output", dst); r.ExitCode != 0 {
+			if r := testutil.RunDues(t, bin, work, 2*time.Minute, "extract-archive", "--input", out, "--output", dst); r.ExitCode != 0 {
 				t.Fatalf("extract-archive: exit %d\n%s", r.ExitCode, r.Combined())
 			}
 			if got, want := testutil.TreeHash(t, dst), testutil.TreeHash(t, src); got != want {

@@ -3,7 +3,7 @@
 # LZNT1-compressed files and sparse files, written by ntfs-3g. It is separate
 # from gen_fixtures.sh so adding it does not regenerate every other fixture.
 #
-#   wsl -u root --exec bash lib/parser/testdata/gen/gen_ntfs_extra.sh
+#   wsl -u root --exec bash lib/parser/testdata/gen/gen_ntfs_extra.sh [--dataset-dir DIR]
 #
 # Requires: ntfs-3g (mkntfs, setfattr, getfattr), zstd, python3.
 set -euo pipefail

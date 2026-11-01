@@ -10,8 +10,14 @@ import (
 	"indicer/internal/testutil"
 )
 
+// corpusVHD is the real corpus's directory of VHD and VHDX images, which
+// only some machines have:
+//
+//	go test ./lib/parser/image -args -dues.corpus-vhd=DIR
+var corpusVHD = testutil.NewDirFlag("dues.corpus-vhd", "a directory of real VHD and VHDX images, Hyper-V snapshot chains among them")
+
 // The tests in this file read Hyper-V snapshot chains of the real corpus
-// (DUES_CORPUS_VHD). They are the regression checks for two libvhdi defects
+// (-dues.corpus-vhd). They are the regression checks for two libvhdi defects
 // DUES worked around until libvhdi v0.4.2 fixed them, and they failed against
 // v0.4.1 read without the workarounds.
 
@@ -25,7 +31,7 @@ const (
 )
 
 func TestOpenVHDFileReadsUnalignedInPartialBlocks(t *testing.T) {
-	dir := testutil.RequireEnvDir(t, "DUES_CORPUS_VHD")
+	dir := corpusVHD.Require(t)
 	path := filepath.Join(dir, corpusPartialChild)
 	if _, err := os.Stat(path); err != nil {
 		t.Skipf("corpus image not present: %v", err)
@@ -68,7 +74,7 @@ func TestOpenVHDFileReadsUnalignedInPartialBlocks(t *testing.T) {
 const corpusTailLayer = "ubuntu_B6F397AF-91E2-41AC-B269-1334DF75AD38.avhdx"
 
 func TestOpenVHDFileReadsPartialLastChunk(t *testing.T) {
-	dir := testutil.RequireEnvDir(t, "DUES_CORPUS_VHD")
+	dir := corpusVHD.Require(t)
 	path := filepath.Join(dir, corpusTailLayer)
 	if _, err := os.Stat(path); err != nil {
 		t.Skipf("corpus image not present: %v", err)

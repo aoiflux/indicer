@@ -11,6 +11,8 @@ import (
 	"sync"
 	"testing"
 	"time"
+
+	"indicer/internal/osdirs"
 )
 
 var (
@@ -58,7 +60,11 @@ func buildBinary(pkg string, tags []string) (string, string) {
 		return "", "go env GOMOD: " + err.Error()
 	}
 	root := filepath.Dir(strings.TrimSpace(string(gomod)))
-	dir, err := os.MkdirTemp("", "dues-bin-")
+	temp, err := osdirs.Temp()
+	if err != nil {
+		return "", err.Error()
+	}
+	dir, err := os.MkdirTemp(temp, "dues-bin-")
 	if err != nil {
 		return "", err.Error()
 	}
@@ -105,40 +111,15 @@ func (r Result) LastLine() string {
 	return last
 }
 
-// RunDues runs the binary in dir with args, killing it after timeout.
+// RunDues runs the binary in dir with args, killing it after timeout. Its
+// output is never a terminal, so it must hold no escape code unless the
+// arguments ask for colour; a run that breaks this fails the test.
 func RunDues(tb testing.TB, bin, dir string, timeout time.Duration, args ...string) Result {
-	tb.Helper()
-	return RunDuesEnv(tb, bin, dir, timeout, nil, args...)
-}
-
-// presentationVars are variables a developer's shell may set that change
-// how DUES looks. Children never inherit them, so tests see the plain
-// output scripts see.
-var presentationVars = []string{"NO_COLOR", "FORCE_COLOR", "CLICOLOR_FORCE", "DUES_COLOR", "DUES_PLAIN", "DUES_NO_FUN", "DUES_THEME"}
-
-// ChildEnv is the environment for a DUES child process: this process's,
-// without the presentation variables, plus extra ("K=V").
-func ChildEnv(extra ...string) []string {
-	var env []string
-	for _, kv := range os.Environ() {
-		name, _, _ := strings.Cut(kv, "=")
-		if !slices.ContainsFunc(presentationVars, func(v string) bool { return strings.EqualFold(v, name) }) {
-			env = append(env, kv)
-		}
-	}
-	return append(env, extra...)
-}
-
-// RunDuesEnv is RunDues with extra environment ("K=V") for the child only.
-// Its output is never a terminal, so it must hold no escape code unless
-// the arguments ask for colour; a run that breaks this fails the test.
-func RunDuesEnv(tb testing.TB, bin, dir string, timeout time.Duration, env []string, args ...string) Result {
 	tb.Helper()
 	cmd := exec.Command(bin, args...)
 	cmd.Dir = dir
-	cmd.Env = ChildEnv(env...)
 	defer func() {
-		if !slices.Contains(args, "--color=always") && !slices.Contains(env, "FORCE_COLOR=1") {
+		if !slices.Contains(args, "--color=always") {
 			if out := stdoutOf(cmd) + stderrOf(cmd); strings.Contains(out, "\x1b") {
 				tb.Errorf("dues %s wrote an escape code to a pipe:\n%q", strings.Join(args, " "), out)
 			}

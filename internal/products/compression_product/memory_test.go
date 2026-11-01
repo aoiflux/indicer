@@ -17,19 +17,23 @@ import (
 )
 
 func TestMain(m *testing.M) {
-	os.Exit(testutil.RunChildScenarios(m, map[string]func() int{
+	os.Exit(testutil.RunChildScenarios(m, map[string]func(args []string) int{
 		"archive-memory": childArchiveMemory,
 	}))
 }
 
-// envChildDir names the directory a child scenario works in.
-const envChildDir = "DUES_TEST_DIR"
-
-// childArchiveMemory creates and extracts an archive, as a library host would,
-// then reports the live heap after a collection and whether a process encoder
-// is left behind.
-func childArchiveMemory() int {
-	dir := os.Getenv(envChildDir)
+// childArchiveMemory creates and extracts an archive in the directory
+// args[0] with GOMAXPROCS set to args[1], as a library host would, then
+// reports the live heap after a collection and whether a process encoder is
+// left behind.
+func childArchiveMemory(args []string) int {
+	procs, err := strconv.Atoi(args[1])
+	if err != nil {
+		fmt.Fprintln(os.Stderr, err)
+		return 1
+	}
+	runtime.GOMAXPROCS(procs)
+	dir := args[0]
 	src := filepath.Join(dir, "src")
 	rng := rand.New(rand.NewPCG(1, 2))
 	words := []string{"evidence ", "chunk ", "volume ", "record ", "partition ", "hash "}
@@ -72,7 +76,7 @@ func childArchiveMemory() int {
 // (best level) and badger's table encoder (level 15) each kept one 50 MB
 // state per CPU after the first archive: about 1.1 GB live here.
 func TestArchiveOperationsReleaseEncoders(t *testing.T) {
-	c := testutil.StartChild(t, "archive-memory", envChildDir+"="+t.TempDir(), "GOMAXPROCS=16")
+	c := testutil.StartChild(t, "archive-memory", t.TempDir(), "16")
 	if code := c.Wait(t, 3*time.Minute); code != 0 {
 		t.Fatalf("child exited %d:\n%s", code, c.Output())
 	}

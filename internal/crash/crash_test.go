@@ -13,11 +13,12 @@ import (
 )
 
 func TestMain(m *testing.M) {
-	os.Exit(testutil.RunChildScenarios(m, map[string]func() int{
-		// unguardedPanic dies the way a stray goroutine panic kills DUES: the
-		// runtime prints the trace and exits with code 2.
-		"unguardedPanic": func() int {
-			if _, err := Setup(os.Getenv("CRASH_DIR"), "child"); err != nil {
+	os.Exit(testutil.RunChildScenarios(m, map[string]func(args []string) int{
+		// unguardedPanic, with the crash directory as its argument, dies the
+		// way a stray goroutine panic kills DUES: the runtime prints the
+		// trace and exits with code 2.
+		"unguardedPanic": func(args []string) int {
+			if _, err := Setup(args[0], "child"); err != nil {
 				return 3
 			}
 			go func() {
@@ -79,7 +80,7 @@ func TestWriteKeepsReport(t *testing.T) {
 // runtime's own trace must land in the crash file.
 func TestUnguardedPanicIsCaptured(t *testing.T) {
 	dir := t.TempDir()
-	c := testutil.StartChild(t, "unguardedPanic", "CRASH_DIR="+dir)
+	c := testutil.StartChild(t, "unguardedPanic", dir)
 	if code := c.Wait(t, time.Minute); code == 0 || code == 3 {
 		t.Fatalf("child exited %d; want a runtime crash\n%s", code, c.Output())
 	}

@@ -54,11 +54,11 @@ ACLs.
 
 The password is read from the first of these that is given:
 1. `--password-file PATH` (its first line);
-2. `--password-stdin` (the first line of standard input);
-3. the `DUES_PASSWORD` environment variable;
-4. `--password` (warns, because other users can see the command line).
+2. `--password-stdin` (the first line of standard input).
 
-An empty password means no password.
+An empty password means no password. `--password`/`-p` was removed, because
+other users can see a command line; passing it is a usage error that names
+these two. The `DUES_PASSWORD` environment variable is ignored.
 
 ## Concurrent use
 
@@ -159,19 +159,20 @@ notes, warnings and errors. On a pipe nothing holds an escape code, and
 progress is one plain line when a phase starts, one when it ends, and, while
 the command runs, one heartbeat line: every 15 seconds at first, then every
 tenth of the time it has run, never more than 5 minutes apart (a two-hour
-store prints about 55). Under CI (`CI`, `GITHUB_ACTIONS`, `GITLAB_CI`, `BUILDKITE`,
-`JENKINS_URL`, `TF_BUILD`, `TEAMCITY_VERSION`, or `--ci`) DUES behaves as on a
-pipe, and prompts refuse.
+store prints about 55). Under `--ci` DUES behaves as on a pipe, and prompts
+refuse.
 
-| Variable | Effect |
+| Flag | Effect |
 |---|---|
-| `DUES_COLOR` | `auto`, `always`, `never` or `ansi`, as `--color` |
-| `DUES_PLAIN=1` | as `--plain` |
-| `DUES_NO_FUN=1` | as `--no-fun` |
-| `DUES_THEME` | `dark` or `light`: the terminal's background |
-| `NO_COLOR` | any value: no colour |
-| `FORCE_COLOR`, `CLICOLOR_FORCE` | colour even on a pipe |
-| `TERM=dumb` | no colour, no redraw, ASCII |
+| `--color` | `auto` (256 colours on a terminal, none on a pipe), `always`, `never`, `ansi` (the theme's 16 colours) or `truecolor` |
+| `--plain` | no colour, no redraw, ASCII |
+| `--ci` | as on a pipe, for CI logs |
+| `--theme` | `dark` or `light`: the terminal's background |
+| `--taskbar` | progress on the terminal's tab and taskbar |
+| `--no-fun` | no extras |
+
+DUES reads no environment variable: `NO_COLOR`, `FORCE_COLOR`, `TERM`, `CI`
+and the like change nothing.
 
 [CLI_UX.md](CLI_UX.md) has the rest: palette, marks, the progress display and
 the accessibility review.
@@ -180,10 +181,15 @@ the accessibility review.
 
 DUES writes its log to the first directory it can write in, in this order:
 1. `--log-dir`;
-2. `DUES_LOG_DIR`;
-3. the per-user cache directory: `%LocalAppData%\dues\logs` on Windows,
-   `~/.cache/dues/logs` on Linux, `~/Library/Caches/dues/logs` on macOS;
-4. `dues-<user>/logs` in the temporary directory.
+2. the per-user cache directory: `AppData\Local\dues\logs` in the user's
+   profile on Windows, `~/.cache/dues/logs` on Linux and
+   `~/Library/Caches/dues/logs` on macOS, where `~` is the home directory the
+   account database records;
+3. `dues-<user>/logs` in the temporary directory (`--temp-dir`, else `/tmp`,
+   or `AppData\Local\Temp` in the profile on Windows).
+
+DUES finds these directories from the operating system, never from `HOME`,
+`XDG_CACHE_HOME`, `LOCALAPPDATA`, `TMPDIR` or `TEMP`.
 
 If none is writable, DUES prints one warning and runs without a log. A logging
 failure never stops a command.
@@ -192,11 +198,18 @@ Each process writes its own files, named
 `<component>-<UTC time>-<pid>.ndjson`. The component is `dues` for the CLI
 and `qwikpak` for the compression command. Each line is one JSON object with
 `run_id`, `pid` and `component`. A file rotates at 50 MB, and the newest 10
-files are kept per directory. Set `DUES_DEBUG=1` for debug-level entries.
+files are kept per directory. `--debug` adds debug-level entries.
+
+Each run's log holds one `settings` record: every presentation, log,
+temporary-file and database setting in effect, and whether a flag or the
+default set it. When an explicit `--log-dir` could not be written, it also
+gives the one asked for. The password is never logged; its entry, `unlock`,
+says where it came from (`password-file`, `password-stdin` or `none`).
 
 Values of fields whose names mention a password, secret, token, credential
 or authorization, or end in `key`, are replaced with `[REDACTED]`. So are the values of
-`--password` and `--token` on a logged command line.
+the removed `--password` and `--token` flags, should an old script still pass
+them.
 
 Each run also creates `crash-<run id>.txt` in the log directory and removes it
 at a clean exit if nothing was written to it. The file receives:
@@ -207,7 +220,8 @@ at a clean exit if nothing was written to it. The file receives:
 After a crash, DUES prints the crash file's path and the run ID, which matches
 the `run_id` of the log entries.
 
-The compression library logs only when its host sets `DUES_LOG_DIR`.
+The compression library logs fully only when its host passes a `log_dir` to
+`DuesConfigure` ([COMPRESSION_ABI_REFERENCE.md](COMPRESSION_ABI_REFERENCE.md)).
 Otherwise it writes warnings and errors to the cache directory, in a file
 created at the first such entry.
 

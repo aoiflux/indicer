@@ -14,16 +14,18 @@ import (
 
 // VerifyResult is the outcome of verifying one evidence.
 type VerifyResult struct {
-	ID      string // base64 evidence ID
-	Name    string
-	Size    int64
-	Problem string // empty when the evidence verified
+	ID      string `json:"id"` // base64 evidence ID
+	Name    string `json:"name"`
+	Size    int64  `json:"size"`
+	Problem string `json:"problem,omitempty"` // empty when the evidence verified
 }
 
-// VerifyReport is what VerifyEvidence found.
+// VerifyReport is what VerifyEvidence found. `dues repair --verify` prints it
+// in its document.
 type VerifyReport struct {
-	Results            []VerifyResult
-	Verified, Problems int
+	Verified int            `json:"verified"`
+	Problems int            `json:"damaged"`
+	Results  []VerifyResult `json:"results"`
 }
 
 // VerifyEvidence reads back every stored chunk of every completed or flushed

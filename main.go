@@ -271,7 +271,7 @@ func executeCommand(ctx context.Context, parsed string, cliDef cliDefinition, db
 }
 
 // eggsAllowed reports whether an extra may follow a command: not repair,
-// whose --fix, --upgrade and --verify write JSON to stdout.
+// whose JSON document on stdout scripts read.
 func eggsAllowed(parsed string, cliDef cliDefinition) bool {
 	return parsed != cliDef.commands.repair.FullCommand()
 }

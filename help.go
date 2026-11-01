@@ -410,6 +410,8 @@ func printRepairHelp() {
 	printHelpHeader("repair")
 	fmt.Println("Usage: dues repair [--fix [--reindex-failed] [--revrel]] [--verify] [--upgrade [--yes]] [global options]")
 	fmt.Println("Without options, lists what interrupted ingests left, opening the database read-only.")
+	fmt.Println("Prints one JSON document on stdout, with a section for each step that ran; the")
+	fmt.Println("steps' messages and the --upgrade question go to stderr.")
 	printHelpSection("Options")
 	fmt.Println("  --fix, -J          Finish what interrupted ingests left: unfinished attempts are marked")
 	fmt.Println("                     failed (storing the file again resumes them), flushed ones are checked")

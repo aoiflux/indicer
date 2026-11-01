@@ -86,7 +86,9 @@ type commandRun struct {
 
 // runCommands runs the same commands in a fresh work directory with env as
 // the whole environment, and returns their output with what differs from
-// one run to the next masked: the work directory, durations and IDs.
+// one run to the next masked: the work directory, durations and IDs. Plain
+// start lines are dropped: one shows only when a sample finds its phase
+// still running, so a quick phase has one in some runs and not in others.
 func runCommands(t *testing.T, bin string, env []string) []commandRun {
 	t.Helper()
 	work := t.TempDir()
@@ -127,7 +129,7 @@ func runCommands(t *testing.T, bin string, env []string) []commandRun {
 			cmd:    strings.Join(args, " "),
 			code:   code,
 			stdout: mask.apply(stdout.String()),
-			stderr: mask.apply(stderr.String()),
+			stderr: mask.apply(startLineRE.ReplaceAllString(stderr.String(), "")),
 		})
 	}
 	return runs
@@ -137,6 +139,8 @@ var (
 	durationRE = regexp.MustCompile(`(\d+(\.\d+)?(ns|µs|us|ms|s|m|h))+\b`)
 	// An evidence or partition ID: 16 bytes in base64.
 	idRE = regexp.MustCompile(`[A-Za-z0-9+/]{22}==`)
+	// A plain line saying a phase started: "dues: index: start".
+	startLineRE = regexp.MustCompile(`(?m)^dues: [^\n]*: start(, [^\n]*)?\r?\n`)
 )
 
 // masker numbers the IDs of one run in the order they appear, so two runs

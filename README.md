@@ -507,6 +507,9 @@ See [docs/CLI_UX.md](docs/CLI_UX.md).
 - repair --verify: read back every chunk and check its hash
 - repair --upgrade [--yes]: move a legacy block index into the database, and
   set aside indexes of raw-stored E01 or VHD/VHDX evidence
+- repair prints one JSON document on stdout, with a section for each step
+  that ran; each step's lines and the --upgrade question go to stderr (see
+  [OPERATIONS.md](docs/OPERATIONS.md))
 - reindex --failed | --all | ID...: rebuild indexes from the stored chunks;
   --source reads one evidence from its original file instead
 

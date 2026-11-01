@@ -20,14 +20,15 @@ import (
 // maxDamagedSamples bounds the damaged records a BlockIndexUpgrade lists.
 const maxDamagedSamples = 20
 
-// BlockIndexUpgrade reports what UpgradeBlockIndex did.
+// BlockIndexUpgrade reports what UpgradeBlockIndex did. `dues repair
+// --upgrade` prints it in its document.
 type BlockIndexUpgrade struct {
-	Files         int // block files read
-	Records       int // records in them
-	Migrated      int // records written to C|||
-	AlreadyStored int // records whose chunk already had C||| metadata
-	DamagedCount  int // records whose chunk could not be read or verified
-	Damaged       []string
+	Files         int      `json:"files"`         // block files read
+	Records       int      `json:"records"`       // records in them
+	Migrated      int      `json:"migrated"`      // records written to C|||
+	AlreadyStored int      `json:"alreadyStored"` // records whose chunk already had C||| metadata
+	DamagedCount  int      `json:"damagedCount"`  // records whose chunk could not be read or verified
+	Damaged       []string `json:"damaged,omitempty"`
 }
 
 // Complete reports whether every block index record now has C||| metadata,

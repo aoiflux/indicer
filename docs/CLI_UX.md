@@ -9,7 +9,7 @@ of `internal/console` (the only writer to the terminal).
 ## Output contract
 
 1. **Results on stdout, everything else on stderr.** Results are JSON
-   (`list`, `micro list`), reports (`store`, `restore`, `reindex`, `stats`),
+   (`list`, `micro list`, and one document from `repair`), reports (`store`, `restore`, `reindex`, `stats`),
    help and version text, including the identity line `dues --version`
    prints. The run header, progress, notes, warnings, errors and the
    occasional extra go to stderr. `dues list | jq` reads pure JSON.
@@ -313,7 +313,8 @@ The tests cover what a test can see. Before a release, look at these by hand:
 - Each instrumented package: tests that assert its phases, its plan and its
   notes.
 - `internal/e2e/output_contract_test.go`:
-  - pure JSON on stdout;
+  - pure JSON on stdout from `list`, `micro list`, `repair --verify` and
+    `repair --fix --revrel`;
   - the identity line from `version`, `--version` and piped help;
   - colour only when asked for, and no taskbar progress on a pipe.
   `testutil.RunDues` fails any piped run that writes an escape code.

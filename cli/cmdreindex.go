@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"indicer/internal/progress"
+	"io"
 	"time"
 
 	"indicer/internal/console"
@@ -46,7 +47,7 @@ func ReindexData(ctx context.Context, opts DBOptions, ro ReindexOptions) (err er
 		return err
 	}
 	defer closeDB(h, &err)
-	err = reindexEvidence(ctx, h.DB, ro)
+	_, err = reindexEvidence(ctx, h.DB, ro, console.Out())
 	compactValueLog(ctx, h, "ReindexData")
 	return err
 }
@@ -56,21 +57,37 @@ type reindexTarget struct {
 	name string
 }
 
-// reindexEvidence reindexes each selected evidence in turn. One that fails
-// does not stop the rest; an index left incomplete exits 2.
-func reindexEvidence(ctx context.Context, db *badger.DB, ro ReindexOptions) (err error) {
+// reindexOutcome is how the reindex of one evidence ended.
+type reindexOutcome struct {
+	ID      string `json:"id"`
+	Name    string `json:"name"`
+	Outcome string `json:"outcome"` // ok, incomplete or failed
+	Error   string `json:"error,omitempty"`
+}
+
+// reindexSummary is what reindexEvidence did; repair prints it in its
+// document.
+type reindexSummary struct {
+	Evidence   []reindexOutcome `json:"evidence"`
+	Incomplete int              `json:"incomplete"`
+	Failed     int              `json:"failed"`
+}
+
+// reindexEvidence reindexes each selected evidence in turn, reporting on w.
+// One that fails does not stop the rest; an index left incomplete exits 2.
+func reindexEvidence(ctx context.Context, db *badger.DB, ro ReindexOptions, w io.Writer) (sum reindexSummary, err error) {
+	sum.Evidence = []reindexOutcome{}
 	targets, err := reindexTargets(db, ro)
 	if err != nil {
-		return err
+		return sum, err
 	}
 	if ro.Source != "" && len(targets) != 1 {
-		return lifecycle.Usagef("--source reads one evidence; %d are selected", len(targets))
+		return sum, lifecycle.Usagef("--source reads one evidence; %d are selected", len(targets))
 	}
 	if len(targets) == 0 {
-		console.Println("Nothing to reindex.")
-		return nil
+		fmt.Fprintln(w, "Nothing to reindex.")
+		return sum, nil
 	}
-	var warned int
 	var failures []string
 	var firstErr error
 	all := progress.Start(ctx, "evidence", progress.Evidence, int64(len(targets)))
@@ -78,49 +95,55 @@ func reindexEvidence(ctx context.Context, db *badger.DB, ro ReindexOptions) (err
 	defer func() { all.Done(err) }()
 	for _, t := range targets {
 		if err := ctx.Err(); err != nil {
-			return err
+			return sum, err
 		}
 		start := time.Now()
-		console.Printf("\nReindexing %s (%s)\n", termsafe.Line(t.name), base64.StdEncoding.EncodeToString(t.id))
+		id := base64.StdEncoding.EncodeToString(t.id)
+		fmt.Fprintf(w, "\nReindexing %s (%s)\n", termsafe.Line(t.name), id)
 		one := progress.Start(progress.Within(ctx, all), t.name, progress.None, 0)
 		res, err := ingest.Reindex(progress.Within(ctx, one), db, t.id, ingest.ReindexOptions{Source: ro.Source, FTS: ro.FTS, Enrich: ro.Enrich})
 		one.Done(err)
 		all.Add(1)
 		if res.Index != nil {
-			reportIngest(console.Out(), res, time.Since(start))
+			reportIngest(w, res, time.Since(start))
 		}
 		logging.GetLogger().Info("Reindex EVIDENCE",
-			zap.String("evidence_id", base64.StdEncoding.EncodeToString(t.id)),
+			zap.String("evidence_id", id),
 			zap.Int64("duration_ms", time.Since(start).Milliseconds()),
 			zap.Error(err))
+		o := reindexOutcome{ID: id, Name: t.name, Outcome: "ok"}
 		var incomplete *ingest.IndexIncompleteError
 		switch {
 		case err == nil:
 		case errors.As(err, &incomplete):
-			warned++
-			console.Println("Warning:", termsafe.Line(err.Error()))
+			o.Outcome, o.Error = "incomplete", err.Error()
+			sum.Incomplete++
+			fmt.Fprintln(w, "Warning:", termsafe.Line(err.Error()))
 		default:
 			if cerr := ctx.Err(); cerr != nil {
-				return cerr
+				return sum, cerr
 			}
+			o.Outcome, o.Error = "failed", err.Error()
+			sum.Failed++
 			failures = append(failures, fmt.Sprintf("%s: %v", t.name, err))
 			failed.Add(1)
 			if firstErr == nil {
 				firstErr = err
 			}
-			console.Println("Failed:", termsafe.Line(err.Error()))
+			fmt.Fprintln(w, "Failed:", termsafe.Line(err.Error()))
 		}
+		sum.Evidence = append(sum.Evidence, o)
 	}
 	if len(targets) > 1 {
-		console.Printf("\nReindex: %d evidence, %d with an incomplete index, %d failed\n", len(targets), warned, len(failures))
+		fmt.Fprintf(w, "\nReindex: %d evidence, %d with an incomplete index, %d failed\n", len(targets), sum.Incomplete, sum.Failed)
 	}
 	switch {
-	case len(failures) > 0:
-		return fmt.Errorf("%d of %d evidence could not be reindexed, first %s: %w", len(failures), len(targets), failures[0], firstErr)
-	case warned > 0:
-		return &lifecycle.WarningError{Err: fmt.Errorf("%d evidence reindexed with an incomplete index", warned)}
+	case sum.Failed > 0:
+		return sum, fmt.Errorf("%d of %d evidence could not be reindexed, first %s: %w", sum.Failed, len(targets), failures[0], firstErr)
+	case sum.Incomplete > 0:
+		return sum, &lifecycle.WarningError{Err: fmt.Errorf("%d evidence reindexed with an incomplete index", sum.Incomplete)}
 	}
-	return nil
+	return sum, nil
 }
 
 // reindexTargets resolves what ro selects, each evidence once.

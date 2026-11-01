@@ -4,6 +4,7 @@ import (
 	"encoding/base64"
 	"errors"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"indicer/internal/lifecycle"
@@ -69,10 +70,26 @@ func TestReindexCommand(t *testing.T) {
 		t.Fatalf("repair --reindex-failed without --fix: %v, want a usage error", err)
 	}
 	setIndex(structs.IndexRunning)
-	if err := repairData(t.Context(), opts, RepairOptions{Fix: true, ReindexFailed: true}, nil, false); err != nil {
+	doc, stderr, err := runRepair(t, opts, RepairOptions{Fix: true, ReindexFailed: true}, "", false, "reindex")
+	if err != nil {
 		t.Fatal(err)
 	}
 	if s := indexState(); s != structs.IndexComplete {
 		t.Fatalf("after repair --fix --reindex-failed the index is %s", s)
+	}
+	var reindex struct {
+		Evidence []struct {
+			ID, Name, Outcome, Error string
+		}
+		Incomplete, Failed int
+	}
+	section(t, doc, "reindex", &reindex)
+	if len(reindex.Evidence) != 1 || reindex.Evidence[0].ID != id || reindex.Evidence[0].Name != rec.Name ||
+		reindex.Evidence[0].Outcome != "ok" || reindex.Evidence[0].Error != "" || reindex.Incomplete != 0 || reindex.Failed != 0 {
+		t.Fatalf("reindex section: %s", doc["reindex"])
+	}
+	// The reindex report goes to stderr with the other steps' lines.
+	if !strings.Contains(stderr, "\nReindexing ") {
+		t.Fatalf("no reindex lines on stderr:\n%s", stderr)
 	}
 }

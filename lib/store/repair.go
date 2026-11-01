@@ -3,9 +3,7 @@ package store
 import (
 	"context"
 	"encoding/base64"
-	"encoding/json"
 	"errors"
-	"indicer/internal/console"
 	"strings"
 
 	"indicer/lib/dbio"
@@ -14,6 +12,8 @@ import (
 	"github.com/dgraph-io/badger/v4"
 )
 
+// RepairReport is what InspectEvidenceRepairs found. `dues repair` prints it
+// as the top of its document.
 type RepairReport struct {
 	TotalProblematic   int `json:"totalProblematic"`
 	PendingCount       int `json:"pendingCount"`
@@ -45,21 +45,6 @@ type RepairEvidenceRow struct {
 	Action      string `json:"action"`
 
 	id []byte
-}
-
-func Repair(ctx context.Context, db *badger.DB, fix bool) error {
-	report, err := InspectEvidenceRepairs(ctx, db, fix)
-	if err != nil {
-		return err
-	}
-
-	jsonData, err := json.MarshalIndent(report, "", "  ")
-	if err != nil {
-		return err
-	}
-
-	console.Println(string(jsonData))
-	return nil
 }
 
 // InspectEvidenceRepairs lists the evidence an unfinished ingest left, and

@@ -92,10 +92,29 @@ func TestRepairUpgradeMovesBlockIndex(t *testing.T) {
 			dbPath, files := legacyHierarchicalDB(t)
 			assertRestores(t, dbPath, files)
 
-			err := repairData(t.Context(), optsFor(dbPath, 0, nil), RepairOptions{Upgrade: true, Yes: c.yes},
-				strings.NewReader(c.answer), c.interactive)
+			doc, stderr, err := runRepair(t, optsFor(dbPath, 0, nil), RepairOptions{Upgrade: true, Yes: c.yes},
+				c.answer, c.interactive, "upgrade", "quarantined")
 			if err != nil {
 				t.Fatal(err)
+			}
+			var up struct {
+				Files               int    `json:"files"`
+				Migrated            int    `json:"migrated"`
+				RecordedAsContainer bool   `json:"recordedAsContainer"`
+				BlockFiles          string `json:"blockFiles"`
+				BlockFileCount      int    `json:"blockFileCount"`
+			}
+			section(t, doc, "upgrade", &up)
+			wantFiles := "kept"
+			if c.wantDeleted {
+				wantFiles = "deleted"
+			}
+			if up.Files == 0 || up.Migrated == 0 || !up.RecordedAsContainer || up.BlockFiles != wantFiles || up.BlockFileCount != up.Files {
+				t.Fatalf("upgrade section %+v, want block files %s", up, wantFiles)
+			}
+			// The question goes to stderr, with the lines about the steps.
+			if asked := strings.Contains(stderr, "block index files? "); asked != (c.interactive && !c.yes) {
+				t.Fatalf("asked %v:\n%s", asked, stderr)
 			}
 			m, err := dbmeta.Load(dbPath)
 			if err != nil {
@@ -130,7 +149,7 @@ func TestRepairUpgradeWithoutBlockIndex(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := repairData(t.Context(), optsFor(dbPath, 0, nil), RepairOptions{Upgrade: true}, strings.NewReader(""), false); err != nil {
+	if _, _, err := runRepair(t, optsFor(dbPath, 0, nil), RepairOptions{Upgrade: true}, "", false, "upgrade", "quarantined"); err != nil {
 		t.Fatal(err)
 	}
 	after, err := dbmeta.Load(dbPath)

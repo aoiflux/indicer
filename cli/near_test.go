@@ -33,8 +33,14 @@ func TestNearCommand(t *testing.T) {
 	if err := RepairData(t.Context(), opts, RepairOptions{AddRevrel: true}); !errors.As(err, &usage) {
 		t.Fatalf("repair --revrel without --fix: %v, want a usage error", err)
 	}
-	if err := repairData(t.Context(), opts, RepairOptions{Fix: true, AddRevrel: true}, nil, false); err != nil {
+	doc, _, err := runRepair(t, opts, RepairOptions{Fix: true, AddRevrel: true}, "", false, "revrel")
+	if err != nil {
 		t.Fatal(err)
+	}
+	var revrel struct{ Evidence, Added int64 }
+	section(t, doc, "revrel", &revrel)
+	if revrel.Evidence != 1 || revrel.Added == 0 {
+		t.Fatalf("repair --fix --revrel: %s", doc["revrel"])
 	}
 	if err := NearInData(t.Context(), opts, rec.FileHash, NearOptions{Out: out}); err != nil {
 		t.Fatal(err)

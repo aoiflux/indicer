@@ -76,6 +76,8 @@ The upgrade moves every block index record into `C|||`, after checking the chunk
 
 What stops the upgrade with an error: a damaged block file, a database error, or a cancelled context.
 
+The messages above, and the question, go to stderr. On stdout the `upgrade` section of the repair document holds the counts, `recordedAsContainer`, and what happened to the block files (`blockFiles`: `none`, `kept` or `deleted`); see [OPERATIONS.md](OPERATIONS.md).
+
 `--upgrade` then also sets aside indexes that older versions built from the raw bytes of E01 and VHD/VHDX evidence (`quarantineContainerIndexes`). That step is not part of the block index upgrade.
 
 ### Crash safety of the storage change

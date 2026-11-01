@@ -109,6 +109,30 @@ The command then fails with `database needs recovery`, and
 hash. It prints `OK` or `DAMAGED` for each evidence and exits 1 if any is
 damaged.
 
+`dues repair` prints one JSON document on stdout, whatever flags ran, so a
+script can read it whole:
+
+- the recovery report: `totalProblematic`, the counts, `fixed`, and
+  `evidence`, one row for each evidence an ingest left unfinished;
+- a section for each step a flag ran, absent otherwise:
+  - `upgrade`: `files`, `records`, `migrated`, `alreadyStored`,
+    `damagedCount` and `damaged`; `recordedAsContainer`; and `blockFiles`
+    (`none`, `kept` or `deleted`) with `blockFileCount`;
+  - `quarantined`: each index `--upgrade` set aside, as `id`, `name` and
+    `format`;
+  - `revrel`: the `evidence` that lacked reverse relations, and the relations
+    `added`;
+  - `reindex`: each evidence's `id`, `name`, `outcome` (`ok`, `incomplete` or
+    `failed`) and `error`, with the `incomplete` and `failed` counts;
+  - `verify`: `verified`, `damaged`, and `results`, each with `id`, `name`,
+    `size` and, when damaged, `problem`;
+- `error`: the error the command ends with, if any.
+
+The document is printed once the database is open, also when a step fails:
+`repair --verify` exits 1 on damaged evidence and still prints every result.
+The lines each step prints, and the question `--upgrade` asks before it
+deletes the block index files, go to stderr.
+
 A restore, a report or an archive that is interrupted leaves nothing at its
 target. Output is written to a temporary file beside the target and renamed
 into place only at the end. The next write to the same path removes any

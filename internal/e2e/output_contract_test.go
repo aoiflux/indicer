@@ -54,6 +54,24 @@ func TestOutputContract(t *testing.T) {
 			t.Errorf("dues %s: braces on stderr:\n%s", strings.Join(args, " "), r.Stderr)
 		}
 	}
+	// repair prints one JSON document, with a section for each step it ran;
+	// the steps' lines go to stderr.
+	for _, c := range []struct {
+		args          []string
+		section, line string
+	}{
+		{[]string{"repair", "--verify"}, "verify", " 0 damaged.\n"},
+		{[]string{"repair", "--fix", "--revrel"}, "revrel", "Reverse relations: "},
+	} {
+		r := duesMust(t, bin, work, append(c.args, "--dbpath", db)...)
+		var doc map[string]json.RawMessage
+		if err := json.Unmarshal([]byte(r.Stdout), &doc); err != nil || doc[c.section] == nil {
+			t.Errorf("dues %s: stdout is not one JSON document with %q (%v):\n%s", strings.Join(c.args, " "), c.section, err, r.Stdout)
+		}
+		if !strings.Contains(r.Stderr, c.line) {
+			t.Errorf("dues %s: stderr has no %q:\n%s", strings.Join(c.args, " "), c.line, r.Stderr)
+		}
+	}
 
 	// The unencrypted-database note on stderr shows whether colour is on.
 	note := func(args ...string) string {

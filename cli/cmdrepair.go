@@ -3,6 +3,8 @@ package cli
 import (
 	"bufio"
 	"context"
+	"encoding/base64"
+	"encoding/json"
 	"fmt"
 	"indicer/internal/console"
 	"indicer/internal/lifecycle"
@@ -39,35 +41,76 @@ type RepairOptions struct {
 	AddRevrel bool
 }
 
+// repairDocument is what repair prints on stdout once the database is open:
+// the recovery report, a section for each step a flag ran, and the error the
+// command ends with. The steps' own lines and the prompt go to stderr.
+type repairDocument struct {
+	store.RepairReport
+	Upgrade *upgradeSection `json:"upgrade,omitempty"`
+	// Quarantined is a pointer so that a quarantine that found nothing is an
+	// empty list, and one that did not run is absent.
+	Quarantined *[]quarantinedIndex `json:"quarantined,omitempty"`
+	Revrel      *revrelSection      `json:"revrel,omitempty"`
+	Reindex     *reindexSummary     `json:"reindex,omitempty"`
+	Verify      *store.VerifyReport `json:"verify,omitempty"`
+	Error       string              `json:"error,omitempty"`
+}
+
+// upgradeSection is what --upgrade did.
+type upgradeSection struct {
+	store.BlockIndexUpgrade
+	RecordedAsContainer bool `json:"recordedAsContainer"`
+	// BlockFiles is none, kept or deleted; BlockFileCount, how many there were.
+	BlockFiles     string `json:"blockFiles"`
+	BlockFileCount int    `json:"blockFileCount"`
+}
+
+// quarantinedIndex is one evidence whose index --upgrade quarantined.
+type quarantinedIndex struct {
+	ID     string `json:"id"`
+	Name   string `json:"name"`
+	Format string `json:"format"`
+}
+
+// revrelSection is what --revrel did.
+type revrelSection struct {
+	Evidence int   `json:"evidence"` // evidence that lacked reverse relations
+	Added    int64 `json:"added"`    // reverse relations written
+}
+
 // addReverseRelations gives every stored evidence without reverse relations
 // what near needs to find its chunks (SRC-12).
-func addReverseRelations(ctx context.Context, h *dbopen.Handle) error {
+func addReverseRelations(ctx context.Context, h *dbopen.Handle) (*revrelSection, error) {
 	evidence, added, err := store.AddMissingReverseRelations(ctx, h.DB)
-	console.Printf("Reverse relations: %d evidence lacked them; %d added.\n", evidence, added)
-	return err
+	console.Errorf("Reverse relations: %d evidence lacked them; %d added.\n", evidence, added)
+	return &revrelSection{Evidence: evidence, Added: added}, err
 }
 
 // quarantineContainerIndexes hides the indexes ingests before W6 built over
 // the raw bytes of EWF and VHD containers (ING-7).
-func quarantineContainerIndexes(ctx context.Context, h *dbopen.Handle) error {
+func quarantineContainerIndexes(ctx context.Context, h *dbopen.Handle) (*[]quarantinedIndex, error) {
 	q, err := store.QuarantineRawContainerIndexes(ctx, h.DB)
 	if err != nil {
-		return err
+		return nil, err
+	}
+	rows := make([]quarantinedIndex, 0, len(q))
+	for _, e := range q {
+		rows = append(rows, quarantinedIndex{ID: base64.StdEncoding.EncodeToString(e.ID), Name: e.Name, Format: string(e.Format)})
 	}
 	if len(q) == 0 {
-		console.Println("No index built over raw container bytes.")
-		return nil
+		console.Errorln("No index built over raw container bytes.")
+		return &rows, nil
 	}
-	console.Printf("Quarantined %d index(es) built over raw container bytes; store each evidence again to index its decoded disk:\n", len(q))
+	console.Errorf("Quarantined %d index(es) built over raw container bytes; store each evidence again to index its decoded disk:\n", len(q))
 	for _, e := range q {
-		console.Printf("  %s (%s)\n", termsafe.Line(e.Name), e.Format)
+		console.Errorf("  %s (%s)\n", termsafe.Line(e.Name), e.Format)
 		// The graph hides the index too, as list does: its partitions and
 		// files go, the evidence node stays.
 		if err := ingest.DeleteGraphIndex(h.DB, e.ID, true); err != nil {
-			return fmt.Errorf("remove the quarantined index of %s from the graph: %w", termsafe.Line(e.Name), err)
+			return &rows, fmt.Errorf("remove the quarantined index of %s from the graph: %w", termsafe.Line(e.Name), err)
 		}
 	}
-	return nil
+	return &rows, nil
 }
 
 // VerifyError reports evidence that failed `repair --verify`.
@@ -109,38 +152,44 @@ func repairData(ctx context.Context, opts DBOptions, ro RepairOptions, in io.Rea
 		logging.GetLogger().Error("RepairData DB_CONNECT_ERROR", zap.Error(err))
 		return err
 	}
+	// Deferred before closeDB, so it runs after it: the document is printed
+	// whichever step fails, and carries a failed close too.
+	var doc repairDocument
+	defer func() { err = printRepairDocument(&doc, err) }()
 	defer closeDB(h, &err)
 
 	logging.GetLogger().Info("RepairData REPAIR_EXECUTE", zap.Bool("fix", ro.Fix))
-	err = store.Repair(ctx, h.DB, ro.Fix)
+	doc.RepairReport, err = store.InspectEvidenceRepairs(ctx, h.DB, ro.Fix)
 	if err != nil {
 		logging.GetLogger().Error("RepairData REPAIR_ERROR", zap.Error(err), zap.Bool("fix", ro.Fix))
 		return err
 	}
 	if ro.Upgrade {
-		if err = upgradeBlockIndex(ctx, h, ro.Yes, in, interactive); err != nil {
+		if doc.Upgrade, err = upgradeBlockIndex(ctx, h, ro.Yes, in, interactive); err != nil {
 			logging.GetLogger().Error("RepairData UPGRADE_ERROR", zap.Error(err))
 			return err
 		}
-		if err = quarantineContainerIndexes(ctx, h); err != nil {
+		if doc.Quarantined, err = quarantineContainerIndexes(ctx, h); err != nil {
 			logging.GetLogger().Error("RepairData QUARANTINE_ERROR", zap.Error(err))
 			return err
 		}
 	}
 	if ro.AddRevrel {
-		if err = addReverseRelations(ctx, h); err != nil {
+		if doc.Revrel, err = addReverseRelations(ctx, h); err != nil {
 			logging.GetLogger().Error("RepairData REVREL_ERROR", zap.Error(err))
 			return err
 		}
 	}
 	if ro.ReindexFailed {
-		if err = reindexEvidence(ctx, h.DB, ReindexOptions{Failed: true}); err != nil {
+		sum, rerr := reindexEvidence(ctx, h.DB, ReindexOptions{Failed: true}, console.Err())
+		doc.Reindex = &sum
+		if err = rerr; err != nil {
 			logging.GetLogger().Error("RepairData REINDEX_ERROR", zap.Error(err))
 			return err
 		}
 	}
 	if ro.Verify {
-		if err = verifyEvidence(ctx, h); err != nil {
+		if doc.Verify, err = verifyEvidence(ctx, h); err != nil {
 			logging.GetLogger().Error("RepairData VERIFY_ERROR", zap.Error(err))
 			return err
 		}
@@ -157,84 +206,109 @@ func repairData(ctx context.Context, opts DBOptions, ro RepairOptions, in io.Rea
 	return nil
 }
 
-// verifyEvidence reads back every stored chunk of every completed or flushed
-// evidence, prints a line for each evidence, and fails when any is damaged.
-func verifyEvidence(ctx context.Context, h *dbopen.Handle) error {
-	report, err := store.VerifyEvidence(ctx, h.DB)
+// printRepairDocument prints doc on stdout with err, the error repair ends
+// with, and returns err, or the print's own error when there was none.
+func printRepairDocument(doc *repairDocument, err error) error {
+	if err != nil {
+		doc.Error = err.Error()
+	}
+	data, perr := json.MarshalIndent(doc, "", "  ")
+	if perr == nil {
+		_, perr = fmt.Fprintf(console.Out(), "%s\n", data)
+	}
 	if err != nil {
 		return err
 	}
-	p := ui.For(console.Out())
+	return perr
+}
+
+// verifyEvidence reads back every stored chunk of every completed or flushed
+// evidence, prints a line for each evidence, and fails when any is damaged.
+func verifyEvidence(ctx context.Context, h *dbopen.Handle) (*store.VerifyReport, error) {
+	report, err := store.VerifyEvidence(ctx, h.DB)
+	if report.Results == nil {
+		report.Results = []store.VerifyResult{}
+	}
+	if err != nil {
+		return &report, err
+	}
+	p := ui.For(console.Err())
 	for _, r := range report.Results {
 		if r.Problem == "" {
-			console.Printf("%s %s  %s (%d bytes)\n", p.Strong(ui.Success, "OK     "), p.Paint(ui.Evidence, r.ID), termsafe.Line(r.Name), r.Size)
+			console.Errorf("%s %s  %s (%d bytes)\n", p.Strong(ui.Success, "OK     "), p.Paint(ui.Evidence, r.ID), termsafe.Line(r.Name), r.Size)
 		} else {
-			console.Printf("%s %s  %s (%d bytes): %s\n", p.Strong(ui.Error, "DAMAGED"), p.Paint(ui.Evidence, r.ID), termsafe.Line(r.Name), r.Size, termsafe.Line(r.Problem))
+			console.Errorf("%s %s  %s (%d bytes): %s\n", p.Strong(ui.Error, "DAMAGED"), p.Paint(ui.Evidence, r.ID), termsafe.Line(r.Name), r.Size, termsafe.Line(r.Problem))
 		}
 	}
-	console.Printf("Verified %d evidence; %d damaged.\n", report.Verified, report.Problems)
+	console.Errorf("Verified %d evidence; %d damaged.\n", report.Verified, report.Problems)
 	if report.Problems > 0 {
-		return &VerifyError{Problems: report.Problems, Verified: report.Verified}
+		return &report, &VerifyError{Problems: report.Problems, Verified: report.Verified}
 	}
-	return nil
+	return &report, nil
 }
 
 // upgradeBlockIndex moves the block index of a database written in the
 // retired hierarchical mode into C||| (D9), records the database as
 // container storage once every record has moved, and deletes the block
 // files when the user confirms.
-func upgradeBlockIndex(ctx context.Context, h *dbopen.Handle, yes bool, in io.Reader, interactive bool) error {
+func upgradeBlockIndex(ctx context.Context, h *dbopen.Handle, yes bool, in io.Reader, interactive bool) (*upgradeSection, error) {
 	files, err := fio.BlockIndexFiles(h.Root)
 	if err != nil {
-		return err
+		return nil, err
+	}
+	s := &upgradeSection{BlockFiles: "none", BlockFileCount: len(files)}
+	if len(files) > 0 {
+		s.BlockFiles = "kept"
 	}
 	legacy := h.Manifest.Layout.Storage == dbmeta.StorageContainerBIDX
 	if len(files) == 0 && !legacy {
-		console.Println("No legacy block index to upgrade.")
-		return nil
+		console.Errorln("No legacy block index to upgrade.")
+		return s, nil
 	}
 
-	report, err := store.UpgradeBlockIndex(ctx, h.DB)
+	s.BlockIndexUpgrade, err = store.UpgradeBlockIndex(ctx, h.DB)
 	if err != nil {
-		return err
+		return s, err
 	}
-	console.Printf("Block index: %d files, %d records: %d moved into the database, %d already there, %d damaged.\n",
-		report.Files, report.Records, report.Migrated, report.AlreadyStored, report.DamagedCount)
-	if !report.Complete() {
-		for _, d := range report.Damaged {
-			console.Printf("  damaged: %s\n", termsafe.Line(d))
+	console.Errorf("Block index: %d files, %d records: %d moved into the database, %d already there, %d damaged.\n",
+		s.Files, s.Records, s.Migrated, s.AlreadyStored, s.DamagedCount)
+	if !s.Complete() {
+		for _, d := range s.Damaged {
+			console.Errorf("  damaged: %s\n", termsafe.Line(d))
 		}
-		return fmt.Errorf("%d block index records could not be read or verified; the block index is kept and still used", report.DamagedCount)
+		return s, fmt.Errorf("%d block index records could not be read or verified; the block index is kept and still used", s.DamagedCount)
 	}
 	if legacy {
 		if err := h.SetStorage(dbmeta.StorageContainer); err != nil {
-			return err
+			return s, err
 		}
-		console.Println("The database is now recorded as container storage.")
+		s.RecordedAsContainer = true
+		console.Errorln("The database is now recorded as container storage.")
 	}
 	if len(files) == 0 {
-		return nil
+		return s, nil
 	}
 
 	if !yes {
 		if !interactive {
-			console.Printf("Kept %d block index files; the database no longer needs them. Run again with --yes to delete them.\n", len(files))
-			return nil
+			console.Errorf("Kept %d block index files; the database no longer needs them. Run again with --yes to delete them.\n", len(files))
+			return s, nil
 		}
-		console.Printf("Delete the %d block index files? Their records are in the database now. [y/N] ", len(files))
+		console.Errorf("Delete the %d block index files? Their records are in the database now. [y/N] ", len(files))
 		line, _ := bufio.NewReader(in).ReadString('\n')
 		if answer := strings.ToLower(strings.TrimSpace(line)); answer != "y" && answer != "yes" {
-			console.Println("Kept the block index files.")
-			return nil
+			console.Errorln("Kept the block index files.")
+			return s, nil
 		}
 	}
-	for _, f := range files {
+	for i, f := range files {
 		if err := fsx.Remove(f); err != nil {
-			return err
+			return s, fmt.Errorf("deleted %d of %d block index files: %w", i, len(files), err)
 		}
 	}
 	_ = os.Remove(filepath.Dir(files[0])) // the blocks directory, once empty
 	cnst.LegacyBlockIndex = false
-	console.Printf("Deleted %d block index files.\n", len(files))
-	return nil
+	s.BlockFiles = "deleted"
+	console.Errorf("Deleted %d block index files.\n", len(files))
+	return s, nil
 }

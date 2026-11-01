@@ -1,6 +1,7 @@
 package main
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -11,7 +12,7 @@ import (
 )
 
 // credsFor parses args and resolves the password the way run does.
-func credsFor(t *testing.T, stdin string, args ...string) (dbmeta.Credentials, []string, error) {
+func credsFor(t *testing.T, stdin string, args ...string) (dbmeta.Credentials, error) {
 	t.Helper()
 	cliDef := newCLIDefinition()
 	if _, err := cliDef.app.Parse(args); err != nil {
@@ -29,50 +30,55 @@ func TestPasswordSources(t *testing.T) {
 	if err := os.WriteFile(pwFile, []byte("from-file\r\nignored second line\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	t.Setenv(envPassword, "")
+	// DUES_PASSWORD is not read: it was a source until the flags-only pass.
+	t.Setenv("DUES_PASSWORD", "from-env")
 
 	cases := []struct {
-		name    string
-		env     string
-		stdin   string
-		args    []string
-		want    dbmeta.Credentials
-		warning bool
+		name  string
+		stdin string
+		args  []string
+		want  dbmeta.Credentials
 	}{
-		{"none", "", "", []string{"list"}, dbmeta.NoPassword(), false},
-		{"argv warns", "", "", []string{"-p", "from-argv", "list"}, dbmeta.Password("from-argv"), true},
-		{"env", "from-env", "", []string{"list"}, dbmeta.Password("from-env"), false},
-		{"env beats argv", "from-env", "", []string{"-p", "from-argv", "list"}, dbmeta.Password("from-env"), false},
-		{"stdin", "from-env", "from-stdin\n", []string{"--password-stdin", "list"}, dbmeta.Password("from-stdin"), false},
-		{"file beats all", "from-env", "from-stdin\n", []string{"--password-file", pwFile, "--password-stdin", "-p", "x", "list"}, dbmeta.Password("from-file"), false},
-		// An empty password is no password: a new database is unencrypted and
-		// a legacy one opens with the empty-password key either way.
-		{"empty argv", "", "", []string{"-p", "", "list"}, dbmeta.NoPassword(), false},
+		{"none", "", []string{"list"}, dbmeta.NoPassword()},
+		{"stdin", "from-stdin\n", []string{"--password-stdin", "list"}, dbmeta.Password("from-stdin")},
+		{"file beats stdin", "from-stdin\n", []string{"--password-file", pwFile, "--password-stdin", "list"}, dbmeta.Password("from-file")},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
-			t.Setenv(envPassword, c.env)
-			got, warnings, err := credsFor(t, c.stdin, c.args...)
+			got, err := credsFor(t, c.stdin, c.args...)
 			if err != nil {
 				t.Fatal(err)
 			}
 			if !got.Equal(c.want) {
 				t.Fatalf("credentials differ from %q", c.name)
 			}
-			if (len(warnings) > 0) != c.warning {
-				t.Fatalf("warnings %q, want warning=%v", warnings, c.warning)
-			}
 		})
 	}
 }
 
+// TestPasswordFlagRemoved: --password and -p are refused, naming what
+// replaces them, even with a file or stdin source given too.
+func TestPasswordFlagRemoved(t *testing.T) {
+	pwFile := filepath.Join(t.TempDir(), "pw")
+	if err := os.WriteFile(pwFile, []byte("from-file\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	for _, args := range [][]string{
+		{"-p", "x", "list"}, {"--password", "x", "list"}, {"--password=", "list"}, {"--password-file", pwFile, "-p", "x", "list"},
+	} {
+		_, err := credsFor(t, "", args...)
+		if lifecycle.ExitCode(err) != lifecycle.ExitUsage || !strings.Contains(fmt.Sprint(err), "--password-file") {
+			t.Errorf("%q: %v (exit %d); want a usage error naming --password-file", args, err, lifecycle.ExitCode(err))
+		}
+	}
+}
+
 func TestPasswordFileErrors(t *testing.T) {
-	t.Setenv(envPassword, "")
-	_, _, err := credsFor(t, "", "--password-file", filepath.Join(t.TempDir(), "missing"), "list")
+	_, err := credsFor(t, "", "--password-file", filepath.Join(t.TempDir(), "missing"), "list")
 	if err == nil || lifecycle.ExitCode(err) != lifecycle.ExitUsage {
 		t.Fatalf("missing password file: %v (exit %d)", err, lifecycle.ExitCode(err))
 	}
-	if _, _, err := credsFor(t, "", "--password-stdin", "list"); err == nil {
+	if _, err := credsFor(t, "", "--password-stdin", "list"); err == nil {
 		t.Fatal("empty stdin accepted as a password")
 	}
 }

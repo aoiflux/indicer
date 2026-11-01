@@ -9,6 +9,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"indicer/internal/testutil"
 )
@@ -205,9 +206,7 @@ func TestNumberedFileIsNotASplitPart(t *testing.T) {
 // assemble it in a temporary directory that was never removed.
 func TestSplitReadingLeavesNoTemporaryFiles(t *testing.T) {
 	tmp := t.TempDir()
-	t.Setenv("TMP", tmp)
-	t.Setenv("TEMP", tmp)
-	t.Setenv("TMPDIR", tmp)
+	svc := NewWithOptions(Options{TempDir: tmp})
 	src := t.TempDir()
 	testutil.WriteRandomFile(t, src, "big.bin", 9, 1_500_000)
 	dir := t.TempDir()
@@ -220,11 +219,40 @@ func TestSplitReadingLeavesNoTemporaryFiles(t *testing.T) {
 		if op == opExtractArchive {
 			params["output_path"] = filepath.Join(dir, "x")
 		}
-		if _, rerr := handle(New(), op, params); rerr != nil {
+		if _, rerr := handle(svc, op, params); rerr != nil {
 			t.Fatalf("%s: %v %v", op, rerr, rerr.Details)
 		}
 	}
 	if left, _ := os.ReadDir(tmp); len(left) != 0 {
 		t.Fatalf("temporary files left: %v", left)
+	}
+}
+
+// TestWorkDirsGoInTempDir: work directories go in Options.TempDir
+// (--temp-dir), and the first one sweeps the stale ones left there.
+func TestWorkDirsGoInTempDir(t *testing.T) {
+	tmp := t.TempDir()
+	stale := filepath.Join(tmp, "duesarc-work-stale")
+	if err := os.Mkdir(stale, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	old := time.Now().Add(-2 * staleWorkAge)
+	if err := os.Chtimes(stale, old, old); err != nil {
+		t.Fatal(err)
+	}
+	src := t.TempDir()
+	testutil.WriteRandomFile(t, src, "a.bin", 3, 64<<10)
+	res, rerr := handle(NewWithOptions(Options{TempDir: tmp}), opCreateArchive, map[string]any{
+		"input_path": src, "output_path": filepath.Join(t.TempDir(), "a.duesarc"), "keep_work_dir": true,
+	})
+	if rerr != nil {
+		t.Fatalf("create: %v %v", rerr, rerr.Details)
+	}
+	m, _ := structToMap(res)
+	if work, _ := m["work_dir"].(string); filepath.Dir(work) != tmp {
+		t.Fatalf("work directory %q is not in Options.TempDir %s", work, tmp)
+	}
+	if _, err := os.Stat(stale); !os.IsNotExist(err) {
+		t.Fatalf("stale work directory not swept: %v", err)
 	}
 }

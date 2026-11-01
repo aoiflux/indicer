@@ -28,8 +28,8 @@ type Config struct {
 	// Options are added to the program's own; tests set its input and
 	// output.
 	Options []tea.ProgramOption
-	// Profile is the colour depth the command line resolved (--color,
-	// NO_COLOR, ...); zero lets bubbletea detect it.
+	// Profile is the colour depth the command line resolved (--color);
+	// zero lets bubbletea detect it.
 	Profile colorprofile.Profile
 }
 

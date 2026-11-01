@@ -4,12 +4,15 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
+	"io"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
 
 	"indicer/internal/lifecycle"
+	"indicer/lib/logging"
 )
 
 func runCLI(t *testing.T, ctx context.Context, stdin string, args ...string) (int, map[string]any, string) {
@@ -76,32 +79,27 @@ func TestPasswordSources(t *testing.T) {
 	if err := os.WriteFile(file, []byte("from-file\r\nignored\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	t.Setenv(envPassword, "from-env")
+	// DUES_PASSWORD is not read: it was a source until the flags-only pass.
+	t.Setenv("DUES_PASSWORD", "from-env")
 	cases := []struct {
-		file   string
-		stdin  bool
-		value  string
-		want   string
-		warned bool
+		file    string
+		stdin   bool
+		removed string
+		want    string
+		err     error
 	}{
-		{file: file, stdin: true, value: "x", want: "from-file"},
-		{stdin: true, value: "x", want: "from-stdin"},
-		{value: "x", want: "from-env"},
+		{file: file, stdin: true, want: "from-file"},
+		{stdin: true, want: "from-stdin"},
+		{want: ""},
+		{file: file, removed: "x", err: errPasswordRemoved},
 	}
 	for _, c := range cases {
 		var errb bytes.Buffer
 		r := &runner{stderr: &errb, stdin: strings.NewReader("from-stdin\nmore")}
-		got, err := r.password(passwordFlags{file: &c.file, stdin: &c.stdin, value: &c.value})
-		if err != nil || got != c.want {
+		got, err := r.password(passwordFlags{file: &c.file, stdin: &c.stdin, removed: &c.removed})
+		if !errors.Is(err, c.err) || got != c.want {
 			t.Errorf("%+v: %q, %v", c, got, err)
 		}
-	}
-	t.Setenv(envPassword, "")
-	var errb bytes.Buffer
-	r := &runner{stderr: &errb, stdin: strings.NewReader("")}
-	empty, no, value := "", false, "from-flag"
-	if got, _ := r.password(passwordFlags{file: &empty, stdin: &no, value: &value}); got != "from-flag" || !strings.Contains(errb.String(), "visible") {
-		t.Fatalf("--password: %q, warning %q", got, errb.String())
 	}
 }
 
@@ -120,7 +118,6 @@ func TestArchiveCommands(t *testing.T) {
 	if err := os.WriteFile(pw, []byte("s3cret-pass\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	t.Setenv(envPassword, "")
 	archive := filepath.Join(dir, "case.duesarc")
 	ctx := context.Background()
 	if code, env, stderr := runCLI(t, ctx, "", cmdCreateArchive, "--input", src, "--output", archive, "--password-file", pw); code != 0 {
@@ -134,13 +131,11 @@ func TestArchiveCommands(t *testing.T) {
 	if code != 0 || result["valid"] != true {
 		t.Fatalf("verify: exit %d %v", code, env)
 	}
-	t.Setenv(envPassword, "wrong")
-	if code, _, _ := runCLI(t, ctx, "", cmdExtractArchive, "--input", archive, "--output", filepath.Join(dir, "x")); code != 2 {
+	if code, _, _ := runCLI(t, ctx, "wrong\n", cmdExtractArchive, "--input", archive, "--output", filepath.Join(dir, "x"), "--password-stdin"); code != 2 {
 		t.Fatalf("extract with a wrong password: exit %d", code)
 	}
-	t.Setenv(envPassword, "s3cret-pass")
 	out := filepath.Join(dir, "out")
-	if code, env, _ := runCLI(t, ctx, "", cmdExtractArchive, "--input", archive, "--output", out); code != 0 {
+	if code, env, _ := runCLI(t, ctx, "", cmdExtractArchive, "--input", archive, "--output", out, "--password-file", pw); code != 0 {
 		t.Fatalf("extract: exit %d %v", code, env)
 	}
 	for name, want := range map[string]string{"a.txt": "alpha", "sub/b.txt": "beta", "sub/c.txt": "alpha"} {
@@ -148,7 +143,7 @@ func TestArchiveCommands(t *testing.T) {
 			t.Errorf("%s: %q, %v", name, got, err)
 		}
 	}
-	if code, env, _ := runCLI(t, ctx, "", cmdExtractArchive, "--input", archive, "--output", out, "--on-conflict", "error"); code != 1 {
+	if code, env, _ := runCLI(t, ctx, "", cmdExtractArchive, "--input", archive, "--output", out, "--on-conflict", "error", "--password-file", pw); code != 1 {
 		t.Fatalf("extract onto itself with --on-conflict error: exit %d %v", code, env)
 	}
 }
@@ -159,5 +154,78 @@ func TestInterruptedCommandExitsWithSignalCode(t *testing.T) {
 	code, env, _ := runCLI(t, ctx, "", cmdCompressFile, "--input", filepath.Join(t.TempDir(), "x"))
 	if code != 130 {
 		t.Fatalf("exit %d, %v", code, env)
+	}
+}
+
+// TestGlobalOptions: --temp-dir must be an existing directory, -h prints
+// the usage, and work directories go in --temp-dir.
+func TestGlobalOptions(t *testing.T) {
+	ctx := context.Background()
+	file := filepath.Join(t.TempDir(), "file")
+	if err := os.WriteFile(file, nil, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	for _, dir := range []string{filepath.Join(t.TempDir(), "missing"), file} {
+		if code, _, stderr := runCLI(t, ctx, "", "--temp-dir", dir, "capabilities"); code != lifecycle.ExitUsage || !strings.Contains(stderr, "--temp-dir") {
+			t.Errorf("--temp-dir %s: exit %d, stderr %q; want a usage error naming the flag", dir, code, stderr)
+		}
+	}
+
+	// A release build has no --faults option; a faultinject build refuses a
+	// bad spec.
+	if code, _, stderr := runCLI(t, ctx, "", "--faults", "no.such.point=error", "capabilities"); code != lifecycle.ExitUsage || !strings.Contains(stderr, "-faults") {
+		t.Errorf("--faults with a bad spec: exit %d, stderr %q; want a usage error naming the option", code, stderr)
+	}
+
+	var out, errb bytes.Buffer
+	if code := run(ctx, []string{"-h"}, &out, &errb, strings.NewReader("")); code != lifecycle.ExitOK || !strings.Contains(out.String(), "--temp-dir DIR") {
+		t.Errorf("-h: exit %d, stdout %q", code, out.String())
+	}
+
+	temp, src := t.TempDir(), t.TempDir()
+	if err := os.WriteFile(filepath.Join(src, "a.txt"), []byte("hello"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	code, env, stderr := runCLI(t, ctx, "", "--temp-dir", temp, "create-archive",
+		"--input", src, "--output", filepath.Join(t.TempDir(), "a.duesarc"), "--keep-work-dir")
+	if code != lifecycle.ExitOK {
+		t.Fatalf("create-archive: exit %d, %v, %s", code, env, stderr)
+	}
+	result, _ := env["result"].(map[string]any)
+	if work, _ := result["work_dir"].(string); filepath.Dir(work) != temp {
+		t.Fatalf("work directory %q is not in --temp-dir %s (%v)", work, temp, env)
+	}
+}
+
+// TestSettingsRecord: a run logs the log and temporary directories in
+// effect, and whether an option or the default chose each.
+func TestSettingsRecord(t *testing.T) {
+	logDir, temp := t.TempDir(), t.TempDir()
+	logging.Init(logging.Config{Component: "qwikpak", Dir: logDir, Stderr: io.Discard})
+	t.Cleanup(func() { _ = logging.Close() })
+	g, _, err := parseGlobal([]string{"--temp-dir", temp, "capabilities"}, io.Discard)
+	if err != nil {
+		t.Fatal(err)
+	}
+	g.logSettings()
+	_ = logging.Sync()
+	b, err := os.ReadFile(logging.Current().Path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var rec map[string]any
+	for line := range strings.SplitSeq(string(b), "\n") {
+		var r map[string]any
+		if json.Unmarshal([]byte(line), &r) == nil && r["msg"] == "settings" {
+			rec = r
+		}
+	}
+	tempSetting, _ := rec["temp-dir"].(map[string]any)
+	logSetting, _ := rec["log-dir"].(map[string]any)
+	if tempSetting["value"] != temp || tempSetting["source"] != logging.FromFlag {
+		t.Errorf("temp-dir %v, want %s from the option", rec["temp-dir"], temp)
+	}
+	if logSetting["value"] != logging.Current().Dir || logSetting["source"] != logging.FromDefault {
+		t.Errorf("log-dir %v, want the directory in effect, from the default", rec["log-dir"])
 	}
 }

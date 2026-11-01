@@ -2,7 +2,6 @@ package console
 
 import (
 	"os"
-	"strconv"
 	"sync/atomic"
 
 	"golang.org/x/term"
@@ -29,22 +28,15 @@ func Detect() Terminal {
 	return t
 }
 
-// Size is the size of the terminal on stderr in columns and rows. It falls
-// back to $COLUMNS and $LINES, then to 80x24, so a caller always gets a
-// usable layout.
+// Size is the size of the terminal on stderr in columns and rows, from the
+// operating system, or 80x24 when stderr is not a terminal, so a caller
+// always gets a usable layout. COLUMNS and LINES are not read.
 func Size() (width, height int) {
 	w, h, err := term.GetSize(int(os.Stderr.Fd()))
 	if err != nil || w <= 0 || h <= 0 {
-		w, h = envInt("COLUMNS", 80), envInt("LINES", 24)
+		return 80, 24
 	}
 	return w, h
-}
-
-func envInt(name string, def int) int {
-	if n, err := strconv.Atoi(os.Getenv(name)); err == nil && n > 0 {
-		return n
-	}
-	return def
 }
 
 var nonInteractive atomic.Bool

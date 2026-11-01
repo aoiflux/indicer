@@ -50,12 +50,12 @@ fuzz_run() {
 	local rc=0
 	while read -r pkg fn; do
 		case "$pkg" in "" | \#*) continue ;; esac
-		# Strict: a panic internal/safe would contain is still a finding.
-		# Go minimises each input that finds new coverage for up to 60s by
-		# default. In a 60s smoke that kept every worker minimising (0
-		# execs/sec), and the unfinished inputs never reached the cache, so
-		# every run repeated it.
-		DUES_SAFE_STRICT=1 go test "$pkg" -run '^$' -fuzz "^$fn\$" -fuzztime "${FUZZTIME:-60s}" \
+		# -tags safestrict: a panic internal/safe would contain is still a
+		# finding. Go minimises each input that finds new coverage for up to
+		# 60s by default. In a 60s smoke that kept every worker minimising
+		# (0 execs/sec), and the unfinished inputs never reached the cache,
+		# so every run repeated it.
+		go test -tags safestrict "$pkg" -run '^$' -fuzz "^$fn\$" -fuzztime "${FUZZTIME:-60s}" \
 			-fuzzminimizetime 5s || rc=1
 	done <scripts/fuzz-targets.txt
 	return $rc

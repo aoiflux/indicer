@@ -8,7 +8,6 @@ import (
 	"os/exec"
 	"regexp"
 	"runtime"
-	"slices"
 	"strconv"
 	"strings"
 	"testing"
@@ -16,7 +15,6 @@ import (
 
 	"indicer/internal/testutil"
 	"indicer/internal/testutil/vtscreen"
-	"indicer/lib/logging"
 )
 
 // ptyScript returns util-linux script(1), which runs a command on a
@@ -48,38 +46,25 @@ func ptyScript(t *testing.T) string {
 	return path
 }
 
-// ptyEnv is a child environment that says nothing of the terminal but what
-// the test sets: no terminal program, multiplexer, size, locale or CI.
-func ptyEnv(t *testing.T, extra ...string) []string {
-	drop := []string{"TERM", "COLORTERM", "TERM_PROGRAM", "WT_SESSION", "ConEmuANSI", "TMUX", "STY", "COLUMNS", "LINES",
-		"LANG", "SHELL", "RUNEWIDTH_EASTASIAN", "COLORFGBG",
-		"CI", "GITHUB_ACTIONS", "GITLAB_CI", "BUILDKITE", "JENKINS_URL", "TF_BUILD", "TEAMCITY_VERSION"}
-	var env []string
-	for _, kv := range testutil.ChildEnv() {
-		k, _, _ := strings.Cut(kv, "=")
-		if !slices.Contains(drop, k) && !strings.HasPrefix(k, "LC_") {
-			env = append(env, kv)
-		}
-	}
-	// The user's login shell may not be a POSIX one (fish).
-	env = append(env, "SHELL=/bin/sh", "TERM=xterm-256color", "LANG=C.UTF-8", "LC_ALL=C.UTF-8",
-		"DUES_NO_FUN=1", logging.EnvDir+"="+t.TempDir())
-	return append(env, extra...)
-}
+// ptyEnv is script(1)'s whole environment: what its shell and stty need.
+// SHELL is set because the user's login shell may not be a POSIX one
+// (fish). DUES reads none of it; its settings are arguments.
+var ptyEnv = []string{"PATH=/usr/bin:/bin", "SHELL=/bin/sh"}
 
 // runPTY runs dues with args on a pseudo-terminal cols columns wide, in
 // work, and returns what the terminal received and the exit code. stty sets
-// the size, so DUES reads it the way it reads a real terminal's.
-func runPTY(t *testing.T, script, bin, work string, cols int, env []string, args ...string) (string, int) {
+// the size, so DUES reads it the way it reads a real terminal's. No extra
+// plays, and the log goes to a test directory.
+func runPTY(t *testing.T, script, bin, work string, cols int, args ...string) (string, int) {
 	t.Helper()
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
 	defer cancel()
 	line := "stty cols " + strconv.Itoa(cols) + " rows 30; exec " + shQuote(bin)
-	for _, a := range args {
+	for _, a := range append([]string{"--no-fun", "--log-dir", t.TempDir()}, args...) {
 		line += " " + shQuote(a)
 	}
 	cmd := exec.CommandContext(ctx, script, "-qec", line, "/dev/null")
-	cmd.Dir, cmd.Env = work, env
+	cmd.Dir, cmd.Env = work, ptyEnv
 	var out bytes.Buffer
 	cmd.Stdout, cmd.Stderr = &out, &out
 	// Open until the command ends, so script(1) never sees its input end.
@@ -113,7 +98,7 @@ func TestLiveDisplayInPTY(t *testing.T) {
 		t.Run(strconv.Itoa(cols)+" columns", func(t *testing.T) {
 			work := t.TempDir()
 			testutil.WriteRandomFile(t, work, "ev.bin", 7, 16<<20)
-			out, code := runPTY(t, script, bin, work, cols, ptyEnv(t), "store", "ev.bin", "--dbpath", "db", "--compress-level", "fast")
+			out, code := runPTY(t, script, bin, work, cols, "store", "ev.bin", "--dbpath", "db", "--compress-level", "fast")
 			if code != 0 {
 				t.Fatalf("exit %d:\n%q", code, out)
 			}
@@ -134,14 +119,14 @@ func TestLiveDisplayInPTY(t *testing.T) {
 	// On a terminal, version is the banner and an overview; --version is
 	// the identity line alone.
 	work := t.TempDir()
-	out, code := runPTY(t, script, bin, work, 100, ptyEnv(t), "version")
+	out, code := runPTY(t, script, bin, work, 100, "version")
 	scr := vtscreen.New(t, 100)
 	scr.Write([]byte(out))
 	scr.Finish()
 	if s := scr.String(); code != 0 || !strings.Contains(s, "●─●─●  ┌─╮ ╷ ╷ ┌─╴ ╭─╴  Deduplicated Unified Evidence Store") || !strings.Contains(s, "Overview") {
 		t.Errorf("dues version, exit %d:\n%s", code, s)
 	}
-	out, code = runPTY(t, script, bin, work, 100, ptyEnv(t), "--version")
+	out, code = runPTY(t, script, bin, work, 100, "--version")
 	scr = vtscreen.New(t, 100)
 	scr.Write([]byte(out))
 	scr.Finish()

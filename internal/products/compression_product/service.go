@@ -105,10 +105,21 @@ const (
 
 type Service struct {
 	tasks *taskRunner
+	temp  *tempRoot
 }
 
-func New() *Service {
-	return &Service{tasks: newTaskRunner()}
+// Options configure a Service.
+type Options struct {
+	// TempDir is where operations make their temporary work directories
+	// (--temp-dir); empty means osdirs.Temp.
+	TempDir string
+}
+
+// New is NewWithOptions with the defaults.
+func New() *Service { return NewWithOptions(Options{}) }
+
+func NewWithOptions(o Options) *Service {
+	return &Service{tasks: newTaskRunner(), temp: &tempRoot{dir: o.TempDir}}
 }
 
 func (s *Service) Product() string {

@@ -110,7 +110,7 @@ func TestLegacyRestore(t *testing.T) {
 				}
 				t.Run(r.Kind+":"+r.Name, func(t *testing.T) {
 					out := filepath.Join(work, "r"+strconv.Itoa(i)+".bin")
-					args := append([]string{"restore", r.Hash, "-f", out, "--dbpath", db}, f.ReadFlags()...)
+					args := append([]string{"restore", r.Hash, "-f", out, "--dbpath", db}, f.ReadFlags(t)...)
 					cmdOut, runErr := runIn(work, bin, args...)
 					got, size, hashErr := fileSHA256(out)
 					correct := runErr == nil && hashErr == nil && got == want.SHA256 && size == want.Size

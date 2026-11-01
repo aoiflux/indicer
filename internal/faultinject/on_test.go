@@ -6,6 +6,7 @@ import (
 	"errors"
 	"os"
 	"os/signal"
+	"path/filepath"
 	"runtime"
 	"testing"
 	"time"
@@ -34,9 +35,70 @@ func TestMain(m *testing.M) {
 
 func withSpec(t *testing.T, spec string) {
 	t.Helper()
-	t.Setenv("DUES_FAULTS", spec)
-	Reset()
-	t.Cleanup(Reset)
+	restore, err := Set(spec)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(restore)
+}
+
+func TestConfigureRejectsBadSpecAndKeepsRules(t *testing.T) {
+	withSpec(t, SelfTest+"=error")
+	for _, spec := range []string{"nope", "no.such.point=error", SelfTest + "=exit", SelfTest + "=error@0"} {
+		if err := Configure(spec, ""); err == nil {
+			t.Errorf("Configure(%q) accepted a bad spec", spec)
+		}
+	}
+	if err := Hit(SelfTest); !errors.Is(err, ErrInjected) {
+		t.Fatalf("after bad specs the earlier rule is gone: %v", err)
+	}
+}
+
+func TestConfigureReportsFirstHits(t *testing.T) {
+	withSpec(t, "")
+	notify := filepath.Join(t.TempDir(), "points.log")
+	if err := Configure(SelfTest+"=sleep:1ms", notify); err != nil {
+		t.Fatal(err)
+	}
+	for range 3 {
+		if err := Hit(SelfTest); err != nil {
+			t.Fatal(err)
+		}
+	}
+	b, err := os.ReadFile(notify)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := string(b); got != SelfTest+"\n" {
+		t.Fatalf("notification file %q, want the point once", got)
+	}
+	if Hits(SelfTest) != 3 {
+		t.Fatalf("Hits = %d, want 3", Hits(SelfTest))
+	}
+}
+
+func TestSetRestoresAndCountsAgain(t *testing.T) {
+	withSpec(t, SelfTest+"=error@2")
+	if err := Hit(SelfTest); err != nil {
+		t.Fatal(err)
+	}
+	restore, err := Set("")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := Hit(SelfTest); err != nil {
+		t.Fatalf("an empty spec injected %v", err)
+	}
+	restore()
+	if Hits(SelfTest) != 0 {
+		t.Fatalf("Hits = %d after restore, want 0", Hits(SelfTest))
+	}
+	if err := Hit(SelfTest); err != nil {
+		t.Fatalf("first hit after restore: %v", err)
+	}
+	if err := Hit(SelfTest); !errors.Is(err, ErrInjected) {
+		t.Fatalf("second hit after restore: %v, want the restored rule", err)
+	}
 }
 
 func TestHitError(t *testing.T) {

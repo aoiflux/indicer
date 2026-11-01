@@ -9,14 +9,11 @@ func TestDetectUnderTest(t *testing.T) {
 	}
 }
 
-func TestSizeFallsBackToEnvironment(t *testing.T) {
+// TestSizeIgnoresEnvironment: off a terminal the size is 80x24, whatever
+// COLUMNS and LINES say.
+func TestSizeIgnoresEnvironment(t *testing.T) {
 	t.Setenv("COLUMNS", "132")
 	t.Setenv("LINES", "50")
-	if w, h := Size(); w != 132 || h != 50 {
-		t.Fatalf("Size() = %d, %d; want 132, 50", w, h)
-	}
-	t.Setenv("COLUMNS", "")
-	t.Setenv("LINES", "x")
 	if w, h := Size(); w != 80 || h != 24 {
 		t.Fatalf("Size() = %d, %d; want 80, 24", w, h)
 	}

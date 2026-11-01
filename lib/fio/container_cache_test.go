@@ -59,17 +59,18 @@ func withContainerCache(t *testing.T, memBudget int64) (decodes *atomic.Int64, s
 	t.Helper()
 	spillDir = t.TempDir()
 	decodes = &atomic.Int64{}
-	prevOpen, prevDir := openContainerDecoder, containerSpillDir
+	prevOpen := openContainerDecoder
 	openContainerDecoder = func(r io.Reader) (io.ReadCloser, error) {
 		decodes.Add(1)
 		return prevOpen(r)
 	}
-	containerSpillDir = spillDir
+	SetContainerSpillDir(spillDir)
 	SetContainerReadCacheSize(memBudget)
 	EnableContainerReadCache()
 	t.Cleanup(func() {
 		DisableContainerReadCache()
-		openContainerDecoder, containerSpillDir = prevOpen, prevDir
+		openContainerDecoder = prevOpen
+		SetContainerSpillDir("")
 		SetContainerReadCacheSize(defaultMaxCacheSize)
 	})
 	return decodes, spillDir

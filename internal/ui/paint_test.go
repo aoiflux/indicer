@@ -24,6 +24,14 @@ func terminal(t *testing.T, m Mode) (out, errb *bytes.Buffer) {
 	return out, errb
 }
 
+// withWidth makes the terminal n columns wide (and 24 rows) for one test.
+func withWidth(t *testing.T, n int) {
+	t.Helper()
+	prev := termSize
+	termSize = func() (int, int) { return n, 24 }
+	t.Cleanup(func() { termSize = prev })
+}
+
 func ttyMode(p colorprofile.Profile, th Theme, g GlyphSet) Mode {
 	c := Caps{TTY: true, Profile: p, Glyphs: g, Motion: true}
 	return Mode{Out: c, Err: c, Theme: th, Interactive: true}
@@ -96,9 +104,6 @@ func TestGlyphSets(t *testing.T) {
 			if GlyphSet(set) == GlyphsASCII && !isASCII(m) {
 				t.Errorf("ASCII set has %q", m)
 			}
-			if GlyphSet(set) == GlyphsConsole && !isASCII(m) && !strings.Contains("·─█░", m) {
-				t.Errorf("console set has %q, which is not in CP437", m)
-			}
 		}
 		if w := ansi.StringWidth(g.Arrow); w < 1 || w > 2 {
 			t.Errorf("set %d: arrow %q is %d columns wide", set, g.Arrow, w)
@@ -109,9 +114,6 @@ func TestGlyphSets(t *testing.T) {
 		for _, m := range []string{g.TreeMid, g.TreeEnd, g.TreeBar, g.Ellipsis, g.Times} {
 			if GlyphSet(set) == GlyphsASCII && !isASCII(m) {
 				t.Errorf("ASCII set has %q", m)
-			}
-			if GlyphSet(set) == GlyphsConsole && !isASCII(strings.Trim(m, "├└│─ ")) {
-				t.Errorf("console set has %q, which is not in CP437", m)
 			}
 		}
 	}
@@ -193,7 +195,7 @@ func TestRunHeader(t *testing.T) {
 	}
 
 	// On a narrow terminal the lines break at spaces; none is wider.
-	t.Setenv("COLUMNS", "30")
+	withWidth(t, 30)
 	errb.Reset()
 	h.Target = "/tmp/TestLiveDisplayInPTY2895467/001/db"
 	RunHeader(console.Err(), h)

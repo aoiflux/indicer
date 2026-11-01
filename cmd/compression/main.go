@@ -15,14 +15,15 @@ import (
 	"os"
 	"runtime/debug"
 	"strings"
-	"time"
 
 	"indicer/internal/console"
 	"indicer/internal/core/jsonbridge"
 	"indicer/internal/lifecycle"
-	"indicer/internal/products/compression_product"
+	"indicer/internal/osdirs"
 	"indicer/lib/logging"
 	platformapi "indicer/pkg/api"
+
+	"go.uber.org/zap"
 )
 
 const (
@@ -53,9 +54,12 @@ const (
 	defaultChunkSizeKB = 256
 	defaultFormat      = "duesarc"
 
-	envPassword = "DUES_PASSWORD"
+	usageText = `usage: compression [--log-dir DIR] [--temp-dir DIR] <command> [flags]
 
-	usageText = `usage: compression <command> [flags]
+global options (before the command):
+  --log-dir DIR     directory for log files (default: the per-user cache directory)
+  --temp-dir DIR    directory for temporary work directories (default: /tmp, or
+                    AppData\Local\Temp on Windows); it must exist
 
 commands:
   create-archive    archive a file, a folder, or files (--input, --input-file)
@@ -71,8 +75,7 @@ commands:
 
 The response envelope is printed on stdout. Exit codes: 0 ok; 2 invalid
 request; 1 failed; 70 internal error; 130/143 interrupted. Passwords are read
-from --password-file, --password-stdin or DUES_PASSWORD (--password is
-visible to other users).`
+from --password-file or --password-stdin only.`
 )
 
 func main() {
@@ -82,7 +85,10 @@ func main() {
 func realMain(args []string) (code int) {
 	// Stdout carries the JSON result; library output goes to stderr (FFI-3).
 	console.Configure(os.Stderr, os.Stderr)
-	logging.Init(logging.Config{Component: "qwikpak"})
+	// The log exists before run reports a bad global option, so the global
+	// options are read twice; run reports what is wrong with them.
+	g, _, _ := parseGlobal(args, io.Discard)
+	logging.Init(logging.Config{Component: "qwikpak", Dir: g.logDir, TempDir: g.tempDir})
 	defer logging.Close()
 	logging.ReportPanics()
 	defer func() {
@@ -94,26 +100,96 @@ func realMain(args []string) (code int) {
 	}()
 	ctx, stop := lifecycle.Context(context.Background())
 	defer stop()
-	_, _ = compression_product.SweepStaleWorkDirs(os.TempDir(), 24*time.Hour)
 	return run(ctx, args, os.Stdout, os.Stderr, os.Stdin)
 }
 
-type runner struct {
-	ctx    context.Context
-	stdout io.Writer
-	stderr io.Writer
-	stdin  io.Reader
+// globalFlags are the options before the command.
+type globalFlags struct {
+	logDir, tempDir string
+	faults          faultFlags
+	set             map[string]bool // the options given
 }
 
-// run executes one command and returns the exit code.
+// parseGlobal reads the global options and returns the arguments from the
+// command on. A --temp-dir that is not an existing directory is an error.
+func parseGlobal(args []string, stderr io.Writer) (globalFlags, []string, error) {
+	var g globalFlags
+	fs := flag.NewFlagSet("compression", flag.ContinueOnError)
+	fs.SetOutput(stderr)
+	fs.Usage = func() {}
+	fs.StringVar(&g.logDir, "log-dir", "", "directory for log files")
+	fs.StringVar(&g.tempDir, "temp-dir", "", "directory for temporary work directories")
+	g.faults.register(fs)
+	if err := fs.Parse(args); err != nil {
+		return g, nil, err
+	}
+	g.set = map[string]bool{}
+	fs.Visit(func(f *flag.Flag) { g.set[f.Name] = true })
+	if g.tempDir != "" {
+		info, err := os.Stat(g.tempDir)
+		if err != nil {
+			return g, nil, fmt.Errorf("--temp-dir: %w", err)
+		}
+		if !info.IsDir() {
+			return g, nil, fmt.Errorf("--temp-dir %s is not a directory", g.tempDir)
+		}
+	}
+	return g, fs.Args(), nil
+}
+
+// logSettings writes the run's "settings" record: the log and temporary
+// directories in effect, each with whether an option or the default chose
+// it.
+func (g globalFlags) logSettings() {
+	from := func(name string) string {
+		if g.set[name] {
+			return logging.FromFlag
+		}
+		return logging.FromDefault
+	}
+	temp, err := osdirs.TempOr(g.tempDir)
+	tempSetting := logging.Setting("temp-dir", temp, from("temp-dir"))
+	if err != nil {
+		tempSetting = logging.Setting("temp-dir", "", from("temp-dir"), zap.Error(err))
+	}
+	logging.GetLogger().Info("settings", logging.DirSetting("log-dir", g.logDir, from("log-dir")), tempSetting)
+}
+
+type runner struct {
+	ctx      context.Context
+	dispatch *platformapi.Dispatcher
+	stdout   io.Writer
+	stderr   io.Writer
+	stdin    io.Reader
+}
+
+// run executes one command, after the global options, and returns the
+// exit code.
 func run(ctx context.Context, args []string, stdout, stderr io.Writer, stdin io.Reader) int {
-	r := &runner{ctx: ctx, stdout: stdout, stderr: stderr, stdin: stdin}
+	g, args, err := parseGlobal(args, stderr)
+	if errors.Is(err, flag.ErrHelp) {
+		fmt.Fprintln(stdout, usageText)
+		return lifecycle.ExitOK
+	}
+	if err == nil {
+		err = g.faults.apply()
+	}
+	if err != nil {
+		fmt.Fprintf(stderr, "%v\n%s\n", err, usageText)
+		return lifecycle.ExitUsage
+	}
+	g.logSettings()
+	r := &runner{
+		ctx:      ctx,
+		dispatch: platformapi.NewDefaultDispatcher(platformapi.Options{TempDir: g.tempDir}),
+		stdout:   stdout, stderr: stderr, stdin: stdin,
+	}
 	if len(args) == 0 {
 		fmt.Fprintln(stderr, usageText)
 		return lifecycle.ExitUsage
 	}
 	commands := map[string]func([]string) int{
-		cmdDispatch:       r.dispatch,
+		cmdDispatch:       r.dispatchRequest,
 		cmdCapabilities:   r.capabilities,
 		cmdCreateArchive:  r.createArchive,
 		cmdExtractArchive: r.extractArchive,
@@ -147,25 +223,33 @@ func (r *runner) usage(msg string) int {
 	return lifecycle.ExitUsage
 }
 
-// passwordFlags are the ways a password can be given.
+// passwordFlags are the ways a password can be given. A password on the
+// command line or in the environment is visible to other users of the
+// machine, so neither is read.
 type passwordFlags struct {
 	file  *string
 	stdin *bool
-	value *string
+	// removed is the removed --password, kept so that using it fails with
+	// what replaces it.
+	removed *string
 }
 
 func addPasswordFlags(fs *flag.FlagSet) passwordFlags {
 	return passwordFlags{
-		file:  fs.String("password-file", "", "read the archive password from the first line of this file"),
-		stdin: fs.Bool("password-stdin", false, "read the archive password from the first line of standard input"),
-		value: fs.String("password", "", "archive password (visible to other users; prefer --password-file or DUES_PASSWORD)"),
+		file:    fs.String("password-file", "", "read the archive password from the first line of this file"),
+		stdin:   fs.Bool("password-stdin", false, "read the archive password from the first line of standard input"),
+		removed: fs.String("password", "", "removed: use --password-file or --password-stdin"),
 	}
 }
 
-// password resolves the password: --password-file, then --password-stdin,
-// then DUES_PASSWORD, then --password (with a warning).
+// errPasswordRemoved refuses the removed --password.
+var errPasswordRemoved = errors.New("--password was removed: a password on the command line is visible to other users of this machine; use --password-file or --password-stdin")
+
+// password resolves the password: --password-file, then --password-stdin.
 func (r *runner) password(p passwordFlags) (string, error) {
 	switch {
+	case *p.removed != "":
+		return "", errPasswordRemoved
 	case *p.file != "":
 		f, err := os.Open(*p.file)
 		if err != nil {
@@ -175,11 +259,6 @@ func (r *runner) password(p passwordFlags) (string, error) {
 		return firstLine(f)
 	case *p.stdin:
 		return firstLine(r.stdin)
-	case os.Getenv(envPassword) != "":
-		return os.Getenv(envPassword), nil
-	case *p.value != "":
-		fmt.Fprintln(r.stderr, "warning: --password is visible to other users of this machine; use --password-file, --password-stdin or "+envPassword)
-		return *p.value, nil
 	}
 	return "", nil
 }
@@ -209,7 +288,7 @@ func (l limitFlags) params() map[string]any {
 	return map[string]any{"max_total_bytes": *l.total, "max_entries": *l.entries, "max_ratio": *l.ratio}
 }
 
-func (r *runner) dispatch(args []string) int {
+func (r *runner) dispatchRequest(args []string) int {
 	fs := r.flags(cmdDispatch)
 	request := fs.String("request", "", "full JSON request envelope")
 	requestFile := fs.String("request-file", "", "read the request envelope from this file (- for standard input)")
@@ -234,7 +313,7 @@ func (r *runner) dispatch(args []string) int {
 	if body == "" {
 		return r.usage("--request or --request-file is required")
 	}
-	return r.emit(platformapi.DefaultDispatcher().DispatchJSON(r.ctx, body))
+	return r.emit(r.dispatch.DispatchJSON(r.ctx, body))
 }
 
 func (r *runner) send(operation string, params map[string]any) int {
@@ -245,7 +324,7 @@ func (r *runner) send(operation string, params map[string]any) int {
 		fmt.Fprintln(r.stderr, err)
 		return lifecycle.ExitInternal
 	}
-	return r.emit(platformapi.DefaultDispatcher().DispatchJSON(r.ctx, string(body)))
+	return r.emit(r.dispatch.DispatchJSON(r.ctx, string(body)))
 }
 
 // emit prints the response envelope and returns its exit code.

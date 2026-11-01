@@ -525,6 +525,38 @@ func TestWritableOpenSweepsTemps(t *testing.T) {
 	}
 }
 
+// withHome makes homeDir return dir and err for one test.
+func withHome(t *testing.T, dir string, err error) {
+	t.Helper()
+	prev := homeDir
+	homeDir = func() (string, error) { return dir, err }
+	t.Cleanup(func() { homeDir = prev })
+}
+
+// TestDefaultRoot: the default is ~/.dues; without a home directory there
+// is none, and the error says to pass --dbpath (the working directory would
+// put evidence wherever the command happened to run).
+func TestDefaultRoot(t *testing.T) {
+	home := t.TempDir()
+	withHome(t, home, nil)
+	for name, f := range map[string]func() (string, error){
+		"DefaultRoot":       DefaultRoot,
+		"ResolveRoot(\"\")": func() (string, error) { return ResolveRoot("") },
+	} {
+		if got, err := f(); err != nil || got != filepath.Join(home, ".dues") {
+			t.Errorf("%s = %q, %v; want %s", name, got, err, filepath.Join(home, ".dues"))
+		}
+	}
+
+	withHome(t, "", errors.New("uid 4242 is not in the account database"))
+	if got, err := DefaultRoot(); err == nil || !strings.Contains(err.Error(), "4242") || !strings.Contains(err.Error(), "--dbpath") {
+		t.Errorf("DefaultRoot without a home = %q, %v; want an error giving the cause and naming --dbpath", got, err)
+	}
+	if _, err := Open(context.Background(), Request{Mode: ReadWrite}); err == nil || !strings.Contains(err.Error(), "--dbpath") {
+		t.Errorf("Open without a path or a home = %v; want the --dbpath error", err)
+	}
+}
+
 // TestReadOnlyOpenOfUnwritableDatabase: badger opens its DISCARD file for
 // writing even to read, and ends the process when it cannot (on
 // write-protected media, or files the user may only read). A read-only open
@@ -565,10 +597,14 @@ func TestReadOnlyOpenOfUnwritableDatabase(t *testing.T) {
 	}
 	before := testutil.TreeHash(t, kv)
 
-	h := open(t, Request{Path: root, Mode: ReadOnly})
+	tempDir := t.TempDir()
+	h := open(t, Request{Path: root, Mode: ReadOnly, TempDir: tempDir})
 	shadow := h.shadow
 	if shadow == "" {
 		t.Fatal("the read-only open did not use a temporary badger directory")
+	}
+	if filepath.Dir(shadow) != tempDir {
+		t.Fatalf("temporary badger directory %s is not in Request.TempDir %s", shadow, tempDir)
 	}
 	if got, err := dbio.GetChonkNode(ckey, h.DB); err != nil || !bytes.Equal(got, secret) {
 		t.Fatalf("read back %d bytes, %v", len(got), err)

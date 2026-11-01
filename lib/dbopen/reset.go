@@ -35,7 +35,7 @@ func CheckResettable(root string) error {
 		return fmt.Errorf("%w %s: it is a filesystem root", ErrResetRefused, root)
 	}
 	places := map[string]func() (string, error){
-		"your home directory":   os.UserHomeDir,
+		"your home directory":   homeDir,
 		"the working directory": os.Getwd,
 	}
 	for what, get := range places {

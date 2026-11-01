@@ -66,7 +66,7 @@ func (p Painter) Bold(s string) string { return p.style(Plain, true, s) }
 // progress display, a bar's empty track. On a known background it is the
 // muted colour. On an unknown one it is faint (SGR 2), which dims the
 // terminal's own colour and so is never invisible; a terminal that ignores
-// it shows normal text. NO_COLOR keeps it, as it keeps bold.
+// it shows normal text.
 func (p Painter) Faint(s string) string {
 	if s == "" || p.profile < colorprofile.ASCII {
 		return s

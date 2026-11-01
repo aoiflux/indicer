@@ -66,6 +66,15 @@ func TestCreateTempDeleteOnClose(t *testing.T) {
 	}
 }
 
+// TestCreateTempDeleteOnCloseNeedsDir: an empty directory used to mean
+// os.TempDir, which reads TMPDIR, TMP and TEMP.
+func TestCreateTempDeleteOnCloseNeedsDir(t *testing.T) {
+	if f, err := CreateTempDeleteOnClose("", "spill-*"); err == nil {
+		_ = f.Close()
+		t.Fatalf("CreateTempDeleteOnClose(\"\") created %s", f.Name())
+	}
+}
+
 // TestCreateTempDeleteOnCloseAfterCrash checks that a process killed while
 // it holds the file leaves nothing behind: the file can hold decompressed
 // evidence.

@@ -24,6 +24,7 @@ import (
 
 	"indicer/internal/diskspace"
 	"indicer/internal/lifecycle"
+	"indicer/internal/osdirs"
 	"indicer/lib/blobcodec"
 	"indicer/lib/cnst"
 	"indicer/lib/dbio"
@@ -77,6 +78,10 @@ type Request struct {
 	KDF *dbmeta.KDFParams
 	// WrittenBy names the program in a new manifest.
 	WrittenBy string
+	// TempDir is where a read-only open of a database on write-protected
+	// media makes its temporary badger directory (--temp-dir). Empty means
+	// osdirs.Temp.
+	TempDir string
 }
 
 // Handle is an open database.
@@ -95,6 +100,8 @@ type Handle struct {
 	// shadow is the temporary badger directory a read-only open of
 	// write-protected media used (newShadow), removed at close.
 	shadow string
+	// tempDir is Request.TempDir, where a shadow goes.
+	tempDir string
 }
 
 // Errors.
@@ -110,16 +117,18 @@ var (
 	ErrMarkerMismatch = errors.New("manifest does not match the database")
 )
 
-// DefaultRoot is the data root used when no path is given: ~/.dues, or .dues
-// in the working directory when there is no home directory. It is not created.
+// homeDir is osdirs.Home; tests replace it.
+var homeDir = osdirs.Home
+
+// DefaultRoot is the data root used when no path is given, ~/.dues. It is
+// not created. Without a home directory there is no default: the working
+// directory would put evidence wherever the command happened to run.
 func DefaultRoot() (string, error) {
-	base, err := os.UserHomeDir()
+	home, err := homeDir()
 	if err != nil {
-		if base, err = os.Getwd(); err != nil {
-			return "", err
-		}
+		return "", fmt.Errorf("no default database path: %w; pass --dbpath", err)
 	}
-	return filepath.Abs(filepath.Join(base, ".dues"))
+	return filepath.Join(home, ".dues"), nil
 }
 
 // ResolveRoot turns a --dbpath value into an absolute data root.
@@ -143,7 +152,7 @@ func Open(ctx context.Context, req Request) (*Handle, error) {
 	if err != nil {
 		return nil, err
 	}
-	h := &Handle{Root: root, ReadOnly: req.Mode == ReadOnly}
+	h := &Handle{Root: root, ReadOnly: req.Mode == ReadOnly, tempDir: req.TempDir}
 	if err := h.open(ctx, req); err != nil {
 		h.release()
 		return nil, err
@@ -351,7 +360,7 @@ func (h *Handle) create(req Request) (dbmeta.Manifest, dbmeta.Keys, error) {
 	}
 	h.Created = true
 	if !m.Encrypted() {
-		h.notice("created database %s without encryption (no --password given)", h.Root)
+		h.notice("created database %s without encryption (no password given)", h.Root)
 	}
 	return m, keys, nil
 }
@@ -524,7 +533,7 @@ func (h *Handle) openBadger(m dbmeta.Manifest, keys dbmeta.Keys) error {
 	}
 	realDir := opts.Dir
 	if h.ReadOnly && !discardWritable(opts.Dir) {
-		shadow, copied, err := newShadow(opts.Dir)
+		shadow, copied, err := newShadow(opts.Dir, h.tempDir)
 		if err != nil {
 			return fmt.Errorf("opening %s from read-only media: %w", h.Root, err)
 		}
@@ -578,13 +587,18 @@ func discardWritable(dir string) bool {
 // where the platform allows it and copied otherwise; since badger v4.9.2 a
 // read-only open opens its value logs read-only too, so links to them serve.
 // copied counts the bytes copied. Removing the directory removes only the
-// links and copies.
-func newShadow(dir string) (shadow string, copied int64, err error) {
+// links and copies. The directory goes in tempDir, or osdirs.Temp when it
+// is empty.
+func newShadow(dir, tempDir string) (shadow string, copied int64, err error) {
 	entries, err := os.ReadDir(dir)
 	if err != nil {
 		return "", 0, err
 	}
-	shadow, err = os.MkdirTemp("", "dues-readonly-")
+	base, err := osdirs.TempOr(tempDir)
+	if err != nil {
+		return "", 0, err
+	}
+	shadow, err = os.MkdirTemp(base, "dues-readonly-")
 	if err != nil {
 		return "", 0, err
 	}

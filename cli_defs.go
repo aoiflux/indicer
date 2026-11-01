@@ -9,9 +9,13 @@ import (
 	"github.com/alecthomas/kingpin/v2"
 )
 
-// flagLogDir selects the log directory. It is read before parsing too, by
-// logDirFromArgs.
-const flagLogDir = "log-dir"
+// Flags read before parsing too, by flagFromArgs and boolFlagFromArgs,
+// because the log and the crash file exist before kingpin runs.
+const (
+	flagLogDir  = "log-dir"
+	flagTempDir = "temp-dir"
+	flagDebug   = "debug"
+)
 
 // cmdReindex names the reindex command.
 const cmdReindex = "reindex"
@@ -27,6 +31,8 @@ const (
 
 type cliFlags struct {
 	logDir            *string
+	tempDir           *string
+	debug             *bool
 	dbpath            *string
 	pwd               *string
 	pwdFile           *string
@@ -45,6 +51,8 @@ type cliFlags struct {
 	plain             *bool
 	ci                *bool
 	noFun             *bool
+	theme             *string
+	taskbar           *bool
 
 	evipath             *string
 	syncIndex           *bool
@@ -152,6 +160,7 @@ type cliDefinition struct {
 	app      *kingpin.Application
 	flags    cliFlags
 	commands cliCommands
+	faults   faultFlags
 }
 
 func newCLIDefinition() cliDefinition {
@@ -166,8 +175,13 @@ func newCLIDefinition() cliDefinition {
 
 	flags := cliFlags{}
 	flags.logDir = app.Flag(flagLogDir, "Directory for log and crash files (default: the per-user cache directory)").String()
+	flags.tempDir = app.Flag(flagTempDir, "Directory for temporary files, such as decoded containers and read-only database copies (default: /tmp, or AppData\\Local\\Temp on Windows)").String()
+	flags.debug = app.Flag(flagDebug, "Write debug entries to the log").Bool()
 	flags.dbpath = app.Flag(cnst.FlagDBPath, "Custom path for DUES database").Short(cnst.FlagDBPathShort).String()
-	flags.pwd = app.Flag(cnst.FlagPassword, "Password for the DUES database (visible to other users; prefer --password-file, --password-stdin or DUES_PASSWORD)").Short(cnst.FlagPasswordShort).String()
+	// --password and --token were removed: a secret on the command line is
+	// visible to other users. They stay, hidden, so a script that still
+	// passes one fails with what replaces it, not "unknown flag".
+	flags.pwd = app.Flag(cnst.FlagPassword, "Removed: use --password-file or --password-stdin").Short(cnst.FlagPasswordShort).Hidden().String()
 	flags.pwdFile = app.Flag(flagPasswordFile, "Read the database password from the first line of this file").String()
 	flags.pwdStdin = app.Flag(flagPasswordStdin, "Read the database password from the first line of standard input").Bool()
 	flags.chonkSize = app.Flag(cnst.FlagChonkSize, "Custom chunk size(KB) to be used for dedup").Short(cnst.FlagChonkSizeShort).Default("256").Int()
@@ -182,10 +196,12 @@ func newCLIDefinition() cliDefinition {
 	flags.compressLevel = app.Flag(cnst.FlagCompressLevel, "Per-chunk zstd compression level [fast|default|best] (default: best)").Short(cnst.FlagCompressLevelShort).Default("best").String()
 	// The presentation flags are read before parsing too, by ui.PreScan,
 	// because help prints before kingpin runs; kingpin validates them.
-	flags.color = app.Flag(ui.FlagColor, "Colour: auto, always, never, or ansi (only the terminal theme's 16 colours)").Default(string(ui.ColorAuto)).Enum(ui.ColorPolicies...)
-	flags.plain = app.Flag(ui.FlagPlain, "Plain output: no colour, ASCII only, no animation (for screen readers and logs)").Bool()
+	flags.color = app.Flag(ui.FlagColor, "Colour: auto (256 colours on a terminal), always, never, ansi (only the terminal theme's 16 colours) or truecolor").Default(string(ui.ColorAuto)).Enum(ui.ColorPolicies...)
+	flags.plain = app.Flag(ui.FlagPlain, "Plain output: no colour, ASCII only, no animation (for screen readers, logs, the Windows console host)").Bool()
 	flags.ci = app.Flag(ui.FlagCI, "Behave as if no terminal is attached: plain output, and prompts refuse").Bool()
 	flags.noFun = app.Flag(ui.FlagNoFun, "No easter eggs").Bool()
+	flags.theme = app.Flag(ui.FlagTheme, "Terminal background: auto, dark or light (auto: the neutral palette; the TUI asks the terminal)").Default(ui.ThemeNames[0]).Enum(ui.ThemeNames...)
+	flags.taskbar = app.Flag(ui.FlagTaskbar, "Show progress on the terminal's tab and taskbar (Windows Terminal, ConEmu)").Bool()
 
 	commands := cliCommands{}
 	commands.version = app.Command(cnst.CmdVeresion, "Show version details and quick feature overview")
@@ -279,7 +295,7 @@ func newCLIDefinition() cliDefinition {
 	flags.serverHashAlgo = commands.server.Flag(cnst.FlagHashAlgo, "Hashing algorithm to use [sha3|blake3] (default: BLAKE3)").Short(cnst.FlagHashAlgoShort).Default(cnst.BLAKE3).String()
 	flags.serverListen = commands.server.Flag(flagListen, "Serve on this host:port (repeatable; default 127.0.0.1:50051 and [::1]:50051). A non-loopback address needs a token").Strings()
 	flags.serverTokenFile = commands.server.Flag(flagTokenFile, "Require the bearer token on the first line of this file").String()
-	flags.serverToken = commands.server.Flag(flagToken, "Require this bearer token (visible to other users; prefer --token-file or DUES_TOKEN)").String()
+	flags.serverToken = commands.server.Flag(flagToken, "Removed: use --token-file").Hidden().String()
 	flags.serverCORSOrigins = commands.server.Flag(flagCORSOrigin, "Also let pages from this origin call the server, as scheme://host[:port] (repeatable)").Strings()
 
 	commands.reset = app.Command(cnst.CmdReset, "Delete the database").Alias(cnst.CmdPurge).Alias(cnst.CmdDelete).Alias(cnst.CmdDestroy)
@@ -288,5 +304,5 @@ func newCLIDefinition() cliDefinition {
 	commands.mew = app.Command(cmdMeow, "").Hidden()
 	flags.resetYes = commands.reset.Flag("yes", "Delete without asking for the folder name (required when stdin is not a terminal)").Default("false").Bool()
 
-	return cliDefinition{app: app, flags: flags, commands: commands}
+	return cliDefinition{app: app, flags: flags, commands: commands, faults: addFaultFlags(app)}
 }

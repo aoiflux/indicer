@@ -12,9 +12,10 @@ import (
 	"indicer/internal/lifecycle"
 )
 
-// TestServerTokenSources: --token-file, then DUES_TOKEN, then --token, which
-// warns that the command line is visible.
+// TestServerTokenSources: the token comes from --token-file only. DUES_TOKEN
+// is not read, and the removed --token is refused, naming --token-file.
 func TestServerTokenSources(t *testing.T) {
+	t.Setenv("DUES_TOKEN", "from-env")
 	tokFile := filepath.Join(t.TempDir(), "tok")
 	if err := os.WriteFile(tokFile, []byte("from-file-0123456789abcdef0123456789\r\nignored\n"), 0o600); err != nil {
 		t.Fatal(err)
@@ -24,38 +25,40 @@ func TestServerTokenSources(t *testing.T) {
 		t.Fatal(err)
 	}
 	for _, c := range []struct {
-		name    string
-		env     string
-		args    []string
-		want    string
-		warning bool
-		usage   bool
+		name  string
+		args  []string
+		want  string
+		usage string // part of the usage error expected; empty for none
 	}{
-		{"none", "", nil, "", false, false},
-		{"flag", "", []string{"--token", "from-flag"}, "from-flag", true, false},
-		{"env over flag", "from-env", []string{"--token", "from-flag"}, "from-env", false, false},
-		{"file over env", "from-env", []string{"--token-file", tokFile}, "from-file-0123456789abcdef0123456789", false, false},
-		{"missing file", "", []string{"--token-file", filepath.Join(t.TempDir(), "nope")}, "", false, true},
-		{"empty file", "", []string{"--token-file", empty}, "", false, true},
+		{"none", nil, "", ""},
+		{"file", []string{"--token-file", tokFile}, "from-file-0123456789abcdef0123456789", ""},
+		{"removed flag", []string{"--token", "from-flag"}, "", "--token-file"},
+		{"removed flag with a file", []string{"--token-file", tokFile, "--token", "x"}, "", "--token-file"},
+		{"missing file", []string{"--token-file", filepath.Join(t.TempDir(), "nope")}, "", "--token-file"},
+		{"empty file", []string{"--token-file", empty}, "", "holds no token"},
 	} {
 		t.Run(c.name, func(t *testing.T) {
-			t.Setenv(envToken, c.env)
+			args := append([]string{"server"}, c.args...)
 			cliDef := newCLIDefinition()
-			if _, err := cliDef.app.Parse(append([]string{"server"}, c.args...)); err != nil {
+			if _, err := cliDef.app.Parse(args); err != nil {
 				t.Fatal(err)
 			}
-			tok, warnings, err := resolveServerToken(cliDef.flags)
-			if c.usage {
-				if lifecycle.ExitCode(err) != lifecycle.ExitUsage {
-					t.Fatalf("error %v, want a usage error", err)
+			set, err := flagsSetByUser(cliDef.app, args)
+			if err != nil {
+				t.Fatal(err)
+			}
+			tok, err := resolveServerToken(cliDef.flags, set)
+			if c.usage != "" {
+				if lifecycle.ExitCode(err) != lifecycle.ExitUsage || !strings.Contains(err.Error(), c.usage) {
+					t.Fatalf("error %v, want a usage error containing %q", err, c.usage)
 				}
 				return
 			}
 			if err != nil {
 				t.Fatal(err)
 			}
-			if tok != c.want || (len(warnings) > 0) != c.warning {
-				t.Fatalf("token %q, warnings %q; want %q, warning %v", tok, warnings, c.want, c.warning)
+			if tok != c.want {
+				t.Fatalf("token %q, want %q", tok, c.want)
 			}
 		})
 	}

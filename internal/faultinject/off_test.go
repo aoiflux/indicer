@@ -4,7 +4,7 @@ package faultinject
 
 import "testing"
 
-// A release build ignores DUES_FAULTS entirely.
+// A release build injects nothing, whatever the environment says.
 func TestHitIsInertWithoutTag(t *testing.T) {
 	t.Setenv("DUES_FAULTS", SelfTest+"=panic")
 	if Enabled {

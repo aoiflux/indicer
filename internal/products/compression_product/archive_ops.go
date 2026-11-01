@@ -59,7 +59,7 @@ func (s *Service) createArchive(ctx context.Context, req createArchiveReq, repor
 	partSize := int64(req.SplitSizeMB) * oneMiBBytes
 	var err error
 	if format == archiveFormatDuesarc {
-		res.OutputFiles, res.WorkDir, err = createDuesarc(ctx, req, in, outputPath, partSize, chunk, report)
+		res.OutputFiles, res.WorkDir, err = createDuesarc(ctx, s.temp, req, in, outputPath, partSize, chunk, report)
 	} else {
 		emitProgress(report, "packaging", 35, "packaging compatibility archive")
 		res.OutputFiles, err = writeArchiveOutput(ctx, outputPath, partSize, func(w io.Writer) error {
@@ -140,7 +140,7 @@ func (s *Service) extractArchive(ctx context.Context, req extractArchiveReq, rep
 
 	var res commitResult
 	if format == archiveFormatDuesarc {
-		res, err = extractDuesarc(ctx, inputPath, out, req.Password, policy, limits, report)
+		res, err = extractDuesarc(ctx, s.temp, inputPath, out, req.Password, policy, limits, report)
 	} else {
 		emitProgress(report, "extracting", 20, "extracting compatibility archive")
 		res, err = extractCompat(ctx, inputPath, out, format, policy, limits, func(processed, total int64) {
@@ -197,7 +197,7 @@ func (s *Service) listArchive(ctx context.Context, req archiveReadReq, report pr
 	za.Close()
 	res.EntryCount = len(res.Entries)
 	if res.HasManifest {
-		m, files, err := listDuesarc(ctx, inputPath, req.Password, report)
+		m, files, err := listDuesarc(ctx, s.temp, inputPath, req.Password, report)
 		if err != nil {
 			return listArchiveRes{}, opError(ctx, err, errListArchiveFailed)
 		}
@@ -241,7 +241,7 @@ func (s *Service) verifyArchive(ctx context.Context, req archiveReadReq, report 
 	}
 	res.EntryCount, res.FileCount, res.DirCount, res.VerifiedBytes = stats.EntryCount, stats.FileCount, stats.DirCount, stats.VerifiedBytes
 	if format == archiveFormatDuesarc {
-		m, verified, err := verifyDuesarcContent(ctx, inputPath, req.Password, report)
+		m, verified, err := verifyDuesarcContent(ctx, s.temp, inputPath, req.Password, report)
 		if err != nil {
 			return verifyArchiveRes{}, opError(ctx, err, errVerifyArchiveFailed)
 		}

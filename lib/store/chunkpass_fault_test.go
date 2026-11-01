@@ -25,10 +25,12 @@ func TestWriterErrorIsNotMasked(t *testing.T) {
 			}
 			// More chunks than the barrier holds, so it fires mid-pass.
 			content := testutil.RandomBytes(11, 32<<20)
-			t.Setenv("DUES_FAULTS", faultinject.StoreChunkBeforeBarrier+"=error")
-			faultinject.Reset()
-			t.Cleanup(faultinject.Reset)
-			_, err := pass(t.Context(), ChunkPass{DB: db.DB, ID: []byte("writer-fault"), Source: byteReaderAt(content), Size: int64(len(content)), Quiet: true})
+			restore, err := faultinject.Set(faultinject.StoreChunkBeforeBarrier + "=error")
+			if err != nil {
+				t.Fatal(err)
+			}
+			t.Cleanup(restore)
+			_, err = pass(t.Context(), ChunkPass{DB: db.DB, ID: []byte("writer-fault"), Source: byteReaderAt(content), Size: int64(len(content)), Quiet: true})
 			if !errors.Is(err, faultinject.ErrInjected) {
 				t.Fatalf("pass error %v, want the writer's injected fault", err)
 			}

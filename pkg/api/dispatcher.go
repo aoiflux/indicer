@@ -21,15 +21,22 @@ func NewDispatcher(r *registry.Registry) *Dispatcher {
 	return &Dispatcher{registry: r}
 }
 
-func NewDefaultDispatcher() *Dispatcher {
+// Options configure the services of NewDefaultDispatcher.
+type Options struct {
+	// TempDir is where services make temporary work directories
+	// (--temp-dir); empty means osdirs.Temp.
+	TempDir string
+}
+
+func NewDefaultDispatcher(o Options) *Dispatcher {
 	r := registry.New()
-	compressionService := compression_product.New()
+	compressionService := compression_product.NewWithOptions(compression_product.Options{TempDir: o.TempDir})
 	r.Register(compressionService)
 	r.RegisterAs(compression_product.LegacyName, compressionService)
 	return NewDispatcher(r)
 }
 
-var defaultDispatcher = NewDefaultDispatcher()
+var defaultDispatcher = NewDefaultDispatcher(Options{})
 
 func DefaultDispatcher() *Dispatcher {
 	return defaultDispatcher

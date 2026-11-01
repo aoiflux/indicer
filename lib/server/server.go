@@ -89,7 +89,7 @@ func (c Config) Validate() error {
 	}
 	for _, a := range addrs {
 		if !a.loopback && c.Token == "" {
-			return fmt.Errorf("listen address %s is not a loopback address: serving it needs a token of at least %d characters (--token-file or DUES_TOKEN)", a.addr, MinTokenLength)
+			return fmt.Errorf("listen address %s is not a loopback address: serving it needs a token of at least %d characters (--token-file)", a.addr, MinTokenLength)
 		}
 	}
 	for _, o := range c.CORSOrigins {

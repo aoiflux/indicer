@@ -87,8 +87,8 @@ Step "cross build (6 targets)" {
                     go build -trimpath -tags netgo,osusergo -o $bin $pkg
                 }
                 if ($LASTEXITCODE -ne 0) { $bad = $true; continue }
-                if ((go version -m $bin) -match "faultinject") {
-                    Write-Host "release binary $bin carries the faultinject tag" -ForegroundColor Red
+                if ((go version -m $bin) -match "faultinject|safestrict") {
+                    Write-Host "release binary $bin carries a test-only tag (faultinject or safestrict)" -ForegroundColor Red
                     $bad = $true
                 }
             }

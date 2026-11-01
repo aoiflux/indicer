@@ -4,7 +4,7 @@
 #   scripts/verify.sh [--fast] [--no-vuln] [--no-race] [--no-fuzz]
 #
 # Steps: format, vet (normal and faultinject builds), cross builds with a
-# check that release binaries carry no faultinject tag, staticcheck,
+# check that release binaries carry no test-only tag, staticcheck,
 # govulncheck, tests, race tests, faultinject tests, and fuzz smoke.
 # --fast skips race, fuzz and govulncheck. Prints a pass/fail summary and
 # exits non-zero if any step failed.
@@ -58,8 +58,8 @@ cross_build() {
 				rc=1
 				continue
 			fi
-			if go version -m "$bin" | grep -q faultinject; then
-				echo "release binary $bin was built with the faultinject tag"
+			if go version -m "$bin" | grep -Eq 'faultinject|safestrict'; then
+				echo "release binary $bin was built with a test-only tag (faultinject or safestrict)"
 				rc=1
 			fi
 		done
@@ -89,8 +89,8 @@ fuzz_run() {
 	while read -r pkg fn; do
 		case "$pkg" in "" | \#*) continue ;; esac
 		echo "-- fuzz $pkg $fn"
-		# A short minimise time keeps the smoke fuzzing; see scripts/wsl/suite.sh.
-		go test "$pkg" -run '^$' -fuzz "^$fn\$" -fuzztime "${FUZZTIME:-60s}" \
+		# Strict, with a short minimise time; see scripts/wsl/suite.sh.
+		go test -tags safestrict "$pkg" -run '^$' -fuzz "^$fn\$" -fuzztime "${FUZZTIME:-60s}" \
 			-fuzzminimizetime 5s || rc=1
 	done <scripts/fuzz-targets.txt
 	return $rc

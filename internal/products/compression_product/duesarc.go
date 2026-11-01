@@ -164,12 +164,12 @@ func zipManifest(zr *zip.Reader) (m archiveManifest, found bool, err error) {
 
 // createDuesarc stores every input file in a new database in a work
 // directory, writes the manifest, and packs both into the archive.
-func createDuesarc(ctx context.Context, req createArchiveReq, in *archiveInputs, outputPath string, partSize int64, chunkKiB int, report progressReporter) (files []string, workPath string, err error) {
+func createDuesarc(ctx context.Context, tmp *tempRoot, req createArchiveReq, in *archiveInputs, outputPath string, partSize int64, chunkKiB int, report progressReporter) (files []string, workPath string, err error) {
 	var wd *workDir
 	if req.WorkDir != "" {
 		wd, err = openWorkDir(req.WorkDir)
 	} else {
-		wd, err = newTempWorkDir(tempWorkDirPattern)
+		wd, err = tmp.newWorkDir(tempWorkDirPattern)
 	}
 	if err != nil {
 		return nil, "", err
@@ -327,7 +327,7 @@ func (s *stagedArchive) release() { s.wd.release(true) }
 // stageDuesarc extracts a .duesarc archive's manifest and database, with the
 // same checks and limits as any extraction, after checking a split set's
 // parts against their sidecar.
-func stageDuesarc(ctx context.Context, archivePath string, limits Limits, onBytes func(processed, total int64)) (*stagedArchive, error) {
+func stageDuesarc(ctx context.Context, tmp *tempRoot, archivePath string, limits Limits, onBytes func(processed, total int64)) (*stagedArchive, error) {
 	limits, lerr := limits.resolve()
 	if lerr != nil {
 		return nil, lerr
@@ -342,7 +342,7 @@ func stageDuesarc(ctx context.Context, archivePath string, limits Limits, onByte
 	} else if !found {
 		return nil, &ArchiveError{Msg: errManifestMissing}
 	}
-	wd, err := newTempWorkDir(tempExtractPattern)
+	wd, err := tmp.newWorkDir(tempExtractPattern)
 	if err != nil {
 		return nil, err
 	}
@@ -674,9 +674,9 @@ func restoreDamage(err error) error {
 }
 
 // extractDuesarc restores a .duesarc archive into out.
-func extractDuesarc(ctx context.Context, inputPath, out, password, policy string, limits Limits, report progressReporter) (commitResult, error) {
+func extractDuesarc(ctx context.Context, tmp *tempRoot, inputPath, out, password, policy string, limits Limits, report progressReporter) (commitResult, error) {
 	emitProgress(report, "extracting", 20, "extracting archive entries")
-	staged, err := stageDuesarc(ctx, inputPath, limits, func(processed, total int64) {
+	staged, err := stageDuesarc(ctx, tmp, inputPath, limits, func(processed, total int64) {
 		emitProgress(report, "extracting", progressFromBytes(processed, total, 20, 60), "extracting archive entries")
 	})
 	if err != nil {
@@ -722,8 +722,8 @@ func extractDuesarc(ctx context.Context, inputPath, out, password, policy string
 }
 
 // listDuesarc lists a .duesarc archive's logical files.
-func listDuesarc(ctx context.Context, inputPath, password string, report progressReporter) (archiveManifest, []archiveLogicalFile, error) {
-	staged, err := stageDuesarc(ctx, inputPath, Limits{}, func(processed, total int64) {
+func listDuesarc(ctx context.Context, tmp *tempRoot, inputPath, password string, report progressReporter) (archiveManifest, []archiveLogicalFile, error) {
+	staged, err := stageDuesarc(ctx, tmp, inputPath, Limits{}, func(processed, total int64) {
 		emitProgress(report, "extracting", progressFromBytes(processed, total, 55, 85), "extracting manifest and metadata")
 	})
 	if err != nil {
@@ -819,8 +819,8 @@ func storedSize(ctx context.Context, db *badger.DB, raw []byte, ev structs.Evide
 
 // verifyDuesarcContent reads back every chunk of every evidence the archive
 // restores and checks it against its hash. It returns how many were checked.
-func verifyDuesarcContent(ctx context.Context, inputPath, password string, report progressReporter) (archiveManifest, int, error) {
-	staged, err := stageDuesarc(ctx, inputPath, Limits{}, nil)
+func verifyDuesarcContent(ctx context.Context, tmp *tempRoot, inputPath, password string, report progressReporter) (archiveManifest, int, error) {
+	staged, err := stageDuesarc(ctx, tmp, inputPath, Limits{}, nil)
 	if err != nil {
 		return archiveManifest{}, 0, err
 	}

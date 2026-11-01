@@ -32,82 +32,76 @@ type pipelineTuning struct {
 	layout dbopen.Requested
 }
 
-// Password sources, highest precedence first: --password-file,
-// --password-stdin, DUES_PASSWORD, --password.
+// The password comes from --password-file or --password-stdin, never from
+// the command line or the environment, which other users of the machine
+// can read.
 const (
 	flagPasswordFile  = "password-file"
 	flagPasswordStdin = "password-stdin"
-	envPassword       = "DUES_PASSWORD"
 )
 
-// resolveCredentials returns the database password from the first source
-// that has one, and warnings for the user. An empty password is no password.
-func resolveCredentials(f cliFlags, set map[string]bool, stdin io.Reader) (dbmeta.Credentials, []string, error) {
-	var warnings []string
+// resolveCredentials returns the database password from --password-file,
+// or else --password-stdin. An empty password is no password. The removed
+// --password (-p) is refused with what replaces it.
+func resolveCredentials(f cliFlags, set map[string]bool, stdin io.Reader) (dbmeta.Credentials, error) {
+	if set[cnst.FlagPassword] {
+		return dbmeta.Credentials{}, lifecycle.Usagef("--%s (-%c) was removed: a password on the command line is visible to other users of this machine; use --%s or --%s",
+			cnst.FlagPassword, cnst.FlagPasswordShort, flagPasswordFile, flagPasswordStdin)
+	}
 	pw := ""
 	switch {
 	case *f.pwdFile != "":
 		b, err := os.ReadFile(*f.pwdFile)
 		if err != nil {
-			return dbmeta.Credentials{}, nil, lifecycle.Usagef("--%s: %v", flagPasswordFile, err)
+			return dbmeta.Credentials{}, lifecycle.Usagef("--%s: %v", flagPasswordFile, err)
 		}
 		pw = firstLine(string(b))
 		if pw == "" {
-			return dbmeta.Credentials{}, nil, lifecycle.Usagef("--%s: %s holds no password", flagPasswordFile, *f.pwdFile)
+			return dbmeta.Credentials{}, lifecycle.Usagef("--%s: %s holds no password", flagPasswordFile, *f.pwdFile)
 		}
 	case *f.pwdStdin:
 		line, err := bufio.NewReader(stdin).ReadString('\n')
 		if err != nil && !errors.Is(err, io.EOF) {
-			return dbmeta.Credentials{}, nil, lifecycle.Usagef("--%s: %v", flagPasswordStdin, err)
+			return dbmeta.Credentials{}, lifecycle.Usagef("--%s: %v", flagPasswordStdin, err)
 		}
 		pw = firstLine(line)
 		if pw == "" {
-			return dbmeta.Credentials{}, nil, lifecycle.Usagef("--%s: no password on standard input", flagPasswordStdin)
+			return dbmeta.Credentials{}, lifecycle.Usagef("--%s: no password on standard input", flagPasswordStdin)
 		}
-	case os.Getenv(envPassword) != "":
-		pw = os.Getenv(envPassword)
-	case set[cnst.FlagPassword] && *f.pwd != "":
-		pw = *f.pwd
-		warnings = append(warnings, fmt.Sprintf("--%s on the command line is visible to other users of this machine; prefer --%s, --%s or %s",
-			cnst.FlagPassword, flagPasswordFile, flagPasswordStdin, envPassword))
 	}
 	if pw == "" {
-		return dbmeta.NoPassword(), warnings, nil
+		return dbmeta.NoPassword(), nil
 	}
-	return dbmeta.Password(pw), warnings, nil
+	return dbmeta.Password(pw), nil
 }
 
-// Server token sources, highest precedence first: --token-file, DUES_TOKEN,
-// --token.
+// The server's bearer token comes from --token-file only, for the same
+// reason as the password.
 const (
 	flagListen     = "listen"
 	flagToken      = "token"
 	flagTokenFile  = "token-file"
 	flagCORSOrigin = "cors-origin"
-	envToken       = "DUES_TOKEN"
 )
 
-// resolveServerToken returns the server's bearer token from the first source
-// that has one, and warnings for the user. An empty token is no token.
-func resolveServerToken(f cliFlags) (string, []string, error) {
-	switch {
-	case *f.serverTokenFile != "":
-		b, err := os.ReadFile(*f.serverTokenFile)
-		if err != nil {
-			return "", nil, lifecycle.Usagef("--%s: %v", flagTokenFile, err)
-		}
-		tok := strings.TrimSpace(firstLine(string(b)))
-		if tok == "" {
-			return "", nil, lifecycle.Usagef("--%s: %s holds no token", flagTokenFile, *f.serverTokenFile)
-		}
-		return tok, nil, nil
-	case os.Getenv(envToken) != "":
-		return strings.TrimSpace(os.Getenv(envToken)), nil, nil
-	case *f.serverToken != "":
-		return *f.serverToken, []string{fmt.Sprintf("--%s on the command line is visible to other users of this machine; prefer --%s or %s",
-			flagToken, flagTokenFile, envToken)}, nil
+// resolveServerToken returns the server's bearer token from --token-file;
+// none is no token. The removed --token is refused with what replaces it.
+func resolveServerToken(f cliFlags, set map[string]bool) (string, error) {
+	if set[flagToken] {
+		return "", lifecycle.Usagef("--%s was removed: a token on the command line is visible to other users of this machine; use --%s", flagToken, flagTokenFile)
 	}
-	return "", nil, nil
+	if *f.serverTokenFile == "" {
+		return "", nil
+	}
+	b, err := os.ReadFile(*f.serverTokenFile)
+	if err != nil {
+		return "", lifecycle.Usagef("--%s: %v", flagTokenFile, err)
+	}
+	tok := strings.TrimSpace(firstLine(string(b)))
+	if tok == "" {
+		return "", lifecycle.Usagef("--%s: %s holds no token", flagTokenFile, *f.serverTokenFile)
+	}
+	return tok, nil
 }
 
 // firstLine returns s up to its first line break.

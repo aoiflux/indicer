@@ -104,11 +104,7 @@ func TestResetRefusals(t *testing.T) {
 	})
 	t.Run("home directory", func(t *testing.T) {
 		root := newRoot(t)
-		t.Setenv("HOME", root)
-		t.Setenv("USERPROFILE", root)
-		if home, _ := os.UserHomeDir(); home != root {
-			t.Skipf("cannot point the home directory at a test root (%s)", home)
-		}
+		withHome(t, root, nil)
 		if _, _, err := Reset(root); !errors.Is(err, ErrResetRefused) {
 			t.Fatalf("Reset of the home directory = %v", err)
 		}

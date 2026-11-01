@@ -12,62 +12,114 @@ import (
 // Enabled reports whether this build can inject faults.
 const Enabled = true
 
+// config is what the process injects: the rules by point, and the file the
+// first hit of each point is reported to ("" for none).
+type config struct {
+	rules  map[string][]Rule
+	notify string
+}
+
+func newConfig(spec, notify string) (*config, error) {
+	parsed, err := ParseSpec(spec)
+	if err != nil {
+		return nil, err
+	}
+	c := &config{rules: map[string][]Rule{}, notify: notify}
+	for _, r := range parsed {
+		c.rules[r.Point] = append(c.rules[r.Point], r)
+	}
+	return c, nil
+}
+
 var (
-	loadOnce sync.Once
-	loadErr  error
-	rules    map[string][]Rule
+	fallback    sync.Once
+	fallbackErr error
 
 	mu       sync.Mutex
+	active   *config // nil injects nothing
 	hits     = map[string]int{}
 	notified = map[string]bool{}
 )
 
-func load() {
-	parsed, err := ParseSpec(os.Getenv("DUES_FAULTS"))
+// loadFallback reads DUES_FAULTS and DUES_FAULTS_NOTIFY when nothing called
+// Configure or Set before the first hit. The child-process tests still
+// configure faults this way; it goes once they pass --faults.
+func loadFallback() {
+	spec := os.Getenv("DUES_FAULTS")
+	notify := os.Getenv("DUES_FAULTS_NOTIFY")
+	c, err := newConfig(spec, notify)
 	if err != nil {
-		loadErr = err
+		fallbackErr = err
 		return
 	}
-	rules = map[string][]Rule{}
-	for _, r := range parsed {
-		rules[r.Point] = append(rules[r.Point], r)
-	}
+	mu.Lock()
+	active = c
+	mu.Unlock()
 }
 
-// Reset forgets hit counts and re-reads DUES_FAULTS. Tests that change the
-// environment in-process call it.
-func Reset() {
+// Configure installs spec, a list of point=action rules, and the file each
+// point's first hit is reported to ("" for none). The binaries call it with
+// their hidden --faults and --faults-notify flags, before any work starts. It
+// also forgets the hit counts. A bad spec is returned and changes nothing.
+func Configure(spec, notify string) error {
+	c, err := newConfig(spec, notify)
+	if err != nil {
+		return err
+	}
+	install(c)
+	return nil
+}
+
+// Set installs spec for a test in this process and returns the function
+// that puts back what was installed before. Hit counts start again at both.
+func Set(spec string) (restore func(), err error) {
+	c, err := newConfig(spec, "")
+	if err != nil {
+		return nil, err
+	}
+	mu.Lock()
+	prev := active
+	mu.Unlock()
+	install(c)
+	return func() { install(prev) }, nil
+}
+
+func install(c *config) {
+	// Once configured, the process never reads the environment.
+	fallback.Do(func() {})
 	mu.Lock()
 	defer mu.Unlock()
+	active = c
 	hits = map[string]int{}
 	notified = map[string]bool{}
-	loadOnce = sync.Once{}
-	loadErr = nil
-	rules = nil
 }
 
-// Hit marks a fault point and performs whatever DUES_FAULTS configures there.
+// Hit marks a fault point and performs whatever the configuration sets there.
 func Hit(point string) error {
-	loadOnce.Do(load)
-	if loadErr != nil {
+	fallback.Do(loadFallback)
+	if fallbackErr != nil {
 		// A bad spec is a test bug; fail loudly at the first point reached.
-		panic(loadErr)
+		panic(fallbackErr)
 	}
 	if !Known(point) {
 		panic(fmt.Sprintf("faultinject: Hit(%q): unregistered point", point))
 	}
 
 	mu.Lock()
+	c := active
 	hits[point]++
 	n := hits[point]
 	first := !notified[point]
 	notified[point] = true
 	mu.Unlock()
+	if c == nil {
+		return nil
+	}
 	if first {
-		notify(point)
+		c.report(point)
 	}
 
-	for _, r := range rules[point] {
+	for _, r := range c.rules[point] {
 		if !r.fires(n) {
 			continue
 		}
@@ -87,7 +139,7 @@ func Hit(point string) error {
 		case "sleep":
 			time.Sleep(r.Delay)
 		case "block":
-			notify(point + "#blocked")
+			c.report(point + "#blocked")
 			select {}
 		case "signal":
 			if err := signalSelf(r.Signal); err != nil {
@@ -100,14 +152,13 @@ func Hit(point string) error {
 	return nil
 }
 
-// notify appends a line to the DUES_FAULTS_NOTIFY file, if one is set.
+// report appends a line to the notification file, if there is one.
 // Failures are ignored: notification only helps a waiting parent.
-func notify(line string) {
-	path := os.Getenv("DUES_FAULTS_NOTIFY")
-	if path == "" {
+func (c *config) report(line string) {
+	if c.notify == "" {
 		return
 	}
-	f, err := os.OpenFile(path, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o644)
+	f, err := os.OpenFile(c.notify, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o644)
 	if err != nil {
 		return
 	}
@@ -116,7 +167,8 @@ func notify(line string) {
 	_ = f.Close()
 }
 
-// Hits reports how many times point has been hit since the last Reset.
+// Hits reports how many times point has been hit since the last Configure
+// or Set.
 func Hits(point string) int {
 	mu.Lock()
 	defer mu.Unlock()

@@ -32,9 +32,11 @@ func TestInterruptedDuplicateCleanupIsFinished(t *testing.T) {
 		t.Fatalf("commit: %+v, %v", res, err)
 	}
 
-	t.Setenv("DUES_FAULTS", faultinject.IngestDuplicateCleanup+"=error")
-	faultinject.Reset()
-	t.Cleanup(faultinject.Reset)
+	restore, err := faultinject.Set(faultinject.IngestDuplicateCleanup + "=error")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(restore)
 	if err := CleanupDuplicate(t.Context(), db.DB, dup); !errors.Is(err, faultinject.ErrInjected) {
 		t.Fatalf("cleanup: %v, want the injected fault", err)
 	}
@@ -42,8 +44,7 @@ func TestInterruptedDuplicateCleanupIsFinished(t *testing.T) {
 		t.Fatal("the cleanup removed the relations before the fault point")
 	}
 
-	t.Setenv("DUES_FAULTS", "")
-	faultinject.Reset()
+	restore()
 	report, err := RecoverIncompleteIngests(t.Context(), db.DB)
 	if err != nil || report.DuplicatesCleaned != 1 {
 		t.Fatalf("recovery: %+v, %v", report, err)

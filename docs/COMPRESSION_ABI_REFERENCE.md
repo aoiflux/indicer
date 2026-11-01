@@ -17,6 +17,9 @@ for scripts that call the `compression` command. It covers:
 3. The operation runs and the dispatcher returns a JSON response envelope.
 4. The host frees the response with `DuesFreeString`.
 
+Before its first request, a host may call `DuesConfigure` once to choose
+where the library logs and keeps temporary files.
+
 `compression_product` is accepted as a legacy name for `qwikpak`.
 
 ## Native ABI (FFI)
@@ -26,10 +29,47 @@ Source: `cmd/ffi/main.go`.
 ### Exported functions
 
 ```c
+char* DuesConfigure(char* configJSON);
 char* DuesDispatchJSON(char* requestJSON);
 char* DuesShutdown(long long timeout_ms);
 void  DuesFreeString(char* ptr);
 ```
+
+### DuesConfigure
+
+The library reads no environment variables; this call is its configuration.
+
+- **Input:** a NUL-terminated UTF-8 JSON object. NULL is read as `{}`.
+
+  ```json
+  { "log_dir": "C:/Users/me/AppData/Local/MyApp/logs", "temp_dir": "D:/scratch" }
+  ```
+
+  - `log_dir`: where the library logs, as the command-line tools do, in
+    rotating NDJSON files. Without it, see [Logging and output](#logging-and-output).
+  - `temp_dir`: where archive work directories and decoded containers go. It
+    must exist. Without it, `/tmp` on Unix and `AppData\Local\Temp` under the
+    user's profile on Windows.
+  - Both are optional and must be absolute. Any other key is refused.
+- **When:** once, before any other call. Without it, the first
+  `DuesDispatchJSON` or `DuesShutdown` sets up the defaults. Moving the log or
+  the temporary directory under running tasks is not safe, so a later call is
+  refused and changes nothing: `invalid_request` with `details.reason`
+  `already_configured` (it was called before) or `requests_started` (a request
+  already ran with the defaults).
+- **Output:** a response envelope. On success its result gives the
+  directories in effect; `log_dir` is empty when the library uses its default
+  log, which is created at its first entry.
+
+  ```json
+  { "version": "v1", "status": "ok", "result": { "log_dir": "C:/Users/me/AppData/Local/MyApp/logs", "temp_dir": "D:/scratch" } }
+  ```
+
+- **Failures:** a bad document is an `invalid_request` whose message starts
+  with `configuration:`. The call never returns NULL and never lets a panic
+  reach the host.
+- The library logs the configuration in effect, and where each value came
+  from, in a `settings` record.
 
 ### DuesDispatchJSON
 
@@ -65,7 +105,8 @@ cancellation. Do not unload the library while `running_tasks` is above zero.
 
 ### DuesFreeString
 
-- Call it once for every string `DuesDispatchJSON` or `DuesShutdown` returned.
+- Call it once for every string `DuesConfigure`, `DuesDispatchJSON` or
+  `DuesShutdown` returned.
 - Never free those strings with any other allocator.
 - Passing NULL does nothing.
 
@@ -86,11 +127,11 @@ table-encoder state for as long as it is loaded.
 
 The library never writes to the host's stdout or stderr.
 
-- **`DUES_LOG_DIR` set:** the library logs there, as the command-line tools
-  do, in rotating NDJSON files.
-- **Not set:** it logs only warnings and errors (recovered panics among them)
-  to the user cache directory (`dues/logs`). The file is created only when
-  there is something to write.
+- **`DuesConfigure` gave a `log_dir`:** the library logs there, as the
+  command-line tools do, in rotating NDJSON files.
+- **Otherwise:** it logs only warnings and errors (recovered panics among
+  them) to the user cache directory (`dues/logs`). The file is created only
+  when there is something to write.
 
 The library does not install a crash handler: the host owns the process.
 
@@ -174,7 +215,7 @@ Source: `internal/core/jsonbridge/jsonbridge.go`.
 
 | Code | Meaning | What a frontend does |
 |---|---|---|
-| `invalid_request` | The request is wrong: a missing or bad parameter, an input that does not exist, an unsupported format, a missing (`details.reason: password_required`) or wrong (`wrong_password`) password. | Show the message; fix the request. |
+| `invalid_request` | The request is wrong: a missing or bad parameter, an input that does not exist, an unsupported format, a missing (`details.reason: password_required`) or wrong (`wrong_password`) password. From `DuesConfigure`: a bad document, or a call that came too late (`already_configured`, `requests_started`). | Show the message; fix the request. |
 | `unknown_product`, `unknown_operation` | The envelope names something the library does not have. | Programming error. |
 | `invalid_archive` | The archive cannot be extracted here as it stands. Its data is damaged (a checksum, a split part, a stored chunk), its manifest is invalid, or entries have names that are unsafe or invalid on this system, or that collide. `details.count` and `details.entry_1` … `entry_20` name the entries. | Show the entries; the archive must be repaired or extracted elsewhere. |
 | `conflict` | With `on_conflict: error`, entries would replace existing files; or an entry is a file where a directory exists (or the reverse). The entries are named as for `invalid_archive`. Nothing was written. | Ask the user, then retry with `overwrite` or `skip`, or another output. |
@@ -640,8 +681,13 @@ Reading:
 ## The compression command
 
 ```
-compression <command> [flags]
+compression [--log-dir DIR] [--temp-dir DIR] <command> [flags]
 ```
+
+The global options come before the command. `--log-dir` chooses the log
+directory (default: the per-user cache directory). `--temp-dir` chooses where
+work directories go; it must exist (default: `/tmp`, or `AppData\Local\Temp`
+on Windows). The command reads no environment variables.
 
 | Command | Operation | Main flags |
 |---|---|---|
@@ -663,8 +709,10 @@ The command runs one request and exits, so it has no async mode. `--async`,
 
 1. `--password-file PATH`: the first line of the file.
 2. `--password-stdin`: the first line of standard input.
-3. The `DUES_PASSWORD` environment variable.
-4. `--password`: other users of the machine can see it, so the command warns.
+
+`--password` was removed, because other users of the machine can see a
+password on the command line; passing it is a usage error that names these
+two.
 
 **Output:** the response envelope goes to stdout; everything else goes to
 stderr.
@@ -679,17 +727,17 @@ stderr.
 | 70 | an internal error from a recovered panic |
 | 130 / 143 | interrupted (Ctrl-C, SIGTERM); the operation stops and removes its temporary files |
 
-**Startup cleanup:** at start, the command removes `duesarc-*` work
-directories that a killed process left under the temporary directory. A
-directory is removed only when it is unlocked and older than 24 hours. The
-library does the same before it first creates a work directory.
+**Cleanup:** before it first creates a work directory, the command removes
+`duesarc-*` work directories that a killed process left under the temporary
+directory. A directory is removed only when it is unlocked and older than 24
+hours. The library does the same.
 
 Examples:
 
 ```sh
 compression create-archive --input ./evidence --output ./evidence.duesarc --password-file ./pw
 compression create-archive --input ./evidence --format zip --split-size-mb 4000
-DUES_PASSWORD=… compression extract-archive --input ./evidence.duesarc --output ./restored --on-conflict error
+compression --temp-dir D:/scratch extract-archive --input ./evidence.duesarc --output ./restored --on-conflict error --password-file ./pw
 compression verify-archive --input ./evidence.duesarc.001 --password-stdin < ./pw
 compression decompress-file --input ./report.pdf.duesarc
 ```
@@ -711,10 +759,12 @@ typedef _FreeDart = void Function(ffi.Pointer<Utf8>);
 
 class QwikpakClient {
   QwikpakClient(ffi.DynamicLibrary lib)
-      : _dispatch = lib.lookupFunction<_DispatchNative, _DispatchDart>('DuesDispatchJSON'),
+      : _configure = lib.lookupFunction<_DispatchNative, _DispatchDart>('DuesConfigure'),
+        _dispatch = lib.lookupFunction<_DispatchNative, _DispatchDart>('DuesDispatchJSON'),
         _shutdown = lib.lookupFunction<_ShutdownNative, _ShutdownDart>('DuesShutdown'),
         _free = lib.lookupFunction<_FreeNative, _FreeDart>('DuesFreeString');
 
+  final _DispatchDart _configure;
   final _DispatchDart _dispatch;
   final _ShutdownDart _shutdown;
   final _FreeDart _free;
@@ -724,6 +774,19 @@ class QwikpakClient {
       return jsonDecode(p.toDartString()) as Map<String, dynamic>;
     } finally {
       _free(p);
+    }
+  }
+
+  /// Call once, before any other call, to choose the directories.
+  Map<String, dynamic> configure({String? logDir, String? tempDir}) {
+    final doc = jsonEncode({
+      if (logDir != null) 'log_dir': logDir,
+      if (tempDir != null) 'temp_dir': tempDir,
+    }).toNativeUtf8();
+    try {
+      return _take(_configure(doc));
+    } finally {
+      calloc.free(doc);
     }
   }
 
@@ -749,6 +812,7 @@ class QwikpakClient {
 
 ```dart
 final client = QwikpakClient(ffi.DynamicLibrary.open('dues_engine-windows-amd64.dll'));
+client.configure(logDir: 'C:/Users/me/AppData/Local/MyApp/logs');
 
 final start = client.call('create_archive', {
   'input_path': 'C:/evidence/folder',
@@ -781,6 +845,8 @@ client.shutdown();
 
 ## Integration checklist
 
+- Call `DuesConfigure` first if the app keeps its logs or temporary files in
+  a place of its own.
 - Send the full envelope with product `qwikpak`.
 - Branch on `status`, then on `error.code`. Show `error.message` and, for
   `invalid_archive` and `conflict`, the entries in `details`.

@@ -1,7 +1,6 @@
 package ui
 
 import (
-	"runtime"
 	"sync/atomic"
 
 	"indicer/internal/console"
@@ -11,6 +10,9 @@ import (
 
 var current atomic.Pointer[Mode]
 
+// termSize is console.Size; tests set a width with withWidth.
+var termSize = console.Size
+
 // Before Setup (tests, the FFI library, the compression product) nothing
 // is a terminal: no colour, no motion, no fun.
 func init() { current.Store(&Mode{}) }
@@ -18,12 +20,12 @@ func init() { current.Store(&Mode{}) }
 // Current is the Mode decided by Setup.
 func Current() Mode { return *current.Load() }
 
-// Setup decides what this process shows, from the flags PreScan found and
-// the environment (os.Environ form). Main calls it before anything prints;
-// the returned function undoes it on the way out.
-func Setup(o Options, env []string) (teardown func()) {
+// Setup decides what this process shows, from the flags PreScan found.
+// Main calls it before anything prints; the returned function undoes it on
+// the way out.
+func Setup(o Options) (teardown func()) {
 	prev := current.Load()
-	m := Resolve(o, env, console.Detect(), runtime.GOOS)
+	m := Resolve(o, console.Detect())
 	restoreVT := func() {}
 	if m.Out.TTY || m.Err.TTY {
 		var outOK, errOK bool

@@ -49,7 +49,7 @@ func Message(w io.Writer, l Level, text string) {
 		role, mark = Error, g.Fail
 	}
 	if !p.Decorated() {
-		// The label is coloured only under --color=always or FORCE_COLOR.
+		// The label is coloured only under --color=always.
 		fmt.Fprintf(w, "dues: %s %s\n", p.Strong(role, l.label()+":"), text)
 		return
 	}

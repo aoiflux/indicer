@@ -22,6 +22,8 @@ type DBOptions struct {
 	Path   string
 	Creds  dbmeta.Credentials
 	Layout dbopen.Requested
+	// TempDir is --temp-dir; empty means osdirs.Temp.
+	TempDir string
 }
 
 // LegacyKeyOptions builds DBOptions from the old (chunk size, path, key)
@@ -46,6 +48,7 @@ func Common(ctx context.Context, opts DBOptions, mode dbopen.Mode, recover bool)
 		Creds:     opts.Creds,
 		Layout:    opts.Layout,
 		WrittenBy: "dues",
+		TempDir:   opts.TempDir,
 	})
 	if err != nil {
 		return nil, err

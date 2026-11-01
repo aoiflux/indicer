@@ -47,7 +47,7 @@ func defaultRunConfig() runConfig {
 	cfg := runConfig{
 		mode: renderPlain, now: time.Now, tick: 250 * time.Millisecond,
 		heartbeat: 15 * time.Second, hold: 250 * time.Millisecond,
-		size: console.Size, painter: For(console.Progress()), progress: console.Progress(),
+		size: termSize, painter: For(console.Progress()), progress: console.Progress(),
 		wrap: console.Wrap, taskbarDelay: time.Second,
 	}
 	switch {

@@ -16,8 +16,8 @@ import (
 // TestOutputContract runs DUES with pipes, as scripts do, and holds it to
 // its output contract (docs/CLI_UX.md): results on stdout, everything else
 // on stderr; nothing decorated on a pipe; colour only when asked for.
-// testutil.RunDuesEnv also fails any run that writes an escape code to a
-// pipe without asking for colour.
+// testutil.RunDues also fails any run that writes an escape code to a pipe
+// without asking for colour.
 func TestOutputContract(t *testing.T) {
 	bin := testutil.BuildDues(t)
 	work := t.TempDir()
@@ -38,10 +38,10 @@ func TestOutputContract(t *testing.T) {
 	if strings.Contains(r.Stdout, "dues: store:") || !strings.Contains(r.Stdout, "Stored as evidence ") {
 		t.Errorf("store stdout is not the report alone:\n%s", r.Stdout)
 	}
-	// Under a terminal that shows taskbar progress, a pipe still gets none:
-	// RunDuesEnv fails any escape code on it.
-	if r := testutil.RunDuesEnv(t, bin, work, time.Minute, []string{"WT_SESSION=e2e"}, "store", ev, "--dbpath", db); r.ExitCode != 0 {
-		t.Errorf("store under WT_SESSION: exit %d\n%s", r.ExitCode, r.Combined())
+	// Asked for taskbar progress, a pipe still gets none: RunDues fails
+	// any escape code on it.
+	if r := testutil.RunDues(t, bin, work, time.Minute, "--taskbar", "store", ev, "--dbpath", db); r.ExitCode != 0 {
+		t.Errorf("store --taskbar: exit %d\n%s", r.ExitCode, r.Combined())
 	}
 
 	for _, args := range [][]string{{"list"}, {"micro", "list"}} {
@@ -56,27 +56,21 @@ func TestOutputContract(t *testing.T) {
 	}
 
 	// The unencrypted-database note on stderr shows whether colour is on.
-	note := func(env []string, args ...string) string {
+	note := func(args ...string) string {
 		t.Helper()
-		r := testutil.RunDuesEnv(t, bin, work, time.Minute, env, append(args, "list", "--dbpath", db)...)
+		r := testutil.RunDues(t, bin, work, time.Minute, append(args, "list", "--dbpath", db)...)
 		if r.ExitCode != 0 {
-			t.Fatalf("list %v %v: exit %d\n%s", env, args, r.ExitCode, r.Combined())
+			t.Fatalf("list %v: exit %d\n%s", args, r.ExitCode, r.Combined())
 		}
 		return r.Stderr
 	}
-	if s := note(nil, "--color=always"); !strings.Contains(s, "\x1b[") {
+	if s := note("--color=always"); !strings.Contains(s, "\x1b[") {
 		t.Errorf("--color=always: no colour on a piped stderr:\n%q", s)
 	}
-	if s := note([]string{"FORCE_COLOR=1"}); !strings.Contains(s, "\x1b[") {
-		t.Errorf("FORCE_COLOR=1: no colour on a piped stderr:\n%q", s)
-	}
-	if s := note([]string{"FORCE_COLOR=1", "NO_COLOR=yes"}); strings.Contains(s, "\x1b") {
-		t.Errorf("NO_COLOR=yes did not beat FORCE_COLOR:\n%q", s)
-	}
-	if s := note([]string{"FORCE_COLOR=1"}, "--color=never"); strings.Contains(s, "\x1b") {
-		t.Errorf("--color=never did not beat FORCE_COLOR:\n%q", s)
-	}
-	if s := note(nil, "--plain"); !strings.Contains(s, "dues: note: ") {
+	// RunDues fails these if they write an escape code.
+	note("--color=truecolor")
+	note("--color=never")
+	if s := note("--plain"); !strings.Contains(s, "dues: note: ") {
 		t.Errorf("--plain: note not in plain form:\n%q", s)
 	}
 

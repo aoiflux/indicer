@@ -19,12 +19,14 @@ import (
 	"log"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 	"sync/atomic"
 
 	"go.uber.org/zap"
 	"go.uber.org/zap/zapcore"
 
+	"indicer/internal/osdirs"
 	"indicer/internal/safe"
 )
 
@@ -34,14 +36,13 @@ const (
 	// DefaultKeep is how many log files are kept per directory, the current
 	// one included.
 	DefaultKeep = 10
-	// EnvDir names the environment variable that sets the log directory.
-	EnvDir = "DUES_LOG_DIR"
 )
 
 // Config controls Init.
 type Config struct {
 	Component string // file prefix and "component" field; "dues" when empty
 	Dir       string // explicit directory (--log-dir); empty to resolve one
+	TempDir   string // --temp-dir, for the last-resort log directory; empty for osdirs.Temp
 	Debug     bool
 	MaxBytes  int64     // rotation size; DefaultMaxBytes when zero
 	Keep      int       // files kept; DefaultKeep when zero
@@ -74,25 +75,31 @@ var (
 	nop     = &state{logger: zap.NewNop(), sugar: zap.NewNop().Sugar()}
 )
 
-// dirCandidates lists where a log may go, in order. Tests replace it.
-var dirCandidates = func(explicit string) []string {
+// dirCandidates lists where a log may go, in order: the explicit
+// directory, the per-user cache, then a per-user directory under the
+// temporary directory. Tests replace it.
+var dirCandidates = func(explicit, tempDir string) []string {
 	var dirs []string
 	if explicit != "" {
 		dirs = append(dirs, explicit)
 	}
-	if env := os.Getenv(EnvDir); env != "" {
-		dirs = append(dirs, env)
+	if dir, err := osdirs.LogDir(); err == nil {
+		dirs = append(dirs, dir)
 	}
-	if cache, err := os.UserCacheDir(); err == nil {
-		dirs = append(dirs, filepath.Join(cache, "dues", "logs"))
+	if temp, err := osdirs.TempOr(tempDir); err == nil {
+		dirs = append(dirs, filepath.Join(temp, "dues-"+tempUser(), "logs"))
 	}
-	user := "user"
-	if u := os.Getenv("USER"); u != "" {
-		user = u
-	} else if u := os.Getenv("USERNAME"); u != "" {
-		user = u
+	return dirs
+}
+
+// tempUser names the per-user log directory under the temporary directory:
+// the account name, or "user" when there is none usable as a file name.
+func tempUser() string {
+	name, err := osdirs.UserName()
+	if err != nil || name == "." || name == ".." || strings.ContainsAny(name, `/\`) {
+		return "user"
 	}
-	return append(dirs, filepath.Join(os.TempDir(), "dues-"+user, "logs"))
+	return name
 }
 
 func newRunID() string {
@@ -127,9 +134,9 @@ func Init(cfg Config) Info {
 		errs []error
 	)
 	if cfg.Lazy {
-		out = lazyRotating(dirCandidates(cfg.Dir), cfg.Component, cfg.MaxBytes, cfg.Keep, cfg.Stderr)
+		out = lazyRotating(dirCandidates(cfg.Dir, cfg.TempDir), cfg.Component, cfg.MaxBytes, cfg.Keep, cfg.Stderr)
 	}
-	for _, dir := range dirCandidates(cfg.Dir) {
+	for _, dir := range dirCandidates(cfg.Dir, cfg.TempDir) {
 		if out != nil {
 			break
 		}
@@ -239,6 +246,40 @@ func WithField(key string, value interface{}) *zap.Logger {
 // WithFields returns a logger with fields attached.
 func WithFields(fields ...zap.Field) *zap.Logger {
 	return GetLogger().With(fields...)
+}
+
+// Where a setting in a "settings" record came from.
+const (
+	FromFlag    = "flag"
+	FromConfig  = "config"
+	FromDefault = "default"
+)
+
+// Setting is one entry of a "settings" record: the value a setting has in
+// this run and where it came from (FromFlag, FromConfig or FromDefault).
+// Each program logs one such record once its configuration is read, so
+// its log answers what a run was configured with. The core redacts only
+// top-level fields, so the entry's own fields are redacted here.
+func Setting(name string, value any, from string, extra ...zap.Field) zap.Field {
+	fields := append([]zap.Field{zap.Any("value", value), zap.String("source", from)}, extra...)
+	return zap.Dict(name, redactFields(fields)...)
+}
+
+// DirSetting is the "settings" entry for the log directory: the one in
+// effect and, when the one given could not be written and logging fell
+// back, the one given.
+func DirSetting(name, given, from string) zap.Field {
+	dir := Current().Dir
+	if given != "" && !sameDir(dir, given) {
+		return Setting(name, dir, from, zap.String("given", given))
+	}
+	return Setting(name, dir, from)
+}
+
+func sameDir(a, b string) bool {
+	ai, errA := os.Stat(a)
+	bi, errB := os.Stat(b)
+	return errA == nil && errB == nil && os.SameFile(ai, bi)
 }
 
 // DebugFunc logs entry to and exit from a function.

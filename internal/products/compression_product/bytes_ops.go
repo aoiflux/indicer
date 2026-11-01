@@ -146,7 +146,7 @@ func (s *Service) decompressFile(ctx context.Context, req fileReq, report progre
 		emitProgress(report, "finalizing", 98, "finalizing decompress file")
 		return fileRes{InputPath: input, OutputPath: out, OriginalBytes: int(written), CompressedBytes: int(size), Format: "zstd"}, nil
 	case isZipSignature(head) && isDuesarc(input):
-		written, err := decompressDuesarcFile(ctx, input, out, req.Password, limits, report)
+		written, err := decompressDuesarcFile(ctx, s.temp, input, out, req.Password, limits, report)
 		if err != nil {
 			return fileRes{}, opError(ctx, err, errDecompressFailed)
 		}
@@ -184,7 +184,7 @@ func decompressZstdFile(ctx context.Context, input, out string, size int64, limi
 }
 
 // decompressDuesarcFile extracts a .duesarc archive's only file to out.
-func decompressDuesarcFile(ctx context.Context, input, out, password string, limits Limits, report progressReporter) (int64, error) {
+func decompressDuesarcFile(ctx context.Context, temp *tempRoot, input, out, password string, limits Limits, report progressReporter) (int64, error) {
 	if err := os.MkdirAll(filepath.Dir(out), defaultDirPerm); err != nil {
 		return 0, err
 	}
@@ -193,7 +193,7 @@ func decompressDuesarcFile(ctx context.Context, input, out, password string, lim
 		return 0, err
 	}
 	defer func() { _ = fsx.RetryBusy(func() error { return os.RemoveAll(tmp) }) }()
-	res, err := extractDuesarc(ctx, input, tmp, password, conflictError, limits, report)
+	res, err := extractDuesarc(ctx, temp, input, tmp, password, conflictError, limits, report)
 	if err != nil {
 		return 0, err
 	}

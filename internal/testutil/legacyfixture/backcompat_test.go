@@ -87,7 +87,7 @@ func mustRun(t *testing.T, dir, bin string, args ...string) string {
 
 func restoreAndCheck(t *testing.T, f Fixture, bin, work, db, hash, out string, want VolumeFile) {
 	t.Helper()
-	mustRun(t, work, bin, append([]string{"restore", hash, "-f", out, "--dbpath", db}, f.ReadFlags()...)...)
+	mustRun(t, work, bin, append([]string{"restore", hash, "-f", out, "--dbpath", db}, f.ReadFlags(t)...)...)
 	got, size, err := fileSHA256(out)
 	if err != nil || got != want.SHA256 || size != want.Size {
 		t.Fatalf("restore of %s: %d bytes, sha256 %s, %v; want %d bytes, %s", hash, size, got, err, want.Size, want.SHA256)
@@ -113,7 +113,7 @@ func TestLegacyReadsChangeNothing(t *testing.T) {
 				reads = append(reads, []string{"restore", r.Hash, "-f", filepath.Join(work, "restored.bin")})
 			}
 			for _, args := range reads {
-				args = append(append(args, "--dbpath", db), f.ReadFlags()...)
+				args = append(append(args, "--dbpath", db), f.ReadFlags(t)...)
 				out, err := runIn(work, bin, args...)
 				var exit *exec.ExitError
 				// A search reports what it could not read (the container
@@ -145,7 +145,7 @@ func TestStoreIntoLegacyDatabase(t *testing.T) {
 			db := Extract(t, f)
 			work := t.TempDir()
 			src := testutil.WriteRandomFile(t, work, "new.bin", 99, 700<<10)
-			mustRun(t, work, bin, append([]string{"store", src, "--dbpath", db}, f.ReadFlags()...)...)
+			mustRun(t, work, bin, append([]string{"store", src, "--dbpath", db}, f.ReadFlags(t)...)...)
 
 			m, err := dbmeta.Load(db)
 			if err != nil {
@@ -155,7 +155,7 @@ func TestStoreIntoLegacyDatabase(t *testing.T) {
 				t.Fatalf("manifest %+v: a legacy database must keep its encoding", m.Layout)
 			}
 
-			out := mustRun(t, work, bin, append([]string{"list", "--dbpath", db}, f.ReadFlags()...)...)
+			out := mustRun(t, work, bin, append([]string{"list", "--dbpath", db}, f.ReadFlags(t)...)...)
 			var doc struct {
 				Evidence []struct {
 					Name, Hash, Status string
@@ -198,7 +198,7 @@ func TestLegacyE01AfterUpgrade(t *testing.T) {
 		}
 		db := Extract(t, f)
 		work := t.TempDir()
-		mustRun(t, work, bin, append([]string{"repair", "--upgrade", "--yes", "--dbpath", db}, f.ReadFlags()...)...)
+		mustRun(t, work, bin, append([]string{"repair", "--upgrade", "--yes", "--dbpath", db}, f.ReadFlags(t)...)...)
 		r, want, ok := goodRestore(f)
 		if !ok {
 			t.Fatal("the e01 fixture has no restore its release got right")

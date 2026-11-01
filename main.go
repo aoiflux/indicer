@@ -9,8 +9,10 @@ import (
 	"indicer/internal/console"
 	"indicer/internal/crash"
 	"indicer/internal/lifecycle"
+	"indicer/internal/osdirs"
 	"indicer/internal/ui"
 	"indicer/lib/cnst"
+	"indicer/lib/fio"
 	"indicer/lib/logging"
 	"indicer/lib/store"
 	"os"
@@ -57,16 +59,20 @@ func realMain(args []string) (code int) {
 	// Presentation is decided first: help and version print before kingpin
 	// parses, and must already honour --color, --plain and --ci.
 	uiOpts, helpArgs := ui.PreScan(args)
-	defer ui.Setup(uiOpts, os.Environ())()
+	defer ui.Setup(uiOpts)()
 
 	if maybeHandleHelp(helpArgs) {
 		return lifecycle.ExitOK
 	}
 
+	// The log and the crash file exist before kingpin parses, so a parse
+	// error is logged too; their flags are read from the raw arguments.
+	tempDir := flagFromArgs(args, flagTempDir)
 	logInfo := logging.Init(logging.Config{
 		Component: "dues",
-		Dir:       logDirFromArgs(args),
-		Debug:     os.Getenv("DUES_DEBUG") != "",
+		Dir:       flagFromArgs(args, flagLogDir),
+		TempDir:   tempDir,
+		Debug:     boolFlagFromArgs(args, flagDebug),
 		// Warnings about the log itself go through console, so they print
 		// above a progress display instead of through it.
 		Stderr: console.ErrSink,
@@ -75,9 +81,13 @@ func realMain(args []string) (code int) {
 
 	crashDir := logInfo.Dir
 	if crashDir == "" {
-		crashDir = filepath.Join(os.TempDir(), "dues-crash")
+		if temp, err := osdirs.TempOr(tempDir); err == nil {
+			crashDir = filepath.Join(temp, "dues-crash")
+		}
 	}
-	if _, err := crash.Setup(crashDir, logInfo.RunID); err != nil {
+	if crashDir == "" {
+		logging.GetLogger().Warn("crash output not captured: no log or temporary directory")
+	} else if _, err := crash.Setup(crashDir, logInfo.RunID); err != nil {
 		logging.GetLogger().Warn("crash output not captured", zap.Error(err))
 	}
 	defer crash.Finish()
@@ -114,10 +124,10 @@ func realMain(args []string) (code int) {
 	return lifecycle.ExitCode(err)
 }
 
-// logDirFromArgs finds --log-dir before kingpin parses the command line,
-// because the log must exist before parsing can fail.
-func logDirFromArgs(args []string) string {
-	flag := "--" + flagLogDir
+// flagFromArgs finds the value of a string flag (--name V or --name=V)
+// before kingpin parses the command line. kingpin validates it later.
+func flagFromArgs(args []string, name string) string {
+	flag := "--" + name
 	for i, a := range args {
 		if a == "--" {
 			break
@@ -130,6 +140,40 @@ func logDirFromArgs(args []string) string {
 		}
 	}
 	return ""
+}
+
+// boolFlagFromArgs finds a boolean flag (--name, or --no-name to undo it;
+// the last one counts) before kingpin parses the command line.
+func boolFlagFromArgs(args []string, name string) bool {
+	on := false
+	for _, a := range args {
+		if a == "--" {
+			break
+		}
+		switch a {
+		case "--" + name:
+			on = true
+		case "--no-" + name:
+			on = false
+		}
+	}
+	return on
+}
+
+// checkTempDir fails fast on a --temp-dir that is not an existing
+// directory, before anything is written there.
+func checkTempDir(dir string) error {
+	if dir == "" {
+		return nil
+	}
+	info, err := os.Stat(dir)
+	if err != nil {
+		return lifecycle.Usagef("--%s: %v", flagTempDir, err)
+	}
+	if !info.IsDir() {
+		return lifecycle.Usagef("--%s %s is not a directory", flagTempDir, dir)
+	}
+	return nil
 }
 
 func run(args []string) error {
@@ -157,6 +201,17 @@ func run(args []string) error {
 	if err != nil {
 		return lifecycle.Usagef("%v (see dues --help)", err)
 	}
+	if err := cliDef.faults.apply(); err != nil {
+		return err
+	}
+
+	tempDir := *cliDef.flags.tempDir
+	if err := checkTempDir(tempDir); err != nil {
+		return err
+	}
+	// Restores share one container cache per process, so its spill
+	// directory is a process setting.
+	fio.SetContainerSpillDir(tempDir)
 
 	tuning, err := applyRuntimeConfig(parsed, args, cliDef)
 	if err != nil {
@@ -171,15 +226,12 @@ func run(args []string) error {
 		return err
 	}
 
-	creds, warnings, err := resolveCredentials(cliDef.flags, tuning.layout.Set, os.Stdin)
+	creds, err := resolveCredentials(cliDef.flags, tuning.layout.Set, os.Stdin)
 	if err != nil {
 		return err
 	}
-	for _, w := range warnings {
-		logging.GetLogger().Warn("credentials", zap.String("detail", w))
-		ui.Warnf("%s", w)
-	}
-	dbOpts := cli.DBOptions{Path: *cliDef.flags.dbpath, Creds: creds, Layout: tuning.layout}
+	dbOpts := cli.DBOptions{Path: *cliDef.flags.dbpath, Creds: creds, Layout: tuning.layout, TempDir: tempDir}
+	logSettings(cliDef.flags, tuning.layout.Set)
 
 	printRunHeader(parsed, cliDef, tuning)
 
@@ -401,13 +453,9 @@ func buildCommandHandlers(cliDef cliDefinition, dbOpts cli.DBOptions, tuning pip
 		cliDef.commands.mew.FullCommand():     func(context.Context) error { ui.Meow(); return nil },
 		cliDef.commands.server.FullCommand(): func(ctx context.Context) error {
 			logging.GetLogger().Info("Command: server", zap.String("dbpath", *cliDef.flags.dbpath), zap.Int("chonksize_kb", *cliDef.flags.chonkSize))
-			token, warnings, err := resolveServerToken(cliDef.flags)
+			token, err := resolveServerToken(cliDef.flags, tuning.layout.Set)
 			if err != nil {
 				return err
-			}
-			for _, w := range warnings {
-				logging.GetLogger().Warn("server token", zap.String("detail", w))
-				ui.Warnf("%s", w)
 			}
 			return api.Server(ctx, dbOpts, api.Options{
 				Listen:      *cliDef.flags.serverListen,

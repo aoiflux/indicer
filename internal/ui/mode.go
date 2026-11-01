@@ -2,16 +2,16 @@
 // progress and the small extras.
 //
 // It decides once per process what each standard stream may show, from
-// the command line, the environment and what internal/console reports
-// about the streams. It never asks the terminal itself: background and
-// capability queries are slow over SSH and leave stray bytes in the shell.
-// It writes only through internal/console, so the TUI, the FFI library
-// and the compression product can still redirect or silence it.
+// the command line and what internal/console reports about the streams.
+// It reads no environment variable: NO_COLOR, TERM, CI and the like are
+// replaced by --color, --plain and --ci, so the same command line looks
+// the same everywhere. The CLI never asks the terminal anything either:
+// queries are slow over SSH and leave stray bytes in the shell. It writes
+// only through internal/console, so the TUI, the FFI library and the
+// compression product can still redirect or silence it.
 package ui
 
 import (
-	"slices"
-	"strconv"
 	"strings"
 
 	"indicer/internal/console"
@@ -21,41 +21,72 @@ import (
 
 // Flag names, shared by PreScan and the kingpin definition.
 const (
-	FlagColor = "color"
-	FlagPlain = "plain"
-	FlagCI    = "ci"
-	FlagNoFun = "no-fun"
+	FlagColor   = "color"
+	FlagPlain   = "plain"
+	FlagCI      = "ci"
+	FlagNoFun   = "no-fun"
+	FlagTheme   = "theme"
+	FlagTaskbar = "taskbar"
 )
 
-// ColorPolicy is the --color setting (or DUES_COLOR).
+// ColorPolicy is the --color setting.
 type ColorPolicy string
 
 const (
+	// ColorAuto is 256 colours on a terminal and none elsewhere.
 	ColorAuto   ColorPolicy = "auto"
 	ColorAlways ColorPolicy = "always"
 	ColorNever  ColorPolicy = "never"
 	// ColorANSI keeps colour but uses only the terminal theme's own 16
 	// colours, so high-contrast and colour-blind themes stay in charge.
 	ColorANSI ColorPolicy = "ansi"
+	// ColorTrueColor is 24-bit colour on a terminal.
+	ColorTrueColor ColorPolicy = "truecolor"
 )
 
 // ColorPolicies lists the accepted --color values.
-var ColorPolicies = []string{string(ColorAuto), string(ColorAlways), string(ColorNever), string(ColorANSI)}
+var ColorPolicies = []string{string(ColorAuto), string(ColorAlways), string(ColorNever), string(ColorANSI), string(ColorTrueColor)}
 
 func parseColorPolicy(s string) ColorPolicy {
 	switch p := ColorPolicy(strings.ToLower(strings.TrimSpace(s))); p {
-	case ColorAuto, ColorAlways, ColorNever, ColorANSI:
+	case ColorAuto, ColorAlways, ColorNever, ColorANSI, ColorTrueColor:
 		return p
 	}
 	return ""
 }
 
+// Theme is the terminal background, when DUES is told it.
+type Theme uint8
+
+const (
+	// ThemeUnknown (--theme auto) uses the neutral palette, readable on
+	// dark and light. The TUI asks the terminal instead.
+	ThemeUnknown Theme = iota
+	ThemeDark
+	ThemeLight
+)
+
+// ThemeNames lists the accepted --theme values.
+var ThemeNames = []string{"auto", "dark", "light"}
+
+func parseTheme(s string) Theme {
+	switch strings.ToLower(strings.TrimSpace(s)) {
+	case "dark":
+		return ThemeDark
+	case "light":
+		return ThemeLight
+	}
+	return ThemeUnknown
+}
+
 // Options are the presentation switches given on the command line.
 type Options struct {
-	Color ColorPolicy // empty when --color was not given
-	Plain bool        // --plain: no colour, ASCII, no animation
-	CI    bool        // --ci: behave as if no terminal is attached
-	NoFun bool        // --no-fun: no easter eggs
+	Color   ColorPolicy // empty when --color was not given
+	Plain   bool        // --plain: no colour, ASCII, no animation
+	CI      bool        // --ci: behave as if no terminal is attached
+	NoFun   bool        // --no-fun: no easter eggs
+	Theme   Theme       // --theme; ThemeUnknown for auto
+	Taskbar bool        // --taskbar: progress on the terminal's tab (OSC 9;4)
 }
 
 // PreScan reads the presentation flags from the raw arguments and returns
@@ -65,6 +96,20 @@ type Options struct {
 func PreScan(args []string) (Options, []string) {
 	var o Options
 	rest := make([]string, 0, len(args))
+	// value reads a flag's value, given as --name=V or --name V.
+	value := func(i *int, a, name string) (string, bool) {
+		if v, ok := strings.CutPrefix(a, "--"+name+"="); ok {
+			return v, true
+		}
+		if a == "--"+name {
+			if *i+1 < len(args) {
+				*i++
+				return args[*i], true
+			}
+			return "", true
+		}
+		return "", false
+	}
 	for i := 0; i < len(args); i++ {
 		a := args[i]
 		if a == "--" {
@@ -82,17 +127,18 @@ func PreScan(args []string) (Options, []string) {
 			o.CI = false
 		case "--" + FlagNoFun:
 			o.NoFun = true
-		case "--" + FlagColor:
-			if i+1 < len(args) {
-				i++
-				o.Color = parseColorPolicy(args[i])
-			}
+		case "--" + FlagTaskbar:
+			o.Taskbar = true
+		case "--no-" + FlagTaskbar:
+			o.Taskbar = false
 		default:
-			if v, ok := strings.CutPrefix(a, "--"+FlagColor+"="); ok {
+			if v, ok := value(&i, a, FlagColor); ok {
 				o.Color = parseColorPolicy(v)
-				continue
+			} else if v, ok := value(&i, a, FlagTheme); ok {
+				o.Theme = parseTheme(v)
+			} else {
+				rest = append(rest, a)
 			}
-			rest = append(rest, a)
 		}
 	}
 	return o, rest
@@ -102,32 +148,19 @@ func PreScan(args []string) (Options, []string) {
 type GlyphSet uint8
 
 const (
-	// GlyphsASCII is plain ASCII: --plain, dumb terminals, non-UTF-8
-	// locales, and East Asian locales, where box drawing is often drawn
-	// double width.
+	// GlyphsASCII is plain ASCII, under --plain: for screen readers, the
+	// Windows console host's raster fonts, dumb terminals and terminals
+	// that draw box drawing two columns wide.
 	GlyphsASCII GlyphSet = iota
-	// GlyphsConsole is the Windows console host without a modern terminal
-	// around it: no font fallback, so ASCII marks plus the CP437 blocks.
-	GlyphsConsole
 	// GlyphsFull is Unicode marks, the braille spinner and box drawing.
 	GlyphsFull
 )
 
-// Theme is the terminal background, when DUES is told it.
-type Theme uint8
-
-const (
-	// ThemeUnknown uses the neutral palette, readable on dark and light.
-	ThemeUnknown Theme = iota
-	ThemeDark
-	ThemeLight
-)
-
 // Caps is what one output stream may show.
 type Caps struct {
-	TTY bool // a terminal (false for every stream under --ci and in CI)
+	TTY bool // a terminal (false for every stream under --ci)
 	// Profile is the colour depth. NoTTY means no escape codes at all
-	// (--plain, pipes); Ascii means no colour but bold is fine (NO_COLOR).
+	// (--plain, --color never, pipes).
 	Profile colorprofile.Profile
 	Glyphs  GlyphSet
 	// Motion allows redraws, spinners and animations.
@@ -152,205 +185,50 @@ type Mode struct {
 // go build -ldflags "-X indicer/internal/ui.funDefault=off".
 var funDefault = "on"
 
-// ciVariables are set by CI services; any of them means no human watches.
-var ciVariables = []string{"CI", "GITHUB_ACTIONS", "GITLAB_CI", "BUILDKITE", "JENKINS_URL", "TF_BUILD", "TEAMCITY_VERSION"}
-
-// Resolve decides the Mode from the flags, the environment (os.Environ
-// form), the streams' terminal state and the operating system.
-func Resolve(o Options, env []string, t console.Terminal, goos string) Mode {
-	e := newEnviron(env, goos)
-	m := Mode{Plain: o.Plain || truthy(e.get("DUES_PLAIN"))}
-	for _, v := range ciVariables {
-		if truthy(e.get(v)) {
-			m.CI = true
-		}
-	}
-	m.CI = m.CI || o.CI
+// Resolve decides the Mode from the flags and the streams' terminal state.
+func Resolve(o Options, t console.Terminal) Mode {
+	m := Mode{Plain: o.Plain, CI: o.CI, Theme: o.Theme}
 	if m.CI {
 		t = console.Terminal{}
 	}
-	dumb := e.get("TERM") == "dumb"
-
-	policy := o.Color
-	if policy == "" {
-		policy = parseColorPolicy(e.get("DUES_COLOR"))
+	glyphs := GlyphsFull
+	if m.Plain {
+		glyphs = GlyphsASCII
 	}
-	glyphs := glyphSet(e, goos, m.Plain || dumb)
 	stream := func(tty bool) Caps {
 		return Caps{
 			TTY:     tty,
-			Profile: profile(policy, e, tty, m.Plain),
+			Profile: profile(o.Color, tty, m.Plain),
 			Glyphs:  glyphs,
-			Motion:  tty && !m.Plain && !dumb,
+			Motion:  tty && !m.Plain,
 		}
 	}
 	m.Out, m.Err = stream(t.OutTTY), stream(t.ErrTTY)
-	m.Theme = theme(e)
 	m.Interactive = t.InTTY
-	m.Fun = m.Err.Motion && t.InTTY && t.OutTTY && !o.NoFun &&
-		!truthy(e.get("DUES_NO_FUN")) && funDefault != "off"
-	m.Taskbar = m.Err.Motion && taskbarTerminal(e)
+	m.Fun = m.Err.Motion && t.InTTY && t.OutTTY && !o.NoFun && funDefault != "off"
+	// Only the user knows whether the terminal shows OSC 9;4 (Windows
+	// Terminal and ConEmu do; iTerm2 takes it for a notification).
+	m.Taskbar = m.Err.Motion && o.Taskbar
 	return m
 }
 
-// taskbarTerminal reports whether the terminal shows OSC 9;4 progress:
-// Windows Terminal and ConEmu do. Not inside tmux or screen, which pass it
-// on to whatever terminal they run in, and not under another terminal that
-// set TERM_PROGRAM: VS Code or mintty started from Windows Terminal inherit
-// WT_SESSION, and iTerm2 takes OSC 9 for a notification.
-func taskbarTerminal(e environ) bool {
-	return (e.get("WT_SESSION") != "" || e.get("ConEmuANSI") == "ON") &&
-		e.get("TERM_PROGRAM") == "" && e.get("TMUX") == "" && e.get("STY") == ""
-}
-
-// profile picks a stream's colour depth. Precedence: --color, DUES_COLOR,
-// --plain (no escape codes at all), NO_COLOR (any value, per no-color.org:
-// no colour, bold still allowed), CLICOLOR_FORCE and FORCE_COLOR, then the
-// terminal type from the environment.
-func profile(policy ColorPolicy, e environ, tty, plain bool) colorprofile.Profile {
-	if policy == ColorNever {
+// profile picks a stream's colour depth. Nothing in the environment says
+// what the terminal can show, so a terminal gets 256 colours, which every
+// current terminal and tmux shows: --color truecolor asks for 24-bit and
+// --color ansi for the theme's 16. A pipe, --plain and --color never get no
+// escape codes; --color always colours a pipe too.
+func profile(policy ColorPolicy, tty, plain bool) colorprofile.Profile {
+	switch {
+	case policy == ColorNever:
 		return colorprofile.NoTTY
+	case policy == ColorAlways:
+		return colorprofile.ANSI256
+	case !tty || plain:
+		return colorprofile.NoTTY
+	case policy == ColorTrueColor:
+		return colorprofile.TrueColor
+	case policy == ColorANSI:
+		return colorprofile.ANSI
 	}
-	forced := policy == ColorAlways
-	if !forced {
-		if plain {
-			return colorprofile.NoTTY
-		}
-		if e.get("NO_COLOR") != "" {
-			if tty {
-				return colorprofile.Ascii
-			}
-			return colorprofile.NoTTY
-		}
-		forced = truthy(e.get("CLICOLOR_FORCE")) || truthy(e.get("FORCE_COLOR"))
-		if !tty && !forced {
-			return colorprofile.NoTTY
-		}
-	}
-	// colorprofile.Env reads the terminal type from the environment only.
-	// colorprofile.Detect is not used: inside tmux it runs `tmux info` and
-	// it reads terminfo files, too slow for every start. NO_COLOR is
-	// settled above, and here it must not undo --color=always.
-	p := colorprofile.Env(e.without("NO_COLOR"))
-	if forced && p < colorprofile.ANSI {
-		p = colorprofile.ANSI
-	}
-	if policy == ColorANSI && p > colorprofile.ANSI {
-		p = colorprofile.ANSI
-	}
-	return p
-}
-
-func glyphSet(e environ, goos string, ascii bool) GlyphSet {
-	if ascii || eastAsian(e) {
-		return GlyphsASCII
-	}
-	if goos == "windows" {
-		// Go writes to consoles in UTF-16, so the locale does not matter;
-		// the font does. Windows Terminal, VS Code and ConEmu fall back to
-		// other fonts for missing glyphs; the plain console host does not.
-		if e.get("WT_SESSION") != "" || e.get("TERM_PROGRAM") != "" || e.get("ConEmuANSI") == "ON" {
-			return GlyphsFull
-		}
-		return GlyphsConsole
-	}
-	loc := locale(e)
-	if loc == "" {
-		if goos == "darwin" {
-			return GlyphsFull
-		}
-		return GlyphsASCII
-	}
-	l := strings.ToLower(loc)
-	if strings.Contains(l, "utf-8") || strings.Contains(l, "utf8") {
-		return GlyphsFull
-	}
-	return GlyphsASCII
-}
-
-func locale(e environ) string {
-	for _, k := range []string{"LC_ALL", "LC_CTYPE", "LANG"} {
-		if v := e.get(k); v != "" {
-			return v
-		}
-	}
-	return ""
-}
-
-// eastAsian follows go-runewidth: RUNEWIDTH_EASTASIAN decides when set,
-// otherwise a Chinese, Japanese or Korean locale does. Those terminals
-// often draw box-drawing characters two columns wide.
-func eastAsian(e environ) bool {
-	switch e.get("RUNEWIDTH_EASTASIAN") {
-	case "1":
-		return true
-	case "0":
-		return false
-	}
-	l := strings.ToLower(locale(e))
-	return strings.HasPrefix(l, "ja") || strings.HasPrefix(l, "ko") || strings.HasPrefix(l, "zh")
-}
-
-// theme reads DUES_THEME, then COLORFGBG ("fg;bg", rxvt convention: bg 0-6
-// or 8 is dark, 7 or 9-15 is light).
-func theme(e environ) Theme {
-	switch strings.ToLower(e.get("DUES_THEME")) {
-	case "dark":
-		return ThemeDark
-	case "light":
-		return ThemeLight
-	}
-	if v := e.get("COLORFGBG"); v != "" {
-		bg := v[strings.LastIndexByte(v, ';')+1:]
-		if n, err := strconv.Atoi(bg); err == nil && n >= 0 && n <= 15 {
-			if n == 7 || n >= 9 {
-				return ThemeLight
-			}
-			return ThemeDark
-		}
-	}
-	return ThemeUnknown
-}
-
-func truthy(v string) bool {
-	v = strings.TrimSpace(v)
-	return v != "" && v != "0" && !strings.EqualFold(v, "false") && !strings.EqualFold(v, "no")
-}
-
-// environ is an os.Environ-style list with lookups. Names are compared
-// case-insensitively on Windows, as the system does.
-type environ struct {
-	list []string
-	fold bool
-}
-
-func newEnviron(env []string, goos string) environ {
-	return environ{list: env, fold: goos == "windows"}
-}
-
-func (e environ) match(k, name string) bool {
-	if e.fold {
-		return strings.EqualFold(k, name)
-	}
-	return k == name
-}
-
-// get returns the value of name; the last assignment wins, as in exec.Cmd.
-func (e environ) get(name string) string {
-	for _, kv := range slices.Backward(e.list) {
-		if k, v, ok := strings.Cut(kv, "="); ok && e.match(k, name) {
-			return v
-		}
-	}
-	return ""
-}
-
-func (e environ) without(name string) []string {
-	out := make([]string, 0, len(e.list))
-	for _, kv := range e.list {
-		if k, _, _ := strings.Cut(kv, "="); !e.match(k, name) {
-			out = append(out, kv)
-		}
-	}
-	return out
+	return colorprofile.ANSI256
 }

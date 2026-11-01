@@ -8,11 +8,13 @@
 //	}
 //
 // In a normal build Hit is an empty function that always returns nil, and the
-// compiler removes the call. Only a build with -tags faultinject reads the
-// DUES_FAULTS environment variable and acts on it. Release builds must never
-// carry the tag; the verify gate checks binaries with `go version -m`.
+// compiler removes the call. Only a build with -tags faultinject acts on a
+// spec: dues and compression take it from their hidden --faults flag, which
+// only that build has, and tests in the process call Set. Release builds
+// must never carry the tag; the verify gate checks binaries with
+// `go version -m`.
 //
-// DUES_FAULTS is a comma-separated list of point=action[@N[+]]:
+// A spec is a comma-separated list of point=action[@N[+]]:
 //
 //	error        return ErrInjected
 //	enospc       return the platform's disk-full error
@@ -26,8 +28,8 @@
 //	signal:TERM  send the process SIGTERM (Unix only)
 //
 // @N fires only on the Nth hit of the point, @N+ on the Nth and every later
-// hit; with neither, every hit fires. When DUES_FAULTS_NOTIFY names a file,
-// the first hit of each point appends "<point>\n" to it, so a parent test can
+// hit; with neither, every hit fires. When --faults-notify names a file, the
+// first hit of each point appends "<point>\n" to it, so a parent test can
 // wait for the child to get there.
 package faultinject
 

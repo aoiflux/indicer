@@ -7,7 +7,7 @@ import (
 	"time"
 )
 
-// Rule is one parsed entry of a DUES_FAULTS spec.
+// Rule is one parsed entry of a fault spec.
 type Rule struct {
 	Point  string
 	Action string        // error, enospc, eio, eacces, panic, exit, sleep, block, signal
@@ -30,7 +30,7 @@ func (r Rule) fires(hit int) bool {
 	}
 }
 
-// ParseSpec parses a DUES_FAULTS value. It is available in every build, so a
+// ParseSpec parses a fault spec. It is available in every build, so a
 // release binary can still reject a malformed spec in its own tests.
 func ParseSpec(spec string) ([]Rule, error) {
 	var rules []Rule

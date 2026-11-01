@@ -68,14 +68,28 @@ type Fixture struct {
 	Restores    []Restore             `json:"restores"`
 }
 
-// ReadFlags returns the global flags a reader of this database must pass to
-// the release that wrote it: password, quick, container, hierarchical and
-// chunk size. Store-only options such as --hash-algo are left out.
-func (f Fixture) ReadFlags() []string {
+// ReadFlags returns the global flags the current DUES needs to read this
+// database: password, quick, container, hierarchical and chunk size.
+// Store-only options such as --hash-algo are left out. The releases that
+// wrote the fixtures took --password; the current one reads the password
+// from a file, written in a test directory.
+func (f Fixture) ReadFlags(tb testing.TB) []string {
+	tb.Helper()
 	var out []string
 	for i := 0; i < len(f.Flags); i++ {
 		switch f.Flags[i] {
-		case "--password", "--chonksize":
+		case "--password":
+			if i+1 < len(f.Flags) {
+				if pw := f.Flags[i+1]; pw != "" {
+					file := filepath.Join(tb.TempDir(), "password")
+					if err := os.WriteFile(file, []byte(pw+"\n"), 0o600); err != nil {
+						tb.Fatal(err)
+					}
+					out = append(out, "--password-file", file)
+				}
+				i++
+			}
+		case "--chonksize":
 			if i+1 < len(f.Flags) {
 				out = append(out, f.Flags[i], f.Flags[i+1])
 				i++

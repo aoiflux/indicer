@@ -29,16 +29,6 @@ var glyphSets = [...]Glyphs{
 		TreeMid: "|- ", TreeEnd: "`- ", TreeBar: "|   ",
 		Ellipsis: "...", Times: "x", Dash: "--",
 	},
-	// The console host has no font fallback and raster fonts follow CP437:
-	// ASCII marks, and the CP437 middle dot and block characters.
-	GlyphsConsole: {
-		OK: "+", Fail: "x", Warn: "!", Note: "*", Interrupted: "#", Pending: ".", Skipped: "-",
-		Brand: "*", Sep: "·", Arrow: "->", Rule: "─",
-		Spinner: []string{"|", "/", "-", `\`},
-		BarFull: "█", BarTip: "█", BarEmpty: "░",
-		TreeMid: "├─ ", TreeEnd: "└─ ", TreeBar: "│   ",
-		Ellipsis: "...", Times: "x", Dash: "--",
-	},
 	GlyphsFull: {
 		OK: "✓", Fail: "✗", Warn: "▲", Note: "●", Interrupted: "■", Pending: "·", Skipped: "–",
 		Brand: "◆", Sep: "·", Arrow: "→", Rule: "─",

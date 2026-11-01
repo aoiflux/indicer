@@ -6,8 +6,6 @@ import (
 	"runtime"
 	"strings"
 
-	"indicer/internal/console"
-
 	"github.com/charmbracelet/x/ansi"
 )
 
@@ -112,7 +110,7 @@ func Banner(w io.Writer, b Build) bool {
 	if !p.Decorated() {
 		return false
 	}
-	width, _ := console.Size()
+	width, _ := termSize()
 	for i, r := range bannerLines(b, p.GlyphSet(), width) {
 		line := p.Strong(Forensics, r.mark)
 		if r.emblem != "" {

@@ -85,7 +85,7 @@ func MaybeEgg(command string, ran time.Duration) {
 	}
 	w := console.Err()
 	p := For(w)
-	if width, _ := console.Size(); width < maxCols+2 {
+	if width, _ := termSize(); width < maxCols+2 {
 		return
 	}
 	fit := extrasFor(command)
@@ -102,7 +102,7 @@ func MaybeEgg(command string, ran time.Duration) {
 // signOff is the quiet extra: one line from `dues fortune` under the
 // footer, which is how anyone finds the command.
 func signOff(p Painter) {
-	width, _ := console.Size()
+	width, _ := termSize()
 	line := "  " + fortuneLine(p, fortunes[eggPick(len(fortunes))]) + " " + p.Paint(Muted, p.Glyphs().Sep+" dues fortune")
 	fmt.Fprintln(console.Err(), wrapLine(line, width-1, "    "))
 }

@@ -18,7 +18,7 @@ var testBuild = Build{Version: "0.39.0", Codename: "<pineapple> spacebar", Commi
 func TestBannerSize(t *testing.T) {
 	builds := []Build{testBuild, {Version: "0.39.0", Codename: "<pineapple> spacebar", Commit: "74431db"}, {Version: "0.39.0"},
 		{Version: "0.39.0", Codename: strings.Repeat("long ", 20), Commit: strings.Repeat("c", 50)}}
-	for _, g := range []GlyphSet{GlyphsFull, GlyphsConsole, GlyphsASCII} {
+	for _, g := range []GlyphSet{GlyphsFull, GlyphsASCII} {
 		for _, b := range builds {
 			for _, width := range []int{120, 61, 60, 59, 50, 23, 16} {
 				rows := bannerLines(b, g, width)
@@ -39,7 +39,7 @@ func TestBannerSize(t *testing.T) {
 }
 
 func TestBanner(t *testing.T) {
-	t.Setenv("COLUMNS", "100")
+	withWidth(t, 100)
 	out, _ := terminal(t, ttyMode(colorprofile.TrueColor, ThemeDark, GlyphsFull))
 	if !Banner(console.Out(), testBuild) {
 		t.Fatal("no banner on a terminal")
@@ -59,21 +59,19 @@ func TestBanner(t *testing.T) {
 	}
 
 	// Narrow: the emblem and wordmark alone.
-	t.Setenv("COLUMNS", "50")
+	withWidth(t, 50)
 	out.Reset()
 	Banner(console.Out(), testBuild)
 	if got := ansi.Strip(out.String()); strings.Contains(got, Product) || strings.Count(got, "\n") != 3 || !strings.Contains(got, "●─●─●  ┌─╮") {
 		t.Errorf("narrow banner:\n%s", got)
 	}
 
-	// The ASCII and console sets draw both in ASCII.
-	for _, g := range []GlyphSet{GlyphsASCII, GlyphsConsole} {
-		out, _ = terminal(t, ttyMode(colorprofile.NoTTY, ThemeUnknown, g))
-		t.Setenv("COLUMNS", "100")
-		Banner(console.Out(), testBuild)
-		if got := out.String(); !strings.Contains(got, "o-o-o  +-. . . +-- .--") || !strings.Contains(got, ` \|/   | | | |`) || strings.Contains(got, "\x1b") {
-			t.Errorf("set %d banner:\n%q", g, got)
-		}
+	// The ASCII set draws both in ASCII.
+	out, _ = terminal(t, ttyMode(colorprofile.NoTTY, ThemeUnknown, GlyphsASCII))
+	withWidth(t, 100)
+	Banner(console.Out(), testBuild)
+	if got := out.String(); !strings.Contains(got, "o-o-o  +-. . . +-- .--") || !strings.Contains(got, ` \|/   | | | |`) || strings.Contains(got, "\x1b") {
+		t.Errorf("ASCII banner:\n%q", got)
 	}
 }
 

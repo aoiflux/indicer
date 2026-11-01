@@ -22,7 +22,7 @@ func FuzzDispatchJSON(f *testing.F) {
 	f.Add(`{"version":"v1","product":"compression","operation":"get_progress","params":{"task_id":"x"}}`)
 	f.Add(`{"product":"nope"}`)
 	f.Add(`{`)
-	d := NewDefaultDispatcher()
+	d := NewDefaultDispatcher(Options{})
 	f.Fuzz(func(t *testing.T, input string) {
 		if req, err := jsonbridge.DecodeRequest(input); err == nil && !inMemoryOps[req.Operation] {
 			return

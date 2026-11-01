@@ -14,10 +14,10 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
-	"os"
 	"runtime/debug"
 	"strings"
 	"sync"
+	"sync/atomic"
 )
 
 // Site says where a panic happened. Only Component and Op are required; the
@@ -112,9 +112,16 @@ func Counts() map[string]int {
 	return out
 }
 
-// strict makes recovered panics re-panic, so fuzzing and CI see the original
-// crash instead of a handled error.
-func strict() bool { return os.Getenv("DUES_SAFE_STRICT") == "1" }
+// strictMode makes recovered panics re-panic, so fuzzing sees the original
+// crash instead of a handled error. It starts as the safestrict build tag
+// says (strictDefault); there is no run-time switch.
+var strictMode atomic.Bool
+
+func init() { strictMode.Store(strictDefault) }
+
+// SetStrict turns strict mode on or off for a test and returns the previous
+// setting.
+func SetStrict(on bool) (prev bool) { return strictMode.Swap(on) }
 
 func newID() string {
 	var b [4]byte
@@ -139,7 +146,7 @@ func recovered(site Site, v any) *PanicError {
 	if r != nil {
 		r(e, first)
 	}
-	if strict() {
+	if strictMode.Load() {
 		panic(fmt.Sprintf("%v\n\noriginal stack:\n%s", e, e.Stack))
 	}
 	return e

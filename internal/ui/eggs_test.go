@@ -81,7 +81,7 @@ func TestPlayStopsOnCancel(t *testing.T) {
 }
 
 func TestMaybeEgg(t *testing.T) {
-	t.Setenv("COLUMNS", "100")
+	withWidth(t, 100)
 	fun := ttyMode(colorprofile.TrueColor, ThemeDark, GlyphsFull)
 	fun.Fun = true
 	noFun := fun
@@ -152,7 +152,7 @@ func TestExtrasFor(t *testing.T) {
 
 // The extra played is the one picked among those that fit the command.
 func TestMaybeEggByCommand(t *testing.T) {
-	t.Setenv("COLUMNS", "100")
+	withWidth(t, 100)
 	fun := ttyMode(colorprofile.TrueColor, ThemeDark, GlyphsFull)
 	fun.Fun = true
 	prevRand, prevPick, prevSleep := eggRand, eggPick, eggSleep
@@ -189,9 +189,9 @@ func TestEggChance(t *testing.T) {
 	}
 	stdoutPiped := console.Terminal{InTTY: true, ErrTTY: true}
 	for name, m := range map[string]Mode{
-		"CI":           Resolve(Options{}, []string{"CI=true"}, allTTY, "linux"),
-		"stdout piped": Resolve(Options{}, nil, stdoutPiped, "linux"),
-		"--no-fun":     Resolve(Options{NoFun: true}, nil, allTTY, "linux"),
+		"--ci":         Resolve(Options{CI: true}, allTTY),
+		"stdout piped": Resolve(Options{}, stdoutPiped),
+		"--no-fun":     Resolve(Options{NoFun: true}, allTTY),
 	} {
 		if m.Fun {
 			t.Errorf("%s: extras allowed", name)

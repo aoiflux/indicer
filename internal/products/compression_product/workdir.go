@@ -10,6 +10,7 @@ import (
 	"sync"
 	"time"
 
+	"indicer/internal/osdirs"
 	"indicer/lib/fsx"
 )
 
@@ -32,11 +33,23 @@ type workDir struct {
 	lock    *fsx.Lock
 }
 
-// newTempWorkDir creates a locked work directory under the system's
-// temporary directory. A stale one from a process that died is swept first.
-func newTempWorkDir(pattern string) (*workDir, error) {
-	sweepStaleWorkDirsOnce()
-	dir, err := os.MkdirTemp("", pattern)
+// tempRoot is where a Service makes temporary work directories:
+// Options.TempDir, or osdirs.Temp when that is empty.
+type tempRoot struct {
+	dir   string
+	sweep sync.Once
+}
+
+// newWorkDir creates a locked work directory in the temporary root. The
+// first one a Service makes sweeps the stale directories that processes
+// which died left there.
+func (t *tempRoot) newWorkDir(pattern string) (*workDir, error) {
+	base, err := osdirs.TempOr(t.dir)
+	if err != nil {
+		return nil, err
+	}
+	t.sweep.Do(func() { _, _ = SweepStaleWorkDirs(base, staleWorkAge) })
+	dir, err := os.MkdirTemp(base, pattern)
 	if err != nil {
 		return nil, err
 	}
@@ -87,12 +100,6 @@ func (w *workDir) release(remove bool) {
 		return
 	}
 	_ = fsx.Remove(filepath.Join(w.path, workLockName))
-}
-
-var sweepOnce sync.Once
-
-func sweepStaleWorkDirsOnce() {
-	sweepOnce.Do(func() { _, _ = SweepStaleWorkDirs(os.TempDir(), staleWorkAge) })
 }
 
 // SweepStaleWorkDirs removes work directories (duesarc-*) under dir that are

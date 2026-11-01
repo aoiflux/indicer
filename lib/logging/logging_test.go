@@ -7,12 +7,14 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"sync"
 	"testing"
 
 	"go.uber.org/zap"
 
+	"indicer/internal/osdirs"
 	"indicer/internal/testutil"
 )
 
@@ -20,7 +22,7 @@ import (
 func useDirs(t *testing.T, dirs ...string) {
 	t.Helper()
 	prev := dirCandidates
-	dirCandidates = func(explicit string) []string {
+	dirCandidates = func(explicit, _ string) []string {
 		if explicit != "" {
 			return append([]string{explicit}, dirs...)
 		}
@@ -30,6 +32,36 @@ func useDirs(t *testing.T, dirs ...string) {
 		_ = Close()
 		dirCandidates = prev
 	})
+}
+
+// TestDirCandidates: the log goes to --log-dir, then the per-user cache,
+// then a per-user directory under --temp-dir (or the default temporary
+// directory). DUES_LOG_DIR, USER and the directory variables are ignored.
+func TestDirCandidates(t *testing.T) {
+	for _, v := range []string{"DUES_LOG_DIR", "USER", "USERNAME", "HOME", "USERPROFILE", "XDG_CACHE_HOME", "LOCALAPPDATA", "TMPDIR", "TMP", "TEMP"} {
+		t.Setenv(v, filepath.Join(t.TempDir(), "junk-"+v))
+	}
+	explicit, temp := t.TempDir(), t.TempDir()
+	var want []string
+	want = append(want, explicit)
+	if dir, err := osdirs.LogDir(); err == nil {
+		want = append(want, dir)
+	}
+	want = append(want, filepath.Join(temp, "dues-"+tempUser(), "logs"))
+	got := dirCandidates(explicit, temp)
+	if !slices.Equal(got, want) {
+		t.Fatalf("dirCandidates = %q, want %q", got, want)
+	}
+	for _, d := range got {
+		if strings.Contains(d, "junk-") {
+			t.Errorf("candidate %s comes from the environment", d)
+		}
+	}
+	if def, err := osdirs.Temp(); err == nil {
+		if got := dirCandidates("", ""); got[len(got)-1] != filepath.Join(def, "dues-"+tempUser(), "logs") {
+			t.Errorf("without --temp-dir the last candidate is %s, want it under %s", got[len(got)-1], def)
+		}
+	}
 }
 
 func readRecords(t *testing.T, path string) []map[string]any {
@@ -241,6 +273,40 @@ func TestWriteFailureDegradesOnce(t *testing.T) {
 	}
 	if n := strings.Count(stderr.String(), "logging stopped"); n != 1 {
 		t.Fatalf("%d degradation warnings, want exactly 1: %q", n, stderr.String())
+	}
+}
+
+func TestSetting(t *testing.T) {
+	dir := t.TempDir()
+	useDirs(t)
+	info := Init(Config{Dir: dir, Stderr: io.Discard})
+	GetLogger().Info("settings",
+		Setting("color", "auto", FromDefault),
+		Setting("temp-dir", "/scratch", FromFlag, zap.String("db_key", "k3y")),
+		DirSetting("log-dir", dir, FromFlag),
+		DirSetting("fell-back", filepath.Join(dir, "missing"), FromFlag),
+	)
+	_ = Sync()
+	raw, err := os.ReadFile(info.Path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if bytes.Contains(raw, []byte("k3y")) {
+		t.Errorf("a secret inside a setting reached the log: %s", raw)
+	}
+	rec := readRecords(t, info.Path)[0]
+	color, _ := rec["color"].(map[string]any)
+	temp, _ := rec["temp-dir"].(map[string]any)
+	if color["value"] != "auto" || color["source"] != FromDefault || temp["value"] != "/scratch" || temp["source"] != FromFlag {
+		t.Errorf("settings record %v", rec)
+	}
+	logDir, _ := rec["log-dir"].(map[string]any)
+	fellBack, _ := rec["fell-back"].(map[string]any)
+	if logDir["value"] != info.Dir || logDir["given"] != nil {
+		t.Errorf("log-dir %v, want %s alone", logDir, info.Dir)
+	}
+	if fellBack["value"] != info.Dir || fellBack["given"] != filepath.Join(dir, "missing") {
+		t.Errorf("fell-back %v, want the directory in effect and the one given", fellBack)
 	}
 }
 

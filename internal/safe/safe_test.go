@@ -11,9 +11,9 @@ import (
 
 func withReporter(t *testing.T, r Reporter) {
 	t.Helper()
-	t.Setenv("DUES_SAFE_STRICT", "")
+	prevStrict := SetStrict(false)
 	prev := SetReporter(r)
-	t.Cleanup(func() { SetReporter(prev) })
+	t.Cleanup(func() { SetReporter(prev); SetStrict(prevStrict) })
 }
 
 func TestCallRecoversPanic(t *testing.T) {
@@ -79,7 +79,7 @@ func TestValue(t *testing.T) {
 
 func TestStrictRepanics(t *testing.T) {
 	withReporter(t, nil)
-	t.Setenv("DUES_SAFE_STRICT", "1")
+	SetStrict(true)
 	defer func() {
 		if recover() == nil {
 			t.Fatal("strict mode did not re-panic")
@@ -149,5 +149,23 @@ func TestGroupLimit(t *testing.T) {
 	}
 	if p := peak.Load(); p > 2 {
 		t.Fatalf("peak concurrency %d, limit 2", p)
+	}
+}
+
+// TestStrictDefault: an ordinary build contains a panic; a safestrict
+// build (the fuzz smoke) re-panics it, with no switch at run time.
+func TestStrictDefault(t *testing.T) {
+	prev := SetReporter(nil)
+	t.Cleanup(func() { SetReporter(prev) })
+	repanicked := true
+	defer func() {
+		if v := recover(); (v != nil) != strictDefault || repanicked != strictDefault {
+			t.Fatalf("strictDefault %v: re-panicked %v, recovered %v", strictDefault, repanicked, v)
+		}
+	}()
+	err := Call(Site{Component: "test", Op: "default"}, func() error { panic("x") })
+	repanicked = false
+	if !IsPanic(err) {
+		t.Fatalf("got %v, want a panic error", err)
 	}
 }

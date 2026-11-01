@@ -13,6 +13,7 @@ package fio
 import (
 	"bytes"
 	"fmt"
+	"indicer/internal/osdirs"
 	"indicer/lib/cnst"
 	"indicer/lib/fsx"
 	"io"
@@ -34,7 +35,8 @@ var (
 	// maxSpilledContainers bounds how many containers stay spilled to disk.
 	maxSpilledContainers = 4
 
-	// containerSpillDir is where spill files go; empty means os.TempDir().
+	// containerSpillDir is where spill files go (SetContainerSpillDir);
+	// empty means osdirs.Temp. containerCache.mu guards it.
 	containerSpillDir = ""
 
 	// openContainerDecoder starts decoding a compressed container. It is a
@@ -93,6 +95,16 @@ func SetContainerReadCacheSize(sizeBytes int64) {
 	c := &containerCache
 	c.mu.Lock()
 	c.memMax = sizeBytes
+	c.mu.Unlock()
+}
+
+// SetContainerSpillDir sets the directory for containers that do not fit
+// in memory (--temp-dir); empty means osdirs.Temp. The cache is shared by
+// every restore in the process, so the directory is a process setting.
+func SetContainerSpillDir(dir string) {
+	c := &containerCache
+	c.mu.Lock()
+	containerSpillDir = dir
 	c.mu.Unlock()
 }
 
@@ -180,8 +192,9 @@ func loadContainer(containerPath string, e *cachedContainer) {
 	c.loading <- struct{}{}
 	c.mu.Lock()
 	room := max(0, c.memMax-c.memUsed)
+	spillDir := containerSpillDir
 	c.mu.Unlock()
-	mem, file, size, err := decodeContainer(containerPath, room)
+	mem, file, size, err := decodeContainer(containerPath, room, spillDir)
 	<-c.loading
 
 	c.mu.Lock()
@@ -245,8 +258,9 @@ func (e *cachedContainer) drop() {
 }
 
 // decodeContainer decodes the compressed container at path, into memory when
-// it fits in room bytes and into a delete-on-close spill file otherwise.
-func decodeContainer(path string, room int64) (mem []byte, spill *os.File, size int64, err error) {
+// it fits in room bytes and into a delete-on-close spill file in spillDir
+// (osdirs.Temp when empty) otherwise.
+func decodeContainer(path string, room int64, spillDir string) (mem []byte, spill *os.File, size int64, err error) {
 	src, err := os.Open(path)
 	if err != nil {
 		return nil, nil, 0, err
@@ -272,7 +286,10 @@ func decodeContainer(path string, room int64) (mem []byte, spill *os.File, size 
 		return nil, nil, 0, tooBig
 	}
 
-	spill, err = fsx.CreateTempDeleteOnClose(containerSpillDir, "dues-container-*.tmp")
+	if spillDir, err = osdirs.TempOr(spillDir); err != nil {
+		return nil, nil, 0, err
+	}
+	spill, err = fsx.CreateTempDeleteOnClose(spillDir, "dues-container-*.tmp")
 	if err != nil {
 		return nil, nil, 0, err
 	}

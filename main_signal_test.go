@@ -18,7 +18,6 @@ import (
 // 130 (SIGINT) or 143 (SIGTERM), not 1, and leaves the database unlocked.
 func TestSignalledCommandExitsWithSignalCode(t *testing.T) {
 	testdb.Isolate(t)
-	isolateLogs(t)
 	root := filepath.Join(t.TempDir(), "db")
 	h, err := dbopen.Open(context.Background(), dbopen.Request{Path: root, Mode: dbopen.ReadWrite})
 	if err != nil {

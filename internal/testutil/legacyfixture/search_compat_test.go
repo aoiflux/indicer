@@ -38,7 +38,7 @@ func TestLegacySearchAndNear(t *testing.T) {
 			db := Extract(t, f)
 			work := t.TempDir()
 			report := filepath.Join(work, "search.json")
-			out, err := runIn(work, bin, append([]string{"search", "the", "--out", report, "--dbpath", db}, f.ReadFlags()...)...)
+			out, err := runIn(work, bin, append([]string{"search", "the", "--out", report, "--dbpath", db}, f.ReadFlags(t)...)...)
 			if code := exitCode(err); code != 0 && code != 2 {
 				t.Fatalf("search exit %d: %s", code, lastLine(out))
 			}
@@ -65,13 +65,13 @@ func TestLegacySearchAndNear(t *testing.T) {
 			if hash == "" {
 				t.Skip("no evidence restored correctly when generated")
 			}
-			nearArgs := append([]string{"near", "in", hash, "--out", filepath.Join(work, "near.json"), "--force", "--dbpath", db}, f.ReadFlags()...)
+			nearArgs := append([]string{"near", "in", hash, "--out", filepath.Join(work, "near.json"), "--force", "--dbpath", db}, f.ReadFlags(t)...)
 			out, err = runIn(work, bin, nearArgs...)
 			if code := exitCode(err); code != 0 && code != 2 {
 				if !strings.Contains(out, "repair --fix --revrel") {
 					t.Fatalf("near exit %d without naming the repair: %s", code, lastLine(out))
 				}
-				rout, rerr := runIn(work, bin, append([]string{"repair", "--fix", "--revrel", "--dbpath", db}, f.ReadFlags()...)...)
+				rout, rerr := runIn(work, bin, append([]string{"repair", "--fix", "--revrel", "--dbpath", db}, f.ReadFlags(t)...)...)
 				if rerr != nil {
 					t.Fatalf("repair --fix --revrel: %v: %s", rerr, lastLine(rout))
 				}

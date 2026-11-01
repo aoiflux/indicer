@@ -6,6 +6,7 @@ import (
 	"regexp"
 	"testing"
 
+	"indicer/internal/faultinject"
 	"indicer/internal/testutil"
 	"indicer/internal/testutil/vtscreen"
 )
@@ -13,23 +14,24 @@ import (
 var redraw = regexp.MustCompile(`\r\x1b\[\d+A`)
 
 // TestTaskbarInPTY: a store that pauses before its commit keeps the live
-// display up long enough to redraw, and under Windows Terminal to show its
-// progress on the tab, which is cleared at the end. Elsewhere it writes no
-// OSC at all (the screen fails the test on one).
+// display up long enough to redraw, and with --taskbar to show its progress
+// on the tab, which is cleared at the end. Without it there is no OSC at all
+// (the screen fails the test on one).
 func TestTaskbarInPTY(t *testing.T) {
 	script := ptyScript(t)
 	bin := testutil.BuildDues(t, "faultinject")
-	for name, wt := range map[string]bool{"windows terminal": true, "other terminal": false} {
+	for name, wt := range map[string]bool{"taskbar": true, "no taskbar": false} {
 		t.Run(name, func(t *testing.T) {
 			work := t.TempDir()
 			testutil.WriteRandomFile(t, work, "ev.bin", 7, 16<<20)
-			extra := []string{"DUES_FAULTS=ingest.before_commit=sleep:2s"}
 			opts := []vtscreen.Option{vtscreen.AllowWrap()}
+			args := []string{"--faults=" + faultinject.IngestBeforeCommit + "=sleep:2s",
+				"store", "ev.bin", "--dbpath", "db", "--compress-level", "fast"}
 			if wt {
-				extra = append(extra, "WT_SESSION=e2e")
+				args = append([]string{"--taskbar"}, args...)
 				opts = append(opts, vtscreen.AllowTaskbar())
 			}
-			out, code := runPTY(t, script, bin, work, 100, ptyEnv(t, extra...), "store", "ev.bin", "--dbpath", "db", "--compress-level", "fast")
+			out, code := runPTY(t, script, bin, work, 100, args...)
 			if code != 0 {
 				t.Fatalf("exit %d:\n%q", code, out)
 			}

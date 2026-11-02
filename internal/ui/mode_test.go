@@ -34,9 +34,28 @@ func TestPreScan(t *testing.T) {
 		{[]string{"--taskbar", "--no-taskbar"}, Options{}, []string{}},
 	}
 	for _, c := range cases {
-		got, rest := PreScan(c.args)
+		got, rest := PreScan(c.args, Options{})
 		if got != c.want || !slices.Equal(rest, c.rest) {
 			t.Errorf("PreScan(%q) = %+v, %q; want %+v, %q", c.args, got, rest, c.want, c.rest)
+		}
+	}
+}
+
+// The config file's settings are the base; the command line changes them.
+func TestPreScanOverBase(t *testing.T) {
+	base := Options{Color: ColorNever, Plain: true, CI: true, NoFun: true, Theme: ThemeLight, Taskbar: true}
+	cases := []struct {
+		args []string
+		want Options
+	}{
+		{[]string{"list"}, base},
+		{[]string{"--color", "auto", "--no-plain", "--no-ci", "--no-no-fun", "--theme=auto", "--no-taskbar"}, Options{Color: ColorAuto}},
+		{[]string{"--theme", "dark"}, Options{Color: ColorNever, Plain: true, CI: true, NoFun: true, Theme: ThemeDark, Taskbar: true}},
+		{[]string{"--no-fun"}, base},
+	}
+	for _, c := range cases {
+		if got, _ := PreScan(c.args, base); got != c.want {
+			t.Errorf("PreScan(%q) over %+v = %+v; want %+v", c.args, base, got, c.want)
 		}
 	}
 }
@@ -121,8 +140,8 @@ func TestTheme(t *testing.T) {
 		}
 	}
 	for i, name := range ThemeNames {
-		if got := parseTheme(name); got != Theme(i) {
-			t.Errorf("parseTheme(%q) = %d, want %d", name, got, i)
+		if got := ParseTheme(name); got != Theme(i) {
+			t.Errorf("ParseTheme(%q) = %d, want %d", name, got, i)
 		}
 	}
 }

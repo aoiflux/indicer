@@ -132,6 +132,7 @@ type cliFlags struct {
 
 type cliCommands struct {
 	version      *kingpin.CmdClause
+	config       *kingpin.CmdClause
 	tui          *kingpin.CmdClause
 	store        *kingpin.CmdClause
 	restore      *kingpin.CmdClause
@@ -164,6 +165,10 @@ type cliDefinition struct {
 }
 
 func newCLIDefinition() cliDefinition {
+	// kingpin reads an argument "@FILE" as the arguments in FILE. That
+	// would store "@ev.bin" as whatever ev.bin lists, and be a second,
+	// hidden config file.
+	kingpin.EnableFileExpansion = false
 	app := kingpin.New("DUES", "Deduplicated Unified Evidence Store")
 	// --version is DUES's own flag. kingpin's printed a block on stderr and,
 	// with no command, went on to print its whole usage.
@@ -174,6 +179,9 @@ func newCLIDefinition() cliDefinition {
 	app.HelpFlag.Short('h')
 
 	flags := cliFlags{}
+	// Read before parsing, by readConfig; kingpin only has to accept them.
+	app.Flag(flagConfig, "Read settings from this config file (default: ~/.config/dues/dues.json, if it exists)").PlaceHolder("FILE").String()
+	app.Flag(flagNoConfig, "Read no config file").Bool()
 	flags.logDir = app.Flag(flagLogDir, "Directory for log and crash files (default: the per-user cache directory)").String()
 	flags.tempDir = app.Flag(flagTempDir, "Directory for temporary files, such as decoded containers and read-only database copies (default: /tmp, or AppData\\Local\\Temp on Windows)").String()
 	flags.debug = app.Flag(flagDebug, "Write debug entries to the log").Bool()
@@ -205,6 +213,7 @@ func newCLIDefinition() cliDefinition {
 
 	commands := cliCommands{}
 	commands.version = app.Command(cnst.CmdVeresion, "Show version details and quick feature overview")
+	commands.config = app.Command(cmdConfig, "Show the settings in effect and where each came from, as JSON")
 	commands.tui = app.Command(cnst.CmdTui, "Launch interactive TUI interface")
 
 	commands.store = app.Command(cnst.CmdStore, "Store file in database")

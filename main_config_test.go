@@ -18,7 +18,7 @@ func configure(t *testing.T, args ...string) (pipelineTuning, error) {
 	if err != nil {
 		t.Fatalf("parse %q: %v", args, err)
 	}
-	return applyRuntimeConfig(parsed, args, cliDef)
+	return applyRuntimeConfig(parsed, cliDef, cmdLineSources(t, cliDef, args))
 }
 
 func TestConfigPresets(t *testing.T) {
@@ -175,4 +175,15 @@ func TestConfigStoreTuningOverrides(t *testing.T) {
 	if w, q := cnst.GetStorePipelineTuning(cnst.CONTAINERMODE); w != 3 || q != 9 {
 		t.Fatalf("pipeline sees %d/%d, want 3/9", w, q)
 	}
+}
+
+// cmdLineSources is where run finds each flag's value when no config file
+// is read: the command line, else the default.
+func cmdLineSources(t testing.TB, cliDef cliDefinition, args []string) sources {
+	t.Helper()
+	set, err := flagsSetByUser(cliDef.app, args)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return sources{set: set, filled: map[string]bool{}}
 }

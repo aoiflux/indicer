@@ -101,31 +101,50 @@ func TestVersionFlag(t *testing.T) {
 }
 
 func TestFlagFromArgs(t *testing.T) {
-	cases := map[string][]string{
-		"/a": {"--log-dir", "/a", "list"},
-		"/b": {"list", "--log-dir=/b"},
-		"":   {"list", "--", "--log-dir", "/c"},
-	}
-	for want, args := range cases {
-		if got := flagFromArgs(args, flagLogDir); got != want {
-			t.Errorf("flagFromArgs(%q, log-dir) = %q, want %q", args, got, want)
+	for _, c := range []struct {
+		args  []string
+		want  string
+		given bool
+	}{
+		{[]string{"--log-dir", "/a", "list"}, "/a", true},
+		{[]string{"list", "--log-dir=/b"}, "/b", true},
+		{[]string{"list", "--log-dir="}, "", true},
+		{[]string{"list", "--", "--log-dir", "/c"}, "", false},
+		{[]string{"list"}, "", false},
+	} {
+		if got, given := flagFromArgs(c.args, flagLogDir); got != c.want || given != c.given {
+			t.Errorf("flagFromArgs(%q, log-dir) = %q, %v; want %q, %v", c.args, got, given, c.want, c.given)
 		}
 	}
-	if got := flagFromArgs([]string{"--log-dir", "/a", "--temp-dir", "/t"}, flagTempDir); got != "/t" {
+	if got, _ := flagFromArgs([]string{"--log-dir", "/a", "--temp-dir", "/t"}, flagTempDir); got != "/t" {
 		t.Errorf("flagFromArgs(temp-dir) = %q, want /t", got)
+	}
+	file := "/f"
+	for args, want := range map[string]string{"--log-dir /a": "/a", "--log-dir=": "", "list": "/f"} {
+		if got := flagOr(strings.Fields(args), flagLogDir, &file); got != want {
+			t.Errorf("flagOr(%q, log-dir, %q) = %q, want %q", args, file, got, want)
+		}
+	}
+	if got := flagOr([]string{"list"}, flagLogDir, nil); got != "" {
+		t.Errorf("flagOr without a file value = %q, want \"\"", got)
 	}
 }
 
 func TestBoolFlagFromArgs(t *testing.T) {
-	cases := map[bool][][]string{
-		true:  {{"--debug", "list"}, {"list", "--debug"}, {"--no-debug", "--debug"}},
-		false: {{"list"}, {"--debug", "--no-debug"}, {"list", "--", "--debug"}, {"--debugger"}},
-	}
-	for want, all := range cases {
-		for _, args := range all {
-			if got := boolFlagFromArgs(args, flagDebug); got != want {
-				t.Errorf("boolFlagFromArgs(%q, debug) = %v, want %v", args, got, want)
-			}
+	for _, c := range []struct {
+		args            []string
+		want, wantGiven bool
+	}{
+		{[]string{"--debug", "list"}, true, true},
+		{[]string{"list", "--debug"}, true, true},
+		{[]string{"--no-debug", "--debug"}, true, true},
+		{[]string{"--debug", "--no-debug"}, false, true},
+		{[]string{"list"}, false, false},
+		{[]string{"list", "--", "--debug"}, false, false},
+		{[]string{"--debugger"}, false, false},
+	} {
+		if got, given := boolFlagFromArgs(c.args, flagDebug); got != c.want || given != c.wantGiven {
+			t.Errorf("boolFlagFromArgs(%q, debug) = %v, %v; want %v, %v", c.args, got, given, c.want, c.wantGiven)
 		}
 	}
 }

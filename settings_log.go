@@ -10,24 +10,18 @@ import (
 	"go.uber.org/zap"
 )
 
-// logSettings writes the run's "settings" record: the presentation, log,
-// temporary-file and database settings in effect, each with whether a flag
-// or the default chose it. Paths are the ones in effect. Of the password
-// only its source is logged, as "unlock": the log redacts any field that
-// names a password.
-func logSettings(f cliFlags, set map[string]bool) {
-	from := func(name string) string {
-		if set[name] {
-			return logging.FromFlag
-		}
-		return logging.FromDefault
-	}
-	setting := func(name string, value any) zap.Field { return logging.Setting(name, value, from(name)) }
+// logSettings writes the run's "settings" record: the config file read,
+// and the presentation, log, temporary-file and database settings in
+// effect, each with whether a flag, the config file or the default chose
+// it. Paths are the ones in effect. Of the password only its source is
+// logged, as "unlock": the log redacts any field that names a password.
+func logSettings(f cliFlags, src sources, conf runConfig) {
+	setting := func(name string, value any) zap.Field { return logging.Setting(name, value, src.from(name)) }
 	path := func(name, dir string, err error) zap.Field {
 		if err != nil {
-			return logging.Setting(name, "", from(name), zap.Error(err))
+			return logging.Setting(name, "", src.from(name), zap.Error(err))
 		}
-		return logging.Setting(name, dir, from(name))
+		return logging.Setting(name, dir, src.from(name))
 	}
 
 	temp, tempErr := osdirs.TempOr(*f.tempDir)
@@ -35,12 +29,13 @@ func logSettings(f cliFlags, set map[string]bool) {
 	unlock, unlockFrom := "none", logging.FromDefault
 	switch {
 	case *f.pwdFile != "":
-		unlock, unlockFrom = flagPasswordFile, logging.FromFlag
+		unlock, unlockFrom = flagPasswordFile, src.from(flagPasswordFile)
 	case *f.pwdStdin:
 		unlock, unlockFrom = flagPasswordStdin, logging.FromFlag
 	}
 
 	logging.GetLogger().Info("settings",
+		configSetting(conf),
 		setting(ui.FlagColor, *f.color),
 		setting(ui.FlagPlain, *f.plain),
 		setting(ui.FlagCI, *f.ci),
@@ -48,9 +43,22 @@ func logSettings(f cliFlags, set map[string]bool) {
 		setting(ui.FlagTheme, *f.theme),
 		setting(ui.FlagTaskbar, *f.taskbar),
 		setting(flagDebug, *f.debug),
-		logging.DirSetting(flagLogDir, *f.logDir, from(flagLogDir)),
+		logging.DirSetting(flagLogDir, *f.logDir, src.from(flagLogDir)),
 		path(flagTempDir, temp, tempErr),
 		path(cnst.FlagDBPath, root, rootErr),
 		logging.Setting("unlock", unlock, unlockFrom),
 	)
+}
+
+// configSetting is the record's entry for the config file: its path, or
+// "none" and why. Its source is the flag that chose it, or the default.
+func configSetting(conf runConfig) zap.Field {
+	from := logging.FromDefault
+	if conf.chosen {
+		from = logging.FromFlag
+	}
+	if conf.path == "" {
+		return logging.Setting(flagConfig, "none", from, zap.String("reason", conf.none))
+	}
+	return logging.Setting(flagConfig, conf.path, from)
 }

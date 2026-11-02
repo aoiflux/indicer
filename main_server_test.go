@@ -47,7 +47,7 @@ func TestServerTokenSources(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			tok, err := resolveServerToken(cliDef.flags, set)
+			tok, err := resolveServerToken(cliDef.flags, sources{set: set})
 			if c.usage != "" {
 				if lifecycle.ExitCode(err) != lifecycle.ExitUsage || !strings.Contains(err.Error(), c.usage) {
 					t.Fatalf("error %v, want a usage error containing %q", err, c.usage)

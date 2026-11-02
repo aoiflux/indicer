@@ -82,8 +82,13 @@ type Raw struct {
 	NearTopK   int
 	MicroTopK  int
 
-	// Set holds the long names of the flags the user set explicitly.
+	// Set holds the long names of the flags the user set explicitly: on
+	// the command line, or in the config file.
 	Set map[string]bool
+	// Origin says where a set value came from when the command line did
+	// not give it, such as "config file /home/u/.config/dues/dues.json".
+	// Messages about the flag name it.
+	Origin map[string]string
 }
 
 // Sys describes the machine.
@@ -121,22 +126,31 @@ type Effective struct {
 type Issue struct {
 	Flag    string
 	Message string
+	Origin  string // where the value came from, if not the command line
 }
 
 func (i Issue) String() string {
 	if i.Flag == "" {
 		return i.Message
 	}
-	return "--" + i.Flag + ": " + i.Message
+	return flagText(i.Flag, i.Origin) + ": " + i.Message
 }
 
 // FlagError is one rejected flag value.
 type FlagError struct {
 	Flag    string
 	Message string
+	Origin  string // where the value came from, if not the command line
 }
 
-func (e *FlagError) Error() string { return "--" + e.Flag + ": " + e.Message }
+func (e *FlagError) Error() string { return flagText(e.Flag, e.Origin) + ": " + e.Message }
+
+func flagText(flag, origin string) string {
+	if origin == "" {
+		return "--" + flag
+	}
+	return "--" + flag + " (set in " + origin + ")"
+}
 
 // Resolve validates raw and returns the effective settings, the adjustments
 // made, and an error wrapping a *lifecycle.UsageError (exit code 2) that lists
@@ -161,11 +175,11 @@ type resolver struct {
 func (r *resolver) set(flag string) bool { return r.raw.Set[flag] }
 
 func (r *resolver) reject(flag, format string, args ...any) {
-	r.errs = append(r.errs, &FlagError{Flag: flag, Message: fmt.Sprintf(format, args...)})
+	r.errs = append(r.errs, &FlagError{Flag: flag, Message: fmt.Sprintf(format, args...), Origin: r.raw.Origin[flag]})
 }
 
 func (r *resolver) warn(flag, format string, args ...any) {
-	r.issues = append(r.issues, Issue{Flag: flag, Message: fmt.Sprintf(format, args...)})
+	r.issues = append(r.issues, Issue{Flag: flag, Message: fmt.Sprintf(format, args...), Origin: r.raw.Origin[flag]})
 }
 
 func (r *resolver) resolve() {
@@ -224,9 +238,11 @@ func (r *resolver) resolve() {
 // setting the user did not set explicitly.
 func (r *resolver) resolvePreset() {
 	raw := r.raw
+	r.eff.Low, r.eff.Quick = raw.Low, raw.Quick
+	r.eff.CompressLevel = NormalizeCompressLevel(raw.CompressLevel)
 	var chosen []string
 	if strings.TrimSpace(raw.Preset) != "" {
-		p := normalizePreset(raw.Preset)
+		p := NormalizePreset(raw.Preset)
 		if p == "" {
 			r.reject(FlagPreset, "unknown preset %q; use %s, %s or %s", raw.Preset, cnst.PresetQuick, cnst.PresetPerformance, cnst.PresetLowResource)
 			return
@@ -249,8 +265,6 @@ func (r *resolver) resolvePreset() {
 		}
 	}
 
-	r.eff.Low, r.eff.Quick = raw.Low, raw.Quick
-	r.eff.CompressLevel = strings.ToLower(strings.TrimSpace(raw.CompressLevel))
 	if len(chosen) == 0 {
 		return
 	}
@@ -274,7 +288,9 @@ func (r *resolver) resolvePreset() {
 	}
 }
 
-func normalizePreset(name string) string {
+// NormalizePreset returns the preset a --preset value names, or "" for
+// none.
+func NormalizePreset(name string) string {
 	switch strings.ToLower(strings.TrimSpace(name)) {
 	case cnst.PresetQuick:
 		return cnst.PresetQuick
@@ -286,10 +302,18 @@ func normalizePreset(name string) string {
 	return ""
 }
 
-func (r *resolver) resolveCompressLevel() {
-	switch r.eff.CompressLevel {
+// NormalizeCompressLevel returns the level a --compress-level value
+// names, or "" for none.
+func NormalizeCompressLevel(level string) string {
+	switch l := strings.ToLower(strings.TrimSpace(level)); l {
 	case "fast", "default", "best":
-	default:
+		return l
+	}
+	return ""
+}
+
+func (r *resolver) resolveCompressLevel() {
+	if r.eff.CompressLevel == "" {
 		r.reject(FlagCompressLevel, "unknown level %q; use fast, default or best", r.raw.CompressLevel)
 	}
 }

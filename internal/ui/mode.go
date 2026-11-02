@@ -69,7 +69,9 @@ const (
 // ThemeNames lists the accepted --theme values.
 var ThemeNames = []string{"auto", "dark", "light"}
 
-func parseTheme(s string) Theme {
+// ParseTheme returns the theme a --theme value names: ThemeUnknown for
+// auto and for anything it does not know.
+func ParseTheme(s string) Theme {
 	switch strings.ToLower(strings.TrimSpace(s)) {
 	case "dark":
 		return ThemeDark
@@ -89,12 +91,13 @@ type Options struct {
 	Taskbar bool        // --taskbar: progress on the terminal's tab (OSC 9;4)
 }
 
-// PreScan reads the presentation flags from the raw arguments and returns
-// the arguments without them. Help and version text print before kingpin
-// parses (main's maybeHandleHelp), and must already honour the flags;
-// kingpin accepts the same flags later and rejects bad values.
-func PreScan(args []string) (Options, []string) {
-	var o Options
+// PreScan reads the presentation flags from the raw arguments over base,
+// the config file's settings, and returns the arguments without them. Help
+// and version text print before kingpin parses (main's maybeHandleHelp),
+// and must already honour the flags; kingpin accepts the same flags later
+// and rejects bad values.
+func PreScan(args []string, base Options) (Options, []string) {
+	o := base
 	rest := make([]string, 0, len(args))
 	// value reads a flag's value, given as --name=V or --name V.
 	value := func(i *int, a, name string) (string, bool) {
@@ -127,6 +130,9 @@ func PreScan(args []string) (Options, []string) {
 			o.CI = false
 		case "--" + FlagNoFun:
 			o.NoFun = true
+		case "--no-" + FlagNoFun:
+			// kingpin's negation of --no-fun: it undoes the config file's.
+			o.NoFun = false
 		case "--" + FlagTaskbar:
 			o.Taskbar = true
 		case "--no-" + FlagTaskbar:
@@ -135,7 +141,7 @@ func PreScan(args []string) (Options, []string) {
 			if v, ok := value(&i, a, FlagColor); ok {
 				o.Color = parseColorPolicy(v)
 			} else if v, ok := value(&i, a, FlagTheme); ok {
-				o.Theme = parseTheme(v)
+				o.Theme = ParseTheme(v)
 			} else {
 				rest = append(rest, a)
 			}

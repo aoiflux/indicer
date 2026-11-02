@@ -93,9 +93,24 @@ func (c Config) Validate() error {
 		}
 	}
 	for _, o := range c.CORSOrigins {
-		if _, ok := normalizeOrigin(o); !ok {
-			return fmt.Errorf("CORS origin %q: want scheme://host[:port] with scheme http or https", o)
+		if err := CheckOrigin(o); err != nil {
+			return err
 		}
+	}
+	return nil
+}
+
+// CheckListen checks the syntax of --listen addresses, without the rule
+// that a non-loopback one needs a token.
+func CheckListen(list []string) error {
+	_, err := parseListen(list)
+	return err
+}
+
+// CheckOrigin checks one --cors-origin value.
+func CheckOrigin(o string) error {
+	if _, ok := normalizeOrigin(o); !ok {
+		return fmt.Errorf("CORS origin %q: want scheme://host[:port] with scheme http or https", o)
 	}
 	return nil
 }

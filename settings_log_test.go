@@ -31,30 +31,8 @@ func TestSettingsRecord(t *testing.T) {
 		t.Fatalf("exited %d, want 0", code)
 	}
 
-	files, _ := filepath.Glob(filepath.Join(dir, "dues-*.ndjson"))
-	var raw []byte
-	var rec map[string]any
-	for _, f := range files {
-		b, err := os.ReadFile(f)
-		if err != nil {
-			t.Fatal(err)
-		}
-		raw = append(raw, b...)
-		for line := range strings.SplitSeq(string(b), "\n") {
-			var r map[string]any
-			if json.Unmarshal([]byte(line), &r) != nil || r["msg"] != "settings" {
-				continue
-			}
-			if rec != nil {
-				t.Fatalf("two settings records:\n%s", b)
-			}
-			rec = r
-		}
-	}
-	if rec == nil {
-		t.Fatalf("no settings record in %v", files)
-	}
-	if bytes.Contains(raw, []byte("hunter2-s3cret")) {
+	rec := settingsRecord(t, dir)
+	if raw := logText(t, dir); bytes.Contains(raw, []byte("hunter2-s3cret")) {
 		t.Fatalf("the password reached the log:\n%s", raw)
 	}
 
@@ -77,4 +55,44 @@ func TestSettingsRecord(t *testing.T) {
 	if s, _ := rec[cnst.FlagDBPath].(map[string]any); s["source"] != logging.FromDefault || s["value"] == "" {
 		t.Errorf("%s: %v, want the default root", cnst.FlagDBPath, rec[cnst.FlagDBPath])
 	}
+	if s, _ := rec[flagConfig].(map[string]any); s["value"] != "none" || s["source"] != logging.FromDefault ||
+		s["reason"] != "no file at testdata/no-such-config.json" {
+		t.Errorf("%s: %v, want none, as there is no default file", flagConfig, rec[flagConfig])
+	}
+}
+
+// logText is every log file in dir.
+func logText(t *testing.T, dir string) []byte {
+	t.Helper()
+	files, _ := filepath.Glob(filepath.Join(dir, "dues-*.ndjson"))
+	var raw []byte
+	for _, f := range files {
+		b, err := os.ReadFile(f)
+		if err != nil {
+			t.Fatal(err)
+		}
+		raw = append(raw, b...)
+	}
+	return raw
+}
+
+// settingsRecord is the one settings record in the logs in dir.
+func settingsRecord(t *testing.T, dir string) map[string]any {
+	t.Helper()
+	raw := logText(t, dir)
+	var rec map[string]any
+	for line := range strings.SplitSeq(string(raw), "\n") {
+		var r map[string]any
+		if json.Unmarshal([]byte(line), &r) != nil || r["msg"] != "settings" {
+			continue
+		}
+		if rec != nil {
+			t.Fatalf("two settings records:\n%s", raw)
+		}
+		rec = r
+	}
+	if rec == nil {
+		t.Fatalf("no settings record in %s:\n%s", dir, raw)
+	}
+	return rec
 }

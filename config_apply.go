@@ -43,21 +43,22 @@ const (
 // resolveCredentials returns the database password from --password-file,
 // or else --password-stdin. An empty password is no password. The removed
 // --password (-p) is refused with what replaces it.
-func resolveCredentials(f cliFlags, set map[string]bool, stdin io.Reader) (dbmeta.Credentials, error) {
-	if set[cnst.FlagPassword] {
+func resolveCredentials(f cliFlags, src sources, stdin io.Reader) (dbmeta.Credentials, error) {
+	if src.set[cnst.FlagPassword] {
 		return dbmeta.Credentials{}, lifecycle.Usagef("--%s (-%c) was removed: a password on the command line is visible to other users of this machine; use --%s or --%s",
 			cnst.FlagPassword, cnst.FlagPasswordShort, flagPasswordFile, flagPasswordStdin)
 	}
 	pw := ""
 	switch {
 	case *f.pwdFile != "":
+		origin := src.originOf(flagPasswordFile)
 		b, err := os.ReadFile(*f.pwdFile)
 		if err != nil {
-			return dbmeta.Credentials{}, lifecycle.Usagef("--%s: %v", flagPasswordFile, err)
+			return dbmeta.Credentials{}, lifecycle.Usagef("--%s%s: %v", flagPasswordFile, origin, err)
 		}
 		pw = firstLine(string(b))
 		if pw == "" {
-			return dbmeta.Credentials{}, lifecycle.Usagef("--%s: %s holds no password", flagPasswordFile, *f.pwdFile)
+			return dbmeta.Credentials{}, lifecycle.Usagef("--%s%s: %s holds no password", flagPasswordFile, origin, *f.pwdFile)
 		}
 	case *f.pwdStdin:
 		line, err := bufio.NewReader(stdin).ReadString('\n')
@@ -86,20 +87,21 @@ const (
 
 // resolveServerToken returns the server's bearer token from --token-file;
 // none is no token. The removed --token is refused with what replaces it.
-func resolveServerToken(f cliFlags, set map[string]bool) (string, error) {
-	if set[flagToken] {
+func resolveServerToken(f cliFlags, src sources) (string, error) {
+	if src.set[flagToken] {
 		return "", lifecycle.Usagef("--%s was removed: a token on the command line is visible to other users of this machine; use --%s", flagToken, flagTokenFile)
 	}
 	if *f.serverTokenFile == "" {
 		return "", nil
 	}
+	origin := src.originOf(flagTokenFile)
 	b, err := os.ReadFile(*f.serverTokenFile)
 	if err != nil {
-		return "", lifecycle.Usagef("--%s: %v", flagTokenFile, err)
+		return "", lifecycle.Usagef("--%s%s: %v", flagTokenFile, origin, err)
 	}
 	tok := strings.TrimSpace(firstLine(string(b)))
 	if tok == "" {
-		return "", lifecycle.Usagef("--%s: %s holds no token", flagTokenFile, *f.serverTokenFile)
+		return "", lifecycle.Usagef("--%s%s: %s holds no token", flagTokenFile, origin, *f.serverTokenFile)
 	}
 	return tok, nil
 }
@@ -112,17 +114,15 @@ func firstLine(s string) string {
 	return s
 }
 
-// applyRuntimeConfig validates the command line and sets the runtime
-// globals from it. Every rejected flag is reported together, as a usage error
-// (exit code 2). Adjustments that are not errors come back in tuning.issues.
-func applyRuntimeConfig(parsed string, args []string, cliDef cliDefinition) (pipelineTuning, error) {
+// applyRuntimeConfig validates the settings, from the command line and the
+// config file, and sets the runtime globals from them. Every rejected flag
+// is reported together, as a usage error (exit code 2). Adjustments that
+// are not errors come back in tuning.issues.
+func applyRuntimeConfig(parsed string, cliDef cliDefinition, src sources) (pipelineTuning, error) {
 	tuning := pipelineTuning{}
 	f := cliDef.flags
+	set := src.set
 
-	set, err := flagsSetByUser(cliDef.app, args)
-	if err != nil {
-		return tuning, lifecycle.Usagef("%v (see dues --help)", err)
-	}
 	raw := appconfig.Raw{
 		Command:           parsed,
 		ChunkKiB:          *f.chonkSize,
@@ -143,7 +143,8 @@ func applyRuntimeConfig(parsed string, args []string, cliDef cliDefinition) (pip
 		ListStatus:        *f.listStatus,
 		RankAlpha:         *f.rankAlpha,
 		MicroTopK:         *f.microExtractTopK,
-		Set:               set,
+		Set:               src.explicit(),
+		Origin:            src.origins(),
 	}
 	switch parsed {
 	case cliDef.commands.nearIn.FullCommand():
@@ -186,10 +187,10 @@ func applyRuntimeConfig(parsed string, args []string, cliDef cliDefinition) (pip
 
 	if parsed == cliDef.commands.store.FullCommand() {
 		if err := cnst.SetStoreHashStrategy(*f.storeHashStrategy); err != nil {
-			return tuning, lifecycle.Usagef("--%s: %v", cnst.FlagHashStrategy, err)
+			return tuning, lifecycle.Usagef("--%s%s: %v", cnst.FlagHashStrategy, src.originOf(cnst.FlagHashStrategy), err)
 		}
 		if err := cnst.SetStorePipeline(*f.storePipeline); err != nil {
-			return tuning, lifecycle.Usagef("--%s: %v", cnst.FlagStorePipeline, err)
+			return tuning, lifecycle.Usagef("--%s%s: %v", cnst.FlagStorePipeline, src.originOf(cnst.FlagStorePipeline), err)
 		}
 		// Retired with W6: the index pass runs beside storage, and partition
 		// and indexed-file hashes are plain hashes (ING-20), so neither
@@ -218,10 +219,10 @@ func applyRuntimeConfig(parsed string, args []string, cliDef cliDefinition) (pip
 			})
 		}
 		if err := cnst.SetStoreIOEngine(*f.storeIOEngine); err != nil {
-			return tuning, lifecycle.Usagef("--%s: %v", cnst.FlagStoreIOEngine, err)
+			return tuning, lifecycle.Usagef("--%s%s: %v", cnst.FlagStoreIOEngine, src.originOf(cnst.FlagStoreIOEngine), err)
 		}
 		if err := cnst.SetStoreIOUringQueueDepth(*f.storeIOUringQueue); err != nil {
-			return tuning, lifecycle.Usagef("--%s: %v", cnst.FlagStoreIOUringQueueDepth, err)
+			return tuning, lifecycle.Usagef("--%s%s: %v", cnst.FlagStoreIOUringQueueDepth, src.originOf(cnst.FlagStoreIOUringQueueDepth), err)
 		}
 	}
 

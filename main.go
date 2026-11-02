@@ -12,6 +12,7 @@ import (
 	"indicer/internal/osdirs"
 	"indicer/internal/ui"
 	"indicer/lib/cnst"
+	"indicer/lib/dbmeta"
 	"indicer/lib/fio"
 	"indicer/lib/logging"
 	"indicer/lib/store"
@@ -56,23 +57,37 @@ func main() {
 // happen on the way out (flushing the log, keeping or removing the crash
 // file) is deferred here, so nothing below may call os.Exit.
 func realMain(args []string) (code int) {
-	// Presentation is decided first: help and version print before kingpin
-	// parses, and must already honour --color, --plain and --ci.
-	uiOpts, helpArgs := ui.PreScan(args)
+	// The config file is read first, and presentation is decided next: help
+	// and version print before kingpin parses, and must already honour
+	// --color, --plain and --ci, and the file's settings for them.
+	conf, rest, confErr := readConfig(args)
+	uiOpts, helpArgs := ui.PreScan(rest, conf.values.presentation())
 	defer ui.Setup(uiOpts)()
 
+	// A config file that cannot be used stops every command, help included:
+	// running without the settings it holds would surprise more.
+	if confErr != nil {
+		ui.Message(console.Err(), ui.LevelError, confErr.Error())
+		return lifecycle.ExitCode(confErr)
+	}
 	if maybeHandleHelp(helpArgs) {
 		return lifecycle.ExitOK
 	}
 
 	// The log and the crash file exist before kingpin parses, so a parse
-	// error is logged too; their flags are read from the raw arguments.
-	tempDir := flagFromArgs(args, flagTempDir)
+	// error is logged too; their flags are read from the raw arguments, and
+	// the file's settings stand in for flags not given.
+	v := conf.values
+	tempDir := flagOr(args, flagTempDir, v.TempDir)
+	debugLog, given := boolFlagFromArgs(args, flagDebug)
+	if !given && v.Debug != nil {
+		debugLog = *v.Debug
+	}
 	logInfo := logging.Init(logging.Config{
 		Component: "dues",
-		Dir:       flagFromArgs(args, flagLogDir),
+		Dir:       flagOr(args, flagLogDir, v.LogDir),
 		TempDir:   tempDir,
-		Debug:     boolFlagFromArgs(args, flagDebug),
+		Debug:     debugLog,
 		// Warnings about the log itself go through console, so they print
 		// above a progress display instead of through it.
 		Stderr: console.ErrSink,
@@ -109,7 +124,7 @@ func realMain(args []string) (code int) {
 		zap.String("commit", buildCommit),
 		zap.Strings("args", logging.RedactArgs(args)))
 
-	err := run(args)
+	err := run(args, conf)
 	if cerr := closeCompressionCodecs(); err == nil {
 		err = cerr
 	}
@@ -125,58 +140,69 @@ func realMain(args []string) (code int) {
 }
 
 // flagFromArgs finds the value of a string flag (--name V or --name=V)
-// before kingpin parses the command line. kingpin validates it later.
-func flagFromArgs(args []string, name string) string {
+// before kingpin parses the command line, and whether it is there.
+// kingpin validates it later.
+func flagFromArgs(args []string, name string) (string, bool) {
 	flag := "--" + name
 	for i, a := range args {
 		if a == "--" {
 			break
 		}
 		if v, ok := strings.CutPrefix(a, flag+"="); ok {
-			return v
+			return v, true
 		}
 		if a == flag && i+1 < len(args) {
-			return args[i+1]
+			return args[i+1], true
 		}
 	}
-	return ""
+	return "", false
+}
+
+// flagOr is the string flag's value when the command line gives it, else
+// the config file's value, else "".
+func flagOr(args []string, name string, file *string) string {
+	if v, ok := flagFromArgs(args, name); ok || file == nil {
+		return v
+	}
+	return *file
 }
 
 // boolFlagFromArgs finds a boolean flag (--name, or --no-name to undo it;
-// the last one counts) before kingpin parses the command line.
-func boolFlagFromArgs(args []string, name string) bool {
-	on := false
+// the last one counts) before kingpin parses the command line, and whether
+// it is there.
+func boolFlagFromArgs(args []string, name string) (on, given bool) {
 	for _, a := range args {
 		if a == "--" {
 			break
 		}
 		switch a {
 		case "--" + name:
-			on = true
+			on, given = true, true
 		case "--no-" + name:
-			on = false
+			on, given = false, true
 		}
 	}
-	return on
+	return on, given
 }
 
 // checkTempDir fails fast on a --temp-dir that is not an existing
-// directory, before anything is written there.
-func checkTempDir(dir string) error {
+// directory, before anything is written there. origin says where the value
+// came from when the command line did not give it.
+func checkTempDir(dir, origin string) error {
 	if dir == "" {
 		return nil
 	}
 	info, err := os.Stat(dir)
 	if err != nil {
-		return lifecycle.Usagef("--%s: %v", flagTempDir, err)
+		return lifecycle.Usagef("--%s%s: %v", flagTempDir, origin, err)
 	}
 	if !info.IsDir() {
-		return lifecycle.Usagef("--%s %s is not a directory", flagTempDir, dir)
+		return lifecycle.Usagef("--%s%s: %s is not a directory", flagTempDir, origin, dir)
 	}
 	return nil
 }
 
-func run(args []string) error {
+func run(args []string, conf runConfig) error {
 	cliDef := newCLIDefinition()
 
 	// kingpin exits the process itself after its own help and usage output.
@@ -201,19 +227,24 @@ func run(args []string) error {
 	if err != nil {
 		return lifecycle.Usagef("%v (see dues --help)", err)
 	}
+	set, err := flagsSetByUser(cliDef.app, args)
+	if err != nil {
+		return lifecycle.Usagef("%v (see dues --help)", err)
+	}
+	src := conf.apply(cliDef.flags, parsed, set)
 	if err := cliDef.faults.apply(); err != nil {
 		return err
 	}
 
 	tempDir := *cliDef.flags.tempDir
-	if err := checkTempDir(tempDir); err != nil {
+	if err := checkTempDir(tempDir, src.originOf(flagTempDir)); err != nil {
 		return err
 	}
 	// Restores share one container cache per process, so its spill
 	// directory is a process setting.
 	fio.SetContainerSpillDir(tempDir)
 
-	tuning, err := applyRuntimeConfig(parsed, args, cliDef)
+	tuning, err := applyRuntimeConfig(parsed, cliDef, src)
 	if err != nil {
 		return err
 	}
@@ -226,12 +257,15 @@ func run(args []string) error {
 		return err
 	}
 
-	creds, err := resolveCredentials(cliDef.flags, tuning.layout.Set, os.Stdin)
-	if err != nil {
-		return err
+	// dues config says where the password comes from; it does not read it.
+	creds := dbmeta.NoPassword()
+	if parsed != cliDef.commands.config.FullCommand() {
+		if creds, err = resolveCredentials(cliDef.flags, src, os.Stdin); err != nil {
+			return err
+		}
 	}
 	dbOpts := cli.DBOptions{Path: *cliDef.flags.dbpath, Creds: creds, Layout: tuning.layout, TempDir: tempDir}
-	logSettings(cliDef.flags, tuning.layout.Set)
+	logSettings(cliDef.flags, src, conf)
 
 	printRunHeader(parsed, cliDef, tuning)
 
@@ -239,7 +273,7 @@ func run(args []string) error {
 	// second one exits at once (LOG-3).
 	ctx, stop := lifecycle.Context(context.Background())
 	defer stop()
-	return executeCommand(ctx, parsed, cliDef, dbOpts, tuning)
+	return executeCommand(ctx, parsed, cliDef, dbOpts, tuning, src, conf)
 }
 
 func closeCompressionCodecs() error {
@@ -250,8 +284,8 @@ func closeCompressionCodecs() error {
 	return nil
 }
 
-func executeCommand(ctx context.Context, parsed string, cliDef cliDefinition, dbOpts cli.DBOptions, tuning pipelineTuning) error {
-	handlers := buildCommandHandlers(cliDef, dbOpts, tuning)
+func executeCommand(ctx context.Context, parsed string, cliDef cliDefinition, dbOpts cli.DBOptions, tuning pipelineTuning, src sources, conf runConfig) error {
+	handlers := buildCommandHandlers(cliDef, dbOpts, tuning, src, conf)
 	handler, ok := handlers[parsed]
 	if !ok {
 		return fmt.Errorf("unsupported command: %s", parsed)
@@ -290,12 +324,16 @@ func showsProgress(parsed string, cliDef cliDefinition) bool {
 	return false
 }
 
-func buildCommandHandlers(cliDef cliDefinition, dbOpts cli.DBOptions, tuning pipelineTuning) map[string]func(context.Context) error {
+func buildCommandHandlers(cliDef cliDefinition, dbOpts cli.DBOptions, tuning pipelineTuning, src sources, conf runConfig) map[string]func(context.Context) error {
 	return map[string]func(context.Context) error{
 		cliDef.commands.version.FullCommand(): func(ctx context.Context) error {
 			logging.GetLogger().Debug("Command: version")
 			printVersionInfo()
 			return nil
+		},
+		cliDef.commands.config.FullCommand(): func(context.Context) error {
+			logging.GetLogger().Debug("Command: config")
+			return printConfig(cliDef.app, cliDef.flags, src, conf)
 		},
 		cliDef.commands.tui.FullCommand(): func(ctx context.Context) error {
 			logging.GetLogger().Info("Command: tui", zap.String("dbpath", *cliDef.flags.dbpath))
@@ -453,15 +491,21 @@ func buildCommandHandlers(cliDef cliDefinition, dbOpts cli.DBOptions, tuning pip
 		cliDef.commands.mew.FullCommand():     func(context.Context) error { ui.Meow(); return nil },
 		cliDef.commands.server.FullCommand(): func(ctx context.Context) error {
 			logging.GetLogger().Info("Command: server", zap.String("dbpath", *cliDef.flags.dbpath), zap.Int("chonksize_kb", *cliDef.flags.chonkSize))
-			token, err := resolveServerToken(cliDef.flags, tuning.layout.Set)
+			token, err := resolveServerToken(cliDef.flags, src)
 			if err != nil {
 				return err
 			}
-			return api.Server(ctx, dbOpts, api.Options{
+			err = api.Server(ctx, dbOpts, api.Options{
 				Listen:      *cliDef.flags.serverListen,
 				Token:       token,
 				CORSOrigins: *cliDef.flags.serverCORSOrigins,
 			})
+			// The file's listen addresses can need a token the command line
+			// does not give; say where they came from.
+			if _, usage := errors.AsType[*lifecycle.UsageError](err); usage && src.filled[flagListen] {
+				err = &lifecycle.UsageError{Err: fmt.Errorf("%w (listen set in config file %s)", err, src.file)}
+			}
+			return err
 		},
 	}
 }

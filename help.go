@@ -152,6 +152,8 @@ func printHelpForPath(path []string) {
 		printResetHelp()
 	case cnst.CmdVeresion:
 		printVersionHelp()
+	case cmdConfig:
+		printConfigHelp()
 	case cnst.CmdTui:
 		printTuiHelp()
 	case cmdCoffee, cmdFortune, cmdMeow:
@@ -182,6 +184,8 @@ func printRootHelp() {
 	printHelpSection("Global Options")
 	fmt.Printf("  %s, %s   Show this help\n", cmd("--help"), cmd("-h"))
 	fmt.Printf("  %s, %s   Show the version line\n", cmd("--version"), cmd("-v"))
+	fmt.Printf("  %s FILE    Read settings from this config file (default: ~/.config/dues/dues.json, if it exists)\n", cmd("--config"))
+	fmt.Printf("  %s     Read no config file\n", cmd("--no-config"))
 	fmt.Printf("  %s, %s   Custom path for DUES database\n", cmd("--dbpath"), cmd("-d"))
 	fmt.Printf("  %s       Directory for log and crash files\n", cmd("--log-dir"))
 	fmt.Printf("  %s      Directory for temporary files (default: /tmp, or AppData\\Local\\Temp on Windows)\n", cmd("--temp-dir"))
@@ -207,7 +211,8 @@ func printRootHelp() {
 	printHelpSection("Output")
 	fmt.Println("  Results go to stdout; the run header, progress, notes, warnings and errors go")
 	fmt.Println("  to stderr, so `dues list | jq` reads pure JSON. On a pipe nothing is coloured.")
-	fmt.Println("  DUES reads no environment variables: every setting is a flag.")
+	fmt.Println("  DUES reads no environment variables: every setting is a flag or a key in the")
+	fmt.Println("  config file (dues help config).")
 
 	printHelpSection("Database Layout")
 	fmt.Println("  Chunk size, hash algorithm, storage and encryption are fixed when a database is")
@@ -237,6 +242,7 @@ func printRootHelp() {
 	fmt.Printf("  %s %s\n", cmd(pad(cnst.CmdServer, 20)), "Serve the database over Connect/gRPC/gRPC-Web (loopback by default)")
 	fmt.Printf("  %s %s\n", cmd(pad(cnst.CmdReset, 20)), "Delete database")
 	fmt.Printf("  %s %s\n", cmd(pad(cnst.CmdVeresion, 20)), "Show version details")
+	fmt.Printf("  %s %s\n", cmd(pad(cmdConfig, 20)), "Show the settings in effect and where each came from")
 	fmt.Printf("  %s %s\n", cmd(pad(cnst.CmdStats, 20)), "Show stats about data")
 	fmt.Printf("  %s %s\n", cmd(pad(cnst.CmdRepair, 20)), "Inspect, finish, verify or upgrade the database")
 	fmt.Printf("  %s %s\n", cmd(pad(cmdReindex, 20)), "Rebuild the index of stored evidence")
@@ -690,6 +696,63 @@ func printVersionHelp() {
 	printExamples(
 		"dues version",
 		"dues -v",
+	)
+}
+
+func printConfigHelp() {
+	cmd := helpCmd()
+	printHelpHeader(cmdConfig)
+	fmt.Println("Usage: dues config [global options]")
+	fmt.Println("Prints, as JSON on stdout, the config file read and every setting it can hold: the")
+	fmt.Println("value in effect and its source (flag, config or default). It opens no database and")
+	fmt.Println("reads neither the password file nor the token file.")
+
+	printHelpSection("The Config File")
+	fmt.Println("  Settings kept between runs, so they need not be typed every time. DUES reads")
+	fmt.Println("  ~/.config/dues/dues.json in the account's home directory, on every system, when it")
+	fmt.Printf("  exists; %s FILE reads another, which must exist, and %s reads none.\n", cmd("--config"), cmd("--no-config"))
+	fmt.Println("  The file is one JSON object. Keys are flag names, exactly as typed; a command's")
+	fmt.Println("  own settings go in an object named after it, and apply to that command only.")
+	fmt.Println("  Paths must be absolute. On Linux and macOS the file must belong to you or root,")
+	fmt.Println("  and neither its group nor others may write it.")
+
+	printHelpSection("Keys")
+	fmt.Println("  color, plain, ci, no-fun, theme, taskbar, log-dir, temp-dir, debug, dbpath,")
+	fmt.Println("  password-file, preset, compress-level, low")
+	fmt.Println("  store:   pipeline, hash-strategy, io-engine, io-uring-queue-depth, store-workers,")
+	fmt.Println("           store-queue")
+	fmt.Println("  restore: restore-workers, restore-queue, restore-buffer-mb")
+	fmt.Println("  server:  listen, token-file, cors-origin")
+	fmt.Println("  Not keys: the database layout (chonksize, container, hash-algo, quick), which a")
+	fmt.Println("  database fixes when it is created; choices for one run (fix, force, out, ...); and")
+	fmt.Println("  the password, which only a file named by password-file holds.")
+
+	printHelpSection("Precedence")
+	fmt.Println("  A flag wins over the file, and the file over the default. A preset on the command")
+	fmt.Println("  line (--preset, -Q, -o, -L) replaces the file's preset, compress-level and low.")
+	fmt.Println("  The file's password-file applies unless --password-file or --password-stdin is")
+	fmt.Println("  given: with it, new databases are created encrypted. --password-file= uses none.")
+	fmt.Println("  A list (listen, cors-origin) on the command line replaces the file's.")
+
+	printHelpSection("Errors")
+	fmt.Println("  A file that cannot be used (bad JSON, an unknown or repeated key, a bad value)")
+	fmt.Println("  stops every command with exit 2, naming the file, line and column. Fix it, or")
+	fmt.Printf("  run with %s.\n", cmd("--no-config"))
+
+	printHelpSection("Example")
+	fmt.Println(`  {`)
+	fmt.Println(`    "theme": "light",`)
+	fmt.Println(`    "log-dir": "D:\\dues\\logs",`)
+	fmt.Println(`    "dbpath": "D:\\cases\\c42",`)
+	fmt.Println(`    "password-file": "D:\\keys\\c42.key",`)
+	fmt.Println(`    "preset": "performance",`)
+	fmt.Println(`    "store": { "pipeline": "staged", "store-workers": 8 },`)
+	fmt.Println(`    "server": { "listen": ["127.0.0.1:50051"], "token-file": "D:\\keys\\server.token" }`)
+	fmt.Println(`  }`)
+	printExamples(
+		"dues config",
+		"dues --config ./case42.json config",
+		"dues --no-config store evidence.img",
 	)
 }
 

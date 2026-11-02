@@ -22,7 +22,7 @@ func credsFor(t *testing.T, stdin string, args ...string) (dbmeta.Credentials, e
 	if err != nil {
 		t.Fatal(err)
 	}
-	return resolveCredentials(cliDef.flags, set, strings.NewReader(stdin))
+	return resolveCredentials(cliDef.flags, sources{set: set}, strings.NewReader(stdin))
 }
 
 func TestPasswordSources(t *testing.T) {

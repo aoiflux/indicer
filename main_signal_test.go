@@ -35,13 +35,13 @@ func TestSignalledCommandExitsWithSignalCode(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		tuning, err := applyRuntimeConfig(parsed, args, cliDef)
+		tuning, err := applyRuntimeConfig(parsed, cliDef, cmdLineSources(t, cliDef, args))
 		if err != nil {
 			t.Fatal(err)
 		}
 		ctx, cancel := context.WithCancelCause(context.Background())
 		cancel(&lifecycle.SignalError{Signal: c.sig})
-		err = executeCommand(ctx, parsed, cliDef, cli.DBOptions{Path: root, Layout: tuning.layout}, tuning)
+		err = executeCommand(ctx, parsed, cliDef, cli.DBOptions{Path: root, Layout: tuning.layout}, tuning, sources{}, runConfig{})
 		if got := lifecycle.ExitCode(err); got != c.code {
 			t.Errorf("%v: exit %d (%v), want %d", c.sig, got, err, c.code)
 		}

@@ -84,6 +84,38 @@ func TestResolveReportsEveryBadFlag(t *testing.T) {
 	}
 }
 
+// A bad preset is the only error: the compression level it never got to
+// apply is not blamed.
+func TestBadPresetBlamesOnlyThePreset(t *testing.T) {
+	for _, raw := range []Raw{
+		with(base(cnst.CmdList), func(r *Raw) { r.Preset = "turbo" }),
+		with(base(cnst.CmdList), func(r *Raw) { r.Preset = "quick"; r.LowResourcePreset = true }),
+	} {
+		_, _, err := Resolve(raw, machine)
+		if err == nil || strings.Contains(err.Error(), "--"+FlagCompressLevel) {
+			t.Errorf("preset %q: %v", raw.Preset, err)
+		}
+	}
+}
+
+// A value from the config file says so.
+func TestMessagesNameTheOrigin(t *testing.T) {
+	origin := map[string]string{FlagStoreWorkers: "config file /c.json"}
+	raw := with(base(cnst.CmdStore), func(r *Raw) { r.StoreWorkers = -1; r.Set = set(FlagStoreWorkers); r.Origin = origin })
+	_, _, err := Resolve(raw, machine)
+	if want := "--store-workers (set in config file /c.json): must be"; err == nil || !strings.Contains(err.Error(), want) {
+		t.Fatalf("got %v, want %q", err, want)
+	}
+	raw = with(base(cnst.CmdRestore), func(r *Raw) {
+		r.RestoreBufferMB = 300
+		r.Origin = map[string]string{FlagRestoreBufferMB: "config file /c.json"}
+	})
+	_, issues, err := Resolve(raw, machine)
+	if err != nil || len(issues) != 1 || !strings.HasPrefix(issues[0].String(), "--restore-buffer-mb (set in config file /c.json): ") {
+		t.Fatalf("got %v, %v", issues, err)
+	}
+}
+
 func TestResolveAcceptsDefaults(t *testing.T) {
 	for _, cmd := range []string{cnst.CmdStore, cnst.CmdRestore, cnst.CmdList, cnst.CmdSearch, "near in", "micro extract", cnst.CmdServer, cnst.CmdTui} {
 		if _, _, err := Resolve(base(cmd), machine); err != nil {

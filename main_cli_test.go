@@ -6,6 +6,7 @@ import (
 	"strings"
 	"testing"
 
+	"indicer/internal/console"
 	"indicer/internal/ui"
 )
 
@@ -131,7 +132,9 @@ func captureOutput(t *testing.T, fn func()) (stdout, stderr string) {
 	if err != nil {
 		t.Fatalf("pipe create failed: %v", err)
 	}
+	// Help prints to os.Stdout; messages go through console.
 	os.Stdout, os.Stderr = outW, errW
+	console.Configure(outW, errW)
 
 	// Read while fn writes: output larger than the pipe's buffer would
 	// otherwise block fn for ever.
@@ -154,6 +157,7 @@ func captureOutput(t *testing.T, fn func()) (stdout, stderr string) {
 	_ = outW.Close()
 	_ = errW.Close()
 	os.Stdout, os.Stderr = oldStdout, oldStderr
+	console.Reset()
 
 	out, errOut := <-outRead, <-errRead
 	if out.err != nil || errOut.err != nil {

@@ -32,6 +32,18 @@ func TestMatchesKnownFolders(t *testing.T) {
 	}
 }
 
+// TestHomeIsTheAccountProfile: Home, read from the token directly, is the
+// folder user.Current reports for the same account.
+func TestHomeIsTheAccountProfile(t *testing.T) {
+	u, err := user.Current()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got, err := Home(); err != nil || !strings.EqualFold(got, u.HomeDir) {
+		t.Errorf("Home = %q, %v; user.Current has %q", got, err, u.HomeDir)
+	}
+}
+
 func TestUserNameHasNoDomain(t *testing.T) {
 	u, err := user.Current()
 	if err != nil {

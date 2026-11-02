@@ -16,9 +16,11 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"iter"
 	"log"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -77,25 +79,30 @@ var (
 
 // dirCandidates lists where a log may go, in order: the explicit
 // directory, the per-user cache, then a per-user directory under the
-// temporary directory. Tests replace it.
-var dirCandidates = func(explicit, tempDir string) []string {
-	var dirs []string
-	if explicit != "" {
-		dirs = append(dirs, explicit)
+// temporary directory. Each is worked out only when the ones before it
+// failed: the account name behind the last costs milliseconds on Windows,
+// and nearly every start stops at the first. Tests replace it.
+var dirCandidates = func(explicit, tempDir string) iter.Seq[string] {
+	return func(yield func(string) bool) {
+		if explicit != "" && !yield(explicit) {
+			return
+		}
+		if dir, err := osdirs.LogDir(); err == nil && !yield(dir) {
+			return
+		}
+		if temp, err := osdirs.TempOr(tempDir); err == nil {
+			yield(filepath.Join(temp, "dues-"+tempUser(), "logs"))
+		}
 	}
-	if dir, err := osdirs.LogDir(); err == nil {
-		dirs = append(dirs, dir)
-	}
-	if temp, err := osdirs.TempOr(tempDir); err == nil {
-		dirs = append(dirs, filepath.Join(temp, "dues-"+tempUser(), "logs"))
-	}
-	return dirs
 }
+
+// userName is osdirs.UserName; a test counts the calls.
+var userName = osdirs.UserName
 
 // tempUser names the per-user log directory under the temporary directory:
 // the account name, or "user" when there is none usable as a file name.
 func tempUser() string {
-	name, err := osdirs.UserName()
+	name, err := userName()
 	if err != nil || name == "." || name == ".." || strings.ContainsAny(name, `/\`) {
 		return "user"
 	}
@@ -134,9 +141,9 @@ func Init(cfg Config) Info {
 		errs []error
 	)
 	if cfg.Lazy {
-		out = lazyRotating(dirCandidates(cfg.Dir, cfg.TempDir), cfg.Component, cfg.MaxBytes, cfg.Keep, cfg.Stderr)
+		out = lazyRotating(slices.Collect(dirCandidates(cfg.Dir, cfg.TempDir)), cfg.Component, cfg.MaxBytes, cfg.Keep, cfg.Stderr)
 	}
-	for _, dir := range dirCandidates(cfg.Dir, cfg.TempDir) {
+	for dir := range dirCandidates(cfg.Dir, cfg.TempDir) {
 		if out != nil {
 			break
 		}

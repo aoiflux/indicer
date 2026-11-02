@@ -5,6 +5,7 @@ import (
 	"bytes"
 	"encoding/json"
 	"io"
+	"iter"
 	"os"
 	"path/filepath"
 	"slices"
@@ -22,11 +23,11 @@ import (
 func useDirs(t *testing.T, dirs ...string) {
 	t.Helper()
 	prev := dirCandidates
-	dirCandidates = func(explicit, _ string) []string {
+	dirCandidates = func(explicit, _ string) iter.Seq[string] {
 		if explicit != "" {
-			return append([]string{explicit}, dirs...)
+			return slices.Values(append([]string{explicit}, dirs...))
 		}
-		return dirs
+		return slices.Values(dirs)
 	}
 	t.Cleanup(func() {
 		_ = Close()
@@ -48,7 +49,7 @@ func TestDirCandidates(t *testing.T) {
 		want = append(want, dir)
 	}
 	want = append(want, filepath.Join(temp, "dues-"+tempUser(), "logs"))
-	got := dirCandidates(explicit, temp)
+	got := slices.Collect(dirCandidates(explicit, temp))
 	if !slices.Equal(got, want) {
 		t.Fatalf("dirCandidates = %q, want %q", got, want)
 	}
@@ -58,9 +59,33 @@ func TestDirCandidates(t *testing.T) {
 		}
 	}
 	if def, err := osdirs.Temp(); err == nil {
-		if got := dirCandidates("", ""); got[len(got)-1] != filepath.Join(def, "dues-"+tempUser(), "logs") {
+		if got := slices.Collect(dirCandidates("", "")); got[len(got)-1] != filepath.Join(def, "dues-"+tempUser(), "logs") {
 			t.Errorf("without --temp-dir the last candidate is %s, want it under %s", got[len(got)-1], def)
 		}
+	}
+}
+
+// TestLogDirFallbacksOnlyWhenNeeded: a usable --log-dir is the only
+// directory worked out, so a start does not pay for the account-name
+// lookup behind the last fallback.
+func TestLogDirFallbacksOnlyWhenNeeded(t *testing.T) {
+	explicit := t.TempDir() // first, so its cleanup runs after Close
+	prev := userName
+	asked := 0
+	userName = func() (string, error) { asked++; return prev() }
+	t.Cleanup(func() {
+		_ = Close()
+		userName = prev
+	})
+
+	if info := Init(Config{Dir: explicit}); info.Dir != explicit {
+		t.Fatalf("log went to %q, want %q", info.Dir, explicit)
+	}
+	if asked != 0 {
+		t.Errorf("Init with a usable --log-dir asked for the account name %d times", asked)
+	}
+	if all := slices.Collect(dirCandidates(explicit, "")); asked != 1 || len(all) < 2 {
+		t.Errorf("listing every candidate (%q) asked for the account name %d times, want 1", all, asked)
 	}
 }
 

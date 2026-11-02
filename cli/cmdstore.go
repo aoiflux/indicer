@@ -99,6 +99,17 @@ func StoreDataWithOptions(ctx context.Context, opts DBOptions, evipath string, s
 // storeOneFile stores one item of a folder; tests replace it.
 var storeOneFile = storeFile
 
+// itemCost is what one evidence costs beyond its bytes (opening it,
+// committing it, starting its index), as bytes of store work: a file of a
+// few KiB takes 15 to 65 ms to store, 2 to 8 MiB at 100 to 130 MiB/s. On
+// the overall bar the items of a folder or a reindex weigh their size plus
+// this, so a large evidence gets the share of the bar it takes and a run of
+// small ones still moves it.
+const itemCost = 4 << 20
+
+// itemWeight is how much an evidence of size bytes weighs among others.
+func itemWeight(size int64) int64 { return max(size, 0) + itemCost }
+
 // storeFolder stores every evidence in a folder, reporting to w. Segment sets
 // (EWF, split raw) are stored once, as one evidence; files that are not
 // regular are skipped and reported; a file that fails does not stop the rest
@@ -115,6 +126,11 @@ func storeFolder(ctx context.Context, w io.Writer, db *badger.DB, dir string, so
 		return err
 	}
 	all := progress.Start(ctx, "evidence", progress.Evidence, int64(len(plan.Items)))
+	var weight int64
+	for _, item := range plan.Items {
+		weight += itemWeight(item.Size)
+	}
+	all.Weigh(weight)
 	failed := all.Meter("failed", progress.Evidence)
 	defer func() { all.Done(err) }()
 	var stored, warned int
@@ -143,6 +159,7 @@ func storeFolder(ctx context.Context, w io.Writer, db *badger.DB, dir string, so
 			name = rel
 		}
 		one := progress.Start(progress.Within(ctx, all), name, progress.None, 0)
+		one.Weigh(itemWeight(item.Size))
 		err := storeOneFile(progress.Within(ctx, one), w, db, item.Path, sopts)
 		one.Done(err)
 		all.Add(1)

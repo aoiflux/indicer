@@ -145,6 +145,7 @@ func fileQuery(ctx context.Context, db *badger.DB, f io.ReaderAt, size int64, de
 // outside the database, and writes the report. A file stored whole is
 // reported as its exact matches, unless opts.ExplainExact.
 func Out(ctx context.Context, db *badger.DB, path string, opts Options) (Outcome, error) {
+	started := now()
 	out := Outcome{ReportPath: reportPath(opts)}
 	if err := checkReportPath(out.ReportPath, opts.Force); err != nil {
 		return out, err
@@ -170,7 +171,7 @@ func Out(ctx context.Context, db *badger.DB, path string, opts Options) (Outcome
 		return out, err
 	}
 	enc := base64.StdEncoding.EncodeToString
-	r := newRun(db, opts)
+	r := newRun(db, opts, started)
 	exact, err := exactMatches(db, size, enc(sums.Plain), enc(sums.Root))
 	if err != nil {
 		return out, err

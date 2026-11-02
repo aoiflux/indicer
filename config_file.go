@@ -347,9 +347,17 @@ func field(v reflect.Value, key string) reflect.Value {
 	panic("config file key " + key + " has no field in " + t.String())
 }
 
+// sectionApplies reports whether the file's section (a command's name, or
+// "" for the global keys) applies to the command that runs: a section's
+// flags exist only on its command. The TUI stores and restores in process,
+// so the store and restore sections tune it too.
+func sectionApplies(section, command string) bool {
+	return section == "" || section == command ||
+		command == cnst.CmdTui && (section == cnst.CmdStore || section == cnst.CmdRestore)
+}
+
 // apply fills the flags the command line left unset with the file's
-// values, and returns where each value came from. A section applies only
-// to its command, as its flags exist only there.
+// values, and returns where each value came from (see sectionApplies).
 func (c runConfig) apply(f cliFlags, parsed string, set map[string]bool) sources {
 	s := sources{set: set, filled: map[string]bool{}, file: c.Path}
 	// A preset on the command line asks for its own settings, so the file's
@@ -357,7 +365,7 @@ func (c runConfig) apply(f cliFlags, parsed string, set map[string]bool) sources
 	presetGiven := set[cnst.FlagPreset] || set[cnst.FlagQuickMode] || set[cnst.FlagPerformanceMode] || set[cnst.FlagLowResourceMode]
 	for _, b := range f.bindings() {
 		switch {
-		case b.section != "" && b.section != parsed, set[b.flag]:
+		case !sectionApplies(b.section, parsed), set[b.flag]:
 			continue
 		case b.flag == cnst.FlagPreset, b.flag == cnst.FlagCompressLevel, b.flag == cnst.FlagLowResource:
 			if presetGiven {

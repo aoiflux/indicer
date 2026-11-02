@@ -55,6 +55,7 @@ func ReindexData(ctx context.Context, opts DBOptions, ro ReindexOptions) (err er
 type reindexTarget struct {
 	id   []byte
 	name string
+	size int64
 }
 
 // reindexOutcome is how the reindex of one evidence ended.
@@ -91,6 +92,11 @@ func reindexEvidence(ctx context.Context, db *badger.DB, ro ReindexOptions, w io
 	var failures []string
 	var firstErr error
 	all := progress.Start(ctx, "evidence", progress.Evidence, int64(len(targets)))
+	var weight int64
+	for _, t := range targets {
+		weight += itemWeight(t.size)
+	}
+	all.Weigh(weight)
 	failed := all.Meter("failed", progress.Evidence)
 	defer func() { all.Done(err) }()
 	for _, t := range targets {
@@ -101,6 +107,7 @@ func reindexEvidence(ctx context.Context, db *badger.DB, ro ReindexOptions, w io
 		id := base64.StdEncoding.EncodeToString(t.id)
 		fmt.Fprintf(w, "\nReindexing %s (%s)\n", termsafe.Line(t.name), id)
 		one := progress.Start(progress.Within(ctx, all), t.name, progress.None, 0)
+		one.Weigh(itemWeight(t.size))
 		res, err := ingest.Reindex(progress.Within(ctx, one), db, t.id, ingest.ReindexOptions{Source: ro.Source, FTS: ro.FTS, Enrich: ro.Enrich})
 		one.Done(err)
 		all.Add(1)
@@ -150,10 +157,10 @@ func reindexEvidence(ctx context.Context, db *badger.DB, ro ReindexOptions, w io
 func reindexTargets(db *badger.DB, ro ReindexOptions) ([]reindexTarget, error) {
 	var out []reindexTarget
 	seen := map[string]bool{}
-	add := func(id []byte, name string) {
+	add := func(id []byte, e structs.EvidenceFile) {
 		if !seen[string(id)] {
 			seen[string(id)] = true
-			out = append(out, reindexTarget{id: id, name: name})
+			out = append(out, reindexTarget{id: id, name: e.Name, size: e.Size})
 		}
 	}
 	for _, ref := range ro.IDs {
@@ -161,7 +168,7 @@ func reindexTargets(db *badger.DB, ro ReindexOptions) ([]reindexTarget, error) {
 		if err != nil {
 			return nil, err
 		}
-		add(id, e.Name)
+		add(id, e)
 	}
 	if !ro.Failed && !ro.All {
 		return out, nil
@@ -188,9 +195,9 @@ func reindexTargets(db *badger.DB, ro ReindexOptions) ([]reindexTarget, error) {
 			case state == structs.IndexInvalid:
 			case e.Source != nil && e.Source.Format == structs.SourceOpaque:
 			case ro.All:
-				add(id, e.Name)
+				add(id, e)
 			case state == structs.IndexFailed || state == structs.IndexInterrupted:
-				add(id, e.Name)
+				add(id, e)
 			}
 		}
 		return nil

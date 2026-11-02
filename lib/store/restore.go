@@ -127,6 +127,9 @@ func Restore(ctx context.Context, db *badger.DB, rhash string, dst io.Writer, op
 		return RestoreReport{}, err
 	}
 	fid, err := dbio.GuessFileType(rhash, db)
+	if errors.Is(err, badger.ErrKeyNotFound) {
+		return RestoreReport{}, fmt.Errorf("no stored object has hash %s: %w", rhash, err)
+	}
 	if err != nil {
 		return RestoreReport{}, err
 	}

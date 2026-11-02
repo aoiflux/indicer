@@ -388,7 +388,7 @@ Top-level fields:
 | Key | Meaning |
 | --- | --- |
 | `generated_at` | When report building started (RFC 3339) |
-| `duration_ms` | Time spent building the report, phase 2 included; phase 1 is not included |
+| `duration_ms` | The whole search: from its start (hashing the file for `near out`) through reading the query, phase 1, phase 2 and the report |
 | `deep_mode` | `--deep` |
 | `advanced_deep_mode` | Phase 2 was enabled for this run |
 | `verify_top_k`, `verify_duration_ms` | K and phase 2's time, when phase 2 ran |

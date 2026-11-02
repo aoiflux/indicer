@@ -14,10 +14,12 @@ function Get-Median {
     if ($Values.Count -eq 0) {
         return [double]::NaN
     }
-    $sorted = $Values | Sort-Object
+    # @() keeps one value an array.
+    $sorted = @($Values | Sort-Object)
     $n = $sorted.Count
     if ($n % 2 -eq 1) {
-        return [double]$sorted[[int]($n / 2)]
+        # Not [int]($n / 2): it rounds half to even, so 3 values gave index 2.
+        return [double]$sorted[($n - 1) / 2]
     }
     $a = [double]$sorted[($n / 2) - 1]
     $b = [double]$sorted[$n / 2]

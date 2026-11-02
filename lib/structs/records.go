@@ -77,7 +77,6 @@ type ByteRange struct {
 type IndexState string
 
 const (
-	IndexPending     IndexState = "pending"
 	IndexRunning     IndexState = "running"
 	IndexComplete    IndexState = "complete"
 	IndexPartial     IndexState = "partial"     // some partitions or files could not be indexed

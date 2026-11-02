@@ -216,7 +216,7 @@ func TestDoneClassification(t *testing.T) {
 		{"ok", "", nil, OK, "", ""},
 		{"warned", "3 files unreadable", nil, Warning, "", "3 files unreadable"},
 		{"warning error", "", fmt.Errorf("store: %w", warning), Warning, "", "store: index partial"},
-		{"signal", "", &lifecycle.SignalError{Signal: os.Interrupt}, Interrupted, "interrupted by interrupt", ""},
+		{"signal", "", &lifecycle.SignalError{Signal: os.Interrupt}, Interrupted, (&lifecycle.SignalError{Signal: os.Interrupt}).Error(), ""},
 		{"bare cancel, command alive", "", context.Canceled, Failed, "context canceled", ""},
 		{"failure", "", errors.New("disk full"), Failed, "disk full", ""},
 	}

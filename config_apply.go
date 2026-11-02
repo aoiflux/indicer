@@ -185,13 +185,24 @@ func applyRuntimeConfig(parsed string, cliDef cliDefinition, src sources) (pipel
 		tuning.layout.ChunkHash = cnst.HASHALGO
 	}
 
-	if parsed == cliDef.commands.store.FullCommand() {
+	// The TUI's store takes these from the config file, as it has no flags
+	// for them: unset, they are empty, which each setter reads as its
+	// default.
+	if parsed == cliDef.commands.store.FullCommand() || parsed == cliDef.commands.tui.FullCommand() {
 		if err := cnst.SetStoreHashStrategy(*f.storeHashStrategy); err != nil {
 			return tuning, lifecycle.Usagef("--%s%s: %v", cnst.FlagHashStrategy, src.originOf(cnst.FlagHashStrategy), err)
 		}
 		if err := cnst.SetStorePipeline(*f.storePipeline); err != nil {
 			return tuning, lifecycle.Usagef("--%s%s: %v", cnst.FlagStorePipeline, src.originOf(cnst.FlagStorePipeline), err)
 		}
+		if err := cnst.SetStoreIOEngine(*f.storeIOEngine); err != nil {
+			return tuning, lifecycle.Usagef("--%s%s: %v", cnst.FlagStoreIOEngine, src.originOf(cnst.FlagStoreIOEngine), err)
+		}
+		if err := cnst.SetStoreIOUringQueueDepth(*f.storeIOUringQueue); err != nil {
+			return tuning, lifecycle.Usagef("--%s%s: %v", cnst.FlagStoreIOUringQueueDepth, src.originOf(cnst.FlagStoreIOUringQueueDepth), err)
+		}
+	}
+	if parsed == cliDef.commands.store.FullCommand() {
 		// Retired with W6: the index pass runs beside storage, and partition
 		// and indexed-file hashes are plain hashes (ING-20), so neither
 		// setting changes anything.
@@ -217,12 +228,6 @@ func applyRuntimeConfig(parsed string, cliDef cliDefinition, src sources) (pipel
 				Flag:    cnst.FlagStoreAsyncFileWrite,
 				Message: "is deprecated and has no effect; chunk blobs are always written durably",
 			})
-		}
-		if err := cnst.SetStoreIOEngine(*f.storeIOEngine); err != nil {
-			return tuning, lifecycle.Usagef("--%s%s: %v", cnst.FlagStoreIOEngine, src.originOf(cnst.FlagStoreIOEngine), err)
-		}
-		if err := cnst.SetStoreIOUringQueueDepth(*f.storeIOUringQueue); err != nil {
-			return tuning, lifecycle.Usagef("--%s%s: %v", cnst.FlagStoreIOUringQueueDepth, src.originOf(cnst.FlagStoreIOUringQueueDepth), err)
 		}
 	}
 

@@ -30,7 +30,7 @@ const (
 // SignalError is the cancellation cause when a signal stops the process.
 type SignalError struct{ Signal os.Signal }
 
-func (e *SignalError) Error() string { return fmt.Sprintf("interrupted by %v", e.Signal) }
+func (e *SignalError) Error() string { return signalName(e.Signal) }
 
 // UsageError marks an error caused by how DUES was invoked. It exits with
 // ExitUsage.
@@ -186,7 +186,24 @@ func Cause(ctx context.Context, err error) error {
 	}
 	var sig *SignalError
 	if errors.As(context.Cause(ctx), &sig) && !errors.As(err, &sig) {
-		return fmt.Errorf("%w: %w", sig, err)
+		return &interruptedError{sig: sig, err: err}
 	}
 	return err
 }
+
+// interruptedError is the error of work a signal stopped. It reads as the
+// signal, then what the work said, unless that was only that it was
+// cancelled, which the signal already says.
+type interruptedError struct {
+	sig *SignalError
+	err error
+}
+
+func (e *interruptedError) Error() string {
+	if e.err.Error() == context.Canceled.Error() {
+		return e.sig.Error()
+	}
+	return e.sig.Error() + ": " + e.err.Error()
+}
+
+func (e *interruptedError) Unwrap() []error { return []error{e.sig, e.err} }

@@ -11,6 +11,7 @@ import (
 	"testing"
 
 	"indicer/internal/lifecycle"
+	"indicer/internal/testutil/testdb"
 	"indicer/internal/ui"
 	"indicer/lib/cnst"
 	"indicer/lib/logging"
@@ -273,6 +274,74 @@ func TestConfigPrecedence(t *testing.T) {
 	}
 	if s.from(ui.FlagTheme) != logging.FromFlag || len(s.filled) != 0 {
 		t.Fatalf("sources %+v", s)
+	}
+}
+
+// TestConfigTuningReachesTheTUI: the TUI stores and restores in process, so
+// the file's store and restore sections tune it as they tune dues store and
+// dues restore. The server section does not apply to it, and the store
+// section applies to no command but store and the TUI.
+func TestConfigTuningReachesTheTUI(t *testing.T) {
+	testdb.Isolate(t)
+	before := testdb.Snapshot()
+	file := `{
+	  "store": {"pipeline": "staged", "hash-strategy": "async", "io-engine": "stdlib",
+	            "io-uring-queue-depth": 64, "store-workers": 3, "store-queue": 6},
+	  "restore": {"restore-workers": 2, "restore-queue": 4, "restore-buffer-mb": 16},
+	  "server": {"token-file": ` + jsonPath(filepath.Join(t.TempDir(), "token")) + `}
+	}`
+	run := func(file string, args ...string) (cliFlags, sources) {
+		t.Helper()
+		before.Restore()
+		cliDef := newCLIDefinition()
+		conf, _, err := readConfig(append([]string{"--config", writeConfig(t, file)}, args...))
+		if err != nil {
+			t.Fatal(err)
+		}
+		parsed, err := cliDef.app.Parse(args)
+		if err != nil {
+			t.Fatal(err)
+		}
+		src := conf.apply(cliDef.flags, parsed, cmdLineSources(t, cliDef, args).set)
+		if _, err := applyRuntimeConfig(parsed, cliDef, src); err != nil {
+			t.Fatal(err)
+		}
+		return cliDef.flags, src
+	}
+
+	f, src := run(file, "tui")
+	if cnst.StorePipelineMode != cnst.StorePipelineStaged || cnst.StoreHashStrategy != cnst.AsyncHashStrategy ||
+		cnst.StoreIOEngine != cnst.StoreIOEngineStdlib || cnst.StoreIOUringQueueDepth != 64 ||
+		cnst.StoreWorkerCount != 3 || cnst.StoreTaskQueueDepth != 6 {
+		t.Errorf("the TUI's store: pipeline %q, hash strategy %q, io engine %q, io-uring depth %d, workers %d, queue %d",
+			cnst.StorePipelineMode, cnst.StoreHashStrategy, cnst.StoreIOEngine, cnst.StoreIOUringQueueDepth, cnst.StoreWorkerCount, cnst.StoreTaskQueueDepth)
+	}
+	if cnst.RestoreWorkerCount != 2 || cnst.RestoreTaskQueueDepth != 4 || cnst.RestoreWriteBufferMB != 16 {
+		t.Errorf("the TUI's restore: workers %d, queue %d, buffer %d MB", cnst.RestoreWorkerCount, cnst.RestoreTaskQueueDepth, cnst.RestoreWriteBufferMB)
+	}
+	for _, name := range []string{cnst.FlagStorePipeline, cnst.FlagStoreWorkers, cnst.FlagRestoreBufferMB} {
+		if got := src.from(name); got != logging.FromConfig {
+			t.Errorf("%s from %s, want %s", name, got, logging.FromConfig)
+		}
+	}
+	if *f.serverTokenFile != "" || src.filled[flagTokenFile] {
+		t.Error("the server section applied to the TUI")
+	}
+
+	// Without the sections, the TUI keeps the defaults it always had.
+	run(`{}`, "tui")
+	if cnst.StorePipelineMode != before.StorePipelineMode || cnst.StoreHashStrategy != before.StoreHashStrategy ||
+		cnst.StoreIOEngine != before.StoreIOEngine || cnst.StoreIOUringQueueDepth != before.StoreIOUringQueueDepth {
+		t.Errorf("an empty file changed the TUI's store: pipeline %q, hash strategy %q, io engine %q, io-uring depth %d",
+			cnst.StorePipelineMode, cnst.StoreHashStrategy, cnst.StoreIOEngine, cnst.StoreIOUringQueueDepth)
+	}
+
+	// Another command is not tuned by them.
+	_, src = run(file, "list")
+	if cnst.StorePipelineMode != before.StorePipelineMode || cnst.StoreWorkerCount != before.StoreWorkerCount ||
+		cnst.RestoreWorkerCount != before.RestoreWorkerCount || len(src.filled) != 0 {
+		t.Errorf("list took the store or restore section: pipeline %q, workers %d, restore workers %d, filled %v",
+			cnst.StorePipelineMode, cnst.StoreWorkerCount, cnst.RestoreWorkerCount, src.filled)
 	}
 }
 

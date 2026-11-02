@@ -709,6 +709,25 @@ func GuessFileTypes(encodedHash string, db *badger.DB) ([][]byte, error) {
 		return nil, err
 	}
 
+	// An evidence is also known by its content root, which dues list shows;
+	// its file hash is the plain hash unless it was stored with hocho. Only
+	// a hash that names nothing else is taken as a root, so every hash that
+	// resolved before resolves as it did.
+	if len(matches) == 0 {
+		err = db.View(func(txn *badger.Txn) error {
+			item, err := txn.Get(RootLookupKey(encodedHash))
+			if err != nil {
+				return err
+			}
+			id, err := item.ValueCopy(nil)
+			appendUnique(CanonicalEvidenceKey(id))
+			return err
+		})
+		if err != nil && err != badger.ErrKeyNotFound {
+			return nil, err
+		}
+	}
+
 	if len(matches) == 0 {
 		return nil, badger.ErrKeyNotFound
 	}

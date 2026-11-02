@@ -15,7 +15,8 @@ import (
 
 // TestStoreFolderProgress: a folder store shows the folder's scan, one
 // "evidence" phase counting the items, an item group for each with its
-// store under it, and the value-log compaction.
+// store under it, and the value-log compaction. The items weigh their size,
+// so the overall bar moves with the bytes.
 func TestStoreFolderProgress(t *testing.T) {
 	testdb.Isolate(t)
 	testdb.EnsureCodecs(t)
@@ -39,6 +40,15 @@ func TestStoreFolderProgress(t *testing.T) {
 	}
 	if v := got["evidence"]; v.State != progress.OK || v.Done != 3 || v.Total != 3 {
 		t.Errorf("evidence %+v", v)
+	}
+	size := int64(2 * matrixChunkKB * 1024)
+	if v := got["evidence"]; v.Weight != 3*(size+itemCost) || v.WeightDone != v.Weight {
+		t.Errorf("evidence weight %d, done %d, want %d", v.Weight, v.WeightDone, 3*(size+itemCost))
+	}
+	for _, k := range got["evidence"].Kids {
+		if k.Weight != size+itemCost {
+			t.Errorf("item %s weighs %d, want %d", k.Name, k.Weight, size+itemCost)
+		}
 	}
 	if v := got["compact"]; v.State != progress.OK {
 		t.Errorf("compact %+v", v)

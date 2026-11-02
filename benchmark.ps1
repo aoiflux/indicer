@@ -6,7 +6,7 @@ param(
     [string]$StoreDataset = "",
     [string]$StoreExe = "",
     [int]$StoreCount = 3,
-    [int[]]$IOUringQueueDepths = @(256, 512, 1024, 2048),
+    [string[]]$IOUringQueueDepths = @("256", "512", "1024", "2048"),
     [string]$StoreDbRoot = "bench\store_matrix"
 )
 
@@ -100,10 +100,12 @@ function Get-Median {
         return [double]::NaN
     }
 
-    $sorted = $Values | Sort-Object
+    # @() keeps one value an array: strict mode has no .Count on a number.
+    $sorted = @($Values | Sort-Object)
     $n = $sorted.Count
     if ($n % 2 -eq 1) {
-        return [double]$sorted[[int]($n / 2)]
+        # Not [int]($n / 2): it rounds half to even, so 3 values gave index 2.
+        return [double]$sorted[($n - 1) / 2]
     }
 
     $a = [double]$sorted[($n / 2) - 1]
@@ -171,6 +173,30 @@ function Test-NoConfig {
     return $LASTEXITCODE -eq 0
 }
 
+# ConvertTo-QueueDepths reads -IOUringQueueDepths. "pwsh -File" passes
+# "256,512" as one string, which [int[]] would read as the number 256512, so
+# the depths arrive as text, split on commas and spaces. Each must be a whole
+# number above 0.
+function ConvertTo-QueueDepths {
+    param([string[]]$Values)
+
+    $depths = @()
+    foreach ($part in ($Values -split '[,\s]+')) {
+        if ($part -eq "") {
+            continue
+        }
+        $n = 0
+        if ($part -notmatch '^[1-9][0-9]*$' -or -not [int]::TryParse($part, [ref]$n)) {
+            throw "Every IOUringQueueDepths value must be a whole number above 0. Invalid value: $part"
+        }
+        $depths += $n
+    }
+    if ($depths.Count -eq 0) {
+        throw "IOUringQueueDepths must contain at least one depth"
+    }
+    return , $depths
+}
+
 function Write-IOUringQueueDepthSummary {
     if ([string]::IsNullOrWhiteSpace($StoreDataset)) {
         return
@@ -181,9 +207,6 @@ function Write-IOUringQueueDepthSummary {
     }
     if ($StoreCount -lt 1) {
         throw "StoreCount must be >= 1"
-    }
-    if ($null -eq $IOUringQueueDepths -or $IOUringQueueDepths.Count -eq 0) {
-        throw "IOUringQueueDepths must contain at least one depth"
     }
 
     $exe = $StoreExe
@@ -223,11 +246,7 @@ function Write-IOUringQueueDepthSummary {
     )
 
     $results = @()
-    foreach ($depth in $IOUringQueueDepths) {
-        if ($depth -le 0) {
-            throw "All IOUringQueueDepths must be > 0. Invalid value: $depth"
-        }
-
+    foreach ($depth in $queueDepths) {
         $times = @()
         for ($i = 1; $i -le $StoreCount; $i++) {
             $dbPath = Join-Path $StoreDbRoot ("io_uring_${depth}_run_${i}")
@@ -257,6 +276,8 @@ function Write-IOUringQueueDepthSummary {
     $lines | Add-Content -Path $summaryFile
     $lines | Add-Content -Path $fullRunFile
 }
+
+$queueDepths = ConvertTo-QueueDepths -Values $IOUringQueueDepths
 
 if (-not (Get-Command go -ErrorAction SilentlyContinue)) {
     throw "Go compiler not found in PATH. Install Go and retry."

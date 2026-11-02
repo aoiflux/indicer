@@ -457,7 +457,8 @@ the account's home directory, on every system. DUES reads it when it exists;
 `--config FILE` reads another file, which must exist, and `--no-config` reads
 none. The file is one JSON object whose keys are flag names, exactly as
 typed. A command's own settings go in an object named after it and apply to
-that command only. Paths must be absolute.
+that command only, except that `store` and `restore` also tune the TUI's
+stores and restores. Paths must be absolute.
 
 ```json
 {

@@ -44,7 +44,7 @@ summary:
 | vet | `go vet ./...` without tags, with `-tags faultinject`, and with every test tag (`faultinject,long,requirepty,safestrict,winconsole`) |
 | cross build | Release builds for windows, linux and darwin on amd64 and arm64, for `.` and `./cmd/compression`. A binary built with the `faultinject` tag fails the step. |
 | staticcheck | Without and with `-tags faultinject`, under the toolchain pinned in `scripts/tools.env` (older staticcheck cannot read newer export data). The target is 0 findings. The faultinject run is skipped when the plain run fails, so after a fix run both by hand. |
-| govulncheck | Source mode, plus binary mode on the Linux build. The target is 0 reachable vulnerabilities. |
+| govulncheck | Source mode, plus binary mode on the Linux build. The target is 0 reachable vulnerabilities. The one module-level report, GO-2026-5932 (`golang.org/x/crypto/openpgp`, unmaintained, with no fixed version), is about a package DUES does not import; the step fails if code ever calls it. |
 | test | `go test ./...`, once without and once with `-tags faultinject`; with `-Long`, the first run uses `-tags long` |
 | WSL suite | `scripts/wsl/sync.sh` copies the working tree to ext4 with LF line endings. `scripts/wsl/suite.sh` then runs the race tests, the fault-injection tests, the filesystem-failure tests, the fuzz smoke and, with `--long`, the long tests. |
 

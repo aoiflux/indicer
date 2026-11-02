@@ -33,6 +33,22 @@ while [ "$#" -gt 0 ]; do
         *) echo "unknown argument '$1'" >&2; exit 2 ;;
     esac
 done
+# Commas or spaces separate the queue depths; each must be a whole number
+# above 0, checked here rather than after the benchmarks.
+IO_URING_DEPTHS="$(printf '%s' "$IO_URING_DEPTHS" | tr ',' ' ')"
+set -f
+# shellcheck disable=SC2086
+set -- $IO_URING_DEPTHS
+set +f
+[ "$#" -gt 0 ] || { echo "ERROR: --io-uring-depths needs at least one depth" >&2; exit 2; }
+for depth in "$@"; do
+    case "$depth" in
+        0* | *[!0-9]*)
+            echo "ERROR: every --io-uring-depths value must be a whole number above 0. Invalid value: $depth" >&2
+            exit 2
+            ;;
+    esac
+done
 FULL_RUN_FILE="$OUTPUT_DIR/full_run.txt"
 SUMMARY_FILE="$OUTPUT_DIR/summary.txt"
 
@@ -177,11 +193,6 @@ write_io_uring_depth_summary() {
     best_median=""
 
     for depth in $IO_URING_DEPTHS; do
-        if [ "$depth" -le 0 ] 2>/dev/null; then
-            echo "Every --io-uring-depths value must be > 0. Invalid value: $depth" >&2
-            exit 1
-        fi
-
         durations=""
         run=1
         while [ "$run" -le "$STORE_COUNT" ]; do

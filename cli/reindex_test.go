@@ -4,10 +4,12 @@ import (
 	"encoding/base64"
 	"errors"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 
 	"indicer/internal/lifecycle"
+	"indicer/internal/progress"
 	"indicer/internal/testutil/testdb"
 	"indicer/lib/dbio"
 	"indicer/lib/structs"
@@ -41,6 +43,16 @@ func TestReindexCommand(t *testing.T) {
 		if err := ReindexData(t.Context(), opts, ro); err != nil {
 			t.Fatalf("reindex %+v: %v", ro, err)
 		}
+	}
+	// Each evidence weighs its size on the overall bar.
+	r := progress.New(t.Context(), nil)
+	if err := ReindexData(progress.With(t.Context(), r), opts, ReindexOptions{All: true}); err != nil {
+		t.Fatal(err)
+	}
+	phases := r.Snapshot(0).Phases
+	i := slices.IndexFunc(phases, func(v progress.View) bool { return v.Name == "evidence" })
+	if want := rec.Size + itemCost; i < 0 || phases[i].Weight != want || phases[i].WeightDone != want {
+		t.Fatalf("reindex phases %+v: want evidence weighing %d", phases, want)
 	}
 
 	// An index pass the process did not finish is rebuilt by --failed.

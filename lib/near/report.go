@@ -22,6 +22,9 @@ import (
 	"github.com/dgraph-io/badger/v4"
 )
 
+// now is the clock a search is timed by; tests replace it.
+var now = time.Now
+
 const shallowExactRankWeight = 1.35
 const deepSimhashRankWeight = 1.00
 
@@ -109,9 +112,8 @@ type nearChunkMatch struct {
 
 // finish builds the report of a matched run, runs phase 2, and writes it.
 func (r *run) finish(ctx context.Context, out Outcome, input nearReportInput, vcfg verifyConfig) (Outcome, error) {
-	start := time.Now()
 	report := nearJSONReport{
-		GeneratedAt: start.Format(time.RFC3339),
+		GeneratedAt: now().Format(time.RFC3339),
 		DeepMode:    r.opts.Deep,
 		VerifyMode:  vcfg.enabled,
 		Input:       input,
@@ -157,7 +159,7 @@ func (r *run) finish(ctx context.Context, out Outcome, input nearReportInput, vc
 	}
 
 	if vcfg.enabled && len(report.Matches) > 0 {
-		verifyStart := time.Now()
+		verifyStart := now()
 		k := vcfg.topK
 		if k <= 0 {
 			var freeGB float64
@@ -175,7 +177,7 @@ func (r *run) finish(ctx context.Context, out Outcome, input nearReportInput, vc
 		if err != nil {
 			return out, err
 		}
-		report.VerifyDurationMs = time.Since(verifyStart).Milliseconds()
+		report.VerifyDurationMs = now().Sub(verifyStart).Milliseconds()
 	}
 	for i := range report.Matches {
 		computeOverallRelatedness(&report.Matches[i])
@@ -190,7 +192,7 @@ func (r *run) finish(ctx context.Context, out Outcome, input nearReportInput, vc
 	out.Coverage = r.cov
 	out.Notes = append(out.Notes, r.notes()...)
 	report.Coverage, report.Notes = out.Coverage, out.Notes
-	report.DurationMs = time.Since(start).Milliseconds()
+	report.DurationMs = now().Sub(r.started).Milliseconds()
 	body, err := json.MarshalIndent(report, "", "  ")
 	if err != nil {
 		return out, err

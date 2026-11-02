@@ -70,7 +70,8 @@ func realMain(args []string) (code int) {
 		ui.Message(console.Err(), ui.LevelError, confErr.Error())
 		return lifecycle.ExitCode(confErr)
 	}
-	if maybeHandleHelp(helpArgs) {
+	cliDef := newCLIDefinition()
+	if maybeHandleHelp(helpArgs, cliDef.app.Model()) {
 		return lifecycle.ExitOK
 	}
 
@@ -124,7 +125,7 @@ func realMain(args []string) (code int) {
 		zap.String("commit", buildCommit),
 		zap.Strings("args", logging.RedactArgs(args)))
 
-	err := run(args, conf)
+	err := run(args, conf, cliDef)
 	if cerr := closeCompressionCodecs(); err == nil {
 		err = cerr
 	}
@@ -202,9 +203,7 @@ func checkTempDir(dir, origin string) error {
 	return nil
 }
 
-func run(args []string, conf runConfig) error {
-	cliDef := newCLIDefinition()
-
+func run(args []string, conf runConfig, cliDef cliDefinition) error {
 	// kingpin exits the process itself after its own help and usage output.
 	// Record the code instead, so realMain's deferred cleanup still runs.
 	terminated := -1

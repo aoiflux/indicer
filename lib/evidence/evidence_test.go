@@ -193,12 +193,14 @@ func TestPlanGroupsSets(t *testing.T) {
 		return p
 	}
 	m, e01 := fixture(t, "ewf/fat12_multiseg")
+	var setSize int64
 	for _, seg := range m.Segments {
 		b, err := os.ReadFile(filepath.Join(filepath.Dir(e01), seg))
 		if err != nil {
 			t.Fatal(err)
 		}
 		write(filepath.Join("case", seg), b)
+		setSize += int64(len(b))
 	}
 	write("split/disk.001", []byte("one"))
 	write("split/disk.002", []byte("two"))
@@ -211,9 +213,11 @@ func TestPlanGroupsSets(t *testing.T) {
 		t.Fatal(err)
 	}
 	got := map[string]int{}
+	sizes := map[string]int64{}
 	for _, it := range plan.Items {
 		rel, _ := filepath.Rel(dir, it.Path)
 		got[filepath.ToSlash(rel)] = len(it.Members)
+		sizes[filepath.ToSlash(rel)] = it.Size
 	}
 	want := map[string]int{
 		"case/" + m.Segments[0]: len(m.Segments) - 1,
@@ -228,6 +232,13 @@ func TestPlanGroupsSets(t *testing.T) {
 			t.Fatalf("items %v, want %v", got, want)
 		}
 	}
+	// A set weighs all its segments.
+	wantSizes := map[string]int64{"case/" + m.Segments[0]: setSize, "split/disk.001": 6, "loose.bin": 1}
+	for k, n := range wantSizes {
+		if sizes[k] != n {
+			t.Fatalf("sizes %v, want %v", sizes, wantSizes)
+		}
+	}
 	if haveLink && (len(plan.Skipped) != 1 || plan.Skipped[0].Path != link) {
 		t.Fatalf("skipped %+v, want the symlink", plan.Skipped)
 	}
@@ -239,5 +250,10 @@ func TestPlanGroupsSets(t *testing.T) {
 	}
 	if n := len(plain.Items); n != len(m.Segments)+3 {
 		t.Fatalf("plain plan has %d items, want %d", n, len(m.Segments)+3)
+	}
+	for _, it := range plain.Items {
+		if fi, err := os.Stat(it.Path); err != nil || it.Size != fi.Size() {
+			t.Fatalf("plain item %s: size %d, file %v %v", it.Path, it.Size, fi, err)
+		}
 	}
 }

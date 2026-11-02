@@ -141,6 +141,13 @@ Piped help opens with it, piped `dues version` prints it alone, and
 `dues --version` (or `-v`) prints it anywhere, on stdout. Under `--plain` on a
 terminal, `dues version` keeps its overview under that line.
 
+Help is always DUES's own page, on stdout: `dues help [command]`, `--help` or
+`-h` after a command, and global options with no command, wherever the
+options stand (`dues -d ./case help store` prints the store page). The
+parser's generated usage text never shows. Help lines fit 80 columns: prose
+is wrapped where it is written, and a long option row or synopsis continues
+under its description, never breaking inside a bracketed option.
+
 ## Progress
 
 Long operations (store, restore, reindex, enrich, NeAR, micro extract,
@@ -324,6 +331,10 @@ The tests cover what a test can see. Before a release, look at these by hand:
   `Update` that allocates nothing.
 - Each instrumented package: tests that assert its phases, its plan and its
   notes.
+- The root package: `help_route_test.go` (which command lines ask for help,
+  with options and their values anywhere before the request) and
+  `help_width_test.go` (every help page fits 80 columns, coloured or not,
+  and its prose is wrapped by hand).
 - `internal/e2e/output_contract_test.go`:
   - pure JSON on stdout from `list`, `micro list`, `repair --verify` and
     `repair --fix --revrel`;

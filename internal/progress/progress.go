@@ -274,6 +274,8 @@ type Phase struct {
 
 	// Guarded by r.mu.
 	planned        bool // listed by Plan before it started
+	weight         int64
+	weightDone     int64 // a group: the weight of its items that ended
 	unit           Unit
 	state          State
 	warn, reason   string
@@ -318,6 +320,28 @@ func (p *Phase) Note(s string) {
 func (p *Phase) Item(s string) {
 	if p != nil {
 		p.item.Store(&s)
+	}
+}
+
+// Weigh gives p its share of its group's work, so the overall measure moves
+// by each item's weight instead of one item of N: the evidence of a folder
+// weigh their size. On the group, w is all its items' weight together. An
+// item's weight counts as done in its group when the item ends, however it
+// ends.
+func (p *Phase) Weigh(w int64) {
+	if p == nil {
+		return
+	}
+	p.r.mu.Lock()
+	p.weight = w
+	p.r.mu.Unlock()
+}
+
+// creditGroup counts p's weight as done in its group; p just ended, and
+// r.mu is held.
+func (p *Phase) creditGroup() {
+	if p.parent != nil {
+		p.parent.weightDone += p.weight
 	}
 }
 
@@ -373,6 +397,7 @@ func (p *Phase) Done(err error) {
 		p.warn = err.Error()
 	}
 	p.ended = r.now()
+	p.creditGroup()
 	r.event(p, true)
 }
 
@@ -527,6 +552,7 @@ func (r *Reporter) Finish(err error) {
 				if err != nil && p.reason == "" {
 					p.reason = err.Error()
 				}
+				p.creditGroup()
 				r.event(p, true)
 			case Pending:
 				p.state, p.reason = Skipped, "not run"
@@ -562,6 +588,11 @@ type View struct {
 	Started, Ended time.Time
 	Meters         []MeterView
 	Kids           []View
+
+	// Weight is the phase's share of its group's work (see Weigh), 0 when
+	// not weighed; on a group, all its items' together. WeightDone, on a
+	// group, is the weight of its items that ended.
+	Weight, WeightDone int64
 }
 
 // MeterView is a meter's name and value.
@@ -599,7 +630,7 @@ type Snapshot struct {
 func (p *Phase) view(kids bool) View {
 	v := View{
 		ID: p.id, Name: p.name, Unit: p.unit, State: p.state, Planned: p.planned,
-		Done: p.done.Load(), Total: p.total.Load(),
+		Done: p.done.Load(), Total: p.total.Load(), Weight: p.weight, WeightDone: p.weightDone,
 		Warn: p.warn, Reason: p.reason, Started: p.started, Ended: p.ended,
 	}
 	if n := p.note.Load(); n != nil {

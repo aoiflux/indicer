@@ -70,7 +70,8 @@ const (
 	// fraction of all their bytes, those still to come included.
 	ModeWork
 	// ModeItems: a folder, or several evidence: items done, plus the
-	// running item's share of its own work.
+	// running item's share of its own work. Items the group weighs (by
+	// size) count by their weight, not one each.
 	ModeItems
 	// ModeStep: one running step of known size.
 	ModeStep
@@ -253,6 +254,15 @@ func (t *Tracker) items(scopeOf []View, g, item *View, now time.Time, finished b
 		e.ItemFraction = workFraction(item.Kids)
 	}
 	f := (float64(e.Done) + e.ItemFraction) / float64(g.Total)
+	if g.Weight > 0 {
+		// Items weighed by size: a large one holds the bar as long as it
+		// takes, and small ones move it little.
+		cur := 0.0
+		if item != nil {
+			cur = e.ItemFraction * float64(item.Weight)
+		}
+		f = (float64(min(g.WeightDone, g.Weight)) + cur) / float64(g.Weight)
+	}
 	e.Fraction = t.show(shownKey{ModeItems, g.ID}, f, finished)
 	if e.Fraction >= 0.01 && e.Elapsed >= rateSeed {
 		e.ETA = time.Duration(float64(e.Elapsed) * (1 - e.Fraction) / e.Fraction)

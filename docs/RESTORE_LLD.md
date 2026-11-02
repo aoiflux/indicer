@@ -145,7 +145,7 @@ type RestoreOptions struct {
 
 `Restore` runs these steps:
 
-1. It resolves `rhash` (base64) to a record key with `dbio.GuessFileType`. `rhash` may be a record ID or a file hash. A hash that several records share resolves to the evidence first, then an indexed file, then a partition.
+1. It resolves `rhash` (base64) to a record key with `dbio.GuessFileType`. `rhash` may be a record ID or a file hash. A hash that several records share resolves to the evidence first, then an indexed file, then a partition. A hash that names no record or file hash is tried as an evidence's content root (the root lookup), so a sync or async evidence restores by its root too. A hash that names nothing fails with "no stored object has hash …".
 2. It opens the record with `OpenLogical`. `SkipVerify` is set only for `VerifyOff`.
 3. It refuses a record whose evidence is not COMPLETED, with `cnst.ErrIncompleteFile`.
 4. With `VerifyEWF`, it prepares the EWF check for an evidence record whose EWF set recorded an MD5 or SHA-1. Any other record ignores `VerifyEWF`.
@@ -261,7 +261,7 @@ dues restore HASH [--filepath|-f restored] [--force] [--verify full|chunks|off] 
     [--restore-buffer-mb|-b N] [global options]
 ```
 
-`HASH` is the base64 of a record ID or a file hash, as `dues list` prints them (`id`, `hash`).
+`HASH` is the base64 of a record ID, a file hash or an evidence's content root, as `dues list` prints them.
 
 | Flag | Default | Meaning |
 | --- | --- | --- |
@@ -320,7 +320,7 @@ A truncated file or an EWF mismatch then prints a `Warning:` line.
 - `internal/appconfig` range-checks explicit values (workers up to max(64, 8 × CPUs), queue up to 65536) and checks them against an in-flight memory budget. A rejected value is a usage error.
 - The reorder window bounds the decoded data in flight, whatever the queue depth.
 - The container read cache gets `cnst.GetCacheLimit()`, at most 4 GiB.
-- The TUI restores with default tuning.
+- The TUI restores with the config file's `restore` settings, or the defaults: it has no tuning flags.
 
 ## Older databases
 

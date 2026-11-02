@@ -63,7 +63,7 @@ sh ./benchmark.sh --count 7 --benchtime 3s
 | `-StoreDataset` | `--store-dataset` | empty | Run the io_uring queue-depth sweep on this evidence file |
 | `-StoreExe` | `--store-exe` | empty | The `dues` binary for the sweep |
 | `-StoreCount` | `--store-count` | `3` | Sweep runs for each depth |
-| `-IOUringQueueDepths` | `--io-uring-depths` | `256,512,1024,2048` / `"256 512 1024 2048"` | Queue depths to sweep |
+| `-IOUringQueueDepths` | `--io-uring-depths` | `256,512,1024,2048` / `"256 512 1024 2048"` | Queue depths to sweep, separated by commas or spaces. Each must be a whole number above 0; the list is checked before the benchmarks run |
 | `-StoreDbRoot` | `--store-db-root` | `bench\store_matrix` / `bench/store_matrix` | Where the sweep's databases go |
 
 ### Outputs

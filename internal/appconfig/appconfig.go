@@ -212,7 +212,8 @@ func (r *resolver) resolve() {
 	case cnst.CmdStore, cnst.CmdServer:
 		r.resolveStoreTuning()
 	case cnst.CmdTui:
-		// The TUI stores and restores, with default tuning only.
+		// The TUI stores and restores, tuned by the config file's store and
+		// restore sections, as it has no tuning flags.
 		r.resolveStoreTuning()
 		r.resolveRestoreTuning()
 	case cnst.CmdRestore:

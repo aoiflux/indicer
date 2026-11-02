@@ -2,6 +2,7 @@ package near
 
 import (
 	"bytes"
+	"context"
 	"encoding/base64"
 	"encoding/json"
 	"errors"
@@ -10,7 +11,9 @@ import (
 	"path/filepath"
 	"sync"
 	"testing"
+	"time"
 
+	"indicer/internal/progress"
 	"indicer/internal/testutil/fsfixture"
 	"indicer/internal/testutil/testdb"
 	"indicer/lib/cnst"
@@ -135,6 +138,56 @@ func TestNearNeedsReverseRelations(t *testing.T) {
 	}
 	if o.Coverage.QueryChunks != 16 || o.Coverage.DistinctChunks != 16 || o.Coverage.MatchedChunks != 8 || len(r.Matches) != 2 {
 		t.Fatalf("coverage %+v, %d matches", o.Coverage, len(r.Matches))
+	}
+}
+
+// TestNearDurationCoversTheSearch: duration_ms is the whole search, from
+// reading the query through phase 1, not only the report's own assembly.
+func TestNearDurationCoversTheSearch(t *testing.T) {
+	d := openNearDB(t)
+	a := randomBytes(8*cs, 5)
+	_, ha := storeFile(t, d.DB, "a.bin", a, true, false)
+	path := filepath.Join(t.TempDir(), "a.bin")
+	if err := os.WriteFile(path, a, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	var ctx context.Context
+	for _, c := range []struct {
+		name   string
+		search func(out string) error
+	}{
+		{"in", func(out string) error { _, err := In(ctx, d.DB, ha, Options{Out: out}); return err }},
+		{"out", func(out string) error {
+			_, err := Out(ctx, d.DB, path, Options{Out: out, ExplainExact: true})
+			return err
+		}},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			// Time passes only as the search works: each phase it starts or
+			// ends moves the clock on by a second.
+			var mu sync.Mutex
+			clock := time.Date(2026, 11, 3, 9, 0, 0, 0, time.UTC)
+			defer func(f func() time.Time) { now = f }(now)
+			now = func() time.Time {
+				mu.Lock()
+				defer mu.Unlock()
+				return clock
+			}
+			ctx = progress.With(t.Context(), progress.New(t.Context(), func() time.Time {
+				mu.Lock()
+				defer mu.Unlock()
+				clock = clock.Add(time.Second)
+				return clock
+			}))
+			out := filepath.Join(t.TempDir(), "near.json")
+			if err := c.search(out); err != nil {
+				t.Fatal(err)
+			}
+			// At least the query's reading, started and ended, and phase 1.
+			if r := readNearReport(t, out); r.DurationMs < 3000 {
+				t.Errorf("duration_ms = %d, want the whole search (3000 or more)", r.DurationMs)
+			}
+		})
 	}
 }
 

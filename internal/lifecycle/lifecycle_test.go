@@ -47,6 +47,41 @@ func TestCauseAttachesSignal(t *testing.T) {
 	}
 }
 
+// The message names the signal once, and leaves out a bare "context
+// canceled", which says nothing the signal does not: an interrupted store
+// used to end with "interrupted by interrupt: context canceled".
+func TestCauseMessage(t *testing.T) {
+	sig := &SignalError{Signal: os.Interrupt}
+	ctx, cancel := context.WithCancelCause(context.Background())
+	cancel(sig)
+	if got := Cause(ctx, context.Canceled).Error(); got != sig.Error() {
+		t.Errorf("Cause(ctx, context.Canceled) = %q, want %q", got, sig.Error())
+	}
+	wrapped := fmt.Errorf("read chunk 3: %w", context.Canceled)
+	err := Cause(ctx, wrapped)
+	if want := sig.Error() + ": read chunk 3: context canceled"; err.Error() != want {
+		t.Errorf("Cause(ctx, wrapped) = %q, want %q", err, want)
+	}
+	if !errors.Is(err, wrapped) || !errors.Is(err, context.Canceled) || ExitCode(err) != ExitInterrupt {
+		t.Errorf("Cause(ctx, wrapped) lost the original error or the signal: %v", err)
+	}
+}
+
+func TestSignalNames(t *testing.T) {
+	interrupt := (&SignalError{Signal: os.Interrupt}).Error()
+	if !strings.HasPrefix(interrupt, "interrupted") || strings.Contains(interrupt, "by interrupt") {
+		t.Errorf("interrupt reads %q", interrupt)
+	}
+	if term := (&SignalError{Signal: syscall.SIGTERM}).Error(); !strings.Contains(term, "SIGTERM") {
+		t.Errorf("SIGTERM reads %q", term)
+	}
+	for _, s := range shutdownSignals {
+		if msg := (&SignalError{Signal: s}).Error(); msg == "" || strings.Contains(msg, "%!") {
+			t.Errorf("signal %v reads %q", s, msg)
+		}
+	}
+}
+
 func TestContextStopReleases(t *testing.T) {
 	ctx, stop := Context(context.Background())
 	stop()

@@ -19,6 +19,9 @@ import (
 type PlanItem struct {
 	Path    string
 	Members []string
+	// Size is the bytes of the file and of its set's other segments, as the
+	// walk found them: what the overall bar weighs the item by.
+	Size int64
 }
 
 // PlanSkip is a folder entry a folder ingest does not store.
@@ -49,6 +52,7 @@ type FolderPlan struct {
 func Plan(ctx context.Context, root string, decode bool) (FolderPlan, error) {
 	var plan FolderPlan
 	var files []string
+	sizes := map[string]int64{}
 	seen := progress.CurrentIn(ctx, progress.Files)
 	err := filepath.WalkDir(root, func(path string, d fs.DirEntry, err error) error {
 		if cerr := ctx.Err(); cerr != nil {
@@ -65,6 +69,7 @@ func Plan(ctx context.Context, root string, decode bool) (FolderPlan, error) {
 		case d.IsDir():
 		case d.Type().IsRegular():
 			files = append(files, path)
+			sizes[filepath.Clean(path)] = entrySize(d)
 			seen.Add(1)
 		default:
 			plan.Skipped = append(plan.Skipped, PlanSkip{Path: path, Reason: "not a regular file (" + d.Type().String() + ")"})
@@ -77,7 +82,7 @@ func Plan(ctx context.Context, root string, decode bool) (FolderPlan, error) {
 	sort.Strings(files)
 	if !decode {
 		for _, f := range files {
-			plan.Items = append(plan.Items, PlanItem{Path: f})
+			plan.Items = append(plan.Items, PlanItem{Path: f, Size: sizes[filepath.Clean(f)]})
 		}
 		return plan, nil
 	}
@@ -89,10 +94,11 @@ func Plan(ctx context.Context, root string, decode bool) (FolderPlan, error) {
 		if len(segs) < 2 {
 			continue
 		}
-		item := PlanItem{Path: f}
+		item := PlanItem{Path: f, Size: sizes[filepath.Clean(f)]}
 		for _, s := range segs[1:] {
 			claimed[filepath.Clean(s)] = true
 			item.Members = append(item.Members, s)
+			item.Size += sizes[filepath.Clean(s)]
 		}
 		heads = append(heads, item)
 	}
@@ -108,9 +114,20 @@ func Plan(ctx context.Context, root string, decode bool) (FolderPlan, error) {
 			plan.Items = append(plan.Items, h)
 			continue
 		}
-		plan.Items = append(plan.Items, PlanItem{Path: f})
+		plan.Items = append(plan.Items, PlanItem{Path: f, Size: sizes[filepath.Clean(f)]})
 	}
 	return plan, nil
+}
+
+// entrySize is the size of the file d names, or 0 when it can no longer be
+// read: the size only weighs the item for progress, and storing the item
+// reports why it cannot be read.
+func entrySize(d fs.DirEntry) int64 {
+	fi, err := d.Info()
+	if err != nil {
+		return 0
+	}
+	return fi.Size()
 }
 
 // setMembers returns every segment of the set whose first segment is path,

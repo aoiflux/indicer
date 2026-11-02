@@ -1,6 +1,7 @@
 package progress
 
 import (
+	"errors"
 	"math"
 	"slices"
 	"testing"
@@ -328,6 +329,71 @@ func TestEstimateItems(t *testing.T) {
 	if e.Mode != ModeActivity || e.Focus.Name != "index" || !slices.Equal(e.FocusPath, []string{"evidence", "case.e01"}) {
 		t.Fatalf("single item: %+v", e)
 	}
+}
+
+// Items weighed by size: each moves the bar by its share of the weight, not
+// by one of N, so a large evidence among small ones holds the bar as long
+// as it takes. An item's weight counts as done when it ends, however it
+// ends.
+func TestEstimateItemsWeighed(t *testing.T) {
+	ctx, r, c := newTest(t)
+	est := estimator(r, c)
+	all := Start(ctx, "evidence", Evidence, 3)
+	all.Weigh(1000)
+	item := func(name string, weight, size int64) (*Phase, *Phase) {
+		one := Start(Within(ctx, all), name, None, 0)
+		one.Weigh(weight)
+		ictx := Within(ctx, one)
+		PlanSteps(ictx, Step{"store", Bytes, size})
+		return one, Start(ictx, "store", Bytes, size)
+	}
+	one, st := item("small", 100, 10)
+	st.Add(10)
+	st.Done(nil)
+	one.Done(nil)
+	// The weight is done with the item, before the counter moves.
+	if e := est(); e.Mode != ModeItems || e.Item != nil || !near(e.Fraction, 0.1) {
+		t.Fatalf("small item done: %+v", e)
+	}
+	all.Add(1)
+	one, st = item("big", 800, 100)
+	c.advance(10 * time.Second)
+	st.Add(25)
+	e := est()
+	if e.Mode != ModeItems || e.Item.Name != "big" || e.Done != 1 || !near(e.ItemFraction, 0.25) || !near(e.Fraction, 0.3) {
+		t.Fatalf("big item a quarter done: %+v", e)
+	}
+	// The pace so far over the weight, not over the items: by count the
+	// bar would read 42%.
+	if want := time.Duration(float64(10*time.Second) * (1 - e.Fraction) / e.Fraction); !e.HasETA || e.ETA != want || e.ETA < 23*time.Second {
+		t.Fatalf("big item ETA: %+v", e)
+	}
+	st.Add(75)
+	st.Done(nil)
+	one.Done(nil)
+	all.Add(1)
+	if e := est(); !near(e.Fraction, 0.9) {
+		t.Fatalf("big item done: %+v", e)
+	}
+	failed := errors.New("read error")
+	one, st = item("last", 100, 10)
+	st.Done(failed)
+	one.Done(failed)
+	all.Add(1)
+	if g := r.Snapshot(0).Phases[0]; g.Weight != 1000 || g.WeightDone != 1000 || g.Kids[1].Weight != 800 {
+		t.Fatalf("weights after a failed item: group %d, done %d, big %d", g.Weight, g.WeightDone, g.Kids[1].Weight)
+	}
+
+	// An item still running when the command ends has its weight done too.
+	ctx, r, _ = newTest(t)
+	all = Start(ctx, "evidence", Evidence, 1)
+	all.Weigh(40)
+	Start(Within(ctx, all), "a.bin", None, 0).Weigh(40)
+	r.Finish(failed)
+	if g := r.Snapshot(0).Phases[0]; g.WeightDone != 40 {
+		t.Fatalf("weight done after Finish: %d", g.WeightDone)
+	}
+	(*Phase)(nil).Weigh(1)
 }
 
 // repair --upgrade --verify: upgrade counts files, so it measures itself;

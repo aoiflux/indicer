@@ -17,6 +17,7 @@ import (
 	"os"
 	"sync"
 	"sync/atomic"
+	"time"
 
 	"indicer/internal/faultinject"
 	"indicer/internal/safe"
@@ -122,6 +123,9 @@ type run struct {
 	db      *badger.DB
 	opts    Options
 	workers int
+	// started is when the search began, so the report's duration_ms covers
+	// reading the query and phase 1, not only phase 2 and the report.
+	started time.Time
 
 	mu      sync.Mutex
 	matches map[string]*match
@@ -131,12 +135,12 @@ type run struct {
 	stale   atomic.Int64
 }
 
-func newRun(db *badger.DB, opts Options) *run {
+func newRun(db *badger.DB, opts Options, started time.Time) *run {
 	workers := opts.Workers
 	if workers <= 0 {
 		workers = max(cnst.GetMaxThreadCount(), 1)
 	}
-	return &run{db: db, opts: opts, workers: workers, matches: map[string]*match{}, exact: map[string]struct{}{}, owners: map[string]*ownerInfo{}}
+	return &run{db: db, opts: opts, workers: workers, started: started, matches: map[string]*match{}, exact: map[string]struct{}{}, owners: map[string]*ownerInfo{}}
 }
 
 // match is one object the query shares content with.
@@ -374,6 +378,7 @@ func reportPath(opts Options) string {
 // In finds the stored objects that share content with the stored object
 // whose hash (base64) is hash, and writes the report.
 func In(ctx context.Context, db *badger.DB, hash string, opts Options) (Outcome, error) {
+	started := now()
 	out := Outcome{ReportPath: reportPath(opts)}
 	if err := checkReportPath(out.ReportPath, opts.Force); err != nil {
 		return out, err
@@ -385,7 +390,7 @@ func In(ctx context.Context, db *badger.DB, hash string, opts Options) (Outcome,
 	if err != nil {
 		return out, err
 	}
-	r := newRun(db, opts)
+	r := newRun(db, opts, started)
 	if err := r.checkCapability(ctx); err != nil {
 		return out, err
 	}

@@ -221,8 +221,11 @@ command reads `~/.config/dues/compression.json` the same way.
 
 The file is one JSON object, at most 64 KiB, in UTF-8. Its keys are flag
 names, exactly as typed; a command's own settings go in an object named after
-it (`store`, `restore`, `server`) and apply to that command only. Paths must
-be absolute: `~` is not expanded. `dues help config` lists the keys.
+it (`store`, `restore`, `server`) and apply to that command only. The one
+exception is `dues tui`: it stores and restores in the same process, with no
+tuning flags of its own, so the `store` and `restore` objects tune it too.
+Paths must be absolute: `~` is not expanded. `dues help config` lists the
+keys.
 
 | Key | Where |
 |---|---|

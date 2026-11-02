@@ -100,7 +100,7 @@ func TestConfigArgs(t *testing.T) {
 		{args: []string{"list", "--config"}, errContains: "--config needs a file"},
 		{args: []string{"--config=", "list"}, errContains: "--config needs a file"},
 		{args: []string{"--config", "/a", "--config", "/b"}, errContains: "given twice"},
-		{args: []string{"--config", "/a", "--no-config"}, errContains: "contradict"},
+		{args: []string{"--config", "/a", "--no-config", "list"}, path: "/a", given: true, off: true, rest: []string{"list"}},
 	} {
 		path, given, off, rest, err := configArgs(c.args)
 		switch {
@@ -127,21 +127,21 @@ func TestReadConfigChoosesTheFile(t *testing.T) {
 	t.Run("default file", func(t *testing.T) {
 		withDefault(t, good, nil)
 		c, _, err := readConfig([]string{"list"})
-		if err != nil || c.path != good || c.chosen || *c.values.Theme != "light" {
+		if err != nil || c.Path != good || c.Chosen || *c.values.Theme != "light" {
 			t.Fatalf("got %+v, %v", c, err)
 		}
 	})
 	t.Run("no default file", func(t *testing.T) {
 		withDefault(t, missing, nil)
 		c, _, err := readConfig([]string{"list"})
-		if err != nil || c.path != "" || c.none != "no file at "+missing {
+		if err != nil || c.Path != "" || c.None != "no file at "+missing {
 			t.Fatalf("got %+v, %v", c, err)
 		}
 	})
 	t.Run("no home", func(t *testing.T) {
 		withDefault(t, "", errors.New("uid 1000 has none"))
 		c, _, err := readConfig([]string{"list"})
-		if err != nil || c.path != "" || !strings.Contains(c.none, "uid 1000 has none") {
+		if err != nil || c.Path != "" || !strings.Contains(c.None, "uid 1000 has none") {
 			t.Fatalf("got %+v, %v", c, err)
 		}
 	})
@@ -156,15 +156,22 @@ func TestReadConfigChoosesTheFile(t *testing.T) {
 	t.Run("no-config skips it", func(t *testing.T) {
 		withDefault(t, broken, nil)
 		c, _, err := readConfig([]string{"--no-config", "list"})
-		if err != nil || c.path != "" || c.none != "--no-config" || !c.chosen {
+		if err != nil || c.Path != "" || c.None != "--no-config" || !c.Chosen {
 			t.Fatalf("got %+v, %v", c, err)
 		}
 	})
 	t.Run("config names one", func(t *testing.T) {
 		withDefault(t, broken, nil)
 		c, _, err := readConfig([]string{"--config", good, "list"})
-		if err != nil || c.path != good || !c.chosen {
+		if err != nil || c.Path != good || !c.Chosen {
 			t.Fatalf("got %+v, %v", c, err)
+		}
+	})
+	t.Run("config and no-config contradict", func(t *testing.T) {
+		withDefault(t, good, nil)
+		_, _, err := readConfig([]string{"--config", good, "--no-config", "list"})
+		if lifecycle.ExitCode(err) != lifecycle.ExitUsage || err.Error() != "--config and --no-config contradict each other; give one" {
+			t.Fatalf("got %v", err)
 		}
 	})
 	t.Run("a missing named file is an error", func(t *testing.T) {

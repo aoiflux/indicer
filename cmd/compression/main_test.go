@@ -15,6 +15,12 @@ import (
 	"indicer/lib/logging"
 )
 
+// run is realMain without the process setup: no log, no signal handling.
+func run(ctx context.Context, args []string, stdout, stderr io.Writer, stdin io.Reader) int {
+	g, rest, err := parseGlobal(args)
+	return execute(ctx, g, rest, err, stdout, stderr, stdin)
+}
+
 func runCLI(t *testing.T, ctx context.Context, stdin string, args ...string) (int, map[string]any, string) {
 	t.Helper()
 	var out, errb bytes.Buffer
@@ -197,35 +203,57 @@ func TestGlobalOptions(t *testing.T) {
 	}
 }
 
-// TestSettingsRecord: a run logs the log and temporary directories in
-// effect, and whether an option or the default chose each.
+// TestSettingsRecord: a run logs the config file, the log and temporary
+// directories in effect, and whether an option, the config file or the
+// default chose each.
 func TestSettingsRecord(t *testing.T) {
 	logDir, temp := t.TempDir(), t.TempDir()
 	logging.Init(logging.Config{Component: "qwikpak", Dir: logDir, Stderr: io.Discard})
 	t.Cleanup(func() { _ = logging.Close() })
-	g, _, err := parseGlobal([]string{"--temp-dir", temp, "capabilities"}, io.Discard)
-	if err != nil {
-		t.Fatal(err)
-	}
-	g.logSettings()
-	_ = logging.Sync()
-	b, err := os.ReadFile(logging.Current().Path)
-	if err != nil {
-		t.Fatal(err)
-	}
-	var rec map[string]any
-	for line := range strings.SplitSeq(string(b), "\n") {
-		var r map[string]any
-		if json.Unmarshal([]byte(line), &r) == nil && r["msg"] == "settings" {
-			rec = r
+	record := func(args ...string) map[string]any {
+		t.Helper()
+		g, _, err := parseGlobal(append(args, "capabilities"))
+		if err != nil {
+			t.Fatal(err)
 		}
+		g.logSettings()
+		_ = logging.Sync()
+		b, err := os.ReadFile(logging.Current().Path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		var rec map[string]any
+		for line := range strings.SplitSeq(string(b), "\n") {
+			var r map[string]any
+			if json.Unmarshal([]byte(line), &r) == nil && r["msg"] == "settings" {
+				rec = r
+			}
+		}
+		return rec
 	}
-	tempSetting, _ := rec["temp-dir"].(map[string]any)
-	logSetting, _ := rec["log-dir"].(map[string]any)
-	if tempSetting["value"] != temp || tempSetting["source"] != logging.FromFlag {
-		t.Errorf("temp-dir %v, want %s from the option", rec["temp-dir"], temp)
+	setting := func(rec map[string]any, name string) map[string]any {
+		s, _ := rec[name].(map[string]any)
+		return s
 	}
-	if logSetting["value"] != logging.Current().Dir || logSetting["source"] != logging.FromDefault {
-		t.Errorf("log-dir %v, want the directory in effect, from the default", rec["log-dir"])
+
+	rec := record("--temp-dir", temp)
+	if s := setting(rec, "temp-dir"); s["value"] != temp || s["source"] != logging.FromFlag {
+		t.Errorf("temp-dir %v, want %s from the option", s, temp)
+	}
+	if s := setting(rec, "log-dir"); s["value"] != logging.Current().Dir || s["source"] != logging.FromDefault {
+		t.Errorf("log-dir %v, want the directory in effect, from the default", s)
+	}
+	if s := setting(rec, "config"); s["value"] != "none" || s["source"] != logging.FromDefault ||
+		s["reason"] != "no file at "+filepath.Join("testdata", "no-such-config.json") {
+		t.Errorf("config %v, want none: no default file", s)
+	}
+
+	config := writeConfig(t, `{"temp-dir": `+jsonPath(t, temp)+`}`)
+	rec = record("--config", config)
+	if s := setting(rec, "temp-dir"); s["value"] != temp || s["source"] != logging.FromConfig {
+		t.Errorf("temp-dir %v, want %s from the config file", s, temp)
+	}
+	if s := setting(rec, "config"); s["value"] != config || s["source"] != logging.FromFlag {
+		t.Errorf("config %v, want %s from the option", s, config)
 	}
 }

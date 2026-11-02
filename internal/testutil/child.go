@@ -87,14 +87,15 @@ func StartChild(tb testing.TB, scenario string, args ...string) *Child {
 }
 
 // StartDues starts bin, a faultinject build of dues or compression, in dir
-// with the fault spec faults ("" for none) and args, as StartChild starts a
-// scenario: output captured, the first hit of each point reported to a
-// fresh notification file, killed at the end of the test if still running.
+// with the fault spec faults ("" for none), args and no config file unless
+// args name one, as StartChild starts a scenario: output captured, the
+// first hit of each point reported to a fresh notification file, killed at
+// the end of the test if still running.
 func StartDues(tb testing.TB, bin, dir, faults string, args ...string) *Child {
 	tb.Helper()
 	notify := newNotifyFile(tb)
 	flags := append(FaultArgs(faults), "--faults-notify="+notify)
-	cmd := exec.Command(bin, append(flags, args...)...)
+	cmd := exec.Command(bin, NoConfig(append(flags, args...))...)
 	cmd.Dir = dir
 	return startChild(tb, cmd, notify)
 }

@@ -111,12 +111,13 @@ func (r Result) LastLine() string {
 	return last
 }
 
-// RunDues runs the binary in dir with args, killing it after timeout. Its
-// output is never a terminal, so it must hold no escape code unless the
-// arguments ask for colour; a run that breaks this fails the test.
+// RunDues runs the binary in dir with args, and no config file unless they
+// name one, killing it after timeout. Its output is never a terminal, so it
+// must hold no escape code unless the arguments ask for colour; a run that
+// breaks this fails the test.
 func RunDues(tb testing.TB, bin, dir string, timeout time.Duration, args ...string) Result {
 	tb.Helper()
-	cmd := exec.Command(bin, args...)
+	cmd := exec.Command(bin, NoConfig(args)...)
 	cmd.Dir = dir
 	defer func() {
 		if !slices.Contains(args, "--color=always") {
@@ -151,6 +152,22 @@ func RunDues(tb testing.TB, bin, dir string, timeout time.Duration, args ...stri
 		}
 	}
 	return res
+}
+
+// NoConfig puts --no-config before args unless they choose a config file
+// themselves, so dues or compression run by a test never reads the
+// account's own file: home comes from the account, not from anything a
+// test can set. Every runner of a binary passes its arguments through it.
+func NoConfig(args []string) []string {
+	for _, a := range args {
+		if a == "--" {
+			break
+		}
+		if a == "--no-config" || a == "--config" || strings.HasPrefix(a, "--config=") {
+			return args
+		}
+	}
+	return append([]string{"--no-config"}, args...)
 }
 
 func stdoutOf(cmd *exec.Cmd) string { return cmd.Stdout.(*bytes.Buffer).String() }

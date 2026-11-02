@@ -53,13 +53,13 @@ var ptyEnv = []string{"PATH=/usr/bin:/bin", "SHELL=/bin/sh"}
 // runPTY runs dues with args on a pseudo-terminal cols columns wide, in
 // work, and returns what the terminal received and the exit code. stty sets
 // the size, so DUES reads it the way it reads a real terminal's. No extra
-// plays, and the log goes to a test directory.
+// plays, no config file, and the log goes to a test directory.
 func runPTY(t *testing.T, script, bin, work string, cols int, args ...string) (string, int) {
 	t.Helper()
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
 	defer cancel()
 	line := "stty cols " + strconv.Itoa(cols) + " rows 30; exec " + shQuote(bin)
-	for _, a := range append([]string{"--no-fun", "--log-dir", t.TempDir()}, args...) {
+	for _, a := range testutil.NoConfig(append([]string{"--no-fun", "--log-dir", t.TempDir()}, args...)) {
 		line += " " + shQuote(a)
 	}
 	cmd := exec.CommandContext(ctx, script, "-qec", line, "/dev/null")

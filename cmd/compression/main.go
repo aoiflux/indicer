@@ -16,6 +16,7 @@ import (
 	"runtime/debug"
 	"strings"
 
+	"indicer/internal/configfile"
 	"indicer/internal/console"
 	"indicer/internal/core/jsonbridge"
 	"indicer/internal/lifecycle"
@@ -54,12 +55,22 @@ const (
 	defaultChunkSizeKB = 256
 	defaultFormat      = "duesarc"
 
-	usageText = `usage: compression [--log-dir DIR] [--temp-dir DIR] <command> [flags]
+	flagLogDir  = "log-dir"
+	flagTempDir = "temp-dir"
+
+	usageText = `usage: compression [global options] <command> [flags]
 
 global options (before the command):
+  --config FILE     read settings from this config file (default:
+                    ~/.config/dues/compression.json, if it exists)
+  --no-config       read no config file
   --log-dir DIR     directory for log files (default: the per-user cache directory)
   --temp-dir DIR    directory for temporary work directories (default: /tmp, or
                     AppData\Local\Temp on Windows); it must exist
+
+The config file is one JSON object with the keys log-dir and temp-dir, each
+an absolute path. An option on the command line wins over the file. A file
+that cannot be used stops every command with exit 2.
 
 commands:
   create-archive    archive a file, a folder, or files (--input, --input-file)
@@ -85,9 +96,9 @@ func main() {
 func realMain(args []string) (code int) {
 	// Stdout carries the JSON result; library output goes to stderr (FFI-3).
 	console.Configure(os.Stderr, os.Stderr)
-	// The log exists before run reports a bad global option, so the global
-	// options are read twice; run reports what is wrong with them.
-	g, _, _ := parseGlobal(args, io.Discard)
+	// The log starts before a bad global option is reported, so it records
+	// the run. It goes to the config file's log-dir only when the file is good.
+	g, rest, err := parseGlobal(args)
 	logging.Init(logging.Config{Component: "qwikpak", Dir: g.logDir, TempDir: g.tempDir})
 	defer logging.Close()
 	logging.ReportPanics()
@@ -100,59 +111,136 @@ func realMain(args []string) (code int) {
 	}()
 	ctx, stop := lifecycle.Context(context.Background())
 	defer stop()
-	return run(ctx, args, os.Stdout, os.Stderr, os.Stdin)
+	return execute(ctx, g, rest, err, os.Stdout, os.Stderr, os.Stdin)
 }
 
-// globalFlags are the options before the command.
+// globalFlags are the options before the command, with the config file's
+// values for those the command line does not give.
 type globalFlags struct {
 	logDir, tempDir string
 	faults          faultFlags
 	set             map[string]bool // the options given
+	filled          map[string]bool // the options the config file gave
+	config          configfile.Source
 }
 
-// parseGlobal reads the global options and returns the arguments from the
-// command on. A --temp-dir that is not an existing directory is an error.
-func parseGlobal(args []string, stderr io.Writer) (globalFlags, []string, error) {
+// fileConfig is compression.json: global options a run takes from the
+// file when the command line does not give them.
+type fileConfig struct {
+	LogDir  *string `json:"log-dir"`
+	TempDir *string `json:"temp-dir"`
+}
+
+func (c *fileConfig) validate(f *configfile.File) error {
+	return errors.Join(f.CheckPath(flagLogDir, c.LogDir), f.CheckPath(flagTempDir, c.TempDir))
+}
+
+// defaultConfigPath is where compression looks without --config; tests
+// point it at a file of their own.
+var defaultConfigPath = func() (string, error) { return configfile.DefaultPath("compression") }
+
+// fileError is an error in the config file or in a value it gave: the
+// usage text would not help fix it.
+type fileError struct{ error }
+
+func (e fileError) Unwrap() error { return e.error }
+
+// parseGlobal reads the global options and the config file they choose,
+// and returns the arguments from the command on. A file that cannot be
+// used stops every command, -h included. A --temp-dir that is not an
+// existing directory is an error.
+func parseGlobal(args []string) (globalFlags, []string, error) {
 	var g globalFlags
+	var config string
+	var noConfig bool
 	fs := flag.NewFlagSet("compression", flag.ContinueOnError)
-	fs.SetOutput(stderr)
+	fs.SetOutput(io.Discard) // the caller prints the error
 	fs.Usage = func() {}
-	fs.StringVar(&g.logDir, "log-dir", "", "directory for log files")
-	fs.StringVar(&g.tempDir, "temp-dir", "", "directory for temporary work directories")
+	fs.StringVar(&config, configfile.FlagConfig, "", "read settings from this config file")
+	fs.BoolVar(&noConfig, configfile.FlagNoConfig, false, "read no config file")
+	fs.StringVar(&g.logDir, flagLogDir, "", "directory for log files")
+	fs.StringVar(&g.tempDir, flagTempDir, "", "directory for temporary work directories")
 	g.faults.register(fs)
-	if err := fs.Parse(args); err != nil {
+	parseErr := fs.Parse(args)
+	if parseErr != nil && !errors.Is(parseErr, flag.ErrHelp) {
+		return g, nil, parseErr
+	}
+	g.set, g.filled = map[string]bool{}, map[string]bool{}
+	fs.Visit(func(f *flag.Flag) { g.set[f.Name] = true })
+	if g.set[configfile.FlagConfig] && config == "" {
+		return g, nil, fmt.Errorf("--%s needs a file", configfile.FlagConfig)
+	}
+	var file fileConfig
+	src, err := configfile.Choice{Path: config, Off: noConfig}.Read("compression", defaultConfigPath, &file, file.validate)
+	if _, inFile := errors.AsType[*configfile.Error](err); inFile {
+		return g, nil, fileError{err}
+	} else if err != nil {
 		return g, nil, err
 	}
-	g.set = map[string]bool{}
-	fs.Visit(func(f *flag.Flag) { g.set[f.Name] = true })
-	if g.tempDir != "" {
-		info, err := os.Stat(g.tempDir)
-		if err != nil {
-			return g, nil, fmt.Errorf("--temp-dir: %w", err)
+	g.config = src
+	fill := func(name string, dst, v *string) {
+		if v != nil && !g.set[name] {
+			*dst, g.filled[name] = *v, true
 		}
-		if !info.IsDir() {
-			return g, nil, fmt.Errorf("--temp-dir %s is not a directory", g.tempDir)
-		}
+	}
+	fill(flagLogDir, &g.logDir, file.LogDir)
+	fill(flagTempDir, &g.tempDir, file.TempDir)
+	if parseErr != nil {
+		return g, nil, parseErr
+	}
+	if err := checkTempDir(g.tempDir, g.origin(flagTempDir)); err != nil && g.filled[flagTempDir] {
+		return g, nil, fileError{err}
+	} else if err != nil {
+		return g, nil, err
 	}
 	return g, fs.Args(), nil
 }
 
-// logSettings writes the run's "settings" record: the log and temporary
-// directories in effect, each with whether an option or the default chose
-// it.
-func (g globalFlags) logSettings() {
-	from := func(name string) string {
-		if g.set[name] {
-			return logging.FromFlag
-		}
-		return logging.FromDefault
+// checkTempDir refuses a --temp-dir that is not an existing directory.
+func checkTempDir(dir, origin string) error {
+	if dir == "" {
+		return nil
 	}
-	temp, err := osdirs.TempOr(g.tempDir)
-	tempSetting := logging.Setting("temp-dir", temp, from("temp-dir"))
+	info, err := os.Stat(dir)
 	if err != nil {
-		tempSetting = logging.Setting("temp-dir", "", from("temp-dir"), zap.Error(err))
+		return fmt.Errorf("--%s%s: %w", flagTempDir, origin, err)
 	}
-	logging.GetLogger().Info("settings", logging.DirSetting("log-dir", g.logDir, from("log-dir")), tempSetting)
+	if !info.IsDir() {
+		return fmt.Errorf("--%s%s: %s is not a directory", flagTempDir, origin, dir)
+	}
+	return nil
+}
+
+// from says whether an option, the config file or the default chose an
+// option's value.
+func (g globalFlags) from(name string) string {
+	switch {
+	case g.set[name]:
+		return logging.FromFlag
+	case g.filled[name]:
+		return logging.FromConfig
+	}
+	return logging.FromDefault
+}
+
+// origin is " (set in config file P)" for a value the config file gave.
+func (g globalFlags) origin(name string) string {
+	if g.filled[name] {
+		return " (set in config file " + g.config.Path + ")"
+	}
+	return ""
+}
+
+// logSettings writes the run's "settings" record: the config file, and the
+// log and temporary directories in effect, each with whether an option, the
+// config file or the default chose it.
+func (g globalFlags) logSettings() {
+	temp, err := osdirs.TempOr(g.tempDir)
+	tempSetting := logging.Setting(flagTempDir, temp, g.from(flagTempDir))
+	if err != nil {
+		tempSetting = logging.Setting(flagTempDir, "", g.from(flagTempDir), zap.Error(err))
+	}
+	logging.GetLogger().Info("settings", g.config.Setting(), logging.DirSetting(flagLogDir, g.logDir, g.from(flagLogDir)), tempSetting)
 }
 
 type runner struct {
@@ -163,10 +251,10 @@ type runner struct {
 	stdin    io.Reader
 }
 
-// run executes one command, after the global options, and returns the
-// exit code.
-func run(ctx context.Context, args []string, stdout, stderr io.Writer, stdin io.Reader) int {
-	g, args, err := parseGlobal(args, stderr)
+// execute runs the command in args, after the global options g that
+// parseGlobal read, or reports err, what was wrong with them. It returns
+// the exit code.
+func execute(ctx context.Context, g globalFlags, args []string, err error, stdout, stderr io.Writer, stdin io.Reader) int {
 	if errors.Is(err, flag.ErrHelp) {
 		fmt.Fprintln(stdout, usageText)
 		return lifecycle.ExitOK
@@ -174,7 +262,10 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer, stdin io.
 	if err == nil {
 		err = g.faults.apply()
 	}
-	if err != nil {
+	if _, inFile := errors.AsType[fileError](err); inFile {
+		fmt.Fprintln(stderr, err)
+		return lifecycle.ExitUsage
+	} else if err != nil {
 		fmt.Fprintf(stderr, "%v\n%s\n", err, usageText)
 		return lifecycle.ExitUsage
 	}

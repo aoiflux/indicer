@@ -142,7 +142,7 @@ func knownDefect(f Fixture, r Restore) string {
 }
 
 func runIn(dir, bin string, args ...string) (string, error) {
-	cmd := exec.Command(bin, args...)
+	cmd := exec.Command(bin, testutil.NoConfig(args)...)
 	cmd.Dir = dir
 	var buf bytes.Buffer
 	cmd.Stdout = &buf

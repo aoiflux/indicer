@@ -9,6 +9,7 @@ import (
 	"os"
 	"os/signal"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -41,6 +42,23 @@ func TestMain(m *testing.M) {
 			}
 		},
 	}))
+}
+
+// TestNoConfig: a binary a test runs reads no config file, unless the test
+// chooses one itself.
+func TestNoConfig(t *testing.T) {
+	for _, c := range []struct{ args, want []string }{
+		{nil, []string{"--no-config"}},
+		{[]string{"list", "--dbpath", "db"}, []string{"--no-config", "list", "--dbpath", "db"}},
+		{[]string{"--config", "c.json", "list"}, []string{"--config", "c.json", "list"}},
+		{[]string{"list", "--config=c.json"}, []string{"list", "--config=c.json"}},
+		{[]string{"--no-config", "list"}, []string{"--no-config", "list"}},
+		{[]string{"store", "--", "--config"}, []string{"--no-config", "store", "--", "--config"}},
+	} {
+		if got := NoConfig(c.args); !slices.Equal(got, c.want) {
+			t.Errorf("NoConfig(%q) = %q, want %q", c.args, got, c.want)
+		}
+	}
 }
 
 // TestChildArgs: a child gets its arguments as given, flag-like ones

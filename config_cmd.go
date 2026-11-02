@@ -39,9 +39,9 @@ type settingDoc struct {
 // would run with, since its flags cannot be given here. Paths are the
 // ones in effect. It reads neither the password file nor the token file.
 func printConfig(app *kingpin.Application, f cliFlags, src sources, conf runConfig) error {
-	doc := configDoc{Reason: conf.none, Settings: map[string]any{}}
-	if conf.path != "" {
-		doc.File = &conf.path
+	doc := configDoc{Reason: conf.None, Settings: map[string]any{}}
+	if conf.Path != "" {
+		doc.File = &conf.Path
 	}
 	for _, b := range f.bindings() {
 		s := settingDoc{Value: reflect.ValueOf(b.dst).Elem().Interface(), Source: src.from(b.flag)}

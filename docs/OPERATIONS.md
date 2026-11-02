@@ -54,7 +54,12 @@ ACLs.
 
 The password is read from the first of these that is given:
 1. `--password-file PATH` (its first line);
-2. `--password-stdin` (the first line of standard input).
+2. `--password-stdin` (the first line of standard input);
+3. the config file's `password-file` (see [The config file](#the-config-file)).
+
+So a config file with `password-file` creates every new database encrypted,
+unless the command line gives `--password-file ''` (no password) or
+`--password-stdin`. A database created without a password ignores it.
 
 An empty password means no password. `--password`/`-p` was removed, because
 other users can see a command line; passing it is a usage error that names
@@ -196,15 +201,74 @@ refuse.
 | `--no-fun` | no extras |
 
 DUES reads no environment variable: `NO_COLOR`, `FORCE_COLOR`, `TERM`, `CI`
-and the like change nothing.
+and the like change nothing. To keep a switch on, put it in the config file.
 
 [CLI_UX.md](CLI_UX.md) has the rest: palette, marks, the progress display and
 the accessibility review.
 
+## The config file
+
+Settings kept between runs go in a JSON file. DUES reads, in this order of
+choice:
+1. the file `--config FILE` names, which must exist;
+2. none, under `--no-config`;
+3. `~/.config/dues/dues.json`, when it exists, where `~` is the home
+   directory the account database records (never `HOME` or `USERPROFILE`).
+   With no home directory there is no default file.
+
+`--config` and `--no-config` together are a usage error. The compression
+command reads `~/.config/dues/compression.json` the same way.
+
+The file is one JSON object, at most 64 KiB, in UTF-8. Its keys are flag
+names, exactly as typed; a command's own settings go in an object named after
+it (`store`, `restore`, `server`) and apply to that command only. Paths must
+be absolute: `~` is not expanded. `dues help config` lists the keys.
+
+| Key | Where |
+|---|---|
+| `color`, `plain`, `ci`, `no-fun`, `theme`, `taskbar` | top level |
+| `log-dir`, `temp-dir`, `debug` | top level |
+| `dbpath`, `password-file`, `preset`, `compress-level`, `low` | top level |
+| `pipeline`, `hash-strategy`, `io-engine`, `io-uring-queue-depth`, `store-workers`, `store-queue` | `store` |
+| `restore-workers`, `restore-queue`, `restore-buffer-mb` | `restore` |
+| `listen`, `token-file`, `cors-origin` | `server` |
+| `log-dir`, `temp-dir` | `compression.json`, top level |
+
+The layout of a new database (chunk size, container, hash algorithm, quick)
+is not a key: a database fixes it when it is created, and a value that
+contradicts an existing database would make every command fail. Neither are
+choices for one run (`--fix`, `--force`, `--out`, ...) or the password.
+
+Precedence:
+- A flag wins over the file, and the file over the default.
+- A preset on the command line (`--preset`, `-Q`, `-o`, `-L`) replaces the
+  file's `preset`, `compress-level` and `low`.
+- A list on the command line (`--listen`, `--cors-origin`) replaces the
+  file's.
+- `--no-plain`, `--no-ci`, `--no-taskbar`, `--no-debug` and `--no-no-fun`
+  undo a switch the file turns on.
+
+A file that cannot be used stops every command, help included, with exit 2
+before anything is written: unreadable, not a regular file, over 64 KiB, not
+UTF-8, bad JSON, an unknown or miscased key, a repeated key, `null`, a wrong
+type, a bad value or a relative path. The message names the file, the line
+and column, and the key; every bad value is reported at once. For the default
+file it adds that `--no-config` runs without it. A value a later check
+refuses (a temporary directory that does not exist, too many workers) says
+`(set in config file PATH)`.
+
+On Linux and macOS the file must belong to you or root, and neither its group
+nor others may write it (`chmod go-w`), as ssh asks of its files. On Windows
+access comes from the file's ACLs and is not checked.
+
+`dues config` prints, as JSON on stdout, the file read and every key with the
+value in effect and its source (`flag`, `config` or `default`). It opens no
+database and reads neither the password file nor the token file.
+
 ## Logs and crash files
 
 DUES writes its log to the first directory it can write in, in this order:
-1. `--log-dir`;
+1. `--log-dir`, or the config file's `log-dir`;
 2. the per-user cache directory: `AppData\Local\dues\logs` in the user's
    profile on Windows, `~/.cache/dues/logs` on Linux and
    `~/Library/Caches/dues/logs` on macOS, where `~` is the home directory the
@@ -224,11 +288,13 @@ and `qwikpak` for the compression command. Each line is one JSON object with
 `run_id`, `pid` and `component`. A file rotates at 50 MB, and the newest 10
 files are kept per directory. `--debug` adds debug-level entries.
 
-Each run's log holds one `settings` record: every presentation, log,
-temporary-file and database setting in effect, and whether a flag or the
-default set it. When an explicit `--log-dir` could not be written, it also
-gives the one asked for. The password is never logged; its entry, `unlock`,
-says where it came from (`password-file`, `password-stdin` or `none`).
+Each run's log holds one `settings` record: the config file read (or `none`
+and why), every presentation, log, temporary-file and database setting in
+effect, and whether a flag, the config file or the default set it. When an
+explicit `--log-dir` could not be written, it also gives the one asked for.
+The password is never logged; its entry, `unlock`, says where it came from
+(`password-file`, `password-stdin` or `none`) and whether a flag or the
+config file chose it.
 
 Values of fields whose names mention a password, secret, token, credential
 or authorization, or end in `key`, are replaced with `[REDACTED]`. So are the values of

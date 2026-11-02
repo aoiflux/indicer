@@ -250,7 +250,7 @@ and boundaries:
 
 | Package | Use it for |
 |---|---|
-| `internal/testutil` | I/O fault injectors (`FailingReaderAt`, `ShortReaderAt`, `NewENOSPCWriter`, `ShortWriter`, `ErrCloser`, slow and blocking readers); deterministic data (`RandomBytes`, `WriteRandomFile`); `TreeHash` and `AssertNoFilesMatching`; gates (`NewDirFlag` and the mount flags `ENOSPCDir`, `LowSpaceDir`, `ReadOnlySrc` and `ReadOnlyDB`; `RequireLinuxNonRoot`; `LongTest`); leak and memory checks (`NoLeakedGoroutines`, `AllocBelow`, `PeakHeap`); `FakeClock`; subprocess scenarios (`RunChildScenarios`, `StartChild`, `NotifyPoint`, `ChildNotifyFile`, `WaitForPoint`, `Kill`, `Interrupt`), which get their settings as arguments; the built binary (`BuildDues`, `BuildBinary`, `RunDues`, `StartDues`, `FaultArgs`; the build functions take build tags); and `HashFile`, `HashRange` |
+| `internal/testutil` | I/O fault injectors (`FailingReaderAt`, `ShortReaderAt`, `NewENOSPCWriter`, `ShortWriter`, `ErrCloser`, slow and blocking readers); deterministic data (`RandomBytes`, `WriteRandomFile`); `TreeHash` and `AssertNoFilesMatching`; gates (`NewDirFlag` and the mount flags `ENOSPCDir`, `LowSpaceDir`, `ReadOnlySrc` and `ReadOnlyDB`; `RequireLinuxNonRoot`; `LongTest`); leak and memory checks (`NoLeakedGoroutines`, `AllocBelow`, `PeakHeap`); `FakeClock`; subprocess scenarios (`RunChildScenarios`, `StartChild`, `NotifyPoint`, `ChildNotifyFile`, `WaitForPoint`, `Kill`, `Interrupt`), which get their settings as arguments; the built binary (`BuildDues`, `BuildBinary`, `RunDues`, `StartDues`, `FaultArgs`, `NoConfig`; the build functions take build tags); and `HashFile`, `HashRange` |
 | `internal/testutil/vtscreen` | A small terminal for asserting what a person would see (below) |
 | `internal/testutil/testdb` | Opening throwaway databases. `ForEachMode` runs a test once per storage mode (default, encrypted, quick, container). Every helper snapshots and restores the process-wide layout globals, so tests using it must not call `t.Parallel`. |
 | `internal/faultinject` | Making the code fail at named points (see below) |
@@ -259,6 +259,16 @@ and boundaries:
 ([CLI_UX.md](CLI_UX.md)): it fails a test whose piped stdout or stderr holds an
 escape code, unless the run asked for colour (`--color=always`). Parse `list` and `micro list` stdout as one JSON document;
 the run header and notes are on stderr.
+
+No test reads the account's own config file (`~/.config/dues/dues.json` or
+`compression.json`), which could otherwise change any result: DUES finds the
+home directory from the account, so no test setting can move it. `RunDues`
+and `StartDues` put `--no-config` before the arguments unless they name a
+config file, through `testutil.NoConfig`; a test that runs a binary any other
+way passes its arguments through `NoConfig` too (the environment, PTY and
+legacy-database tests do). In-process tests of `package main`, in the root and
+in `cmd/compression`, point the default file at a missing one in `TestMain`.
+A test of the config file writes its own and passes `--config`.
 
 Terminal output itself is tested against a small terminal emulator,
 `internal/testutil/vtscreen`:

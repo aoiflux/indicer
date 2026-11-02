@@ -95,9 +95,10 @@ The rest are the standard `windows` and `linux` platform constraints.
 
 ## Environment variables
 
-DUES reads none: every setting is a flag (or, for the FFI library, its
-`DuesConfigure` document), and `internal/osdirs` finds the default
-directories from the operating system. `internal/osdirs/noenv_guard_test.go`
+DUES reads none: every setting is a flag or a key in the config file (or,
+for the FFI library, its `DuesConfigure` document), and `internal/osdirs`
+finds the default directories from the operating system.
+`internal/osdirs/noenv_guard_test.go`
 fails on any environment read in DUES's code, tests included.
 `internal/e2e/environment_test.go` checks that a run prints the same with
 the old variables set.

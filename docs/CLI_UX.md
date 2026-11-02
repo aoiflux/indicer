@@ -52,6 +52,12 @@ DUES reads no environment variable, so the standard ones (`NO_COLOR`,
 the flags above cover what they did. A build for an organisation that wants
 no extras sets `-ldflags "-X indicer/internal/ui.funDefault=off"`.
 
+Each switch is also a key of the config file, `~/.config/dues/dues.json`
+([OPERATIONS.md](OPERATIONS.md#the-config-file)), so a preference such as
+`"theme": "light"` or `"plain": true` holds on every run, help and version
+included. A flag on the command line wins: `--color never`, `--no-plain`,
+`--no-ci`, `--no-taskbar` and `--no-no-fun` undo what the file sets.
+
 ## Colour
 
 Colour carries meaning, and never alone: every state also has a mark and a
@@ -327,6 +333,11 @@ The tests cover what a test can see. Before a release, look at these by hand:
 - `internal/e2e/environment_test.go`: store, list, help and version print the
   same with an empty environment and with every variable DUES once read set,
   and nothing lands where those variables point.
+- `internal/e2e/config_file_test.go`: the config file's settings apply and a
+  flag wins over them, `dues config` shows each source, and a broken file
+  stops the command before it writes anything. Every test runner passes
+  `--no-config` (`testutil.NoConfig`), so the account's own file never
+  changes a test.
 - `internal/e2e/pty_test.go` and `pty_faultinject_test.go`: the binary on a
   real pseudo-terminal under WSL (see [TESTING.md](TESTING.md)).
 - `tui/styles_test.go`: the TUI's styles in both themes against the same

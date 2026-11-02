@@ -6,9 +6,6 @@ package main
 
 import (
 	"errors"
-	"fmt"
-	"io/fs"
-	"path/filepath"
 	"reflect"
 	"slices"
 	"strings"
@@ -23,8 +20,8 @@ import (
 )
 
 const (
-	flagConfig   = "config"
-	flagNoConfig = "no-config"
+	flagConfig   = configfile.FlagConfig
+	flagNoConfig = configfile.FlagNoConfig
 )
 
 // fileConfig is dues.json. Its keys are the long names of the flags they
@@ -99,8 +96,8 @@ func (c *fileConfig) validate(f *configfile.File) error {
 		}
 	}
 	path := func(key string, v *string) {
-		if v != nil && !filepath.IsAbs(*v) {
-			bad(key, "%q is not an absolute path; the config file takes absolute paths only", *v)
+		if err := f.CheckPath(key, v); err != nil {
+			errs = append(errs, err)
 		}
 	}
 	count := func(key string, v *int) {
@@ -172,9 +169,7 @@ func (c *fileConfig) presentation() ui.Options {
 
 // runConfig is the config file a run uses.
 type runConfig struct {
-	path   string // the file read; "" when none was
-	none   string // why none was read, when none was
-	chosen bool   // --config or --no-config chose it
+	configfile.Source
 	values fileConfig
 }
 
@@ -188,34 +183,18 @@ var defaultConfigPath = func() (string, error) { return configfile.DefaultPath("
 // help that prints before kingpin parses. A file that cannot be used is a
 // usage error.
 func readConfig(args []string) (runConfig, []string, error) {
-	path, given, off, rest, err := configArgs(args)
+	path, _, off, rest, err := configArgs(args)
 	if err != nil {
 		return runConfig{}, rest, err
 	}
-	switch {
-	case off:
-		return runConfig{none: "--" + flagNoConfig, chosen: true}, rest, nil
-	case !given:
-		p, err := defaultConfigPath()
-		if err != nil {
-			return runConfig{none: fmt.Sprintf("no home directory (%v)", err)}, rest, nil
-		}
-		path = p
+	var c runConfig
+	c.Source, err = configfile.Choice{Path: path, Off: off}.Read("dues", defaultConfigPath, &c.values, c.values.validate)
+	if err != nil {
+		// The values may hold part of the file; the help printed with the
+		// error must not use them.
+		return runConfig{}, rest, &lifecycle.UsageError{Err: err}
 	}
-	c := runConfig{path: path, chosen: given}
-	f, err := configfile.Load(path, &c.values)
-	if err == nil {
-		err = c.values.validate(f)
-	}
-	switch {
-	case err == nil:
-		return c, rest, nil
-	case !given && errors.Is(err, fs.ErrNotExist):
-		return runConfig{none: "no file at " + path}, rest, nil
-	case !given:
-		err = fmt.Errorf("%w\n(the default config file; dues --%s runs without it)", err, flagNoConfig)
-	}
-	return runConfig{}, rest, &lifecycle.UsageError{Err: err}
+	return c, rest, nil
 }
 
 // configArgs finds --config FILE (or --config=FILE) and --no-config in the
@@ -252,9 +231,6 @@ func configArgs(args []string) (path string, given, off bool, rest []string, err
 			return "", false, false, rest, lifecycle.Usagef("--%s needs a file", flagConfig)
 		}
 		path, given = v, true
-	}
-	if given && off {
-		return "", false, false, rest, lifecycle.Usagef("--%s and --%s contradict each other; give one", flagConfig, flagNoConfig)
 	}
 	return path, given, off, rest, nil
 }
@@ -375,7 +351,7 @@ func field(v reflect.Value, key string) reflect.Value {
 // values, and returns where each value came from. A section applies only
 // to its command, as its flags exist only there.
 func (c runConfig) apply(f cliFlags, parsed string, set map[string]bool) sources {
-	s := sources{set: set, filled: map[string]bool{}, file: c.path}
+	s := sources{set: set, filled: map[string]bool{}, file: c.Path}
 	// A preset on the command line asks for its own settings, so the file's
 	// preset and the settings it tuned with it give way.
 	presetGiven := set[cnst.FlagPreset] || set[cnst.FlagQuickMode] || set[cnst.FlagPerformanceMode] || set[cnst.FlagLowResourceMode]

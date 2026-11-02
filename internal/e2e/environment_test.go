@@ -100,7 +100,7 @@ func runCommands(t *testing.T, bin string, env []string) []commandRun {
 		{"store", "ev.bin", "--dbpath", "db"},
 		{"list", "--dbpath", "db"},
 	} {
-		cmd := exec.Command(bin, args...)
+		cmd := exec.Command(bin, testutil.NoConfig(args)...)
 		cmd.Dir = work
 		cmd.Env = env
 		var stdout, stderr bytes.Buffer

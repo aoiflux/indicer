@@ -35,7 +35,7 @@ func logSettings(f cliFlags, src sources, conf runConfig) {
 	}
 
 	logging.GetLogger().Info("settings",
-		configSetting(conf),
+		conf.Setting(),
 		setting(ui.FlagColor, *f.color),
 		setting(ui.FlagPlain, *f.plain),
 		setting(ui.FlagCI, *f.ci),
@@ -48,17 +48,4 @@ func logSettings(f cliFlags, src sources, conf runConfig) {
 		path(cnst.FlagDBPath, root, rootErr),
 		logging.Setting("unlock", unlock, unlockFrom),
 	)
-}
-
-// configSetting is the record's entry for the config file: its path, or
-// "none" and why. Its source is the flag that chose it, or the default.
-func configSetting(conf runConfig) zap.Field {
-	from := logging.FromDefault
-	if conf.chosen {
-		from = logging.FromFlag
-	}
-	if conf.path == "" {
-		return logging.Setting(flagConfig, "none", from, zap.String("reason", conf.none))
-	}
-	return logging.Setting(flagConfig, conf.path, from)
 }

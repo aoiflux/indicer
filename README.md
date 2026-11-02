@@ -59,6 +59,11 @@ Behaviour that changed:
   they work on read-only media.
 - On Linux and macOS a new data root is readable by its owner only (mode 0700
   directories, 0600 chunk files).
+- An argument that starts with `@` is an argument like any other:
+  `dues store @case.dd` stores the file `@case.dd`. Earlier releases read the
+  command line from the file `case.dd` instead.
+- Settings can be kept in a config file, `~/.config/dues/dues.json`, read on
+  every run when it exists (see [Config file](#config-file)).
 
 ## Feature highlights
 
@@ -368,6 +373,7 @@ Core commands:
 - dues server
 - dues tui
 - dues version
+- dues config
 - dues reset
 
 Exit codes: 0 success, 1 failure, 2 usage error or done with a warning,
@@ -405,6 +411,9 @@ Tip: run `dues help <command>` for command-specific short flags and examples.
 
 ### Global
 
+- --config FILE: read settings from this config file (default
+  `~/.config/dues/dues.json`, when it exists)
+- --no-config: read no config file
 - --dbpath, -d: data root (default `~/.dues`)
 - --log-dir: directory for log and crash files
 - --temp-dir: directory for temporary files (default `/tmp`, or
@@ -425,9 +434,10 @@ Tip: run `dues help <command>` for command-specific short flags and examples.
 Chunk size, hash algorithm, storage and encryption are fixed when a database
 is created. A flag that contradicts an existing database is an error.
 
-DUES reads no environment variables: every setting is a flag, so a run does
-the same whatever the shell holds, and each run logs its settings and where
-each came from. The variables earlier releases read are ignored now:
+DUES reads no environment variables: every setting is a flag or a key in the
+config file, so a run does the same whatever the shell holds, and each run
+logs its settings and where each came from. The variables earlier releases
+read are ignored now:
 - `DUES_PASSWORD` and `DUES_TOKEN`: use `--password-file`, `--password-stdin`
   or `--token-file`;
 - `DUES_LOG_DIR` and `DUES_DEBUG`: use `--log-dir` and `--debug`;
@@ -439,6 +449,51 @@ each came from. The variables earlier releases read are ignored now:
 `--password`/`-p` and `--token` were removed as well, because a secret on the
 command line is visible to other users of the machine. Passing one is a usage
 error that names its replacement.
+
+### Config file
+
+Settings an operator wants on every run go in `~/.config/dues/dues.json`, in
+the account's home directory, on every system. DUES reads it when it exists;
+`--config FILE` reads another file, which must exist, and `--no-config` reads
+none. The file is one JSON object whose keys are flag names, exactly as
+typed. A command's own settings go in an object named after it and apply to
+that command only. Paths must be absolute.
+
+```json
+{
+  "theme": "light",
+  "log-dir": "D:\\dues\\logs",
+  "dbpath": "D:\\cases\\c42",
+  "password-file": "D:\\keys\\c42.key",
+  "preset": "performance",
+  "store": { "pipeline": "staged", "store-workers": 8 },
+  "server": { "listen": ["127.0.0.1:50051"], "token-file": "D:\\keys\\server.token" }
+}
+```
+
+- Keys: `color`, `plain`, `ci`, `no-fun`, `theme`, `taskbar`, `log-dir`,
+  `temp-dir`, `debug`, `dbpath`, `password-file`, `preset`, `compress-level`,
+  `low`; `store`: `pipeline`, `hash-strategy`, `io-engine`,
+  `io-uring-queue-depth`, `store-workers`, `store-queue`; `restore`:
+  `restore-workers`, `restore-queue`, `restore-buffer-mb`; `server`: `listen`,
+  `token-file`, `cors-origin`.
+- Not keys: the layout of a new database (chunk size, container, hash
+  algorithm, quick), choices for one run (`--fix`, `--force`, `--out`...) and
+  the password itself.
+- A flag wins over the file, and the file over the default. A preset on the
+  command line replaces the file's `preset`, `compress-level` and `low`.
+- The file's `password-file` applies unless `--password-file` or
+  `--password-stdin` is given; new databases are then created encrypted.
+- A file that cannot be used (bad JSON, an unknown or repeated key, a bad
+  value) stops every command with exit 2, naming the file, line and column.
+  Fix it or run with `--no-config`.
+- On Linux and macOS the file must belong to you or root, and neither its
+  group nor others may write it.
+
+`dues config` prints every setting with its value and source (flag, config or
+default) as JSON; `dues help config` describes the file. The compression
+command reads `~/.config/dues/compression.json` the same way, with the keys
+`log-dir` and `temp-dir`.
 
 ### Output
 

@@ -681,13 +681,26 @@ Reading:
 ## The compression command
 
 ```
-compression [--log-dir DIR] [--temp-dir DIR] <command> [flags]
+compression [--config FILE | --no-config] [--log-dir DIR] [--temp-dir DIR] <command> [flags]
 ```
 
 The global options come before the command. `--log-dir` chooses the log
 directory (default: the per-user cache directory). `--temp-dir` chooses where
 work directories go; it must exist (default: `/tmp`, or `AppData\Local\Temp`
 on Windows). The command reads no environment variables.
+
+Both can be kept in a config file, `~/.config/dues/compression.json`, read
+when it exists; `--config FILE` reads another, which must exist, and
+`--no-config` reads none. The file is one JSON object with the keys
+`log-dir` and `temp-dir`, each an absolute path, for example
+`{"log-dir": "D:\\logs", "temp-dir": "D:\\scratch"}`. An option on the
+command line wins over the file. A file that cannot be used stops every
+command, `-h` included, with exit 2 and a message naming the file, line and
+column. The rules are those of DUES's own file
+([OPERATIONS.md](OPERATIONS.md#the-config-file)). The run's `settings` log
+record names the file read and whether an option, the file or the default
+chose each directory. The FFI library reads no config file: its host passes
+the same settings to `DuesConfigure`.
 
 | Command | Operation | Main flags |
 |---|---|---|

@@ -32,11 +32,12 @@ type storeScreen struct {
 }
 
 func newStoreScreen(e *env) *storeScreen {
-	in := textinput.New()
-	in.Placeholder = "Path of a file or folder…"
+	in := e.newInput("Path of a file or folder…")
 	in.Focus()
 	return &storeScreen{env: e, path: in}
 }
+
+func (s *storeScreen) restyle() { s.path.SetStyles(s.env.st.textinput) }
 
 func (s *storeScreen) init() tea.Cmd { return textinput.Blink }
 func (s *storeScreen) resize()       { s.path.SetWidth(max(24, s.env.width-14)) }
@@ -156,35 +157,35 @@ func (s *storeScreen) start() tea.Cmd {
 }
 
 func (s *storeScreen) view() string {
-	e := s.env
+	e, st := s.env, s.env.st
 	label := "File or folder:"
 	if s.focus == storeFocusPath {
-		label = SelectedItemStyle.Render(label)
+		label = st.selected.Render(label)
 	}
 	option := checkbox(s.noIndex, "Skip the index: store the bytes only")
 	if s.focus == storeFocusNoIndex {
-		option = SelectedItemStyle.Render(option)
+		option = st.selected.Render(option)
 	}
-	layout := DimStyle.Render(fmt.Sprintf("Chunks of %d KiB, hashed with %s: the database's own layout, fixed when it was created.",
+	layout := st.dim.Render(fmt.Sprintf("Chunks of %d KiB, hashed with %s: the database's own layout, fixed when it was created.",
 		e.info.ChunkKiB, clean(e.info.ChunkHash)))
 	buttons := lipgloss.JoinHorizontal(lipgloss.Left,
-		button("Store", s.focus == storeFocusStore), button("Cancel", s.focus == storeFocusCancel))
-	stat := s.status.render()
+		button(st, "Store", s.focus == storeFocusStore), button(st, "Cancel", s.focus == storeFocusCancel))
+	stat := s.status.render(st)
 	if s.run.active() {
-		stat = InfoStyle.Render(fmt.Sprintf("Storing %s… %s", clean(strings.TrimSpace(s.path.Value())), since(s.run.since)))
+		stat = st.info.Render(fmt.Sprintf("Storing %s… %s", clean(strings.TrimSpace(s.path.Value())), since(s.run.since)))
 	}
 	help := "Tab/↑/↓: Move | Enter: Select | Space: Toggle | esc: Back (a store keeps running) | ctrl+x: Cancel the store"
 	if s.another.open {
 		help = ""
 	}
-	return frame(e.width, e.height, joinLines(
-		TitleStyle.Render("Store evidence"),
-		InputStyle.Render(label+"\n"+s.path.View()),
+	return e.frame(joinLines(
+		st.title.Render("Store evidence"),
+		st.input.Render(label+"\n"+s.path.View()),
 		option+"\n"+layout,
 		buttons,
 		stat,
 		outcomeLines(s.out, e.width-8),
-		s.another.view(),
-		HelpStyle.Render(help),
+		s.another.view(st),
+		st.help.Render(help),
 	))
 }

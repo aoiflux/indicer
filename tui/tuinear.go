@@ -32,22 +32,17 @@ type nearItem struct {
 
 func (i nearItem) FilterValue() string { return i.title }
 
-type nearDelegate struct{}
+type nearDelegate struct{ env *env }
 
 func (nearDelegate) Height() int                         { return 2 }
 func (nearDelegate) Spacing() int                        { return 0 }
 func (nearDelegate) Update(tea.Msg, *list.Model) tea.Cmd { return nil }
-func (nearDelegate) Render(w io.Writer, m list.Model, index int, item list.Item) {
+func (d nearDelegate) Render(w io.Writer, m list.Model, index int, item list.Item) {
 	i, ok := item.(nearItem)
 	if !ok {
 		return
 	}
-	str := fmt.Sprintf("  %s\n  %s", i.title, i.desc)
-	if index == m.Index() {
-		fmt.Fprint(w, SelectedItemStyle.Render(str))
-	} else {
-		fmt.Fprint(w, NormalItemStyle.Render(str))
-	}
+	fmt.Fprint(w, d.env.row(fmt.Sprintf("  %s\n  %s", i.title, i.desc), index == m.Index()))
 }
 
 type nearScreen struct {
@@ -64,12 +59,16 @@ type nearScreen struct {
 }
 
 func newNearScreen(e *env) *nearScreen {
-	modes := newList([]list.Item{
-		nearItem{"📂 A stored object", "Find what shares content with an object in the database", nearIn},
-		nearItem{"📁 A file outside the database", "Find what shares content with a file on disk", nearOut},
-	}, nearDelegate{}, "NeAR")
-	in := textinput.New()
-	return &nearScreen{env: e, modes: modes, input: in}
+	modes := e.newList([]list.Item{
+		nearItem{"A stored object", "Find what shares content with an object in the database", nearIn},
+		nearItem{"A file outside the database", "Find what shares content with a file on disk", nearOut},
+	}, nearDelegate{e}, "NeAR")
+	return &nearScreen{env: e, modes: modes, input: e.newInput("")}
+}
+
+func (s *nearScreen) restyle() {
+	s.modes.Styles = s.env.st.list
+	s.input.SetStyles(s.env.st.textinput)
 }
 
 func (s *nearScreen) init() tea.Cmd { return nil }
@@ -234,13 +233,13 @@ func (s *nearScreen) start() tea.Cmd {
 }
 
 func (s *nearScreen) view() string {
-	e := s.env
-	title := TitleStyle.Render("NeAR: find stored objects that share content")
+	e, st := s.env, s.env.st
+	title := st.title.Render("NeAR: find stored objects that share content")
 	if s.mode == "" {
-		return frame(e.width, e.height, joinLines(
+		return e.frame(joinLines(
 			title,
 			s.modes.View(),
-			HelpStyle.Render("↑/↓: Choose | Enter: Select | esc: Back"),
+			st.help.Render("↑/↓: Choose | Enter: Select | esc: Back"),
 		))
 	}
 	label := "Stored object (ID or hash):"
@@ -248,26 +247,26 @@ func (s *nearScreen) view() string {
 		label = "File:"
 	}
 	if s.focus == nearFocusInput {
-		label = SelectedItemStyle.Render(label)
+		label = st.selected.Render(label)
 	}
-	parts := []string{title, InputStyle.Render(label + "\n" + s.input.View())}
+	parts := []string{title, st.input.Render(label + "\n" + s.input.View())}
 	if s.mode == nearIn {
 		deep := checkbox(s.deep, "Deep: also match similar chunks (slower)")
 		if s.focus == nearFocusDeep {
-			deep = SelectedItemStyle.Render(deep)
+			deep = st.selected.Render(deep)
 		}
 		parts = append(parts, deep)
 	}
-	stat := s.status.render()
+	stat := s.status.render(st)
 	if s.run.active() {
-		stat = InfoStyle.Render(fmt.Sprintf("Analysing %s… %s", clean(s.asked), since(s.run.since)))
+		stat = st.info.Render(fmt.Sprintf("Analysing %s… %s", clean(s.asked), since(s.run.since)))
 	}
 	parts = append(parts,
-		lipgloss.JoinHorizontal(lipgloss.Left, button("Analyse", s.focus == nearFocusAnalyze)),
-		DimStyle.Render("The report replaces near_report.json in the working directory."),
+		lipgloss.JoinHorizontal(lipgloss.Left, button(st, "Analyse", s.focus == nearFocusAnalyze)),
+		st.dim.Render("The report replaces near_report.json in the working directory."),
 		stat,
 		outcomeLines(s.out, e.width-8),
-		HelpStyle.Render("Tab/↑/↓: Move | Enter: Select | Space: Toggle | esc: Choose again | ctrl+x: Cancel the analysis"),
+		st.help.Render("Tab/↑/↓: Move | Enter: Select | Space: Toggle | esc: Choose again | ctrl+x: Cancel the analysis"),
 	)
-	return frame(e.width, e.height, joinLines(parts...))
+	return e.frame(joinLines(parts...))
 }

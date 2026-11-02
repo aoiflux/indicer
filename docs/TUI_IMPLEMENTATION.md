@@ -16,10 +16,14 @@ stop, and the rules its screens follow.
    silenced per action, which raced when actions ran side by side. It also
    removes any progress reporter from the context (`progress.Without`), so
    actions report no progress.
-3. Runs `tui.Run(ctx, tui.Config{Info, Actions, Profile})` with the command's
-   context. `Profile` is the colour depth the command line resolved
+3. Runs `tui.Run(ctx, tui.Config{Info, Actions, Profile, Theme})` with the
+   command's context. `Profile` is the colour depth the command line resolved
    (`--color`, `--plain`, ...; see [CLI_UX.md](CLI_UX.md)) when stdout is a
-   terminal, so the TUI follows the same switches.
+   terminal, so the TUI follows the same switches. `Theme` is `--theme`.
+   `Run` gives bubbletea an empty environment (`tea.WithEnvironment`), as
+   it would otherwise read `TERM` and the like itself. With no `TERM`, its
+   renderer uses only the sequences every terminal has, as it always did on
+   Windows, where `TERM` is not set.
 4. When `Run` returns, restores output, compacts the value log if anything
    was stored, and closes the database. If `Run` returned `tui.ErrJobsRunning`,
    it does none of this: the database is left unclosed (and output silenced)
@@ -128,15 +132,16 @@ type screen interface {
 | `tuistats.go` | Statistics in a viewport |
 | `tuimicro.go` | Micro-artefact tree in a viewport |
 
-Shared pieces: `widgets.go` (the yes/no `prompt`, the `running` job), and
-`render.go` (status lines, error text, the list window, buttons).
+Shared pieces: `widgets.go` (the yes/no `prompt`, the `running` job),
+`render.go` (status lines, error text, the frame, rows, the list window,
+buttons) and `tuistyles.go` (the styles).
 
 ## Rules the screens follow
 
 These are the defects the W11 rewrite fixed; keep them fixed.
 
 - **No type assertion on a list item without `ok`** (TUI-4). Lists are built
-  with `newList`, which turns off filtering, the quit keys and the help.
+  with `env.newList`, which turns off filtering, the quit keys and the help.
 - **Every string from the evidence goes through `clean`** (`termsafe.Line`)
   before it is drawn: names, paths, artefact values, report lines, error
   messages (TUI-5). `truncate` cuts by runes.
@@ -149,9 +154,21 @@ These are the defects the W11 rewrite fixed; keep them fixed.
   typed, and `Enter` in that field moves to No. A restore over an existing
   file asks first (TUI-2).
 - **Cancel goes back; it never quits** (TUI-4).
-- **Colours come from the CLI's roles** (`tui/tuistyles.go`, `internal/ui`),
-  in their dark-background values, because the TUI assumes a dark background.
-  Light-background support and replacing the menu's emoji are follow-ups.
+- **Styles follow the terminal's background.** `newStyles(dark)` builds the
+  styles for a dark or a light background: the CLI's roles (`internal/ui`)
+  in that theme's values, and greys with a value for each. Screens draw
+  with `env.st` and never keep a style of their own.
+  - `--theme dark` or `light` is used as given.
+  - Under `--theme auto` (the default), `Init` asks the terminal for its
+    background (OSC 11), and the TUI is dark until it answers. The answer
+    (`tea.BackgroundColorMsg`) rebuilds the styles. The menu, and the
+    screen showing if it implements `restyler`, take them over: text inputs
+    and the statistics, which are drawn ahead. A terminal that never
+    answers keeps the dark styles.
+  - An input is made with `env.newInput`. Typed text and the prompt keep the
+    terminal's own colour, and the cursor is reverse video.
+- **No emoji.** Menu entries and titles are words: emoji differ in width
+  between fonts and terminals. `☐` and `☑` are text symbols and stay.
 
 ## Tests
 
@@ -165,6 +182,10 @@ These are the defects the W11 rewrite fixed; keep them fixed.
 - `tui/run_test.go`: `Run` as a program, with keys written to its input: it
   waits for jobs after a signal, reports a stuck job, and quits through the
   dialog.
+- `tui/styles_test.go`: every text colour reaches WCAG AA (4.5:1) on what it
+  is drawn on, in both themes, in truecolor and at 256 colours; an answer
+  from the terminal restyles the menu and an open screen; `--theme` is
+  kept; only `auto` asks the terminal; no emoji in the sources.
 - `cli/cmdtui_test.go`: the actions on a real database, and that `TUICmd`
   closes the database, or leaves it open to a stuck job (`runTUI` and
   `leftOpen` seams).

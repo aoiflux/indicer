@@ -32,11 +32,12 @@ type resetScreen struct {
 }
 
 func newResetScreen(e *env) *resetScreen {
-	in := textinput.New()
-	in.Placeholder = "Folder name"
+	in := e.newInput("Folder name")
 	in.Focus()
 	return &resetScreen{env: e, name: filepath.Base(e.info.Root), input: in}
 }
+
+func (s *resetScreen) restyle() { s.input.SetStyles(s.env.st.textinput) }
 
 func (s *resetScreen) init() tea.Cmd { return textinput.Blink }
 func (s *resetScreen) resize()       { s.input.SetWidth(max(24, min(60, s.env.width-14))) }
@@ -160,34 +161,34 @@ func (s *resetScreen) start() tea.Cmd {
 }
 
 func (s *resetScreen) view() string {
-	e := s.env
-	title := TitleStyle.Render("⚠️  Reset the database")
-	warning := ErrorStyle.Render("This deletes everything in " + clean(e.info.Root) + ":\nall stored evidence, indexes, the graph and the full-text index. It cannot be undone.")
+	e, st := s.env, s.env.st
+	title := st.title.Render("Reset the database")
+	warning := st.error.Render("This deletes everything in " + clean(e.info.Root) + ":\nall stored evidence, indexes, the graph and the full-text index. It cannot be undone.")
 	if s.done {
-		return frame(e.width, e.height, joinLines(title, s.status.render(), HelpStyle.Render("Enter/esc: Back to the menu")))
+		return e.frame(joinLines(title, s.status.render(st), st.help.Render("Enter/esc: Back to the menu")))
 	}
 	label := "Type " + clean(s.name) + " to confirm:"
 	if s.focus == resetFocusInput {
-		label = SelectedItemStyle.Render(label)
+		label = st.selected.Render(label)
 	}
-	no := button("No, keep everything", s.focus == resetFocusNo)
-	yes := disabledButton("Yes, delete everything")
+	no := button(st, "No, keep everything", s.focus == resetFocusNo)
+	yes := disabledButton(st, "Yes, delete everything")
 	if s.confirmed() && s.blocked() == "" {
-		yes = button("Yes, delete everything", s.focus == resetFocusYes)
+		yes = button(st, "Yes, delete everything", s.focus == resetFocusYes)
 	} else if s.focus == resetFocusYes {
-		yes = SelectedItemStyle.Render("[") + yes + SelectedItemStyle.Render("]")
+		yes = st.selected.Render("[") + yes + st.selected.Render("]")
 	}
 	blocked := ""
 	if why := s.blocked(); why != "" && !s.run.active() {
-		blocked = WarningStyle.Render(why)
+		blocked = st.warning.Render(why)
 	}
-	return frame(e.width, e.height, joinLines(
+	return e.frame(joinLines(
 		title,
 		warning,
-		InputStyle.Render(label+"\n"+s.input.View()),
+		st.input.Render(label+"\n"+s.input.View()),
 		lipgloss.JoinHorizontal(lipgloss.Left, no, yes),
 		blocked,
-		s.status.render(),
-		HelpStyle.Render("Tab/↑/↓: Move | Enter: Select | esc: Back"),
+		s.status.render(st),
+		st.help.Render("Tab/↑/↓: Move | Enter: Select | esc: Back"),
 	))
 }

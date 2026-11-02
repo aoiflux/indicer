@@ -1,77 +1,39 @@
 package ui
 
 import (
-	"fmt"
 	"image/color"
-	"math"
 	"testing"
+
+	"indicer/internal/testutil/wcag"
 
 	"github.com/charmbracelet/colorprofile"
 	"github.com/charmbracelet/x/ansi"
 )
-
-// Reference terminal backgrounds: black, Windows Terminal Campbell, VS Code,
-// One Dark, Solarized dark, Ubuntu; then white, near-whites, Solarized light
-// and its base2.
-var (
-	darkBackgrounds  = []string{"#000000", "#0C0C0C", "#1E1E1E", "#282C34", "#002B36", "#300A24"}
-	lightBackgrounds = []string{"#FFFFFF", "#FAFAFA", "#F2F2F2", "#FDF6E3", "#EEE8D5"}
-)
-
-func hexRGB(t *testing.T, h string) color.RGBA {
-	t.Helper()
-	var r, g, b uint8
-	if _, err := fmt.Sscanf(h, "#%02x%02x%02x", &r, &g, &b); err != nil {
-		t.Fatalf("bad colour %q: %v", h, err)
-	}
-	return color.RGBA{r, g, b, 0xff}
-}
-
-func luminance(c color.Color) float64 {
-	r, g, b, _ := c.RGBA()
-	lin := func(v uint32) float64 {
-		s := float64(v>>8) / 255
-		if s <= 0.04045 {
-			return s / 12.92
-		}
-		return math.Pow((s+0.055)/1.055, 2.4)
-	}
-	return 0.2126*lin(r) + 0.7152*lin(g) + 0.0722*lin(b)
-}
-
-// contrast is the WCAG 2 contrast ratio.
-func contrast(a, b color.Color) float64 {
-	la, lb := luminance(a), luminance(b)
-	if la < lb {
-		la, lb = lb, la
-	}
-	return (la + 0.05) / (lb + 0.05)
-}
 
 // TestPaletteContrast holds the palettes to their promises: the dark and
 // light values reach WCAG AA (4.5:1) on their backgrounds, the neutral
 // values 3:1 on all of them, in truecolor and as the nearest xterm-256
 // colour a 256-colour terminal shows instead.
 func TestPaletteContrast(t *testing.T) {
-	all := append(append([]string{}, darkBackgrounds...), lightBackgrounds...)
+	all := append(append([]string{}, wcag.DarkBackgrounds...), wcag.LightBackgrounds...)
 	for r := Info; r < roleCount; r++ {
 		for _, c := range []struct {
 			theme Theme
 			bgs   []string
 			min   float64
 		}{
-			{ThemeDark, darkBackgrounds, 4.5},
-			{ThemeLight, lightBackgrounds, 4.5},
+			{ThemeDark, wcag.DarkBackgrounds, 4.5},
+			{ThemeLight, wcag.LightBackgrounds, 4.5},
 			{ThemeUnknown, all, 3.0},
 		} {
 			fg := r.RGB(c.theme)
 			fg256 := ansi.IndexedColor(ansi256(fg))
 			for _, bg := range c.bgs {
-				b := hexRGB(t, bg)
-				if got := contrast(fg, b); got < c.min {
+				b := wcag.RGB(bg)
+				if got := wcag.Contrast(fg, b); got < c.min {
 					t.Errorf("role %d theme %d: %s on %s is %.2f:1, want >= %.1f", r, c.theme, r.Hex(c.theme), bg, got, c.min)
 				}
-				if got := contrast(fg256, b); got < c.min {
+				if got := wcag.Contrast(fg256, b); got < c.min {
 					t.Errorf("role %d theme %d: xterm-256 colour %d (from %s) on %s is %.2f:1, want >= %.1f",
 						r, c.theme, int(fg256), r.Hex(c.theme), bg, got, c.min)
 				}

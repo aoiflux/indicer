@@ -71,28 +71,28 @@ func (s *microScreen) update(msg tea.Msg) tea.Cmd {
 }
 
 func (s *microScreen) view() string {
-	e := s.env
+	e, st := s.env, s.env.st
 	var body, summary string
 	switch {
 	case s.run.active():
-		body = InfoStyle.Render(fmt.Sprintf("Reading the graph… %s (ctrl+x cancels)", since(s.run.since)))
+		body = st.info.Render(fmt.Sprintf("Reading the graph… %s (ctrl+x cancels)", since(s.run.since)))
 	case !s.loaded:
-		body = s.status.render()
+		body = s.status.render(st)
 	case s.micro.Files == 0:
-		body = DimStyle.Render("No file has micro-artefacts. Run `dues micro extract` first.")
+		body = st.dim.Render("No file has micro-artefacts. Run `dues micro extract` first.")
 	default:
-		summary = DimStyle.Render(fmt.Sprintf("%d file(s) with %d artefact(s)", s.micro.Files, s.micro.Artefacts))
+		summary = st.dim.Render(fmt.Sprintf("%d file(s) with %d artefact(s)", s.micro.Files, s.micro.Artefacts))
 		if s.micro.Shown < s.micro.Files {
-			summary = DimStyle.Render(fmt.Sprintf("The %d files with the most artefacts, of %d with %d artefact(s); `dues micro extract` writes the full view.",
+			summary = st.dim.Render(fmt.Sprintf("The %d files with the most artefacts, of %d with %d artefact(s); `dues micro extract` writes the full view.",
 				s.micro.Shown, s.micro.Files, s.micro.Artefacts))
 		}
 		body = s.viewport.View()
 	}
-	return frame(e.width, e.height, joinLines(
-		TitleStyle.Render("🔬 Micro-artefacts"),
+	return e.frame(joinLines(
+		st.title.Render("Micro-artefacts"),
 		summary,
 		body,
-		HelpStyle.Render("↑/↓/PgUp/PgDn: Scroll | esc/q: Back"),
+		st.help.Render("↑/↓/PgUp/PgDn: Scroll | esc/q: Back"),
 	))
 }
 

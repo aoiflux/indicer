@@ -14,6 +14,7 @@ import (
 	"indicer/internal/console"
 	"indicer/internal/lifecycle"
 	"indicer/internal/testutil/testdb"
+	"indicer/internal/ui"
 	"indicer/lib/dbopen"
 	"indicer/tui"
 )
@@ -171,16 +172,21 @@ func replaceRunTUI(t *testing.T, fn func(context.Context, tui.Config) error) {
 }
 
 // TestTUICmdClosesTheDatabase: output is silenced while the TUI runs and
-// restored after; the database is closed, so it opens again.
+// restored after; the database is closed, so it opens again. The TUI gets
+// --theme.
 func TestTUICmdClosesTheDatabase(t *testing.T) {
 	testdb.Isolate(t)
 	testdb.EnsureCodecs(t)
 	t.Cleanup(console.Reset)
+	t.Cleanup(ui.SetForTest(ui.Mode{Theme: ui.ThemeLight}))
 	dbPath := filepath.Join(t.TempDir(), "db")
 	src := writeFile(t, filepath.Join(t.TempDir(), "a.bin"), bytes.Repeat([]byte("a"), 10000))
 	replaceRunTUI(t, func(ctx context.Context, cfg tui.Config) error {
 		if console.Out() != io.Discard || console.Err() != io.Discard {
 			t.Error("output is not silenced while the TUI runs")
+		}
+		if cfg.Theme != ui.ThemeLight {
+			t.Errorf("the TUI got theme %v, want light", cfg.Theme)
 		}
 		if _, err := cfg.Actions.Store(ctx, src, tui.StoreOptions{}); err != nil {
 			t.Error(err)

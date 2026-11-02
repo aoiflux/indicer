@@ -61,8 +61,9 @@ func TUICmd(ctx context.Context, opts DBOptions) (err error) {
 	// Output is silenced once, for the whole session, before any job runs;
 	// silencing it per action raced when actions ran side by side.
 	restore := console.Quiet()
-	cfg := tui.Config{Info: a.info(), Actions: a.actions()}
-	if m := ui.Current(); m.Out.TTY {
+	m := ui.Current()
+	cfg := tui.Config{Info: a.info(), Actions: a.actions(), Theme: m.Theme}
+	if m.Out.TTY {
 		cfg.Profile = m.Out.Profile
 	}
 	err = runTUI(ctx, cfg)

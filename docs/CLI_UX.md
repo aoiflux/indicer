@@ -21,11 +21,14 @@ of `internal/console` (the only writer to the terminal).
 4. **Text from evidence is sanitised before it is styled.** File names,
    partition labels and error text pass through `internal/termsafe`, so a
    hostile name cannot move the cursor or change the terminal's title.
-5. **No terminal queries.** DUES never asks the terminal for its background
-   colour or capabilities: such queries are slow over SSH and leave stray
-   bytes in the shell. It reads its flags and what the operating system
-   says about each stream (a terminal or not, and its width); it reads no
-   environment variable.
+5. **No terminal queries from the command line.** It never asks the
+   terminal for its background colour or capabilities: such queries are
+   slow over SSH and leave stray bytes in the shell. It reads its flags and
+   what the operating system says about each stream (a terminal or not, and
+   its width); it reads no environment variable. The TUI is the exception:
+   it owns the screen and reads the keyboard, and under `--theme auto` it
+   asks once for the background (OSC 11), taking the answer as it takes a
+   key.
 6. **Extras never touch evidence processing, output files, logs, stdout or
    exit codes.**
 
@@ -40,7 +43,7 @@ warning (exit 2) says `warning`, not `error`.
 | `--color auto\|always\|never\|ansi\|truecolor` | Colour policy for stdout and stderr. `auto` gives 256 colours on a terminal and none on a pipe; `always` colours a pipe too; `ansi` keeps colour but only the terminal theme's 16 colours; `truecolor` uses 24-bit colour. |
 | `--plain` | Keep the terminal, drop decoration: no colour or escape codes at all, ASCII only, no redraw, no spinner, no art, no extras. The mode for screen readers, reduced motion, copying logs, and terminals without Unicode or colour. |
 | `--ci` | Behave as if no terminal is attached: plain output on every stream, and prompts refuse as they do on a pipe. For CI logs. |
-| `--theme auto\|dark\|light` | The terminal's background, for the tuned palettes; `auto` means unknown. |
+| `--theme auto\|dark\|light` | The terminal's background, for the tuned palettes. On the command line `auto` means unknown; the TUI asks the terminal, and is dark until it answers. |
 | `--taskbar` | Progress on the terminal's tab and taskbar (OSC 9;4). |
 | `--no-fun` | No extras; everything else unchanged. |
 
@@ -283,6 +286,9 @@ The tests cover what a test can see. Before a release, look at these by hand:
 - The Windows console host (`conhost.exe cmd`) with `--plain`: ASCII marks
   and emblem; without it, boxes where its font has no glyph.
 - The VS Code terminal.
+- `dues tui` on a dark and a light Windows Terminal profile, without
+  `--theme` (it should match the profile) and with `--theme light` and
+  `dark`; and over SSH, where a slow answer arrives after the menu shows.
 - tmux and screen, and SSH to Linux (`TERM=xterm-256color`).
 - A 50-column window: rows cut, the header and the closing line broken at
   spaces.
@@ -323,3 +329,6 @@ The tests cover what a test can see. Before a release, look at these by hand:
   and nothing lands where those variables point.
 - `internal/e2e/pty_test.go` and `pty_faultinject_test.go`: the binary on a
   real pseudo-terminal under WSL (see [TESTING.md](TESTING.md)).
+- `tui/styles_test.go`: the TUI's styles in both themes against the same
+  reference backgrounds as the palette (`internal/testutil/wcag`), its
+  theme switch, and no emoji.

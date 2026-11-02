@@ -10,6 +10,7 @@ import (
 
 	"indicer/internal/lifecycle"
 	"indicer/internal/safe"
+	"indicer/internal/ui"
 
 	"charm.land/bubbles/v2/list"
 	tea "charm.land/bubbletea/v2"
@@ -31,6 +32,9 @@ type Config struct {
 	// Profile is the colour depth the command line resolved (--color);
 	// zero lets bubbletea detect it.
 	Profile colorprofile.Profile
+	// Theme is --theme. Under auto (ui.ThemeUnknown) the TUI asks the
+	// terminal for its background, and is dark until it answers.
+	Theme ui.Theme
 }
 
 // Run shows the TUI until the user quits or ctx ends, then waits for its
@@ -39,10 +43,13 @@ type Config struct {
 // recover at its next open, not close it under the job (TUI-3).
 func Run(ctx context.Context, cfg Config) error {
 	jobs := newRunner(ctx)
-	m := newModel(cfg.Info, cfg.Actions, jobs)
+	m := newModel(cfg, jobs)
 	// A signal ends the program through ctx, with its cause (exit 130/143).
-	// bubbletea's own handler would end it without one.
-	opts := append([]tea.ProgramOption{tea.WithContext(ctx), tea.WithoutSignalHandler()}, cfg.Options...)
+	// bubbletea's own handler would end it without one. bubbletea reads the
+	// process environment unless it is given one, and DUES reads none: with
+	// no TERM its renderer uses only the sequences every terminal has, as
+	// it always did on Windows, where TERM is not set.
+	opts := append([]tea.ProgramOption{tea.WithContext(ctx), tea.WithoutSignalHandler(), tea.WithEnvironment([]string{})}, cfg.Options...)
 	if cfg.Profile != colorprofile.Unknown {
 		opts = append(opts, tea.WithColorProfile(cfg.Profile))
 	}
@@ -92,6 +99,9 @@ type env struct {
 	jobs    *runner
 	width   int
 	height  int
+	// st are the styles for the terminal's background. Screens read them
+	// as they draw, so a change of theme reaches every screen.
+	st *styles
 }
 
 // run starts fn as a job, and returns its ID and the command that reports
@@ -154,16 +164,23 @@ type model struct {
 	quitYes bool
 	// fatal is a panic contained in the model; the program ends with it.
 	fatal error
+	// auto is --theme auto: the terminal's answer sets the theme.
+	auto bool
 }
 
-func newModel(info Info, acts Actions, jobs *runner) *model {
-	e := &env{info: info, actions: acts, jobs: jobs, width: 100, height: 30}
-	m := &model{env: e, state: StateMenu, menu: newMenu()}
+func newModel(cfg Config, jobs *runner) *model {
+	e := &env{info: cfg.Info, actions: cfg.Actions, jobs: jobs, width: 100, height: 30, st: newStyles(cfg.Theme != ui.ThemeLight)}
+	m := &model{env: e, state: StateMenu, menu: newMenu(e), auto: cfg.Theme == ui.ThemeUnknown}
 	m.resize()
 	return m
 }
 
-func (m *model) Init() tea.Cmd { return tick() }
+func (m *model) Init() tea.Cmd {
+	if m.auto {
+		return tea.Batch(tick(), tea.RequestBackgroundColor)
+	}
+	return tick()
+}
 
 // Update contains a panic in the model: it is logged, every job is
 // cancelled, and the program ends; Run waits for the jobs.
@@ -189,7 +206,7 @@ func (m *model) View() tea.View {
 		// View cannot end the program: the next key does.
 		m.fatal = err
 		m.env.jobs.cancelAll(errStopping)
-		content = ErrorStyle.Render("Internal error: "+errorText(err)) + "\n\nPress any key to exit."
+		content = m.env.st.error.Render("Internal error: "+errorText(err)) + "\n\nPress any key to exit."
 	}
 	v := tea.NewView(content)
 	v.AltScreen = true
@@ -204,6 +221,11 @@ func (m *model) update(msg tea.Msg) tea.Cmd {
 		return nil
 	case tickMsg:
 		return tick()
+	case tea.BackgroundColorMsg:
+		if m.auto {
+			m.restyle(msg.IsDark())
+		}
+		return nil
 	case jobDoneMsg:
 		return m.jobDone(msg)
 	case backMsg:
@@ -218,6 +240,15 @@ func (m *model) update(msg tea.Msg) tea.Cmd {
 	var cmd tea.Cmd
 	m.menu, cmd = m.menu.Update(msg)
 	return cmd
+}
+
+// restyle draws everything in the styles for a dark or a light background.
+func (m *model) restyle(dark bool) {
+	m.env.st = newStyles(dark)
+	m.menu.Styles = m.env.st.list
+	if r, ok := m.screen.(restyler); ok {
+		r.restyle()
+	}
 }
 
 // jobDone reports a finished job to the screen that started it, if it still
@@ -445,24 +476,25 @@ func (m *model) footer() string {
 	if m.screen == nil {
 		hint = "ctrl+x cancels"
 	}
-	return WarningStyle.Render("Running: "+strings.Join(parts, ", ")) + "  " + HelpStyle.Render(hint)
+	st := m.env.st
+	return st.warning.Render("Running: "+strings.Join(parts, ", ")) + "  " + st.help.Render(hint)
 }
 
 func (m *model) menuView() string {
-	info := m.env.info
+	info, st := m.env.info, m.env.st
 	lines := []string{
-		HeaderStyle.Render("DUES - Deduplicated Unified Evidence Store"),
-		InfoStyle.Render("Database: " + clean(info.Root)),
-		DimStyle.Render(fmt.Sprintf("Chunks of %d KiB, hashed with %s", info.ChunkKiB, clean(info.ChunkHash))),
+		st.header.Render("DUES - Deduplicated Unified Evidence Store"),
+		st.info.Render("Database: " + clean(info.Root)),
+		st.dim.Render(fmt.Sprintf("Chunks of %d KiB, hashed with %s", info.ChunkKiB, clean(info.ChunkHash))),
 	}
 	if !info.Encrypted {
-		lines = append(lines, WarningStyle.Render("This database is not encrypted."))
+		lines = append(lines, st.warning.Render("This database is not encrypted."))
 	}
 	if m.status.text != "" {
-		lines = append(lines, "Last: "+m.status.render())
+		lines = append(lines, "Last: "+m.status.render(st))
 	}
-	lines = append(lines, "", m.menu.View(), "", HelpStyle.Render("↑/↓: Navigate | Enter: Select | q: Quit | ctrl+x: Cancel running jobs"))
-	return frame(m.env.width, m.env.height, lipgloss.JoinVertical(lipgloss.Left, lines...))
+	lines = append(lines, "", m.menu.View(), "", st.help.Render("↑/↓: Navigate | Enter: Select | q: Quit | ctrl+x: Cancel running jobs"))
+	return m.env.frame(lipgloss.JoinVertical(lipgloss.Left, lines...))
 }
 
 func (m *model) quitView() string {
@@ -470,29 +502,30 @@ func (m *model) quitView() string {
 	for _, j := range m.env.jobs.running() {
 		names = append(names, fmt.Sprintf("%s (%s)", clean(j.name), since(j.since)))
 	}
+	st := m.env.st
 	var content string
 	if m.quit == quitAsking {
 		content = lipgloss.JoinVertical(lipgloss.Left,
-			TitleStyle.Render("Quit DUES?"),
+			st.title.Render("Quit DUES?"),
 			"",
-			WarningStyle.Render(fmt.Sprintf("%d job(s) running: %s", len(names), strings.Join(names, ", "))),
+			st.warning.Render(fmt.Sprintf("%d job(s) running: %s", len(names), strings.Join(names, ", "))),
 			"",
 			"Stop them and quit?",
 			"",
-			lipgloss.JoinHorizontal(lipgloss.Left, button("No, keep working", !m.quitYes), button("Yes, stop and quit", m.quitYes)),
+			lipgloss.JoinHorizontal(lipgloss.Left, button(st, "No, keep working", !m.quitYes), button(st, "Yes, stop and quit", m.quitYes)),
 			"",
-			HelpStyle.Render("Tab/←/→: Choose | Enter: Confirm | y/n"),
+			st.help.Render("Tab/←/→: Choose | Enter: Confirm | y/n"),
 		)
 	} else {
 		content = lipgloss.JoinVertical(lipgloss.Left,
-			TitleStyle.Render("Stopping"),
+			st.title.Render("Stopping"),
 			"",
 			"Waiting for: "+strings.Join(names, ", "),
 			"",
-			HelpStyle.Render(fmt.Sprintf("ctrl+c: Quit now. DUES still waits up to %v for the jobs, and leaves the database for recovery if one has not stopped.", drainTimeout)),
+			st.help.Render(fmt.Sprintf("ctrl+c: Quit now. DUES still waits up to %v for the jobs, and leaves the database for recovery if one has not stopped.", drainTimeout)),
 		)
 	}
-	box := DialogBoxStyle
+	box := st.dialog
 	if m.env.width > 0 {
 		box = box.Width(max(40, min(m.env.width-4, 90)))
 	}
@@ -507,42 +540,38 @@ type menuItem struct {
 
 func (i menuItem) FilterValue() string { return i.title }
 
-type menuDelegate struct{}
+type menuDelegate struct{ env *env }
 
 func (menuDelegate) Height() int                         { return 2 }
 func (menuDelegate) Spacing() int                        { return 0 }
 func (menuDelegate) Update(tea.Msg, *list.Model) tea.Cmd { return nil }
-func (menuDelegate) Render(w io.Writer, m list.Model, index int, item list.Item) {
+func (d menuDelegate) Render(w io.Writer, m list.Model, index int, item list.Item) {
 	i, ok := item.(menuItem)
 	if !ok {
 		return
 	}
-	str := fmt.Sprintf("  %s\n  %s", i.title, i.description)
-	if index == m.Index() {
-		fmt.Fprint(w, SelectedItemStyle.Render(str))
-	} else {
-		fmt.Fprint(w, NormalItemStyle.Render(str))
-	}
+	fmt.Fprint(w, d.env.row(fmt.Sprintf("  %s\n  %s", i.title, i.description), index == m.Index()))
 }
 
-func newMenu() list.Model {
+func newMenu(e *env) list.Model {
 	items := []list.Item{
-		menuItem{"💾 Store", "Store a file or folder of evidence", StateStore},
-		menuItem{"📂 List", "List the stored evidence", StateList},
-		menuItem{"🔍 Search", "Search the stored content", StateSearch},
-		menuItem{"🔄 Restore", "Restore a stored object to a file", StateRestore},
-		menuItem{"🔎 NeAR", "Find stored objects that share content", StateNear},
-		menuItem{"🗑️  Reset", "Delete everything in the database", StateReset},
-		menuItem{"📊 Statistics", "Show the database's statistics", StateStats},
-		menuItem{"🔬 Micro-artefacts", "Show the files with the most micro-artefacts", StateMicro},
+		menuItem{"Store", "Store a file or folder of evidence", StateStore},
+		menuItem{"List", "List the stored evidence", StateList},
+		menuItem{"Search", "Search the stored content", StateSearch},
+		menuItem{"Restore", "Restore a stored object to a file", StateRestore},
+		menuItem{"NeAR", "Find stored objects that share content", StateNear},
+		menuItem{"Reset", "Delete everything in the database", StateReset},
+		menuItem{"Statistics", "Show the database's statistics", StateStats},
+		menuItem{"Micro-artefacts", "Show the files with the most micro-artefacts", StateMicro},
 	}
-	return newList(items, menuDelegate{}, "DUES")
+	return e.newList(items, menuDelegate{e}, "DUES")
 }
 
 // newList is a list without filtering, quit keys or help of its own: the
 // screens handle those keys (TUI-4).
-func newList(items []list.Item, d list.ItemDelegate, title string) list.Model {
+func (e *env) newList(items []list.Item, d list.ItemDelegate, title string) list.Model {
 	l := list.New(items, d, 60, 16)
+	l.Styles = e.st.list
 	l.Title = title
 	l.SetShowTitle(false)
 	l.SetShowStatusBar(false)

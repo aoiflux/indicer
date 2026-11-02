@@ -58,19 +58,19 @@ type status struct {
 	text string
 }
 
-func (s status) render() string {
+func (s status) render(st *styles) string {
 	if s.text == "" {
 		return ""
 	}
 	switch s.kind {
 	case statusOK:
-		return SuccessStyle.Render(s.text)
+		return st.success.Render(s.text)
 	case statusWarn:
-		return WarningStyle.Render(s.text)
+		return st.warning.Render(s.text)
 	case statusError:
-		return ErrorStyle.Render(s.text)
+		return st.error.Render(s.text)
 	}
-	return InfoStyle.Render(s.text)
+	return st.info.Render(s.text)
 }
 
 func infoStatus(text string) status { return status{statusInfo, text} }
@@ -89,15 +89,23 @@ func outcomeLines(o Outcome, width int) string {
 }
 
 // frame draws content in the screen border, sized to the terminal.
-func frame(width, height int, content string) string {
-	f := BorderStyle
-	if width > 0 {
-		f = f.Width(max(40, width-2))
+func (e *env) frame(content string) string {
+	f := e.st.border
+	if e.width > 0 {
+		f = f.Width(max(40, e.width-2))
 	}
-	if height > 0 {
-		f = f.MaxHeight(max(12, height))
+	if e.height > 0 {
+		f = f.MaxHeight(max(12, e.height))
 	}
 	return f.Render(content)
+}
+
+// row draws a row of a list, or a label, with the focus or without.
+func (e *env) row(s string, selected bool) string {
+	if selected {
+		return e.st.selected.Render(s)
+	}
+	return e.st.normal.Render(s)
 }
 
 // window returns the rows [from, to) of n to draw in rows lines so that
@@ -139,14 +147,14 @@ func checkbox(on bool, label string) string {
 }
 
 // button draws a button, selected or not.
-func button(label string, selected bool) string {
+func button(st *styles, label string, selected bool) string {
 	if selected {
-		return ButtonSelectedStyle.Render(label)
+		return st.buttonSelected.Render(label)
 	}
-	return ButtonStyle.Render(label)
+	return st.button.Render(label)
 }
 
 // disabledButton draws a button that cannot be pressed.
-func disabledButton(label string) string {
-	return ButtonDisabledStyle.Render(label)
+func disabledButton(st *styles, label string) string {
+	return st.buttonDisabled.Render(label)
 }

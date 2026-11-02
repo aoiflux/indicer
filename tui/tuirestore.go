@@ -37,12 +37,15 @@ type restoreScreen struct {
 }
 
 func newRestoreScreen(e *env) *restoreScreen {
-	id := textinput.New()
-	id.Placeholder = "ID or hash of a stored object…"
+	id := e.newInput("ID or hash of a stored object…")
 	id.Focus()
-	path := textinput.New()
-	path.Placeholder = "Path to restore to (default: " + defaultRestoreName + ")"
+	path := e.newInput("Path to restore to (default: " + defaultRestoreName + ")")
 	return &restoreScreen{env: e, id: id, path: path}
+}
+
+func (s *restoreScreen) restyle() {
+	s.id.SetStyles(s.env.st.textinput)
+	s.path.SetStyles(s.env.st.textinput)
 }
 
 func (s *restoreScreen) init() tea.Cmd { return textinput.Blink }
@@ -198,33 +201,33 @@ func (s *restoreScreen) start(replace bool) tea.Cmd {
 }
 
 func (s *restoreScreen) view() string {
-	e := s.env
+	e, st := s.env, s.env.st
 	idLabel, pathLabel := "ID or hash:", "Restore to:"
 	if s.focus == restoreFocusID {
-		idLabel = SelectedItemStyle.Render(idLabel)
+		idLabel = st.selected.Render(idLabel)
 	}
 	if s.focus == restoreFocusPath {
-		pathLabel = SelectedItemStyle.Render(pathLabel)
+		pathLabel = st.selected.Render(pathLabel)
 	}
 	buttons := lipgloss.JoinHorizontal(lipgloss.Left,
-		button("Restore", s.focus == restoreFocusRestore), button("Cancel", s.focus == restoreFocusCancel))
-	stat := s.status.render()
+		button(st, "Restore", s.focus == restoreFocusRestore), button(st, "Cancel", s.focus == restoreFocusCancel))
+	stat := s.status.render(st)
 	if s.run.active() {
-		stat = InfoStyle.Render(fmt.Sprintf("Restoring to %s… %s", clean(s.target), since(s.run.since)))
+		stat = st.info.Render(fmt.Sprintf("Restoring to %s… %s", clean(s.target), since(s.run.since)))
 	}
 	help := "Tab/↑/↓: Move | Enter: Select | esc: Back (a restore keeps running) | ctrl+x: Cancel the restore"
 	if s.replace.open || s.another.open {
 		help = ""
 	}
-	return frame(e.width, e.height, joinLines(
-		TitleStyle.Render("Restore a stored object"),
-		InputStyle.Render(idLabel+"\n"+s.id.View())+"\n"+InputStyle.Render(pathLabel+"\n"+s.path.View()),
-		DimStyle.Render("An existing file is replaced only after you confirm. Every chunk, and the whole content, is checked against its hash."),
+	return e.frame(joinLines(
+		st.title.Render("Restore a stored object"),
+		st.input.Render(idLabel+"\n"+s.id.View())+"\n"+st.input.Render(pathLabel+"\n"+s.path.View()),
+		st.dim.Render("An existing file is replaced only after you confirm. Every chunk, and the whole content, is checked against its hash."),
 		buttons,
 		stat,
-		s.replace.view(),
+		s.replace.view(st),
 		outcomeLines(s.out, e.width-8),
-		s.another.view(),
-		HelpStyle.Render(help),
+		s.another.view(st),
+		st.help.Render(help),
 	))
 }

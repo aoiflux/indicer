@@ -114,7 +114,7 @@ does not change. As of this writing (checked in the module sources):
 | `github.com/charmbracelet/x/ansi` | `RUNEWIDTH_EASTASIAN` | At start-up, `1` makes East Asian ambiguous-width characters two columns wide. DUES measures and cuts its live display with this package, so on a terminal the rows may be cut at other columns. Pipes and `--plain` are not affected. The setting is not exported, so DUES cannot undo it. |
 | `github.com/mattn/go-runewidth` | `RUNEWIDTH_EASTASIAN`, the locale (`LC_ALL`, `LC_CTYPE`, `LANG`), `WT_SESSION` on Windows | Its package defaults, which DUES does not use; `x/ansi` passes its own options. |
 | `charm.land/lipgloss/v2` | the colour variables, at start-up | Only its `Print` functions, which DUES never calls (a guard test bans them). |
-| `charm.land/bubbletea/v2`, `github.com/charmbracelet/ultraviolet` | `TEA_DEBUG`, `TEA_TRACE`, the terminal variables | The TUI only. |
+| `charm.land/bubbletea/v2` | `TEA_DEBUG`, `TEA_TRACE` | The TUI only: a debug log and a trace file. The terminal variables it would read (`TERM`, `TERM_PROGRAM`, `SSH_TTY`, `WT_SESSION`, the colour variables) it does not: the TUI gives it an empty environment. |
 | `github.com/xo/terminfo` | `TERM`, `TERMINFO`, `COLORTERM` and the like | Only when called; DUES does not call it. |
 | `google.golang.org/grpc` | `GRPC_GO_*` and xDS variables | Logging and xDS features of the gRPC library. |
 | `google.golang.org/protobuf` | `GOPROTODEBUG`, the registry conflict policy | Debug behaviour. |

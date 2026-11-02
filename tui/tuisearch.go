@@ -20,11 +20,12 @@ type searchScreen struct {
 }
 
 func newSearchScreen(e *env) *searchScreen {
-	in := textinput.New()
-	in.Placeholder = `Words (ANDed), a | b, or "a phrase"…`
+	in := e.newInput(`Words (ANDed), a | b, or "a phrase"…`)
 	in.Focus()
 	return &searchScreen{env: e, query: in}
 }
+
+func (s *searchScreen) restyle() { s.query.SetStyles(s.env.st.textinput) }
 
 func (s *searchScreen) init() tea.Cmd { return textinput.Blink }
 func (s *searchScreen) resize()       { s.query.SetWidth(max(24, s.env.width-14)) }
@@ -84,17 +85,17 @@ func (s *searchScreen) start() tea.Cmd {
 }
 
 func (s *searchScreen) view() string {
-	e := s.env
-	stat := s.status.render()
+	e, st := s.env, s.env.st
+	stat := s.status.render(st)
 	if s.run.active() {
-		stat = InfoStyle.Render(fmt.Sprintf("Searching for %s… %s", clean(s.asked), since(s.run.since)))
+		stat = st.info.Render(fmt.Sprintf("Searching for %s… %s", clean(s.asked), since(s.run.since)))
 	}
-	return frame(e.width, e.height, joinLines(
-		TitleStyle.Render("Search the stored content"),
-		InputStyle.Render(SelectedItemStyle.Render("Search for:")+"\n"+s.query.View()),
-		DimStyle.Render("Every stored object is searched. The report replaces report.json in the working directory."),
+	return e.frame(joinLines(
+		st.title.Render("Search the stored content"),
+		st.input.Render(st.selected.Render("Search for:")+"\n"+s.query.View()),
+		st.dim.Render("Every stored object is searched. The report replaces report.json in the working directory."),
 		stat,
 		outcomeLines(s.out, e.width-8),
-		HelpStyle.Render("Enter: Search | esc: Back (a search keeps running) | ctrl+x: Cancel the search"),
+		st.help.Render("Enter: Search | esc: Back (a search keeps running) | ctrl+x: Cancel the search"),
 	))
 }

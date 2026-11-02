@@ -23,6 +23,11 @@ The chunk size and chunk hash are part of the database's layout, fixed when it
 was created. The menu shows them; the TUI cannot change them. A database
 without a password is not encrypted, and the menu says so.
 
+The TUI asks the terminal for its background colour as it starts, and uses
+light colours on a light background, dark ones otherwise. A terminal that
+does not answer gets the dark colours; `--theme light` or `--theme dark`
+chooses for it. `--color` and `--plain` apply as on the command line.
+
 ## Keys
 
 | Key | What it does |

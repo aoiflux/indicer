@@ -191,15 +191,15 @@ func (s *listScreen) rows() int {
 }
 
 func (s *listScreen) view() string {
-	e := s.env
-	title := TitleStyle.Render("Stored evidence")
+	e, st := s.env, s.env.st
+	title := st.title.Render("Stored evidence")
 	switch {
 	case s.loading:
-		return frame(e.width, e.height, joinLines(title, InfoStyle.Render("Loading…")))
+		return e.frame(joinLines(title, st.info.Render("Loading…")))
 	case !s.loaded:
-		return frame(e.width, e.height, joinLines(title, s.status.render(), HelpStyle.Render("esc: Back")))
+		return e.frame(joinLines(title, s.status.render(st), st.help.Render("esc: Back")))
 	case len(s.list.Rows) == 0:
-		return frame(e.width, e.height, joinLines(title, InfoStyle.Render("No evidence is stored."), HelpStyle.Render("esc: Back")))
+		return e.frame(joinLines(title, st.info.Render("No evidence is stored."), st.help.Render("esc: Back")))
 	}
 
 	count := fmt.Sprintf("%s evidence", humanize.Comma(int64(s.list.Total)))
@@ -208,7 +208,7 @@ func (s *listScreen) view() string {
 	}
 	nameWidth := max(10, e.width-24-10-8-10-12)
 	header := fmt.Sprintf("%-24s %10s %-8s %-10s %s", "ID", "Size", "Format", "Index", "Name")
-	rows := []string{DimStyle.Render(header)}
+	rows := []string{st.dim.Render(header)}
 	from, to := window(len(s.list.Rows), s.sel, s.rows())
 	for i := from; i < to; i++ {
 		r := s.list.Rows[i]
@@ -216,24 +216,24 @@ func (s *listScreen) view() string {
 			truncate(clean(r.ID), 24), humanize.IBytes(uint64(max(0, r.Size))), truncate(clean(r.Format), 8),
 			truncate(clean(r.Index), 10), truncate(clean(r.Name), nameWidth))
 		if i == s.sel {
-			line = SelectedItemStyle.Render(line)
+			line = st.selected.Render(line)
 		} else {
-			line = NormalItemStyle.Render(line)
+			line = st.normal.Render(line)
 		}
 		rows = append(rows, line)
 	}
-	position := DimStyle.Render(fmt.Sprintf("%d of %d", s.sel+1, len(s.list.Rows)))
+	position := st.dim.Render(fmt.Sprintf("%d of %d", s.sel+1, len(s.list.Rows)))
 	help := "↑/↓/PgUp/PgDn/Home/End: Move | Enter/r: Restore to restored_<ID>.bin | c: Copy the ID | esc: Back"
 	if s.replace.open {
 		help = ""
 	}
-	return frame(e.width, e.height, joinLines(
+	return e.frame(joinLines(
 		title,
 		count,
 		strings.Join(rows, "\n")+"\n"+position,
-		s.status.render(),
-		s.replace.view(),
-		HelpStyle.Render(help),
+		s.status.render(st),
+		s.replace.view(st),
+		st.help.Render(help),
 	))
 }
 

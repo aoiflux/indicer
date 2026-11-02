@@ -2,102 +2,111 @@ package tui
 
 import (
 	"image/color"
+
 	"indicer/internal/ui"
 
+	"charm.land/bubbles/v2/list"
+	"charm.land/bubbles/v2/textinput"
 	"charm.land/lipgloss/v2"
 )
 
-// Colours follow the CLI's roles (internal/ui, docs/CLI_UX.md), in their
-// dark-background values: the TUI draws on a dark background of its own.
+// styles are the TUI's styles for a dark or a light background. Colours
+// follow the CLI's roles (internal/ui, docs/CLI_UX.md) in the theme's
+// values; styles_test.go holds every text colour to WCAG AA (4.5:1) on
+// what it is drawn on.
+type styles struct {
+	dark bool
+
+	header, title, border, dialog lipgloss.Style
+	// selected is the row or field with the focus; normal any other row.
+	selected, normal                                     lipgloss.Style
+	dim, help, input                                     lipgloss.Style
+	success, warning, error, info                        lipgloss.Style
+	button, buttonSelected, buttonDisabled               lipgloss.Style
+	statSection, statLabel, statValue, statGood, statBad lipgloss.Style
+
+	textinput textinput.Styles
+	list      list.Styles
+}
+
+// greys are the xterm-256 colours that are not roles.
+type greys struct {
+	panel    string // behind titles and the selected row
+	text     string // rows and labels
+	border   string
+	onAccent string // text on a coloured button
+	// disabledText on disabledPanel draws a button that cannot be pressed.
+	disabledText, disabledPanel string
+}
+
 var (
-	primaryColor   = role(ui.Forensics) // brand accent: headers, selection
-	secondaryColor = role(ui.Highlight) // the active button, info
-	successColor   = role(ui.Success)
-	warningColor   = role(ui.Warning)
-	errorColor     = role(ui.Error)
-	accentColor    = role(ui.Evidence) // titles
-	mutedColor     = role(ui.Muted)    // dim and help text
-	borderColor    = lipgloss.Color("240")
-	bgColor        = lipgloss.Color("235")
+	darkGreys  = greys{panel: "235", text: "250", border: "240", onAccent: "235", disabledText: "248", disabledPanel: "237"}
+	lightGreys = greys{panel: "255", text: "238", border: "245", onAccent: "231", disabledText: "240", disabledPanel: "253"}
 )
 
-func role(r ui.Role) color.Color { return lipgloss.Color(r.Hex(ui.ThemeDark)) }
+func newStyles(dark bool) *styles {
+	theme, g := ui.ThemeDark, darkGreys
+	if !dark {
+		theme, g = ui.ThemeLight, lightGreys
+	}
+	role := func(r ui.Role) color.Color { return lipgloss.Color(r.Hex(theme)) }
+	accent, active := role(ui.Forensics), role(ui.Highlight)
+	panel, text, muted := lipgloss.Color(g.panel), lipgloss.Color(g.text), role(ui.Muted)
+	fg := func(c color.Color) lipgloss.Style { return lipgloss.NewStyle().Foreground(c) }
+	button := lipgloss.NewStyle().Foreground(lipgloss.Color(g.onAccent)).Padding(0, 2).MarginRight(1)
 
-// Base styles
-var (
-	HeaderStyle = lipgloss.NewStyle().
-			Bold(true).
-			Foreground(primaryColor).
-			MarginBottom(1)
+	st := &styles{
+		dark:   dark,
+		header: fg(accent).Bold(true).MarginBottom(1),
+		title:  fg(role(ui.Evidence)).Bold(true).Background(panel).Padding(0, 2),
+		border: lipgloss.NewStyle().Border(lipgloss.RoundedBorder()).BorderForeground(lipgloss.Color(g.border)).Padding(0, 1),
+		dialog: lipgloss.NewStyle().Border(lipgloss.DoubleBorder()).BorderForeground(accent).Padding(1, 2),
 
-	TitleStyle = lipgloss.NewStyle().
-			Bold(true).
-			Foreground(accentColor).
-			Background(bgColor).
-			Padding(0, 2)
+		selected: fg(accent).Background(panel).Bold(true).Padding(0, 1),
+		normal:   fg(text).Padding(0, 1),
+		dim:      fg(muted),
+		help:     fg(muted).Italic(true),
+		input:    lipgloss.NewStyle().Border(lipgloss.RoundedBorder()).Padding(0, 1),
 
-	BorderStyle = lipgloss.NewStyle().
-			Border(lipgloss.RoundedBorder()).
-			BorderForeground(borderColor).
-			Padding(0, 1)
+		success: fg(role(ui.Success)).Bold(true),
+		warning: fg(role(ui.Warning)).Bold(true),
+		error:   fg(role(ui.Error)).Bold(true),
+		info:    fg(active),
 
-	SelectedItemStyle = lipgloss.NewStyle().
-				Foreground(primaryColor).
-				Background(bgColor).
-				Bold(true).
-				Padding(0, 1)
+		button:         button.Background(accent),
+		buttonSelected: button.Background(active).Bold(true),
+		buttonDisabled: fg(lipgloss.Color(g.disabledText)).Background(lipgloss.Color(g.disabledPanel)).Padding(0, 2).MarginRight(1),
 
-	NormalItemStyle = lipgloss.NewStyle().
-			Foreground(lipgloss.Color("250")).
-			Padding(0, 1)
+		statSection: fg(accent).Bold(true),
+		statLabel:   fg(text).Width(32),
+		statValue:   fg(role(ui.Evidence)).Bold(true),
+		statGood:    fg(role(ui.Success)).Bold(true),
+		statBad:     fg(role(ui.Error)).Bold(true),
 
-	DimStyle = lipgloss.NewStyle().
-			Foreground(mutedColor)
+		list: list.DefaultStyles(dark),
+	}
 
-	HelpStyle = lipgloss.NewStyle().
-			Foreground(mutedColor).
-			Italic(true)
+	// Typed text and the prompt keep the terminal's own colour; the cursor
+	// is reverse video, so it shows on any background.
+	st.textinput = textinput.DefaultStyles(dark)
+	for _, s := range []*textinput.StyleState{&st.textinput.Focused, &st.textinput.Blurred} {
+		s.Placeholder, s.Suggestion = fg(muted), fg(muted)
+		s.Prompt, s.Text = lipgloss.NewStyle(), lipgloss.NewStyle()
+	}
+	st.textinput.Cursor.Color = lipgloss.NoColor{}
+	return st
+}
 
-	InputStyle = lipgloss.NewStyle().
-			Border(lipgloss.RoundedBorder()).
-			Padding(0, 1)
+// restyler is a screen that keeps styles of its own (an input, content
+// drawn ahead), to be redrawn when the theme changes.
+type restyler interface {
+	restyle()
+}
 
-	SuccessStyle = lipgloss.NewStyle().
-			Foreground(successColor).
-			Bold(true)
-
-	WarningStyle = lipgloss.NewStyle().
-			Foreground(warningColor).
-			Bold(true)
-
-	ErrorStyle = lipgloss.NewStyle().
-			Foreground(errorColor).
-			Bold(true)
-
-	InfoStyle = lipgloss.NewStyle().
-			Foreground(secondaryColor)
-
-	ButtonStyle = lipgloss.NewStyle().
-			Foreground(bgColor).
-			Background(primaryColor).
-			Padding(0, 2).
-			MarginRight(1)
-
-	ButtonSelectedStyle = lipgloss.NewStyle().
-				Foreground(bgColor).
-				Background(secondaryColor).
-				Padding(0, 2).
-				MarginRight(1).
-				Bold(true)
-
-	ButtonDisabledStyle = lipgloss.NewStyle().
-				Foreground(lipgloss.Color("245")).
-				Background(lipgloss.Color("237")).
-				Padding(0, 2).
-				MarginRight(1)
-
-	DialogBoxStyle = lipgloss.NewStyle().
-			Border(lipgloss.DoubleBorder()).
-			BorderForeground(primaryColor).
-			Padding(1, 2)
-)
+// newInput is a text input in the current styles.
+func (e *env) newInput(placeholder string) textinput.Model {
+	in := textinput.New()
+	in.SetStyles(e.st.textinput)
+	in.Placeholder = placeholder
+	return in
+}

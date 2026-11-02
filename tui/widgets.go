@@ -47,13 +47,13 @@ func (p *prompt) key(msg tea.KeyPressMsg) (decided, accepted bool) {
 	return false, false
 }
 
-func (p prompt) view() string {
+func (p prompt) view(st *styles) string {
 	if !p.open {
 		return ""
 	}
 	return lipgloss.JoinVertical(lipgloss.Left,
-		WarningStyle.Render(p.question),
-		lipgloss.JoinHorizontal(lipgloss.Left, button(p.no, !p.choice), button(p.yes, p.choice)),
-		HelpStyle.Render("Tab/←/→: Choose | Enter: Confirm | y/n | esc: No"),
+		st.warning.Render(p.question),
+		lipgloss.JoinHorizontal(lipgloss.Left, button(st, p.no, !p.choice), button(st, p.yes, p.choice)),
+		st.help.Render("Tab/←/→: Choose | Enter: Confirm | y/n | esc: No"),
 	)
 }

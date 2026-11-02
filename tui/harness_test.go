@@ -10,6 +10,8 @@ import (
 	"testing"
 	"time"
 
+	"indicer/internal/ui"
+
 	tea "charm.land/bubbletea/v2"
 )
 
@@ -67,12 +69,19 @@ type driver struct {
 // system.
 var testInfo = Info{Root: filepath.Join("cases", "db"), ChunkKiB: 256, ChunkHash: "blake3"}
 
-// newDriver shows the menu of a model on acts. Every job is stopped when the
-// test ends, and the test fails if one does not stop.
+// newDriver shows the menu of a model on acts, under --theme auto with no
+// answer from the terminal yet. Every job is stopped when the test ends,
+// and the test fails if one does not stop.
 func newDriver(t *testing.T, acts Actions) *driver {
 	t.Helper()
+	return newThemedDriver(t, acts, ui.ThemeUnknown)
+}
+
+// newThemedDriver is newDriver under --theme theme.
+func newThemedDriver(t *testing.T, acts Actions, theme ui.Theme) *driver {
+	t.Helper()
 	jobs := newRunner(t.Context())
-	d := &driver{t: t, m: newModel(testInfo, acts, jobs), jobs: jobs, results: make(chan tea.Msg, 1024)}
+	d := &driver{t: t, m: newModel(Config{Info: testInfo, Actions: acts, Theme: theme}, jobs), jobs: jobs, results: make(chan tea.Msg, 1024)}
 	t.Cleanup(func() {
 		jobs.close()
 		jobs.cancelAll(errStopping)

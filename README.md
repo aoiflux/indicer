@@ -454,7 +454,8 @@ for scripts and bug reports:
 - --plain: no colour, ASCII only, no redraw or animation (for screen readers,
   logs and terminals without Unicode)
 - --ci: behave as if no terminal is attached, for CI logs
-- --theme: the terminal's background, auto (default), dark or light
+- --theme: the terminal's background, auto (default), dark or light. Under
+  auto the TUI asks the terminal for it
 - --taskbar: show progress on the terminal's tab and taskbar (Windows
   Terminal, ConEmu)
 - --no-fun: no surprise extras after long commands (the hidden commands still

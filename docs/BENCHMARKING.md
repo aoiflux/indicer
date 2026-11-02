@@ -77,11 +77,10 @@ The `bench/` directory is ignored by git.
 | `summary.txt` | The summary sections below |
 | `<name>.cpu.pprof`, `<name>.mem.pprof` | Profiles, with `-Profiles` or `--profiles` |
 
-`summary.txt` starts with a "Reverse-Relation Dual-Write Mode Summary". It
-looks for the `process_revrel_dual_write_unbuffered` and
-`process_revrel_dual_write_buffered` sub-benchmarks of
-`BenchmarkIngestMetadataPathHotspots`. Those sub-benchmarks no longer exist, so
-the section always reads "Buffered/unbuffered hotspot lines not found".
+`summary.txt` starts with a "Reverse-Relation Write Summary
+(files_32/chunks_16)": the ns/op of the `process_revrel_append_primary` and
+`append_member_only` sub-benchmarks of `BenchmarkIngestMetadataPathHotspots`,
+or "Reverse-relation hotspot lines not found" when the output has neither.
 
 ### io_uring queue-depth sweep
 
@@ -94,21 +93,29 @@ dues store --io-engine io-uring --io-uring-queue-depth <depth> -d <db> <dataset>
 - Each run uses a fresh database under the sweep's database root.
 - The summary gets one `depth=... median_seconds=...` line for each depth and a
   `recommended_depth=...` line.
-- Without `-StoreExe` or `STORE_EXE`, the harness uses `./dues.exe` or `./dues`
-  when it exists, and otherwise `go run .`.
+- Without `-StoreExe` or `--store-exe`, the harness uses `./dues.exe` or
+  `./dues` when it exists, and otherwise `go run .`.
+- Every run passes `--no-config` when the binary takes it, so the account's
+  config file (`~/.config/dues/dues.json`) cannot change a timing. The harness
+  tries `<binary> --no-config version` once first. Releases from before the
+  config file reject the flag and read no config file, so they run without it;
+  the harness prints a note, and the summary's `config:` line says which.
+- The duration comes from the
+  `Stored as evidence <id> (<bytes> bytes, <format>) in <duration>` line, or
+  the `Stored in: <n>s` line of older releases. A run that prints neither stops
+  the sweep with "Could not parse store duration".
 - `benchmark.sh` needs a regular file. `benchmark.ps1` accepts any existing
   path.
+
+`compare_store_speed.ps1` times `dues store` for two binaries, round by round,
+and prints each one's median. It reads the duration and treats `--no-config`
+the same way.
 
 Limits:
 
 - io_uring exists only on Linux. Elsewhere `dues store` prints a warning and
   falls back to the `stdlib` engine, so a sweep on Windows or macOS times
   `stdlib` at every depth.
-- The sweep does not work at present. Both scripts parse a `Stored in: <n>s`
-  line, but `dues store` now prints
-  `Stored as evidence <id> (<bytes> bytes, <format>) in <duration>`. The sweep
-  stops at the first run with "Could not parse store duration".
-  `compare_store_speed.ps1` parses the same line.
 
 ## Running one benchmark
 

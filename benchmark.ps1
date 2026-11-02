@@ -155,6 +155,22 @@ function ConvertFrom-StoreOutput {
     return $null
 }
 
+# Test-NoConfig reports whether the dues binary takes --no-config, so the
+# account's config file (~/.config/dues/dues.json) cannot change a timing.
+# Releases from before the config file reject the flag and read no config
+# file, so they run without it.
+function Test-NoConfig {
+    param(
+        [string]$Exe,
+        [string[]]$Prefix
+    )
+
+    # The probe's stderr must not stop the script under "Stop".
+    $ErrorActionPreference = "Continue"
+    & $Exe @Prefix --no-config version *> $null
+    return $LASTEXITCODE -eq 0
+}
+
 function Write-IOUringQueueDepthSummary {
     if ([string]::IsNullOrWhiteSpace($StoreDataset)) {
         return
@@ -185,6 +201,16 @@ function Write-IOUringQueueDepthSummary {
         throw "Store executable not found: $exe"
     }
 
+    $configArgs = @()
+    $configLine = "config: none passed (the binary rejects --no-config)"
+    if (Test-NoConfig -Exe $exe -Prefix $exePrefix) {
+        $configArgs = @("--no-config")
+        $configLine = "config: --no-config"
+    }
+    else {
+        Write-Host "note: $exe rejects --no-config, so it runs without it (releases from before the config file read none)" -ForegroundColor Yellow
+    }
+
     New-Item -ItemType Directory -Force -Path $StoreDbRoot | Out-Null
 
     $lines = @(
@@ -192,6 +218,7 @@ function Write-IOUringQueueDepthSummary {
         "=== io_uring Queue-Depth Sweep (store command) ===",
         "dataset: $StoreDataset",
         "executable: $exe",
+        $configLine,
         "runs_per_depth: $StoreCount"
     )
 
@@ -207,7 +234,7 @@ function Write-IOUringQueueDepthSummary {
             Remove-Item -Recurse -Force $dbPath -ErrorAction SilentlyContinue
 
             $cmdArgs = @("store", "--io-engine", "io-uring", "--io-uring-queue-depth", "$depth", "-d", $dbPath, $StoreDataset)
-            $allArgs = @($exePrefix + $cmdArgs)
+            $allArgs = @($exePrefix + $configArgs + $cmdArgs)
             $duration = Get-StoreDurationSeconds -Exe $exe -ExecutionParams $allArgs
             $times += $duration
 

@@ -122,6 +122,16 @@ extract_store_seconds() {
     printf '%s\n' "$text" | sed -n 's/.*Stored in:[[:space:]]*\([0-9][0-9.]*\)s.*/\1/p' | tail -n 1
 }
 
+# no_config_flag prints --no-config when the dues command "$@" takes it, so
+# the account's config file (~/.config/dues/dues.json) cannot change a timing.
+# Releases from before the config file reject the flag and read no config file,
+# so they run without it.
+no_config_flag() {
+    if "$@" --no-config version > /dev/null 2>&1; then
+        echo "--no-config"
+    fi
+}
+
 write_io_uring_depth_summary() {
     if [ -z "$STORE_DATASET" ]; then
         return 0
@@ -138,17 +148,28 @@ write_io_uring_depth_summary() {
 
     mkdir -p "$STORE_DB_ROOT"
 
+    if [ -n "$STORE_EXE" ]; then
+        runner="$STORE_EXE"
+    elif [ -x "./dues" ]; then
+        runner="./dues"
+    else
+        runner="go run ."
+    fi
+    # shellcheck disable=SC2086
+    no_config="$(no_config_flag $runner)"
+    if [ -n "$no_config" ]; then
+        config_line="config: --no-config"
+    else
+        config_line="config: none passed (the binary rejects --no-config)"
+        echo "note: $runner rejects --no-config, so it runs without it (releases from before the config file read none)" >&2
+    fi
+
     {
         echo ""
         echo "=== io_uring Queue-Depth Sweep (store command) ==="
         echo "dataset: $STORE_DATASET"
-        if [ -n "$STORE_EXE" ]; then
-            echo "executable: $STORE_EXE"
-        elif [ -x "./dues" ]; then
-            echo "executable: ./dues"
-        else
-            echo "executable: go run ."
-        fi
+        echo "executable: $runner"
+        echo "$config_line"
         echo "runs_per_depth: $STORE_COUNT"
     } | tee -a "$SUMMARY_FILE" | tee -a "$FULL_RUN_FILE" > /dev/null
 
@@ -167,14 +188,9 @@ write_io_uring_depth_summary() {
             db_path="$STORE_DB_ROOT/io_uring_${depth}_run_${run}"
             rm -rf "$db_path"
 
-            cmd_args="store --io-engine io-uring --io-uring-queue-depth $depth -d $db_path $STORE_DATASET"
-            if [ -n "$STORE_EXE" ]; then
-                output="$($STORE_EXE $cmd_args 2>&1)"
-            elif [ -x "./dues" ]; then
-                output="$(./dues $cmd_args 2>&1)"
-            else
-                output="$(go run . $cmd_args 2>&1)"
-            fi
+            cmd_args="$no_config store --io-engine io-uring --io-uring-queue-depth $depth -d $db_path $STORE_DATASET"
+            # shellcheck disable=SC2086
+            output="$($runner $cmd_args 2>&1)"
 
             seconds="$(extract_store_seconds "$output")"
             if [ -z "$seconds" ]; then

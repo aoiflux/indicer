@@ -67,6 +67,30 @@ function ConvertFrom-StoreOutput {
     return $null
 }
 
+# Test-NoConfig reports whether the dues binary takes --no-config, so the
+# account's config file (~/.config/dues/dues.json) cannot change a timing.
+# Releases from before the config file reject the flag and read no config
+# file, so they run without it.
+function Test-NoConfig {
+    param([string]$Exe)
+
+    # The probe's stderr must not stop the script under "Stop".
+    $ErrorActionPreference = "Continue"
+    & $Exe --no-config version *> $null
+    return $LASTEXITCODE -eq 0
+}
+
+# Get-ConfigArgs returns the arguments that keep the config file out of a
+# timing run of $Exe, and says so when the binary cannot take them.
+function Get-ConfigArgs {
+    param([string]$Exe)
+
+    if (Test-NoConfig -Exe $Exe) {
+        return "--no-config"
+    }
+    Write-Host "note: $Exe rejects --no-config, so it runs without it (releases from before the config file read none)"
+}
+
 if (-not (Test-Path $Dataset)) {
     throw "Dataset path not found: $Dataset"
 }
@@ -82,6 +106,9 @@ if ($Count -lt 1) {
 
 New-Item -ItemType Directory -Force -Path $DbRoot | Out-Null
 
+$currentConfig = @(Get-ConfigArgs -Exe $CurrentExe)
+$mainConfig = @(Get-ConfigArgs -Exe $MainExe)
+
 $currentTimes = @()
 $mainTimes = @()
 
@@ -92,13 +119,13 @@ for ($i = 1; $i -le $Count; $i++) {
     Remove-Item -Recurse -Force $currentDb -ErrorAction SilentlyContinue
     Remove-Item -Recurse -Force $mainDb -ErrorAction SilentlyContinue
 
-    $currentArgs = @("--compress-level", $CurrentCompression)
+    $currentArgs = $currentConfig + @("--compress-level", $CurrentCompression)
     if ($CurrentSync) {
         $currentArgs += "--sync"
     }
     $currentArgs += @("store", "-d", $currentDb, $Dataset)
 
-    $mainArgs = @("store", "-d", $mainDb, $Dataset)
+    $mainArgs = $mainConfig + @("store", "-d", $mainDb, $Dataset)
 
     $tCurrent = Get-StoreDurationSeconds -Exe $CurrentExe -ExecutionParams $currentArgs
     $tMain = Get-StoreDurationSeconds -Exe $MainExe -ExecutionParams $mainArgs

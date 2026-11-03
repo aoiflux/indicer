@@ -9,7 +9,7 @@ of `internal/console` (the only writer to the terminal).
 ## Output contract
 
 1. **Results on stdout, everything else on stderr.** Results are JSON
-   (`list`, `micro list`, and one document from `repair`), reports (`store`, `restore`, `reindex`, `stats`),
+   (`list`, `micro list`, and one document from `repair`), reports (`store`, `restore`, `reindex`, `stats`, `package`),
    help and version text, including the identity line `dues --version`
    prints. The run header, progress, notes, warnings, errors and the
    occasional extra go to stderr. `dues list | jq` reads pure JSON.
@@ -151,7 +151,7 @@ under its description, never breaking inside a bracketed option.
 ## Progress
 
 Long operations (store, restore, reindex, enrich, NeAR, micro extract,
-search, and repair with `--verify`, `--upgrade` or `--fix`) show their
+search, package export and verify, and repair with `--verify`, `--upgrade` or `--fix`) show their
 progress.
 
 ### On a terminal

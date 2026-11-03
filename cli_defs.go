@@ -20,6 +20,15 @@ const (
 // cmdReindex names the reindex command.
 const cmdReindex = "reindex"
 
+// The package command and its subcommands.
+const (
+	cmdPackage        = "package"
+	cmdPackageExport  = "export"
+	cmdPackageInspect = "inspect"
+	cmdPackageVerify  = "verify"
+	cmdPackageImport  = "import"
+)
+
 // The hidden commands: not in help or completion, documented only as
 // extras. They run under --no-fun too, because they are asked for by name;
 // --no-fun only stops the surprises and mew's animation.
@@ -129,6 +138,15 @@ type cliFlags struct {
 	serverToken       *string
 	serverTokenFile   *string
 	serverCORSOrigins *[]string
+
+	pkgOut            *string
+	pkgSplitSizeMB    *int
+	pkgForce          *bool
+	pkgWithoutDerived *bool
+	pkgHostInfo       *bool
+	pkgInspectPath    *string
+	pkgVerifyPath     *string
+	pkgImportPath     *string
 }
 
 type cliCommands struct {
@@ -151,6 +169,11 @@ type cliCommands struct {
 	enrich       *kingpin.CmdClause
 	server       *kingpin.CmdClause
 	reset        *kingpin.CmdClause
+	pkg          *kingpin.CmdClause
+	pkgExport    *kingpin.CmdClause
+	pkgInspect   *kingpin.CmdClause
+	pkgVerify    *kingpin.CmdClause
+	pkgImport    *kingpin.CmdClause
 
 	// The hidden extras; see docs/CLI_UX.md.
 	coffee  *kingpin.CmdClause
@@ -308,6 +331,20 @@ func newCLIDefinition() cliDefinition {
 	flags.serverTokenFile = commands.server.Flag(flagTokenFile, "Require the bearer token on the first line of this file").String()
 	flags.serverToken = commands.server.Flag(flagToken, "Removed: use --token-file").Hidden().String()
 	flags.serverCORSOrigins = commands.server.Flag(flagCORSOrigin, "Also let pages from this origin call the server, as scheme://host[:port] (repeatable)").Strings()
+
+	commands.pkg = app.Command(cmdPackage, "Export the database as a package; inspect, verify or import one")
+	commands.pkgExport = commands.pkg.Command(cmdPackageExport, "Copy the database, as it is on disk, into a .duesarc package")
+	flags.pkgOut = commands.pkgExport.Flag("out", "Write the package to this path (default: dues-<database>-<UTC time>.duesarc here)").String()
+	flags.pkgSplitSizeMB = commands.pkgExport.Flag("split-size-mb", "Split the package into parts of this many MiB, described by a .split.json sidecar (0 = one file)").Default("0").Int()
+	flags.pkgForce = commands.pkgExport.Flag("force", "Replace the package if it already exists").Default("false").Bool()
+	flags.pkgWithoutDerived = commands.pkgExport.Flag("without-derived", "Leave out the full-text index and the graph, which reindex, enrich and micro extract rebuild").Default("false").Bool()
+	flags.pkgHostInfo = commands.pkgExport.Flag("host-info", "Record this machine's OS, architecture and name in the package").Default("false").Bool()
+	commands.pkgInspect = commands.pkg.Command(cmdPackageInspect, "Describe a package from its manifest")
+	flags.pkgInspectPath = commands.pkgInspect.Arg("package", "The package, or a part or the sidecar of a split one").Required().String()
+	commands.pkgVerify = commands.pkg.Command(cmdPackageVerify, "Check every file of a package against its manifest")
+	flags.pkgVerifyPath = commands.pkgVerify.Arg("package", "The package, or a part or the sidecar of a split one").Required().String()
+	commands.pkgImport = commands.pkg.Command(cmdPackageImport, "Make a new database, at --dbpath, from a package")
+	flags.pkgImportPath = commands.pkgImport.Arg("package", "The package, or a part or the sidecar of a split one").Required().String()
 
 	commands.reset = app.Command(cnst.CmdReset, "Delete the database").Alias(cnst.CmdPurge).Alias(cnst.CmdDelete).Alias(cnst.CmdDestroy)
 	commands.coffee = app.Command(cmdCoffee, "").Hidden()

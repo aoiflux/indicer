@@ -1,6 +1,6 @@
 //go:build !windows
 
-package compression_product
+package duesarc
 
 import (
 	"runtime"
@@ -10,9 +10,9 @@ import (
 // checkComponent refuses nothing beyond the portable checks on this system.
 func checkComponent(string) error { return nil }
 
-// foldName is the key two entry names collide on. macOS file systems ignore
+// FoldName is the key two entry names collide on. macOS file systems ignore
 // case by default.
-func foldName(local string) string {
+func FoldName(local string) string {
 	if runtime.GOOS == "darwin" {
 		return strings.ToLower(local)
 	}

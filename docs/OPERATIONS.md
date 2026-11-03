@@ -32,7 +32,9 @@ An existing database keeps its own. A flag that contradicts it is an error
 (exit 2) that names the flag.
 
 Paths inside the database are relative to the data root, so a data root can be
-moved or copied as a whole. Copy it only while no DUES process uses it.
+moved or copied as a whole. Copy it only while no DUES process uses it, or
+make a package of it (see [Packages](#packages)), which keeps writers out
+while it copies.
 
 On Linux and macOS a new data root, and the directories DUES creates in it,
 are created with mode 0700, and chunk blobs and containers with mode 0600: they
@@ -69,8 +71,8 @@ these two. The `DUES_PASSWORD` environment variable is ignored.
 
 The root lock serialises access between DUES processes:
 - Commands that only read take it shared, so any number can run at once:
-  `list`, `stats`, `search`, `near`, `restore`, `micro list`, and `repair`
-  without `--fix` or `--upgrade`.
+  `list`, `stats`, `search`, `near`, `restore`, `micro list`, `package
+  export`, and `repair` without `--fix` or `--upgrade`.
 - Commands that write take it exclusively: `store`, `repair --fix`,
   `repair --upgrade`, `reindex`, `enrich`, `micro extract`, `server`, `tui` and
   `reset`.
@@ -367,6 +369,60 @@ disk meanwhile, so keep well more than 128 MiB free.
 A store that runs out of space fails and leaves the database whole. Earlier
 evidence still restores, and storing the file again after making space resumes
 the attempt.
+
+## Packages
+
+`dues package export` copies a data root into a package: a `.duesarc` file
+that holds the root's files as they are on disk, under `db/`, and a
+`manifest.json` listing each file with its size and SHA-256.
+- It takes the root lock shared for the whole copy. Commands that read run
+  beside it; commands that write are refused until it ends, and it refuses to
+  start while one runs.
+- It refuses a database that was not closed cleanly (run `dues repair --fix`)
+  and a database made before manifests existed.
+- It leaves out the locks, temporary files a killed writer left, and
+  `uploads/`. `--without-derived` leaves out `fts/` and `graph/` too: `reindex
+  --fts`, `enrich` and `micro extract` rebuild them.
+- An encrypted database is copied as its encrypted files, so the package
+  needs no password. With one (`--password-file`), it is checked first. Its
+  full-text index and graph are not encrypted, on disk or in the package:
+  export warns, and the manifest names them in `plaintext_components`.
+  `manifest.json` itself is readable by anyone; for an encrypted database it
+  gives no evidence counts.
+- `--split-size-mb N` writes parts of N MiB and a `.split.json` sidecar with
+  each part's SHA-256, as the compression tool does. A split export needs
+  twice the package's size free while it writes; export checks the space
+  first.
+- `--host-info` records the machine's OS, architecture and name. Without it
+  the package says nothing of where it was made.
+
+The package prints a content hash: the SHA-256 of the manifest's file list.
+It leaves out times and the host, so two packages of the same database state
+have the same content hash, which can go in case notes.
+
+`dues package inspect PACKAGE` describes a package from its manifest alone.
+`dues package verify PACKAGE` reads all of it: a split package's parts against
+their sidecar, then every file against its size and SHA-256, and that nothing
+is missing or added. Each problem is named, and any fails the command (exit 1).
+
+`dues package import PACKAGE --dbpath TARGET` makes a new database from a
+package:
+- TARGET must be missing or an empty folder. An import never merges into a
+  database.
+- A package from a newer DUES (a later manifest version, database format or
+  graph schema) is refused before anything is written.
+- The files are written into `.<target>.dues-import-*` beside TARGET, each
+  checked against its size and SHA-256 as it is written and synced. The
+  database is then opened read-only, and its evidence counted against the
+  manifest. Only then is the folder renamed to TARGET.
+- An encrypted database is opened only with its password (`--password-file`);
+  without it, its files are checked and it is not opened.
+- A failure or an interruption removes the folder and leaves no TARGET. A
+  folder left by a killed import is removed by the next import of the same
+  TARGET.
+
+All four take the package, any of its parts, or its sidecar. The format is
+in `docs/COMPRESSION_ABI_REFERENCE.md` (Database packages).
 
 ## Resetting a database
 

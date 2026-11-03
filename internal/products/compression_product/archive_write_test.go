@@ -11,6 +11,7 @@ import (
 	"testing"
 	"time"
 
+	"indicer/internal/duesarc"
 	"indicer/internal/testutil"
 )
 
@@ -45,7 +46,7 @@ func TestArchiveWriteFailureLeavesNoOutput(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			defer func(prev func(*os.File) io.Writer) { archiveSink = prev }(archiveSink)
+			defer func(prev func(*os.File) io.Writer) { duesarc.Sink = prev }(duesarc.Sink)
 			// A .duesarc archive's size varies by a few bytes between runs
 			// (its database holds times and IDs), so its last failure point
 			// stays well inside the central directory.
@@ -54,7 +55,7 @@ func TestArchiveWriteFailureLeavesNoOutput(t *testing.T) {
 				offsets = append(offsets, int64(len(good))-1)
 			}
 			for _, after := range offsets {
-				archiveSink = func(f *os.File) io.Writer { return testutil.NewENOSPCWriter(f, after) }
+				duesarc.Sink = func(f *os.File) io.Writer { return testutil.NewENOSPCWriter(f, after) }
 				if _, code, _ := create(t, map[string]any{"input_path": src, "output_path": out, "format": format}); code == "" {
 					t.Errorf("a write failing after %d of %d bytes reported success", after, len(good))
 				}
@@ -69,13 +70,13 @@ func TestArchiveWriteFailureLeavesNoOutput(t *testing.T) {
 	}
 }
 
-func readSidecar(t *testing.T, path string) splitSidecar {
+func readSidecar(t *testing.T, path string) duesarc.Sidecar {
 	t.Helper()
 	data, err := os.ReadFile(path)
 	if err != nil {
 		t.Fatal(err)
 	}
-	var sc splitSidecar
+	var sc duesarc.Sidecar
 	if err := json.Unmarshal(data, &sc); err != nil {
 		t.Fatal(err)
 	}
@@ -109,7 +110,7 @@ func TestSplitArchiveSidecar(t *testing.T) {
 			if len(parts) != 3 {
 				t.Fatalf("parts %v", res["output_files"])
 			}
-			sc := readSidecar(t, out+splitSidecarExt)
+			sc := readSidecar(t, out+duesarc.SidecarExt)
 			if len(sc.Parts) != 3 {
 				t.Fatalf("sidecar %+v", sc)
 			}

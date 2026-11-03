@@ -8,6 +8,7 @@ import (
 	"indicer/cli"
 	"indicer/internal/console"
 	"indicer/internal/crash"
+	"indicer/internal/duesarc"
 	"indicer/internal/lifecycle"
 	"indicer/internal/osdirs"
 	"indicer/internal/ui"
@@ -319,7 +320,8 @@ func showsProgress(parsed string, cliDef cliDefinition) bool {
 	c, f := cliDef.commands, cliDef.flags
 	switch parsed {
 	case c.store.FullCommand(), c.restore.FullCommand(), c.reindex.FullCommand(), c.enrich.FullCommand(),
-		c.nearIn.FullCommand(), c.nearOut.FullCommand(), c.microExtract.FullCommand(), c.search.FullCommand():
+		c.nearIn.FullCommand(), c.nearOut.FullCommand(), c.microExtract.FullCommand(), c.search.FullCommand(),
+		c.pkgExport.FullCommand(), c.pkgVerify.FullCommand(), c.pkgImport.FullCommand():
 		return true
 	case c.repair.FullCommand():
 		return *f.repairFix || *f.repairUpg || *f.repairVfy
@@ -493,6 +495,32 @@ func buildCommandHandlers(cliDef cliDefinition, dbOpts cli.DBOptions, tuning pip
 		cliDef.commands.enrich.FullCommand(): func(ctx context.Context) error {
 			logging.GetLogger().Info("Command: enrich", zap.String("dbpath", *cliDef.flags.dbpath))
 			return cli.EnrichData(ctx, dbOpts)
+		},
+		cliDef.commands.pkgExport.FullCommand(): func(ctx context.Context) error {
+			logging.GetLogger().Info("Command: package export", zap.String("dbpath", *cliDef.flags.dbpath), zap.String("out", *cliDef.flags.pkgOut))
+			if n := *cliDef.flags.pkgSplitSizeMB; n < 0 {
+				return lifecycle.Usagef("--split-size-mb must be 0 or more, not %d", n)
+			}
+			return cli.PackageExport(ctx, dbOpts, cli.PackageExportOptions{
+				Output:         *cliDef.flags.pkgOut,
+				SplitSizeMB:    *cliDef.flags.pkgSplitSizeMB,
+				Force:          *cliDef.flags.pkgForce,
+				WithoutDerived: *cliDef.flags.pkgWithoutDerived,
+				HostInfo:       *cliDef.flags.pkgHostInfo,
+				Creator:        duesarc.Creator{Product: "dues", Version: duesVersion, Commit: buildCommit},
+			})
+		},
+		cliDef.commands.pkgInspect.FullCommand(): func(context.Context) error {
+			logging.GetLogger().Info("Command: package inspect", zap.String("package", *cliDef.flags.pkgInspectPath))
+			return cli.PackageInspect(*cliDef.flags.pkgInspectPath)
+		},
+		cliDef.commands.pkgVerify.FullCommand(): func(ctx context.Context) error {
+			logging.GetLogger().Info("Command: package verify", zap.String("package", *cliDef.flags.pkgVerifyPath))
+			return cli.PackageVerify(ctx, *cliDef.flags.pkgVerifyPath)
+		},
+		cliDef.commands.pkgImport.FullCommand(): func(ctx context.Context) error {
+			logging.GetLogger().Info("Command: package import", zap.String("package", *cliDef.flags.pkgImportPath), zap.String("dbpath", *cliDef.flags.dbpath))
+			return cli.PackageImport(ctx, dbOpts, *cliDef.flags.pkgImportPath)
 		},
 		cliDef.commands.reset.FullCommand(): func(ctx context.Context) error {
 			logging.GetLogger().Info("Command: reset", zap.String("dbpath", *cliDef.flags.dbpath))

@@ -10,6 +10,7 @@ import (
 	"time"
 
 	coreerr "indicer/internal/core/errors"
+	"indicer/internal/duesarc"
 )
 
 // inputItem is one file or directory to archive.
@@ -165,10 +166,10 @@ func collectFiles(ctx context.Context, paths []string) (*archiveInputs, *coreerr
 			rel = filepath.Join(fmt.Sprintf("input_%03d", i+1), filepath.Base(abs))
 		}
 		rel = filepath.ToSlash(rel)
-		if used[foldName(rel)] {
+		if used[duesarc.FoldName(rel)] {
 			rel = fmt.Sprintf("input_%03d/%s", i+1, filepath.Base(abs))
 		}
-		used[foldName(rel)] = true
+		used[duesarc.FoldName(rel)] = true
 		in.add(inputItem{abs: abs, rel: rel, size: infos[i].Size(), mtime: infos[i].ModTime()})
 	}
 	return in, nil

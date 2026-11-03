@@ -234,6 +234,27 @@ func printHelpForPath(path []string) {
 		return
 	}
 
+	if path[0] == cmdPackage {
+		if len(path) > 1 {
+			switch path[1] {
+			case cmdPackageExport:
+				printPackageExportHelp()
+				return
+			case cmdPackageInspect:
+				printPackageInspectHelp()
+				return
+			case cmdPackageVerify:
+				printPackageVerifyHelp()
+				return
+			case cmdPackageImport:
+				printPackageImportHelp()
+				return
+			}
+		}
+		printPackageHelp()
+		return
+	}
+
 	if path[0] == cnst.CmdMicro {
 		if len(path) > 1 {
 			switch path[1] {
@@ -366,6 +387,7 @@ func printRootHelp() {
 	fmt.Fprintf(helpOut, "  %s %s\n", cmd(pad(cnst.CmdStats, 20)), "Show stats about data")
 	fmt.Fprintf(helpOut, "  %s %s\n", cmd(pad(cnst.CmdRepair, 20)), "Inspect, finish, verify or upgrade the database")
 	fmt.Fprintf(helpOut, "  %s %s\n", cmd(pad(cmdReindex, 20)), "Rebuild the index of stored evidence")
+	fmt.Fprintf(helpOut, "  %s %s\n", cmd(pad(cmdPackage, 20)), "Export the database as a package; inspect, verify or import one")
 
 	printHelpSection("Exit Codes")
 	fmt.Fprintln(helpOut, "  0 success; 1 failure; 2 usage error, or done with a warning (for example an")
@@ -585,6 +607,91 @@ func printReindexHelp() {
 		"dues reindex <hash>",
 		"dues reindex <id> --source ./evidence.E01",
 		"dues reindex --all --fts --dbpath ./caseA",
+	)
+}
+
+func printPackageHelp() {
+	printHelpHeader(cmdPackage)
+	fmt.Fprintln(helpOut, "Usage: dues package <export|inspect|verify|import> ... [global options]")
+	fmt.Fprintln(helpOut, "A package is a .duesarc holding a copy of the database's files as they are on")
+	fmt.Fprintln(helpOut, "disk, and a manifest with each file's size and SHA-256. Move it, keep it, and")
+	fmt.Fprintln(helpOut, "check it later; its content hash names the database state it holds.")
+	fmt.Fprintln(helpOut)
+	fmt.Fprintln(helpOut, "  package export   Copy the database into a package")
+	fmt.Fprintln(helpOut, "  package inspect  Describe a package from its manifest")
+	fmt.Fprintln(helpOut, "  package verify   Check every file of a package against its manifest")
+	fmt.Fprintln(helpOut, "  package import   Make a new database from a package")
+	fmt.Fprintln(helpOut)
+	fmt.Fprintln(helpOut, "Try: dues help package export")
+	printExamples(
+		"dues package export --out caseA.duesarc --dbpath ./caseA",
+		"dues package inspect caseA.duesarc",
+		"dues package verify caseA.duesarc",
+		"dues package import caseA.duesarc --dbpath ./caseA-copy",
+	)
+}
+
+func printPackageExportHelp() {
+	printHelpHeader("package export")
+	fmt.Fprintln(helpOut, "Usage: dues package export [--out PATH] [--split-size-mb N] [--force]")
+	fmt.Fprintln(helpOut, "         [--without-derived] [--host-info] [global options]")
+	fmt.Fprintln(helpOut, "Copies the database into a package. Other DUES commands may read the database")
+	fmt.Fprintln(helpOut, "meanwhile; none may write it, and the export refuses to start while one does.")
+	fmt.Fprintln(helpOut, "A database that was not closed cleanly is refused: run dues repair --fix.")
+	fmt.Fprintln(helpOut, "An encrypted database stays encrypted in the package, and needs no password;")
+	fmt.Fprintln(helpOut, "with one, the password is checked first. Its full-text index and graph are")
+	fmt.Fprintln(helpOut, "not encrypted, on disk or in the package.")
+	printHelpSection("Options")
+	fmt.Fprintln(helpOut, "  --out              Package path (default dues-<database>-<UTC time>.duesarc)")
+	fmt.Fprintln(helpOut, "  --split-size-mb    Write parts of this many MiB and a .split.json sidecar")
+	fmt.Fprintln(helpOut, "  --force            Replace the package if it exists")
+	fmt.Fprintln(helpOut, "  --without-derived  Leave out the full-text index and the graph; reindex --fts,")
+	fmt.Fprintln(helpOut, "                     enrich and micro extract rebuild them")
+	fmt.Fprintln(helpOut, "  --host-info        Record this machine's OS, architecture and name")
+	printExamples(
+		"dues package export --dbpath ./caseA",
+		"dues package export --out caseA.duesarc --split-size-mb 4096 --dbpath ./caseA",
+		"dues package export --without-derived --password-file ./pw --dbpath ./caseB",
+	)
+}
+
+func printPackageInspectHelp() {
+	printHelpHeader("package inspect")
+	fmt.Fprintln(helpOut, "Usage: dues package inspect PACKAGE [global options]")
+	fmt.Fprintln(helpOut, "Describes a package from its manifest alone: who made it and when, the")
+	fmt.Fprintln(helpOut, "database's format and layout, encryption, files, bytes and content hash.")
+	fmt.Fprintln(helpOut, "It reads nothing else, so it is quick, and checks nothing: use verify.")
+	printExamples(
+		"dues package inspect caseA.duesarc",
+		"dues package inspect caseA.duesarc.split.json",
+	)
+}
+
+func printPackageVerifyHelp() {
+	printHelpHeader("package verify")
+	fmt.Fprintln(helpOut, "Usage: dues package verify PACKAGE [global options]")
+	fmt.Fprintln(helpOut, "Reads the whole package and checks it: a split package's parts against their")
+	fmt.Fprintln(helpOut, "sidecar, then every file against the size and SHA-256 its manifest gives, and")
+	fmt.Fprintln(helpOut, "that nothing is missing or added. Each problem is named; any fails the command.")
+	printExamples(
+		"dues package verify caseA.duesarc",
+		"dues package verify caseA.duesarc.001",
+	)
+}
+
+func printPackageImportHelp() {
+	printHelpHeader("package import")
+	fmt.Fprintln(helpOut, "Usage: dues package import PACKAGE [global options]")
+	fmt.Fprintln(helpOut, "Makes a new database at --dbpath (default ~/.dues) from a package. The folder")
+	fmt.Fprintln(helpOut, "must be missing or empty: an import never merges into a database. The files")
+	fmt.Fprintln(helpOut, "are written into a folder beside it and checked against the manifest as they")
+	fmt.Fprintln(helpOut, "are written; the database is opened to check it, and only then does the folder")
+	fmt.Fprintln(helpOut, "take the --dbpath name. A failure or an interruption leaves nothing behind.")
+	fmt.Fprintln(helpOut, "An encrypted database is opened only with its password (--password-file);")
+	fmt.Fprintln(helpOut, "without it, its files are checked and it is not opened.")
+	printExamples(
+		"dues package import caseA.duesarc --dbpath ./caseA",
+		"dues package import caseB.duesarc.001 --dbpath ./caseB --password-file ./pw",
 	)
 }
 

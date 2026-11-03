@@ -1,4 +1,4 @@
-package compression_product
+package duesarc
 
 import (
 	"errors"
@@ -51,6 +51,6 @@ func reservedDevice(c string) bool {
 	return false
 }
 
-// foldName is the key two entry names collide on: Windows file names ignore
+// FoldName is the key two entry names collide on: Windows file names ignore
 // case.
-func foldName(local string) string { return strings.ToLower(local) }
+func FoldName(local string) string { return strings.ToLower(local) }

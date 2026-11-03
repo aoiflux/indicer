@@ -13,6 +13,7 @@ import (
 
 	corecomp "indicer/internal/core/compression"
 	coreerr "indicer/internal/core/errors"
+	"indicer/internal/duesarc"
 	"indicer/lib/fsx"
 )
 
@@ -133,7 +134,7 @@ func (s *Service) decompressFile(ctx context.Context, req fileReq, report progre
 	}
 	head := make([]byte, 512)
 	n, err := in.ReadAt(head, 0)
-	size := in.size
+	size := in.Size()
 	_ = in.Close()
 	if err != nil && err != io.EOF {
 		return fileRes{}, coreerr.NewWithDetails(coreerr.CodeInvalidRequest, errReadInputFileFailed, map[string]string{detailCause: err.Error(), detailInputPath: input})
@@ -173,7 +174,7 @@ func decompressZstdFile(ctx context.Context, input, out string, size int64, limi
 	guard := &outputGuard{limits: limits, in: func() int64 { return counted.n }}
 	var written int64
 	err = fsx.WriteAtomic(out, defaultFilePerm, fsx.Options{RemoveStale: true}, func(f *os.File) error {
-		n, err := copyWithProgress(ctx, guardedWriter{w: f, g: guard}, damageReader{dec}, func(int64) {
+		n, err := duesarc.Copy(ctx, guardedWriter{w: f, g: guard}, duesarc.DamageReader{R: dec}, func(int64) {
 			emitProgress(report, "decompressing", progressFromBytes(counted.n, size, 20, 97), "decompressing file data")
 		})
 		written = n

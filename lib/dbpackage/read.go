@@ -1,0 +1,241 @@
+package dbpackage
+
+import (
+	"archive/zip"
+	"context"
+	"crypto/sha256"
+	"encoding/hex"
+	"errors"
+	"fmt"
+	"io"
+	"strings"
+
+	"indicer/internal/duesarc"
+	"indicer/internal/progress"
+)
+
+// maxProblems bounds the problems an error lists; Count has them all.
+const maxProblems = 20
+
+// isPackageName reports whether a name is a package's, so that name.001
+// beside it is a part of a split package written before sidecars existed.
+func isPackageName(p string) bool {
+	_, ok := duesarc.CutSuffixFold(p, Ext)
+	return ok
+}
+
+// Package is a database package opened for reading.
+type Package struct {
+	Path     string
+	Manifest duesarc.DatabaseManifest
+	// Parts is how many files the package is: 1, or a split set's parts.
+	Parts int
+	// Size is the package's size, all parts together.
+	Size int64
+
+	zip *duesarc.Zip
+}
+
+// Open opens a package, or a split package's parts in place, and reads its
+// manifest. It reads no other entry.
+func Open(path string) (*Package, error) {
+	z, err := duesarc.OpenZip(path, false, isPackageName)
+	if err != nil {
+		return nil, err
+	}
+	p := &Package{Path: z.In.Path(), Parts: max(1, len(z.In.Parts())), Size: z.In.Size(), zip: z}
+	if p.Manifest, err = readManifest(z.Reader); err != nil {
+		z.Close()
+		return nil, err
+	}
+	return p, nil
+}
+
+// Close closes the package's files.
+func (p *Package) Close() { p.zip.Close() }
+
+func readManifest(zr *zip.Reader) (duesarc.DatabaseManifest, error) {
+	var found *zip.File
+	for _, f := range zr.File {
+		if f.Name == duesarc.ManifestName {
+			if found != nil {
+				return duesarc.DatabaseManifest{}, &DamagedError{Problems: []Problem{{Name: f.Name, Reason: "listed twice"}}, Count: 1}
+			}
+			found = f
+		}
+	}
+	if found == nil {
+		return duesarc.DatabaseManifest{}, errors.New("this is not a DUES package: it has no manifest.json")
+	}
+	if found.UncompressedSize64 > duesarc.MaxManifestBytes {
+		return duesarc.DatabaseManifest{}, fmt.Errorf("the manifest is larger than %d MiB", duesarc.MaxManifestBytes>>20)
+	}
+	rc, err := found.Open()
+	if err != nil {
+		return duesarc.DatabaseManifest{}, &duesarc.DamagedError{Err: err}
+	}
+	defer rc.Close()
+	data, err := io.ReadAll(io.LimitReader(duesarc.DamageReader{R: rc}, duesarc.MaxManifestBytes+1))
+	if err != nil {
+		return duesarc.DatabaseManifest{}, err
+	}
+	return duesarc.ParseDatabaseManifest(data)
+}
+
+// Problem is one thing wrong with a package.
+type Problem struct {
+	Name   string // the entry, as the zip names it
+	Reason string
+}
+
+// DamagedError says what in a package does not match its manifest.
+type DamagedError struct {
+	Problems []Problem // the first maxProblems
+	Count    int       // all of them
+}
+
+func (e *DamagedError) Error() string {
+	msg := fmt.Sprintf("the package is damaged: %s: %s", e.Problems[0].Name, e.Problems[0].Reason)
+	if e.Count > 1 {
+		msg += fmt.Sprintf(" (and %d more)", e.Count-1)
+	}
+	return msg
+}
+
+func (e *DamagedError) add(name, reason string) {
+	e.Count++
+	if len(e.Problems) < maxProblems {
+		e.Problems = append(e.Problems, Problem{Name: name, Reason: reason})
+	}
+}
+
+// VerifyResult is what a verify checked.
+type VerifyResult struct {
+	Files int
+	Bytes int64
+	// SidecarChecked is set when a split package's parts were checked
+	// against their sidecar.
+	SidecarChecked bool
+}
+
+// Verify checks a package against its manifest: a split package's parts
+// against their sidecar, then every entry: each file the manifest lists is
+// there, at its size, with its SHA-256, and nothing else is. What does not
+// match comes back as a *DamagedError.
+func (p *Package) Verify(ctx context.Context) (VerifyResult, error) {
+	var res VerifyResult
+	if p.zip.In.Verified() {
+		if err := p.zip.In.Verify(ctx); err != nil {
+			return res, err
+		}
+		res.SidecarChecked = true
+	}
+	m := p.Manifest
+	entries, bad := p.entries()
+	ph := progress.Start(ctx, "verify", progress.Bytes, m.Bytes())
+	for _, f := range m.Files {
+		if err := ctx.Err(); err != nil {
+			ph.Done(err)
+			return res, err
+		}
+		zf := entries[f.Path]
+		if zf == nil {
+			continue
+		}
+		if reason, err := checkEntry(ctx, zf, f, io.Discard, ph); err != nil {
+			ph.Done(err)
+			return res, err
+		} else if reason != "" {
+			bad.add(zf.Name, reason)
+			continue
+		}
+		res.Files++
+		res.Bytes += f.Size
+	}
+	if bad.Count > 0 {
+		ph.Done(bad)
+		return res, bad
+	}
+	ph.Done(nil)
+	return res, nil
+}
+
+// entries matches the zip's entries to the manifest. It returns each listed
+// file's entry, by its path in the manifest, and a problem for every entry
+// missing, added or listed twice.
+func (p *Package) entries() (map[string]*zip.File, *DamagedError) {
+	m := p.Manifest
+	prefix := duesarc.DatabaseDir + "/"
+	files := map[string]bool{}
+	for _, f := range m.Files {
+		files[f.Path] = true
+	}
+	dirs := map[string]bool{}
+	for _, d := range m.Dirs {
+		dirs[prefix+d+"/"] = true
+	}
+	bad := &DamagedError{}
+	seen := map[string]bool{}
+	listed := map[string]*zip.File{}
+	for _, zf := range p.zip.File {
+		name := zf.Name
+		if seen[name] {
+			bad.add(name, "listed twice")
+			continue
+		}
+		seen[name] = true
+		rel, inDB := strings.CutPrefix(name, prefix)
+		switch {
+		case name == duesarc.ManifestName:
+		case dirs[name]:
+		case strings.HasSuffix(name, "/"):
+			bad.add(name, "a directory the manifest does not list")
+		case !inDB || !files[rel]:
+			bad.add(name, "a file the manifest does not list")
+		default:
+			listed[rel] = zf
+		}
+	}
+	for _, f := range m.Files {
+		if listed[f.Path] == nil {
+			bad.add(prefix+f.Path, "missing")
+		}
+	}
+	for _, d := range m.Dirs {
+		if !seen[prefix+d+"/"] {
+			bad.add(prefix+d+"/", "missing")
+		}
+	}
+	return listed, bad
+}
+
+// checkEntry copies one entry to w and says what does not match the
+// manifest, or "" when it all does. Only a failure to go on (cancellation,
+// or writing w) is an error; damage is a reason. It reads at most one byte
+// past the size the manifest gives.
+func checkEntry(ctx context.Context, zf *zip.File, want duesarc.File, w io.Writer, ph *progress.Phase) (string, error) {
+	if zf.UncompressedSize64 != uint64(want.Size) {
+		return fmt.Sprintf("%d bytes; the manifest says %d", zf.UncompressedSize64, want.Size), nil
+	}
+	rc, err := zf.Open()
+	if err != nil {
+		return "unreadable: " + err.Error(), nil
+	}
+	defer rc.Close()
+	h := sha256.New()
+	n, err := duesarc.Copy(ctx, io.MultiWriter(w, h), duesarc.DamageReader{R: io.LimitReader(rc, want.Size+1)}, ph.Add)
+	switch {
+	case ctx.Err() != nil:
+		return "", ctx.Err()
+	case err != nil:
+		if _, damaged := errors.AsType[*duesarc.DamagedError](err); damaged {
+			return "unreadable: " + errors.Unwrap(err).Error(), nil
+		}
+		return "", err
+	case n != want.Size:
+		return fmt.Sprintf("%d bytes; the manifest says %d", n, want.Size), nil
+	case hex.EncodeToString(h.Sum(nil)) != want.SHA256:
+		return "its SHA-256 does not match the manifest", nil
+	}
+	return "", nil
+}

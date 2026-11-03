@@ -12,6 +12,8 @@ import (
 	"time"
 
 	"github.com/ulikunitz/xz"
+
+	"indicer/internal/duesarc"
 )
 
 // writeCompat writes a zip or tar archive of in's items to w. Every writer
@@ -71,7 +73,7 @@ func addZipFile(ctx context.Context, zw *zip.Writer, abs, name string, mtime tim
 	if err != nil {
 		return err
 	}
-	_, err = copyWithProgress(ctx, wr, src, progress)
+	_, err = duesarc.Copy(ctx, wr, src, progress)
 	return err
 }
 
@@ -128,7 +130,7 @@ func addTarFile(ctx context.Context, tw *tar.Writer, it inputItem, progress func
 	if err := tw.WriteHeader(hdr); err != nil {
 		return err
 	}
-	n, err := copyWithProgress(ctx, tw, io.LimitReader(src, info.Size()), progress)
+	n, err := duesarc.Copy(ctx, tw, io.LimitReader(src, info.Size()), progress)
 	if err == nil && n != info.Size() {
 		err = fmt.Errorf("%s changed while it was archived", it.abs)
 	}
@@ -161,7 +163,7 @@ func listCompat(ctx context.Context, inputPath, format string, onProgress func(p
 			return nil, err
 		}
 		defer ts.Close()
-		tr := tar.NewReader(damageReader{ts})
+		tr := tar.NewReader(duesarc.DamageReader{R: ts})
 		var entries []archiveEntry
 		for {
 			if err := ctx.Err(); err != nil {
@@ -218,9 +220,9 @@ func verifyCompat(ctx context.Context, inputPath, format string, onProgress func
 			st.FileCount++
 			rc, err := f.Open()
 			if err != nil {
-				return st, &damagedError{fmt.Errorf("%s: %w", f.Name, err)}
+				return st, &duesarc.DamagedError{Err: fmt.Errorf("%s: %w", f.Name, err)}
 			}
-			n, err := copyWithProgress(ctx, io.Discard, damageReader{rc}, nil)
+			n, err := duesarc.Copy(ctx, io.Discard, duesarc.DamageReader{R: rc}, nil)
 			_ = rc.Close()
 			st.VerifiedBytes += n
 			if err != nil {
@@ -237,7 +239,7 @@ func verifyCompat(ctx context.Context, inputPath, format string, onProgress func
 			return st, err
 		}
 		defer ts.Close()
-		tr := tar.NewReader(damageReader{ts})
+		tr := tar.NewReader(duesarc.DamageReader{R: ts})
 		for {
 			if err := ctx.Err(); err != nil {
 				return st, err
@@ -255,7 +257,7 @@ func verifyCompat(ctx context.Context, inputPath, format string, onProgress func
 				continue
 			}
 			st.FileCount++
-			n, err := copyWithProgress(ctx, io.Discard, tr, nil)
+			n, err := duesarc.Copy(ctx, io.Discard, tr, nil)
 			st.VerifiedBytes += n
 			if err != nil {
 				return st, damaged(err)

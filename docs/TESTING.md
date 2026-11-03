@@ -406,14 +406,15 @@ because root ignores file modes, so run `suite.sh` as a normal user.
 
 ### Fuzzing
 
-`scripts/fuzz-targets.txt` lists 32 targets:
+`scripts/fuzz-targets.txt` lists 34 targets:
 - parsers and the image layer (FAT, exFAT, NTFS, ext, HFS, XFS, GPT, MBR,
   VHD, VHDX, LZNT1, extents, names, detection);
 - storage formats (the blob codec, containers, block indexes, records,
   bounded msgpack decoding);
 - micro-artefact parsers and detectors;
 - the server's origin check and upload requests;
-- the FFI dispatcher, archive entry names and the `.duesarc` manifest;
+- the FFI dispatcher, archive entry names, the `.duesarc` manifest and the
+  database package manifest;
 - configuration, the fault spec, terminal sanitising, log redaction and the
   search matcher.
 

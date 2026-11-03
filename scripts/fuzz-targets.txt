@@ -31,6 +31,7 @@
 ./lib/server FuzzOriginCheck
 ./lib/server FuzzUploadRequests
 ./pkg/api FuzzDispatchJSON
-./internal/products/compression_product FuzzLocalName
+./internal/duesarc FuzzLocalName
+./internal/duesarc FuzzParseDatabaseManifest
 ./internal/products/compression_product FuzzParseManifest
 ./internal/configfile FuzzParse

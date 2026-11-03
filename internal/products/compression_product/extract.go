@@ -15,6 +15,7 @@ import (
 
 	coreerr "indicer/internal/core/errors"
 	"indicer/internal/diskspace"
+	"indicer/internal/duesarc"
 	"indicer/lib/fsx"
 )
 
@@ -74,24 +75,6 @@ func (e *ConflictError) Error() string {
 	return fmt.Sprintf("%d entries would replace existing files: %s", e.Count, e.Problems[0].name)
 }
 
-// damagedError marks an error reading the archive itself, as opposed to
-// writing the output.
-type damagedError struct{ err error }
-
-func (e *damagedError) Error() string { return "archive data is damaged: " + e.err.Error() }
-func (e *damagedError) Unwrap() error { return e.err }
-
-// damageReader marks every error from r, except io.EOF, as damage.
-type damageReader struct{ r io.Reader }
-
-func (d damageReader) Read(p []byte) (int, error) {
-	n, err := d.r.Read(p)
-	if err != nil && err != io.EOF {
-		err = &damagedError{err}
-	}
-	return n, err
-}
-
 func problemDetails(problems []entryProblem, count int) map[string]string {
 	d := map[string]string{"count": strconv.Itoa(count)}
 	for i, p := range problems {
@@ -104,14 +87,14 @@ func problemDetails(problems []entryProblem, count int) map[string]string {
 func extractionError(err error, msg string) *coreerr.Error {
 	var ae *ArchiveError
 	var ce *ConflictError
-	var de *damagedError
+	var de *duesarc.DamagedError
 	switch {
 	case errors.As(err, &ae):
 		return coreerr.NewWithDetails(coreerr.CodeInvalidArchive, ae.Error(), problemDetails(ae.Problems, ae.Count))
 	case errors.As(err, &ce):
 		return coreerr.NewWithDetails(coreerr.CodeConflict, ce.Error(), problemDetails(ce.Problems, ce.Count))
 	case errors.As(err, &de):
-		return coreerr.NewWithDetails(coreerr.CodeInvalidArchive, de.Error(), map[string]string{detailCause: de.err.Error()})
+		return coreerr.NewWithDetails(coreerr.CodeInvalidArchive, de.Error(), map[string]string{detailCause: de.Err.Error()})
 	}
 	if le, ok := asLimitError(err); ok {
 		return limitExceeded(le)
@@ -284,45 +267,10 @@ func (x *extraction) countEntry(name string) error {
 	return nil
 }
 
-// localName turns an archive entry name (slash-separated) into a local
-// path, or explains why it cannot be one. "" with no error is the archive
-// root itself.
-func localName(name string) (string, error) {
-	switch {
-	case strings.ContainsRune(name, '\\'):
-		return "", errors.New("a backslash in a name is ambiguous")
-	case strings.ContainsRune(name, 0):
-		return "", errors.New("a NUL byte in a name")
-	case strings.HasPrefix(name, "/"):
-		return "", errors.New("an absolute path")
-	}
-	var keep []string
-	for _, c := range strings.Split(name, "/") {
-		switch c {
-		case "", ".":
-			continue
-		case "..":
-			return "", errors.New("a reference to a parent directory")
-		}
-		if err := checkComponent(c); err != nil {
-			return "", err
-		}
-		keep = append(keep, c)
-	}
-	if len(keep) == 0 {
-		return "", nil
-	}
-	local, err := filepath.Localize(strings.Join(keep, "/"))
-	if err != nil {
-		return "", errors.New("not a valid name on this system")
-	}
-	return local, nil
-}
-
 // claim registers local as a directory or file entry, with its parents as
 // directories. It returns a reason when the name is taken.
 func (x *extraction) claim(local string, dir bool) string {
-	key := foldName(local)
+	key := duesarc.FoldName(local)
 	if isDir, ok := x.seen[key]; ok {
 		if dir && isDir {
 			return ""
@@ -330,7 +278,7 @@ func (x *extraction) claim(local string, dir bool) string {
 		return "another entry has the same name"
 	}
 	for p := filepath.Dir(local); p != "." && p != string(filepath.Separator); p = filepath.Dir(p) {
-		pk := foldName(p)
+		pk := duesarc.FoldName(p)
 		if isDir, ok := x.seen[pk]; ok {
 			if !isDir {
 				return "a file entry has the name of its directory"
@@ -348,7 +296,7 @@ func (x *extraction) addDir(name string, mtime time.Time) error {
 	if err := x.countEntry(name); err != nil {
 		return err
 	}
-	local, err := localName(name)
+	local, err := duesarc.LocalName(name)
 	if err != nil {
 		x.problem(name, err.Error())
 		return nil
@@ -381,7 +329,7 @@ func (x *extraction) addFile(name string, declared int64, mtime time.Time, fill 
 	if declared > x.limits.MaxEntryBytes {
 		return &LimitError{Limit: "max_entry_bytes", Value: x.limits.MaxEntryBytes, What: "entry " + name}
 	}
-	local, err := localName(name)
+	local, err := duesarc.LocalName(name)
 	if err == nil && local == "" {
 		err = errors.New("a file entry with no name")
 	}

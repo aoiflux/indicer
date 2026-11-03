@@ -660,6 +660,61 @@ Version 1 archives (from earlier versions) still extract:
 - **Name clashes.** Two files that would share a path get distinct names
   (`name~<content ID>.ext`) instead of overwriting each other.
 
+## Database packages
+
+`dues package export` writes a `.duesarc` of another kind: a copy of a whole
+DUES data root, for moving or keeping a database. Its manifest is version 3,
+kind `database`. `extract_archive`, `list_archive` and `verify_archive` refuse
+it with `invalid_archive`, naming `dues package inspect`, `verify` and
+`import`, which read it. Earlier versions of this library refuse it as an
+unsupported manifest version.
+
+The zip holds:
+
+- `db/`, the data root's directories and files as they are on disk, sorted by
+  path, stored without compression (they are compressed or encrypted
+  already), each dated at the package's creation;
+- `manifest.json`, last: its sizes and hashes are computed as the files are
+  copied, so the data is read once. Readers find it through the zip's central
+  directory.
+
+```json
+{
+  "version": "v3",
+  "kind": "database",
+  "pipeline": "export",
+  "created_at_utc": "2026-11-03T12:00:00Z",
+  "db_path": "db",
+  "created_by": { "product": "dues", "version": "0.39.0", "commit": "3484a4d" },
+  "database": {
+    "format": "dues-db", "format_version": 1,
+    "components": { "graph_schema": 2 },
+    "layout": { "chunk_kib": 256, "chunk_hash": "blake3", "storage": "file",
+                "blob_encoding": "v2", "value_encoding": "zstd", "badger_compression": "zstd" },
+    "encryption": "none", "encrypted": false
+  },
+  "stats": { "evidence": 200, "logical_bytes": 209715200 },
+  "dirs": [ "blob", "kvdb" ],
+  "files": [ { "path": "dues-manifest.json", "size": 412, "sha256": "…" } ],
+  "content_sha256": "…",
+  "host": { "os": "windows", "arch": "amd64", "hostname": "lab-3" }
+}
+```
+
+- `files` is sorted by path, byte-wise, and every path is relative and plain
+  (no `.`, `..`, backslash or absolute path).
+- `content_sha256` is the SHA-256 of one line per file,
+  `path NUL size NUL sha256 LF`, in order. It leaves out times and the host,
+  so two packages of one database state share it.
+- `stats` is left out for an encrypted database. `plaintext_components`
+  (`fts`, `graph`) names what an encrypted database's package carries
+  unencrypted. `host` is written only with `--host-info`.
+- Fields may be added within version 3; readers ignore the ones they do not
+  know. A reader refuses a later version.
+
+A package may be split like an archive (`--split-size-mb`), with the same
+sidecar.
+
 ## Split archives
 
 With `split_size_mb`, an archive is written as parts of that many MiB:

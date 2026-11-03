@@ -11,6 +11,8 @@ import (
 	"math"
 
 	"github.com/ulikunitz/xz"
+
+	"indicer/internal/duesarc"
 )
 
 // extractCompat extracts a zip or tar archive into out.
@@ -26,7 +28,7 @@ func extractCompat(ctx context.Context, inputPath, out, format, policy string, l
 		if err != nil {
 			return commitResult{}, err
 		}
-		if err := extractZip(ctx, za.Reader, za.size, x, onBytes); err != nil {
+		if err := extractZip(ctx, za.Reader, za.In.Size(), x, onBytes); err != nil {
 			x.abort()
 			return commitResult{}, err
 		}
@@ -91,10 +93,10 @@ func extractZip(ctx context.Context, zr *zip.Reader, size int64, x *extraction, 
 			err = x.addFile(f.Name, int64(f.UncompressedSize64), f.Modified, func(w io.Writer) error {
 				rc, err := f.Open()
 				if err != nil {
-					return &damagedError{err}
+					return &duesarc.DamagedError{Err: err}
 				}
 				defer rc.Close()
-				_, err = copyWithProgress(ctx, w, damageReader{rc}, func(n int64) {
+				_, err = duesarc.Copy(ctx, w, duesarc.DamageReader{R: rc}, func(n int64) {
 					written += n
 					if onBytes != nil {
 						onBytes(written, declared)
@@ -161,12 +163,12 @@ func openTarStream(inputPath, format string, verifyParts bool) (*tarStream, erro
 		return nil, err
 	}
 	if verifyParts {
-		if err := in.verify(context.Background()); err != nil {
+		if err := in.Verify(context.Background()); err != nil {
 			_ = in.Close()
 			return nil, err
 		}
 	}
-	counted := &countingReader{r: io.NewSectionReader(in, 0, in.size)}
+	counted := &countingReader{r: io.NewSectionReader(in, 0, in.Size())}
 	closers := []io.Closer{in}
 	var r io.Reader = counted
 	switch format {
@@ -175,7 +177,7 @@ func openTarStream(inputPath, format string, verifyParts bool) (*tarStream, erro
 		gz, err := gzip.NewReader(counted)
 		if err != nil {
 			_ = in.Close()
-			return nil, &damagedError{err}
+			return nil, &duesarc.DamagedError{Err: err}
 		}
 		r = gz
 		closers = append([]io.Closer{gz}, closers...)
@@ -183,14 +185,14 @@ func openTarStream(inputPath, format string, verifyParts bool) (*tarStream, erro
 		xr, err := xz.NewReader(counted)
 		if err != nil {
 			_ = in.Close()
-			return nil, &damagedError{err}
+			return nil, &duesarc.DamagedError{Err: err}
 		}
 		r = xr
 	default:
 		_ = in.Close()
 		return nil, fmt.Errorf("%s: %s", errUnsupportedArchiveFormat, format)
 	}
-	return &tarStream{Reader: r, file: counted, size: in.size, closeFn: func() error {
+	return &tarStream{Reader: r, file: counted, size: in.Size(), closeFn: func() error {
 		var first error
 		for _, c := range closers {
 			if err := c.Close(); err != nil && first == nil {
@@ -211,7 +213,7 @@ func measureTar(ctx context.Context, inputPath, format string, limits Limits) (e
 	}
 	defer ts.Close()
 	guard := &outputGuard{limits: limits, in: ts.consumed}
-	tr := tar.NewReader(damageReader{ts})
+	tr := tar.NewReader(duesarc.DamageReader{R: ts})
 	var pending int64
 	for {
 		if err := ctx.Err(); err != nil {
@@ -248,13 +250,13 @@ func measureTar(ctx context.Context, inputPath, format string, limits Limits) (e
 // damaged marks err as damage to the archive unless it already says what
 // went wrong.
 func damaged(err error) error {
-	if _, ok := err.(*damagedError); ok {
+	if _, ok := err.(*duesarc.DamagedError); ok {
 		return err
 	}
 	if _, ok := asLimitError(err); ok {
 		return err
 	}
-	return &damagedError{err}
+	return &duesarc.DamagedError{Err: err}
 }
 
 // extractTar stages every entry of a tar archive.
@@ -265,7 +267,7 @@ func extractTar(ctx context.Context, inputPath, format string, x *extraction, de
 	}
 	defer ts.Close()
 	x.guard.in = ts.consumed
-	tr := tar.NewReader(damageReader{ts})
+	tr := tar.NewReader(duesarc.DamageReader{R: ts})
 	var written int64
 	for {
 		if err := ctx.Err(); err != nil {
@@ -283,7 +285,7 @@ func extractTar(ctx context.Context, inputPath, format string, x *extraction, de
 			err = x.addDir(hdr.Name, hdr.ModTime)
 		case tarRegular(hdr.Typeflag):
 			err = x.addFile(hdr.Name, hdr.Size, hdr.ModTime, func(w io.Writer) error {
-				_, err := copyWithProgress(ctx, w, tr, func(n int64) {
+				_, err := duesarc.Copy(ctx, w, tr, func(n int64) {
 					written += n
 					if onBytes != nil {
 						onBytes(written, declared)
@@ -298,34 +300,4 @@ func extractTar(ctx context.Context, inputPath, format string, x *extraction, de
 			return err
 		}
 	}
-}
-
-type zipArchive struct {
-	*zip.Reader
-	in   *archiveInput
-	size int64
-}
-
-func (z *zipArchive) Close() { _ = z.in.Close() }
-
-// openZip opens a zip archive, or the archive a split set's parts make,
-// read in place. With verifyParts, a split set's parts are first checked
-// against their sidecar.
-func openZip(inputPath string, verifyParts bool) (*zipArchive, error) {
-	in, err := openArchiveInput(inputPath)
-	if err != nil {
-		return nil, err
-	}
-	if verifyParts {
-		if err := in.verify(context.Background()); err != nil {
-			_ = in.Close()
-			return nil, err
-		}
-	}
-	zr, err := zip.NewReader(in, in.size)
-	if err != nil {
-		_ = in.Close()
-		return nil, &damagedError{err}
-	}
-	return &zipArchive{Reader: zr, in: in, size: in.size}, nil
 }

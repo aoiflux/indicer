@@ -19,6 +19,7 @@ import (
 	"strings"
 
 	coreerr "indicer/internal/core/errors"
+	"indicer/internal/duesarc"
 	"indicer/lib/dbmeta"
 )
 
@@ -44,15 +45,14 @@ const (
 	levelDefault = "default"
 	levelBest    = "best"
 
-	archiveExt            = ".duesarc"
-	archiveZipExt         = ".zip"
-	archiveTarExt         = ".tar"
-	archiveTgzExt         = ".tar.gz"
-	archiveTxzExt         = ".tar.xz"
-	archiveSplitSuffixFmt = ".%03d"
-	compressedFileExt     = ".dues.zst"
-	zstdExt               = ".zst"
-	outExt                = ".out"
+	archiveExt        = ".duesarc"
+	archiveZipExt     = ".zip"
+	archiveTarExt     = ".tar"
+	archiveTgzExt     = ".tar.gz"
+	archiveTxzExt     = ".tar.xz"
+	compressedFileExt = ".dues.zst"
+	zstdExt           = ".zst"
+	outExt            = ".out"
 
 	archiveFormatDuesarc = "duesarc"
 	archiveFormatZip     = "zip"
@@ -491,40 +491,6 @@ func progressFromBytes(processed, total int64, startPercent, endPercent int) int
 	return startPercent + int((processed*int64(span))/total)
 }
 
-func copyWithProgress(ctx context.Context, dst io.Writer, src io.Reader, onChunk func(n int64)) (int64, error) {
-	buf := make([]byte, 256*1024)
-	var total int64
-	for {
-		if ctx != nil {
-			if err := ctx.Err(); err != nil {
-				return total, err
-			}
-		}
-		nr, er := src.Read(buf)
-		if nr > 0 {
-			nw, ew := dst.Write(buf[:nr])
-			if nw > 0 {
-				total += int64(nw)
-				if onChunk != nil {
-					onChunk(int64(nw))
-				}
-			}
-			if ew != nil {
-				return total, ew
-			}
-			if nw != nr {
-				return total, io.ErrShortWrite
-			}
-		}
-		if er == io.EOF {
-			return total, nil
-		}
-		if er != nil {
-			return total, er
-		}
-	}
-}
-
 // opError maps an archive operation's failure to the caller's error.
 func opError(ctx context.Context, err error, msg string) *coreerr.Error {
 	if ctx.Err() != nil {
@@ -565,7 +531,7 @@ func (r *decompressReq) getDataBase64() string { return r.DataBase64 }
 
 func defaultDecompressOutput(inputPath string) string {
 	for _, ext := range []string{compressedFileExt, zstdExt, archiveExt} {
-		if before, ok := cutSuffixFold(inputPath, ext); ok && before != "" {
+		if before, ok := duesarc.CutSuffixFold(inputPath, ext); ok && before != "" {
 			return before
 		}
 	}
@@ -581,7 +547,7 @@ func defaultExtractOutput(inputPath string) string {
 		inputPath = base
 	}
 	for _, ext := range []string{archiveExt, archiveZipExt, archiveTgzExt, ".tgz", archiveTxzExt, ".txz", ".xz", archiveTarExt} {
-		if before, ok := cutSuffixFold(inputPath, ext); ok && before != "" {
+		if before, ok := duesarc.CutSuffixFold(inputPath, ext); ok && before != "" {
 			return before
 		}
 	}
@@ -624,10 +590,10 @@ func normalizeArchiveFormat(format string) string {
 // looking through a split part's number or a sidecar's suffix.
 func detectArchiveFormatFromPath(path string) string {
 	lower := strings.ToLower(path)
-	if base, ok := cutSuffixFold(lower, splitSidecarExt); ok {
+	if base, ok := duesarc.CutSuffixFold(lower, duesarc.SidecarExt); ok {
 		lower = base
-	} else if m := partSuffix.FindStringSubmatch(lower); m != nil {
-		lower = m[1]
+	} else if base, ok := duesarc.PartBase(lower); ok {
+		lower = base
 	}
 	switch {
 	case strings.HasSuffix(lower, archiveExt):
@@ -681,9 +647,9 @@ func resolveArchiveReadFormat(requested, inputPath string) (string, *coreerr.Err
 	}
 	detected, err := detectArchiveFormatFromFile(inputPath)
 	if err != nil {
-		var de *damagedError
+		var de *duesarc.DamagedError
 		if errors.As(err, &de) {
-			return "", coreerr.NewWithDetails(coreerr.CodeInvalidArchive, de.Error(), map[string]string{detailCause: de.err.Error()})
+			return "", coreerr.NewWithDetails(coreerr.CodeInvalidArchive, de.Error(), map[string]string{detailCause: de.Err.Error()})
 		}
 		return "", coreerr.NewWithDetails(coreerr.CodeInvalidRequest, errInvalidInputPath, map[string]string{detailCause: err.Error()})
 	}

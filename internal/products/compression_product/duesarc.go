@@ -18,6 +18,7 @@ import (
 	"github.com/dgraph-io/badger/v4"
 
 	"indicer/cli"
+	"indicer/internal/duesarc"
 	"indicer/lib/blobcodec"
 	"indicer/lib/cnst"
 	"indicer/lib/dbio"
@@ -97,7 +98,7 @@ func (m *archiveManifest) validate() error {
 	if m.Pipeline != "" && m.Pipeline != manifestPipelineStore {
 		return &ArchiveError{Msg: fmt.Sprintf("unsupported manifest pipeline %q", m.Pipeline)}
 	}
-	if local, err := localName(m.DbPath); err != nil || local == "" {
+	if local, err := duesarc.LocalName(m.DbPath); err != nil || local == "" {
 		return &ArchiveError{Msg: errExtractDbPathMissing}
 	}
 	for _, e := range m.Entries {
@@ -114,7 +115,15 @@ func (m *archiveManifest) validate() error {
 	return nil
 }
 
+// errDatabasePackage refuses a database package (manifest version 3, kind
+// database), which dues package reads: it holds a database, not files.
+const errDatabasePackage = "this archive is a DUES database package, not an archive of files; use `dues package inspect`, `dues package verify` or `dues package import`"
+
 func parseManifest(data []byte) (archiveManifest, error) {
+	var hdr duesarc.Header
+	if err := json.Unmarshal(data, &hdr); err == nil && hdr.IsDatabase() {
+		return archiveManifest{}, &ArchiveError{Msg: errDatabasePackage}
+	}
 	var m archiveManifest
 	if err := json.Unmarshal(data, &m); err != nil {
 		return archiveManifest{}, &ArchiveError{Msg: errExtractManifestReadFailed + ": " + err.Error()}
@@ -140,9 +149,9 @@ func zipManifest(zr *zip.Reader) (m archiveManifest, found bool, err error) {
 		}
 		rc, err := f.Open()
 		if err != nil {
-			return m, true, &damagedError{err}
+			return m, true, &duesarc.DamagedError{Err: err}
 		}
-		data, err := io.ReadAll(io.LimitReader(damageReader{rc}, 64<<20))
+		data, err := io.ReadAll(io.LimitReader(duesarc.DamageReader{R: rc}, 64<<20))
 		_ = rc.Close()
 		if err != nil {
 			return m, true, err
@@ -261,7 +270,7 @@ func createDuesarc(ctx context.Context, tmp *tempRoot, req createArchiveReq, in 
 	}
 
 	emitProgress(report, "packaging", 82, "packaging archive")
-	files, err = writeArchiveOutput(ctx, outputPath, partSize, func(w io.Writer) error {
+	files, err = duesarc.WriteOutput(ctx, outputPath, partSize, func(w io.Writer) error {
 		return writeDuesarcZip(ctx, w, wd.path, func(processed, total int64) {
 			emitProgress(report, "packaging", progressFromBytes(processed, total, 82, 97), "packaging archive")
 		})
@@ -352,7 +361,7 @@ func stageDuesarc(ctx context.Context, tmp *tempRoot, archivePath string, limits
 		s.release()
 		return nil, err
 	}
-	if err := extractZip(ctx, za.Reader, za.size, x, onBytes); err != nil {
+	if err := extractZip(ctx, za.Reader, za.In.Size(), x, onBytes); err != nil {
 		x.abort()
 		s.release()
 		return nil, err
@@ -370,7 +379,7 @@ func stageDuesarc(ctx context.Context, tmp *tempRoot, archivePath string, limits
 
 // openDB opens the staged database read-only. The caller holds the engine.
 func (s *stagedArchive) openDB(ctx context.Context, password string) (*dbopen.Handle, error) {
-	local, _ := localName(s.manifest.DbPath)
+	local, _ := duesarc.LocalName(s.manifest.DbPath)
 	dbPath := filepath.Join(s.dir, local)
 	if info, err := os.Stat(dbPath); err != nil || !info.IsDir() {
 		return nil, &ArchiveError{Msg: errExtractDbPathMissing}
@@ -569,8 +578,8 @@ func baseName(p string) string {
 // uniquePath returns rel, or, when another file already has that path,
 // "stem~ID.ext" built from the evidence ID.
 func uniquePath(rel, id string, used map[string]bool) string {
-	if !used[foldName(rel)] {
-		used[foldName(rel)] = true
+	if !used[duesarc.FoldName(rel)] {
+		used[duesarc.FoldName(rel)] = true
 		return rel
 	}
 	ext := path.Ext(rel)
@@ -580,10 +589,10 @@ func uniquePath(rel, id string, used map[string]bool) string {
 		tag = tag[:8]
 	}
 	cand := stem + "~" + tag + ext
-	for n := 2; used[foldName(cand)]; n++ {
+	for n := 2; used[duesarc.FoldName(cand)]; n++ {
 		cand = fmt.Sprintf("%s~%s-%d%s", stem, tag, n, ext)
 	}
-	used[foldName(cand)] = true
+	used[duesarc.FoldName(cand)] = true
 	return cand
 }
 
@@ -630,7 +639,7 @@ func restorePlan(ctx context.Context, db *badger.DB, plan []planItem, x *extract
 					return err
 				}
 				defer f.Close()
-				_, err = copyWithProgress(ctx, w, f, nil)
+				_, err = duesarc.Copy(ctx, w, f, nil)
 				return err
 			})
 		default:
@@ -641,12 +650,12 @@ func restorePlan(ctx context.Context, db *badger.DB, plan []planItem, x *extract
 					return restoreDamage(err)
 				}
 				if rep.Size != it.size {
-					return &damagedError{fmt.Errorf("%s restored %d bytes, the archive lists %d", it.path, rep.Size, it.size)}
+					return &duesarc.DamagedError{Err: fmt.Errorf("%s restored %d bytes, the archive lists %d", it.path, rep.Size, it.size)}
 				}
 				return nil
 			})
 			if err == nil && wrote && x.nprob == 0 {
-				first[it.evidence], _ = localName(it.path)
+				first[it.evidence], _ = duesarc.LocalName(it.path)
 			}
 		}
 		if err != nil {
@@ -667,7 +676,7 @@ func restoreDamage(err error) error {
 	}
 	for _, sentinel := range []error{blobcodec.ErrCorrupt, store.ErrDigestMismatch, dbio.ErrRelationMissing, dbio.ErrChunkRange, dbio.ErrChunkNotFound, badger.ErrKeyNotFound} {
 		if errors.Is(err, sentinel) {
-			return &damagedError{err}
+			return &duesarc.DamagedError{Err: err}
 		}
 	}
 	return err

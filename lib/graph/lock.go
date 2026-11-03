@@ -30,7 +30,17 @@ const (
 
 	// legacyLockInfoFileName is the single record earlier releases wrote.
 	legacyLockInfoFileName = "dues.lock.info"
+
+	// grapheneLockFileName is the lock graphene takes in the directory too.
+	grapheneLockFileName = "graphene.lock"
 )
+
+// IsLockFile reports whether name, a file in a graph directory, is a lock
+// or a lock holder's record rather than graph data. A copy of the store
+// leaves these out: they describe the processes using this copy.
+func IsLockFile(name string) bool {
+	return name == lockFileName || name == grapheneLockFileName || strings.HasPrefix(name, lockInfoPrefix)
+}
 
 // ErrGraphLocked is returned when another process holds the store.
 type ErrGraphLocked struct {

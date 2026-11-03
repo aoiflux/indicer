@@ -16,6 +16,7 @@ import (
 	"github.com/dgraph-io/badger/v4"
 
 	"indicer/cli"
+	"indicer/internal/duesarc"
 	"indicer/internal/testutil"
 	"indicer/lib/dbio"
 	"indicer/lib/dbopen"
@@ -171,7 +172,7 @@ func makeV1Archive(t *testing.T, src, archive string, namesOnly bool) {
 	if err := os.WriteFile(filepath.Join(work, manifestFileName), data, 0o644); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := writeArchiveOutput(ctx, archive, 0, func(w io.Writer) error { return writeDuesarcZip(ctx, w, work, nil) }); err != nil {
+	if _, err := duesarc.WriteOutput(ctx, archive, 0, func(w io.Writer) error { return writeDuesarcZip(ctx, w, work, nil) }); err != nil {
 		t.Fatal(err)
 	}
 }
@@ -465,4 +466,39 @@ func TestEncryptedArchiveHidesItsPaths(t *testing.T) {
 	out = filepath.Join(t.TempDir(), "out2")
 	call(t, New(), opExtractArchive, map[string]any{"input_path": archive, "output_path": out, "password": "pw"})
 	sameTree(t, readTree(t, out), files)
+}
+
+// TestDatabasePackageIsRefused: a database package (manifest version 3,
+// kind database) is not an archive of files; list, verify and extract each
+// refuse it and name the dues commands that read it.
+func TestDatabasePackageIsRefused(t *testing.T) {
+	pkg := filepath.Join(t.TempDir(), "case.duesarc")
+	var buf bytes.Buffer
+	zw := zip.NewWriter(&buf)
+	for name, data := range map[string]string{
+		"db/dues-manifest.json": "{}",
+		duesarc.ManifestName:    `{"version":"v3","kind":"database","db_path":"db"}`,
+	} {
+		w, err := zw.Create(name)
+		if err != nil {
+			t.Fatal(err)
+		}
+		_, _ = w.Write([]byte(data))
+	}
+	if err := zw.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(pkg, buf.Bytes(), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	for _, op := range []string{opListArchive, opVerifyArchive, opExtractArchive} {
+		params := map[string]any{"input_path": pkg}
+		if op == opExtractArchive {
+			params["output_path"] = filepath.Join(t.TempDir(), "out")
+		}
+		_, rerr := handle(New(), op, params)
+		if rerr == nil || rerr.Code != "invalid_archive" || !strings.Contains(rerr.Message, "dues package import") {
+			t.Errorf("%s: %v", op, rerr)
+		}
+	}
 }

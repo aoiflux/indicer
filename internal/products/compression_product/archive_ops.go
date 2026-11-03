@@ -10,6 +10,7 @@ import (
 	"strings"
 
 	coreerr "indicer/internal/core/errors"
+	"indicer/internal/duesarc"
 )
 
 const (
@@ -62,7 +63,7 @@ func (s *Service) createArchive(ctx context.Context, req createArchiveReq, repor
 		res.OutputFiles, res.WorkDir, err = createDuesarc(ctx, s.temp, req, in, outputPath, partSize, chunk, report)
 	} else {
 		emitProgress(report, "packaging", 35, "packaging compatibility archive")
-		res.OutputFiles, err = writeArchiveOutput(ctx, outputPath, partSize, func(w io.Writer) error {
+		res.OutputFiles, err = duesarc.WriteOutput(ctx, outputPath, partSize, func(w io.Writer) error {
 			return writeCompat(ctx, w, in, format, func(processed, total int64) {
 				emitProgress(report, "packaging", progressFromBytes(processed, total, 35, 97), "packaging compatibility archive")
 			})
@@ -230,7 +231,7 @@ func (s *Service) verifyArchive(ctx context.Context, req archiveReadReq, report 
 	if err != nil {
 		return verifyArchiveRes{}, opError(ctx, err, errVerifyArchiveFailed)
 	}
-	res.InputBytes, res.HasSplitInput, res.SplitVerified = in.size, in.split(), in.verified()
+	res.InputBytes, res.HasSplitInput, res.SplitVerified = in.Size(), in.Split(), in.Verified()
 	_ = in.Close()
 
 	emitProgress(report, "verifying", 10, "verifying archive entries")

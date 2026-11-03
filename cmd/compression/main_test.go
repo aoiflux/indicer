@@ -203,6 +203,54 @@ func TestGlobalOptions(t *testing.T) {
 	}
 }
 
+// logRecords returns the records with message msg in the current log file.
+func logRecords(t *testing.T, msg string) []map[string]any {
+	t.Helper()
+	_ = logging.Sync()
+	b, err := os.ReadFile(logging.Current().Path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var recs []map[string]any
+	for line := range strings.SplitSeq(string(b), "\n") {
+		var r map[string]any
+		if json.Unmarshal([]byte(line), &r) == nil && r["msg"] == msg {
+			recs = append(recs, r)
+		}
+	}
+	return recs
+}
+
+// TestLogRecordsEarlyExits: the log opens before the global options are
+// checked, so a run they stop records why, and -h records its settings; the
+// log is never left empty.
+func TestLogRecordsEarlyExits(t *testing.T) {
+	broken := writeConfig(t, `{"log-dir": 5}`)
+	t.Cleanup(func() { _ = logging.Close() })
+	for _, c := range []struct {
+		args       []string
+		code       int
+		msg, field string // the record wanted, and text its error holds
+	}{
+		{[]string{"--no-such-option", "capabilities"}, lifecycle.ExitUsage, "command failed", "no-such-option"},
+		{[]string{"--config", broken, "capabilities"}, lifecycle.ExitUsage, "command failed", `"log-dir": must be a string`},
+		{[]string{"-h"}, lifecycle.ExitOK, "settings", ""},
+	} {
+		logging.Init(logging.Config{Component: "qwikpak", Dir: t.TempDir(), Stderr: io.Discard})
+		if code := run(context.Background(), c.args, io.Discard, io.Discard, strings.NewReader("")); code != c.code {
+			t.Errorf("%q: exit %d, want %d", c.args, code, c.code)
+		}
+		recs := logRecords(t, c.msg)
+		if len(recs) != 1 {
+			t.Errorf("%q: %d %q records, want 1", c.args, len(recs), c.msg)
+			continue
+		}
+		if e, _ := recs[0]["error"].(string); !strings.Contains(e, c.field) {
+			t.Errorf("%q: the record's error %q does not say %q", c.args, e, c.field)
+		}
+	}
+}
+
 // TestSettingsRecord: a run logs the config file, the log and temporary
 // directories in effect, and whether an option, the config file or the
 // default chose each.
@@ -217,19 +265,11 @@ func TestSettingsRecord(t *testing.T) {
 			t.Fatal(err)
 		}
 		g.logSettings()
-		_ = logging.Sync()
-		b, err := os.ReadFile(logging.Current().Path)
-		if err != nil {
-			t.Fatal(err)
+		recs := logRecords(t, "settings")
+		if len(recs) == 0 {
+			t.Fatal("no settings record")
 		}
-		var rec map[string]any
-		for line := range strings.SplitSeq(string(b), "\n") {
-			var r map[string]any
-			if json.Unmarshal([]byte(line), &r) == nil && r["msg"] == "settings" {
-				rec = r
-			}
-		}
-		return rec
+		return recs[len(recs)-1]
 	}
 	setting := func(rec map[string]any, name string) map[string]any {
 		s, _ := rec[name].(map[string]any)

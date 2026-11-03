@@ -256,11 +256,15 @@ type runner struct {
 // the exit code.
 func execute(ctx context.Context, g globalFlags, args []string, err error, stdout, stderr io.Writer, stdin io.Reader) int {
 	if errors.Is(err, flag.ErrHelp) {
+		g.logSettings()
 		fmt.Fprintln(stdout, usageText)
 		return lifecycle.ExitOK
 	}
 	if err == nil {
 		err = g.faults.apply()
+	}
+	if err != nil {
+		logging.GetLogger().Error("command failed", zap.Error(err))
 	}
 	if _, inFile := errors.AsType[fileError](err); inFile {
 		fmt.Fprintln(stderr, err)

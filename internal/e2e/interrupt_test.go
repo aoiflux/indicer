@@ -171,6 +171,29 @@ func TestInterruptedGraphCommands(t *testing.T) {
 	}
 }
 
+// TestSecondInterruptLeavesNoCrashFile: a second Ctrl-C ends dues at once,
+// past its deferred cleanup. The crash file it set up must still go, or each
+// such run leaves an empty one in the log directory, which log rotation
+// does not prune.
+func TestSecondInterruptLeavesNoCrashFile(t *testing.T) {
+	l := newCrashLab(t)
+	logs := t.TempDir()
+	twice := spec(faultinject.IngestAfterPending, "signal:INT") + "," + spec(faultinject.IngestAfterPending, "signal:INT")
+	c := testutil.StartDues(t, l.bin, l.work, twice, "--log-dir", logs, "store", l.files[0], "--dbpath", l.root)
+	if code := c.Wait(t, 2*time.Minute); code != 130 {
+		t.Fatalf("exit %d, want 130\n%s", code, c.Output())
+	}
+	if !strings.Contains(c.Output(), "stopped at once") {
+		t.Fatalf("the second interrupt did not end dues at once\n%s", c.Output())
+	}
+	if len(testutil.FilesMatching(t, logs, "dues-*.ndjson")) == 0 {
+		t.Fatalf("no log in %s, so the crash file was looked for in the wrong place", logs)
+	}
+	if left := testutil.FilesMatching(t, logs, "crash-*.txt"); len(left) > 0 {
+		t.Fatalf("a forced exit left %v", left)
+	}
+}
+
 // TestInterruptedServer signals the server while it finalizes an upload: it
 // stops with the signal's code, removes the upload's part file, and leaves
 // the database free and recoverable.

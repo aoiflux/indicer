@@ -107,6 +107,10 @@ func realMain(args []string) (code int) {
 		logging.GetLogger().Warn("crash output not captured", zap.Error(err))
 	}
 	defer crash.Finish()
+	// A second Ctrl-C exits at once, past the deferred Finish; without the
+	// hook each such run would leave an empty crash file in the log
+	// directory, where log rotation never prunes it.
+	defer lifecycle.OnForceExit(crash.Finish)()
 
 	logging.ReportPanics()
 

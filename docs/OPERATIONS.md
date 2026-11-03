@@ -302,13 +302,18 @@ The password is never logged; its entry, `unlock`, says where it came from
 (`password-file`, `password-stdin` or `none`) and whether a flag or the
 config file chose it.
 
+A run whose options are refused logs the error, as `command failed`, and no
+`settings` record. A broken config file stops `dues` before its log opens, so
+that run writes no log; the compression command logs it.
+
 Values of fields whose names mention a password, secret, token, credential
 or authorization, or end in `key`, are replaced with `[REDACTED]`. So are the values of
 the removed `--password` and `--token` flags, should an old script still pass
 them.
 
 Each run also creates `crash-<run id>.txt` in the log directory and removes it
-at a clean exit if nothing was written to it. The file receives:
+when the run ends, a second Ctrl-C included, if nothing was written to it. The
+file receives:
 - the report of a panic DUES recovered (exit 70);
 - the runtime's trace of a crash nothing can recover from: a concurrent map
   write, a stack overflow, a panic on an unguarded goroutine.

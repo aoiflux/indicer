@@ -341,11 +341,12 @@ func stagedDiskWriterLoop(
 			ckey := util.AppendToBytesSlice(cnst.ChonkNamespace, chash)
 			if !item.dup {
 				var err error
-				if cmeta, err = materializeChunkMeta(ckey, item.data, db, containerMgr); err != nil {
+				var written int64
+				if cmeta, written, err = materializeChunkMeta(ckey, item.data, db, containerMgr); err != nil {
 					return err
 				}
 				if cmeta != nil {
-					meter.stored(int64(len(item.data)))
+					meter.stored(int64(len(item.data)), written)
 				}
 			}
 			if err := barrier.record(ckey, cmeta, int64(len(item.data))); err != nil {
@@ -405,14 +406,14 @@ func materializeChunkMeta(
 	cdata []byte,
 	db *badger.DB,
 	containerMgr *fio.ContainerManager,
-) ([]byte, error) {
+) ([]byte, int64, error) {
 	stored, err := dbio.ChunkStored(ckey, db)
 	if err != nil || stored {
-		return nil, err
+		return nil, 0, err
 	}
 	if dir := dbio.KVDir(db); dir != "" {
 		if err := diskspace.GuardFor(dir).Add(len(cdata)); err != nil {
-			return nil, err
+			return nil, 0, err
 		}
 	}
 	return materializeChunk(ckey, cdata, db, containerMgr)

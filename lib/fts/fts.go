@@ -140,6 +140,37 @@ func (h *handle) release() error {
 	return h.idx.Close()
 }
 
+// Index is a held reference to a database's full-text index. A run that
+// indexes many evidence holds one from its first use to its end, so the
+// index opens once, not once per evidence. It is safe for concurrent use;
+// Release gives it back, once.
+type Index struct {
+	db *badger.DB
+	h  *handle
+}
+
+// Acquire returns a held reference to db's full-text index. With create, a
+// writable database without one gets a new index; otherwise that is
+// ErrIndexNotReady.
+func Acquire(db *badger.DB, create bool) (*Index, error) {
+	h, err := acquire(db, create)
+	if err != nil {
+		return nil, err
+	}
+	return &Index{db: db, h: h}, nil
+}
+
+// Release gives the reference back. The index closes with the last
+// reference in the process; a second Release does nothing.
+func (x *Index) Release() error {
+	if x == nil || x.h == nil {
+		return nil
+	}
+	h := x.h
+	x.h = nil
+	return h.release()
+}
+
 // IndexStats says what indexing wrote.
 type IndexStats struct {
 	Files    int // documents written
@@ -178,6 +209,18 @@ func IndexFiles(ctx context.Context, db *badger.DB, jobs []IndexedFileJob) (stat
 			err = cerr
 		}
 	}()
+	return indexFiles(ctx, db, h, jobs)
+}
+
+// IndexFiles is the package's IndexFiles on the held index.
+func (x *Index) IndexFiles(ctx context.Context, jobs []IndexedFileJob) (IndexStats, error) {
+	if len(jobs) == 0 {
+		return IndexStats{}, nil
+	}
+	return indexFiles(ctx, x.db, x.h, jobs)
+}
+
+func indexFiles(ctx context.Context, db *badger.DB, h *handle, jobs []IndexedFileJob) (stats IndexStats, err error) {
 	var first error
 	done := progress.CurrentIn(ctx, progress.Files)
 	b := h.idx.NewBatch()
@@ -257,6 +300,18 @@ func DeleteIndexedFiles(db *badger.DB, fileIDs []string) (err error) {
 			err = cerr
 		}
 	}()
+	return deleteIndexed(h, fileIDs)
+}
+
+// DeleteIndexedFiles is the package's DeleteIndexedFiles on the held index.
+func (x *Index) DeleteIndexedFiles(fileIDs []string) error {
+	if len(fileIDs) == 0 {
+		return nil
+	}
+	return deleteIndexed(x.h, fileIDs)
+}
+
+func deleteIndexed(h *handle, fileIDs []string) error {
 	const batchSize = 4096
 	for i := 0; i < len(fileIDs); i += batchSize {
 		b := h.idx.NewBatch()

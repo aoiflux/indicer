@@ -358,8 +358,13 @@ func buildCommandHandlers(cliDef cliDefinition, dbOpts cli.DBOptions, tuning pip
 				zap.Bool("simhash_enabled", *cliDef.flags.enableSimhash),
 				zap.Int("store_workers", *cliDef.flags.storeWorkers),
 				zap.Int("store_queue", *cliDef.flags.storeQueue),
+				zap.Int("store_jobs", *cliDef.flags.storeJobs),
 				zap.Int("store_workers_effective", tuning.storeWorkers),
 				zap.Int("store_queue_effective", tuning.storeQueue))
+			jobs, err := cli.StoreJobs(*cliDef.flags.storeJobs)
+			if err != nil {
+				return err
+			}
 			return cli.StoreDataWithOptions(ctx, dbOpts, *cliDef.flags.evipath, cli.StoreOptions{
 				NoIndex:         *cliDef.flags.noIndex,
 				FTS:             *cliDef.flags.enableFTS,
@@ -368,6 +373,7 @@ func buildCommandHandlers(cliDef cliDefinition, dbOpts cli.DBOptions, tuning pip
 				Simhash:         *cliDef.flags.enableSimhash,
 				Decode:          true,
 				RequireVerified: *cliDef.flags.requireVerified,
+				Jobs:            jobs,
 			})
 		},
 		cliDef.commands.restore.FullCommand(): func(ctx context.Context) error {

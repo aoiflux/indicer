@@ -61,6 +61,9 @@ type Request struct {
 	RequireVerified bool
 	// Quiet shows no progress bar.
 	Quiet bool
+	// MaxWorkers caps the chunk pass's workers; 0 leaves the configured
+	// width (store.ChunkPass).
+	MaxWorkers int
 }
 
 // Result is how an ingest ended.
@@ -81,6 +84,23 @@ type Result struct {
 	Index *structs.IndexInfo
 	// Partitions are the partition records the index pass wrote.
 	Partitions []index.Partition
+	// Bytes counts the chunk pass; zero when nothing was stored.
+	Bytes Bytes
+}
+
+// Bytes counts an ingest's chunk pass: the bytes it read, those new to the
+// database after deduplication, and what the new ones take on disk,
+// compressed and, in an encrypted database, sealed. Decoded content the
+// index pass stores is not counted.
+type Bytes struct {
+	Read, New, Written int64
+}
+
+// Add adds o to b.
+func (b *Bytes) Add(o Bytes) {
+	b.Read += o.Read
+	b.New += o.New
+	b.Written += o.Written
 }
 
 // IndexIncompleteError means the evidence was stored and committed, but its
@@ -130,8 +150,20 @@ var (
 	ingestChunks = store.IngestChunks
 )
 
-// Run ingests req.Path into db.
+// Run ingests req.Path into db, in a session of its own: the full-text index
+// and graph it opens are closed before it returns.
 func Run(ctx context.Context, db *badger.DB, req Request) (Result, error) {
+	s := NewSession(db)
+	res, err := s.Run(ctx, req)
+	return res, s.closeWith(err)
+}
+
+// Run ingests req.Path into the session's database.
+func (s *Session) Run(ctx context.Context, req Request) (Result, error) {
+	if err := s.usable(); err != nil {
+		return Result{}, err
+	}
+	db := s.db
 	if req.Quiet {
 		ctx = progress.Without(ctx)
 	}
@@ -183,7 +215,7 @@ func Run(ctx context.Context, db *badger.DB, req Request) (Result, error) {
 	if err := faultinject.Hit(faultinject.IngestAfterPending); err != nil {
 		return res, fail(db, eid, err)
 	}
-	return run(ctx, db, src, eid, name, req, res)
+	return s.run(ctx, src, eid, name, req, res)
 }
 
 // planIngest lists the steps an ingest of src will run, with the work each
@@ -351,7 +383,8 @@ func identify(ctx context.Context, db *badger.DB, src *evidence.Source) (store.C
 }
 
 // run stores and indexes the attempt eid, then commits it.
-func run(ctx context.Context, db *badger.DB, src *evidence.Source, eid []byte, name string, req Request, res Result) (Result, error) {
+func (s *Session) run(ctx context.Context, src *evidence.Source, eid []byte, name string, req Request, res Result) (Result, error) {
+	db := s.db
 	reason := indexSkipReason(src, req)
 	indexing := reason == ""
 	info := &structs.IndexInfo{State: structs.IndexSkipped, Reason: reason}
@@ -385,7 +418,7 @@ func run(ctx context.Context, db *badger.DB, src *evidence.Source, eid []byte, n
 	chunks, err := ingestChunks(ctx, store.ChunkPass{
 		DB: db, ID: eid, Source: src.Image(), Size: src.Size(),
 		Parallel: src.Parallel(), Ranges: ranges, EWF: src.EWF(), Quiet: req.Quiet,
-		RevRel: req.RevRel, Simhash: req.Simhash,
+		RevRel: req.RevRel, Simhash: req.Simhash, MaxWorkers: req.MaxWorkers,
 	})
 	if err != nil {
 		stopIndex(fmt.Errorf("storage failed: %w", err))
@@ -393,6 +426,7 @@ func run(ctx context.Context, db *badger.DB, src *evidence.Source, eid []byte, n
 		return res, fail(db, eid, err)
 	}
 
+	res.Bytes = Bytes{Read: src.Size(), New: chunks.NewBytes, Written: chunks.WrittenBytes}
 	check := ewfCheck(res.Source.EWF, chunks.EWF)
 	if check != nil {
 		res.Source.EWF = check
@@ -449,7 +483,7 @@ func run(ctx context.Context, db *badger.DB, src *evidence.Source, eid []byte, n
 			}
 		}
 		if info.State == structs.IndexComplete || info.State == structs.IndexPartial {
-			if err := features(ctx, db, eid, req); err != nil {
+			if err := s.features(ctx, eid, req); err != nil {
 				info.State, info.Reason, idxErr = structs.IndexPartial, err.Error(), err
 			}
 		} else {

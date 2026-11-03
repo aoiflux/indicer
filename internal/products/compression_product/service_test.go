@@ -1299,3 +1299,24 @@ func structToMap(v any) (map[string]any, bool) {
 	}
 	return out, true
 }
+
+func TestSizeRatio(t *testing.T) {
+	for _, c := range []struct {
+		original, archived int64
+		ratio, saved       float64
+		none               bool
+	}{
+		{original: 1000, archived: 304, ratio: 3.289, saved: 69.6},
+		{original: 1000, archived: 1021, ratio: 0.979, saved: -2.1},
+		{original: 0, archived: 10, none: true},
+		{original: 10, archived: 0, none: true},
+	} {
+		r, s := sizeRatio(c.original, c.archived)
+		switch {
+		case c.none && (r != nil || s != nil):
+			t.Errorf("sizeRatio(%d, %d) = %v, %v, want none", c.original, c.archived, r, s)
+		case !c.none && (r == nil || s == nil || *r != c.ratio || *s != c.saved):
+			t.Errorf("sizeRatio(%d, %d) = %v, %v, want %v, %v", c.original, c.archived, r, s, c.ratio, c.saved)
+		}
+	}
+}

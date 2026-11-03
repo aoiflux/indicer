@@ -1,6 +1,7 @@
 package ui
 
 import (
+	"strings"
 	"testing"
 	"time"
 
@@ -34,6 +35,18 @@ func TestFormat(t *testing.T) {
 		{fmtETA(10200 * time.Millisecond), "11s"},
 		{fmtETA(0), "1s"},
 		{fmtETA(125 * time.Second), "2m05s"},
+		{Ratio(3_040, 1_000), "3.04x"},
+		{Ratio(1_000, 1_000), "1.00x"},
+		{Ratio(980, 1_000), "0.98x"},
+		{Ratio(6_722_000, 1_000), "6722x"},
+		{Ratio(0, 1_000), "n/a"},
+		{Ratio(1_000, 0), "n/a"},
+		{Saved(1_000, 204), "79.6% saved"},
+		{Saved(1_000, 1_000), "0.0% saved"},
+		{Saved(1_000, 1_021), "grew 2.1%"},
+		{Saved(100_000, 100_001), "grew <0.1%"},
+		{Saved(1_000, 0), "100.0% saved"},
+		{Saved(0, 10), "n/a"},
 	}
 	for _, c := range cases {
 		if c.got != c.want {
@@ -64,5 +77,28 @@ func TestBar(t *testing.T) {
 	}
 	if bar(p, g, 1, 2, 0, Forensics) != "" {
 		t.Error("zero-width bar")
+	}
+}
+
+// TestFooterFields: the footer names what was deduplicated, and once the
+// command wrote new bytes, how much smaller they are on disk; a failed
+// command claims neither.
+func TestFooterFields(t *testing.T) {
+	tallies := []progress.MeterView{
+		{Name: "read", Unit: progress.Bytes, Value: 4 << 30},
+		{Name: "new", Unit: progress.Bytes, Value: 1 << 30},
+		{Name: "written", Unit: progress.Bytes, Value: 256 << 20},
+	}
+	got := strings.Join(footerFields(progress.Snapshot{Tallies: tallies, Outcome: progress.OK}), ", ")
+	if want := "read 4.00 GiB, new 1.00 GiB, written 256 MiB, deduplicated 3.00 GiB (75%), compressed 4.00x"; got != want {
+		t.Errorf("footer %q, want %q", got, want)
+	}
+	got = strings.Join(footerFields(progress.Snapshot{Tallies: tallies[:2], Outcome: progress.OK}), ", ")
+	if want := "read 4.00 GiB, new 1.00 GiB, deduplicated 3.00 GiB (75%)"; got != want {
+		t.Errorf("footer without written %q, want %q", got, want)
+	}
+	got = strings.Join(footerFields(progress.Snapshot{Tallies: tallies, Outcome: progress.Failed}), ", ")
+	if strings.Contains(got, "deduplicated") || strings.Contains(got, "compressed") {
+		t.Errorf("failed command's footer %q claims savings", got)
 	}
 }

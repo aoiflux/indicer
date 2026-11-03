@@ -7,10 +7,8 @@ import (
 	"fmt"
 
 	"indicer/internal/progress"
-	"indicer/lib/dbio"
 	"indicer/lib/enrichment"
 	"indicer/lib/fts"
-	duesgraph "indicer/lib/graph"
 	"indicer/lib/index"
 	"indicer/lib/structs"
 
@@ -20,18 +18,22 @@ import (
 // features runs the full-text and graph features over the committed
 // evidence's index. They read the stored records, so they run once, after the
 // commit, and an alias never runs them twice.
-func features(ctx context.Context, db *badger.DB, eid []byte, req Request) error {
+func (s *Session) features(ctx context.Context, eid []byte, req Request) error {
 	var errs []error
 	if req.FTS {
 		ph := progress.Start(ctx, "full-text", progress.Files, progress.Unknown)
 		var jobs []fts.IndexedFileJob
-		err := index.ForEachIndexed(ctx, db, eid, func(key []byte, rec structs.IndexedFile) error {
+		err := index.ForEachIndexed(ctx, s.db, eid, func(key []byte, rec structs.IndexedFile) error {
 			jobs = append(jobs, fts.IndexedFileJob{FileID: string(key), Name: rec.Path})
 			return nil
 		})
 		ph.SetTotal(int64(len(jobs)))
 		if err == nil && len(jobs) > 0 {
-			_, err = fts.IndexFiles(progress.Within(ctx, ph), db, jobs)
+			// Only an evidence with files to index makes the index.
+			var x *fts.Index
+			if x, err = s.textIndex(true); err == nil {
+				_, err = x.IndexFiles(progress.Within(ctx, ph), jobs)
+			}
 		}
 		var unreadable *fts.TextError
 		if errors.As(err, &unreadable) {
@@ -46,7 +48,7 @@ func features(ctx context.Context, db *badger.DB, eid []byte, req Request) error
 		}
 	}
 	if req.Enrich {
-		if err := enrich(ctx, db, eid); err != nil {
+		if err := s.enrich(ctx, eid); err != nil {
 			errs = append(errs, fmt.Errorf("graph enrichment: %w", err))
 		}
 	}
@@ -55,45 +57,32 @@ func features(ctx context.Context, db *badger.DB, eid []byte, req Request) error
 
 // enrich writes the evidence's hierarchy to the graph. The evidence node is
 // named from the record, which carries the path it was stored from.
-func enrich(ctx context.Context, db *badger.DB, eid []byte) (err error) {
-	repo, err := enrichment.OpenGrapheneRepository(dbio.KVDir(db))
+func (s *Session) enrich(ctx context.Context, eid []byte) error {
+	repo, err := s.graphStore(true)
 	if err != nil {
 		return err
 	}
-	svc := enrichment.NewService(db, repo)
-	defer func() {
-		if cerr := svc.Close(); err == nil {
-			err = cerr
-		}
-	}()
-	_, err = svc.EnrichEvidenceIndex(ctx, eid)
+	// The service is not closed: the graph is the session's, until Close.
+	_, err = enrichment.NewService(s.db, repo).EnrichEvidenceIndex(ctx, eid)
 	return err
 }
 
-// deleteGraphIndex removes what the graph holds of an evidence's index — its
+// DeleteGraphIndex removes what the graph holds of an evidence's index — its
 // partitions, indexed files, file nodes and micro-artefacts — so a rebuilt
-// index does not sit beside the old one there. A database without a graph is
+// index does not sit beside the old one there, and the repair command can
+// hide the index of an evidence it quarantines. A database without a graph is
 // left without one. keepEvidence keeps the evidence's own node.
-func deleteGraphIndex(db *badger.DB, eid []byte, keepEvidence bool) (err error) {
-	root := dbio.KVDir(db)
-	if !duesgraph.Exists(root) {
-		return nil
-	}
-	repo, err := enrichment.OpenGrapheneRepository(root)
-	if err != nil {
+func (s *Session) DeleteGraphIndex(eid []byte, keepEvidence bool) error {
+	repo, err := s.graphStore(false)
+	if err != nil || repo == nil {
 		return err
 	}
-	defer func() {
-		if cerr := repo.Close(); err == nil {
-			err = cerr
-		}
-	}()
 	_, err = repo.DeleteEvidenceIndex(base64.StdEncoding.EncodeToString(eid), keepEvidence)
 	return err
 }
 
-// DeleteGraphIndex is deleteGraphIndex for the repair command, which hides
-// the index of an evidence it quarantines.
+// DeleteGraphIndex is Session.DeleteGraphIndex in a session of its own.
 func DeleteGraphIndex(db *badger.DB, eid []byte, keepEvidence bool) error {
-	return deleteGraphIndex(db, eid, keepEvidence)
+	s := NewSession(db)
+	return s.closeWith(s.DeleteGraphIndex(eid, keepEvidence))
 }

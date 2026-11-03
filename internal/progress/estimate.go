@@ -99,10 +99,13 @@ type Estimate struct {
 	InWork    bool
 	// Scope is the list of steps measured: the top level, or one item's.
 	Scope []View
-	// In Items mode, Group counts the items, Item is the running one (nil
-	// between two), and ItemFraction is how much of its byte work is done.
+	// In Items mode, Group counts the items, Item is the running one the row
+	// follows, the one started last (nil between two), and ItemFraction is
+	// how much of its byte work is done. Others are the other items running
+	// beside it, when a folder stores several at once.
 	Group, Item  *View
 	ItemFraction float64
+	Others       []*View
 	// Rate is Focus's units per second.
 	Rate float64
 	// ETA is the time left: for the rest of the command when Whole, for
@@ -204,8 +207,8 @@ func (t *Tracker) sample(vs []View, now time.Time) {
 func (t *Tracker) scope(vs []View, key uint64, now time.Time, finished bool) Estimate {
 	for i := range vs {
 		if g := &vs[i]; g.State == Running && g.Total > 0 {
-			if item, ok := itemOf(g); ok {
-				return t.items(vs, g, item, now, finished)
+			if item, running, ok := itemsOf(g); ok {
+				return t.items(vs, g, item, running, now, finished)
 			}
 		}
 	}
@@ -237,8 +240,8 @@ func (t *Tracker) scope(vs []View, key uint64, now time.Time, finished bool) Est
 }
 
 // items measures g, one of scopeOf, a phase that counts items, with item
-// running in it.
-func (t *Tracker) items(scopeOf []View, g, item *View, now time.Time, finished bool) Estimate {
+// running in it, among running.
+func (t *Tracker) items(scopeOf []View, g, item *View, running []*View, now time.Time, finished bool) Estimate {
 	t.path = append(t.path, g.Name)
 	if item != nil {
 		t.path = append(t.path, item.Name)
@@ -255,15 +258,22 @@ func (t *Tracker) items(scopeOf []View, g, item *View, now time.Time, finished b
 		e.Focus, e.Rate, e.Growing = sub.Focus, sub.Rate, sub.Growing
 		e.ItemFraction = workFraction(item.Kids)
 	}
-	f := (float64(e.Done) + e.ItemFraction) / float64(g.Total)
+	// Every running item's share counts: several run at once when a folder
+	// stores in parallel.
+	var share, weighed float64
+	for _, k := range running {
+		kf := workFraction(k.Kids)
+		share += kf
+		weighed += kf * float64(k.Weight)
+		if k != item {
+			e.Others = append(e.Others, k)
+		}
+	}
+	f := (float64(e.Done) + share) / float64(g.Total)
 	if g.Weight > 0 {
 		// Items weighed by size: a large one holds the bar as long as it
 		// takes, and small ones move it little.
-		cur := 0.0
-		if item != nil {
-			cur = e.ItemFraction * float64(item.Weight)
-		}
-		f = (float64(min(g.WeightDone, g.Weight)) + cur) / float64(g.Weight)
+		f = (float64(min(g.WeightDone, g.Weight)) + weighed) / float64(g.Weight)
 	}
 	e.Fraction = t.show(shownKey{ModeItems, g.ID}, f, finished)
 	if e.Fraction >= 0.01 && e.Elapsed >= rateSeed {
@@ -366,24 +376,40 @@ func (t *Tracker) growing(v *View) bool {
 	return p != nil && p.total > 0 && v.Total > p.total
 }
 
-// itemOf finds g's running item when g counts items, whose phases are
-// groups with no unit of their own: the last running kid, or nil between
-// two. Scanning back from the end stops at once, so a long folder costs
-// little.
-func itemOf(g *View) (*View, bool) {
+// itemsOf finds g's running items when g counts items, whose phases are
+// groups with no unit of their own: latest is the running kid started last,
+// or nil between two, and running is every running kid. ok is false when g
+// does not count items. A store of one item at a time has at most one
+// running, at the end: the scan back stops there, so a long folder costs
+// little; items run at once start one after another, so the scan stops
+// after the first long run of ended items.
+func itemsOf(g *View) (latest *View, running []*View, ok bool) {
+	ended := 0
 	for i := len(g.Kids) - 1; i >= 0; i-- {
 		k := &g.Kids[i]
 		switch {
 		case k.Unit != None:
-			return nil, false
+			return latest, running, ok
 		case k.State == Running:
-			return k, true
+			ok, ended = true, 0
+			running = append(running, k)
+			if latest == nil {
+				latest = k
+			}
 		case k.State.Ended():
-			return nil, true
+			ok = true
+			if ended++; ended > endedScan {
+				return latest, running, ok
+			}
 		}
 	}
-	return nil, false
+	return latest, running, ok
 }
+
+// endedScan is how many ended items in a row itemsOf passes before it
+// stops looking for running ones: more than a parallel store keeps between
+// its oldest running item and its newest.
+const endedScan = 4096
 
 // weigh is a step's part in the Work measure: its weight (its total, or
 // the total a pending step expects) and its credit (what it has done). ok

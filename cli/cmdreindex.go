@@ -89,6 +89,10 @@ func reindexEvidence(ctx context.Context, db *badger.DB, ro ReindexOptions, w io
 		fmt.Fprintln(w, "Nothing to reindex.")
 		return sum, nil
 	}
+	// One session for the whole reindex: the full-text index and the graph
+	// open once, not once per evidence.
+	sess := ingest.NewSession(db)
+	defer closeSession(sess, &err)
 	var failures []string
 	var firstErr error
 	all := progress.Start(ctx, "evidence", progress.Evidence, int64(len(targets)))
@@ -108,7 +112,7 @@ func reindexEvidence(ctx context.Context, db *badger.DB, ro ReindexOptions, w io
 		fmt.Fprintf(w, "\nReindexing %s (%s)\n", termsafe.Line(t.name), id)
 		one := progress.Start(progress.Within(ctx, all), t.name, progress.None, 0)
 		one.Weigh(itemWeight(t.size))
-		res, err := ingest.Reindex(progress.Within(ctx, one), db, t.id, ingest.ReindexOptions{Source: ro.Source, FTS: ro.FTS, Enrich: ro.Enrich})
+		res, err := sess.Reindex(progress.Within(ctx, one), t.id, ingest.ReindexOptions{Source: ro.Source, FTS: ro.FTS, Enrich: ro.Enrich})
 		one.Done(err)
 		all.Add(1)
 		if res.Index != nil {

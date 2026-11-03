@@ -205,10 +205,9 @@ func printStats(s *DBStats) {
 	if inc := s.TotalFiles - s.CompletedFiles; inc > 0 {
 		statRow("Incomplete", humanize.Comma(inc), warn)
 	}
-	statRow("Total logical size", humanize.Bytes(uint64(s.TotalLogicalSize)), val)
+	statRow("Total logical size", ui.Bytes(s.TotalLogicalSize), val)
 	if s.CompletedFiles > 0 {
-		avg := uint64(s.TotalLogicalSize) / uint64(s.CompletedFiles)
-		statRow("Avg file size", humanize.Bytes(avg), val)
+		statRow("Avg file size", ui.Bytes(s.TotalLogicalSize/s.CompletedFiles), val)
 	}
 
 	// ── CHUNKS ─────────────────────────────────────────────────────────────
@@ -223,10 +222,9 @@ func printStats(s *DBStats) {
 		statRow("Avg chunks per file", fmt.Sprintf("%.1f", avgChunks), val)
 	}
 	if s.TotalChunkRefs > 0 && s.TotalLogicalSize > 0 {
-		avgSize := uint64(s.TotalLogicalSize) / uint64(s.TotalChunkRefs)
-		statRow("Avg chunk size", humanize.Bytes(avgSize), val)
+		statRow("Avg chunk size", ui.Bytes(s.TotalLogicalSize/s.TotalChunkRefs), val)
 	}
-	statRow("Chunk size", humanize.IBytes(uint64(s.ChunkSize)), dim)
+	statRow("Chunk size", ui.Bytes(s.ChunkSize), dim)
 
 	if s.SharedChunks > 0 {
 		statRow("Chunks shared by objects", humanize.Comma(s.SharedChunks), good)
@@ -281,14 +279,14 @@ func printStats(s *DBStats) {
 	sectionHdr("  STORAGE")
 	console.Println("  ", dim(sep))
 
-	statRow("Logical size", humanize.Bytes(uint64(s.TotalLogicalSize)), val)
-	statRow("On-disk size (blobs)", humanize.Bytes(uint64(s.OnDiskBytes)), val)
+	statRow("Logical size", ui.Bytes(s.TotalLogicalSize), val)
+	statRow("On-disk size (blobs)", ui.Bytes(s.OnDiskBytes), val)
 
 	if s.TotalLogicalSize > 0 && s.OnDiskBytes > 0 {
 		if s.OnDiskBytes < s.TotalLogicalSize {
 			saved := s.TotalLogicalSize - s.OnDiskBytes
 			pct := float64(saved) / float64(s.TotalLogicalSize) * 100
-			statRow("Space saved", fmt.Sprintf("%s (%.1f%%)", humanize.Bytes(uint64(saved)), pct), good)
+			statRow("Space saved", fmt.Sprintf("%s (%.1f%%)", ui.Bytes(saved), pct), good)
 		} else {
 			ratio := float64(s.OnDiskBytes) / float64(s.TotalLogicalSize)
 			statRow("Storage overhead", fmt.Sprintf("%.2fx", ratio), dim)

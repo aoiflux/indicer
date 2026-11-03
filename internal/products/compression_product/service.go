@@ -13,6 +13,7 @@ import (
 	"errors"
 	"io"
 	"io/fs"
+	"math"
 	"os"
 	"path/filepath"
 	"strings"
@@ -194,6 +195,9 @@ type fileRes struct {
 	CompressedBytes int    `json:"compressed_bytes"`
 	// Format is what decompress_file found: "zstd" or "duesarc".
 	Format string `json:"format,omitempty"`
+	// Ratio and SavedPercent compare the two sizes (sizeRatio).
+	Ratio        *float64 `json:"ratio,omitempty"`
+	SavedPercent *float64 `json:"saved_percent,omitempty"`
 }
 
 type capabilitiesRes struct {
@@ -235,6 +239,23 @@ type createArchiveRes struct {
 	// not archived; Skipped names the first of them.
 	SkippedInputs int      `json:"skipped_inputs"`
 	Skipped       []string `json:"skipped,omitempty"`
+	// Ratio and SavedPercent compare InputBytes with ArchiveBytes
+	// (sizeRatio).
+	Ratio        *float64 `json:"ratio,omitempty"`
+	SavedPercent *float64 `json:"saved_percent,omitempty"`
+}
+
+// sizeRatio compares an original size with its archived size: how many
+// times smaller the archive is (3 decimals), and the share of the original
+// it saves, in percent (1 decimal, negative when the archive is larger).
+// Both are nil unless both sizes are positive.
+func sizeRatio(original, archived int64) (ratio, savedPercent *float64) {
+	if original <= 0 || archived <= 0 {
+		return nil, nil
+	}
+	r := math.Round(float64(original)/float64(archived)*1000) / 1000
+	s := math.Round((1-float64(archived)/float64(original))*1000) / 10
+	return &r, &s
 }
 
 type extractArchiveReq struct {

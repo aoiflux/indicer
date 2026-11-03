@@ -66,6 +66,7 @@ func (d *Dispatcher) DispatchJSON(ctx context.Context, input string) string {
 	}
 
 	site := safe.Site{Component: "api/" + req.Product, Op: req.Operation}
+	start := time.Now()
 	out, err := safe.Value(site, func() (string, error) {
 		result, runErr := service.Handle(ctx, req.Operation, req.Params)
 		if runErr != nil {
@@ -73,12 +74,12 @@ func (d *Dispatcher) DispatchJSON(ctx context.Context, input string) string {
 			if ctx.Err() != nil && runErr.Code != coreerr.CodeCanceled {
 				runErr = coreerr.FromContext(ctx)
 			}
-			return jsonbridge.EncodeError(runErr), nil
+			return jsonbridge.EncodeErrorAfter(runErr, time.Since(start)), nil
 		}
-		return jsonbridge.EncodeOK(result), nil
+		return jsonbridge.EncodeOKAfter(result, time.Since(start)), nil
 	})
 	if err != nil {
-		return jsonbridge.EncodeError(coreerr.FromPanic(err))
+		return jsonbridge.EncodeErrorAfter(coreerr.FromPanic(err), time.Since(start))
 	}
 	return out
 }

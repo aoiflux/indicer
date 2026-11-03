@@ -45,6 +45,17 @@ var ErrSourceMismatch = errors.New("the source does not hold the evidence's cont
 // first ingest builds (I7). An index that is not complete afterwards is an
 // IndexIncompleteError.
 func Reindex(ctx context.Context, db *badger.DB, eid []byte, opts ReindexOptions) (Result, error) {
+	s := NewSession(db)
+	res, err := s.Reindex(ctx, eid, opts)
+	return res, s.closeWith(err)
+}
+
+// Reindex is the package's Reindex on the session's database.
+func (s *Session) Reindex(ctx context.Context, eid []byte, opts ReindexOptions) (Result, error) {
+	if err := s.usable(); err != nil {
+		return Result{}, err
+	}
+	db := s.db
 	e, err := dbio.GetEvidenceFile(eid, db)
 	if err != nil {
 		return Result{}, err
@@ -89,7 +100,7 @@ func Reindex(ctx context.Context, db *badger.DB, eid []byte, opts ReindexOptions
 
 	// The previous index goes first, full-text documents with it, so records
 	// a changed parser no longer finds do not linger.
-	if err := deletePrevious(ctx, db, eid); err != nil {
+	if err := s.deletePrevious(ctx, eid); err != nil {
 		return res, err
 	}
 
@@ -113,7 +124,7 @@ func Reindex(ctx context.Context, db *badger.DB, eid []byte, opts ReindexOptions
 		}
 	}
 	if info.State == structs.IndexComplete || info.State == structs.IndexPartial {
-		if err := features(ctx, db, eid, req); err != nil {
+		if err := s.features(ctx, eid, req); err != nil {
 			info.State, info.Reason, idxErr = structs.IndexPartial, err.Error(), err
 		}
 	} else {
@@ -181,20 +192,27 @@ func (s storedImage) Close() error                            { return nil }
 // deletePrevious removes an evidence's previous index: its records, their
 // full-text documents and its graph nodes, which a rebuilt index would
 // otherwise sit beside.
-func deletePrevious(ctx context.Context, db *badger.DB, eid []byte) (err error) {
+func (s *Session) deletePrevious(ctx context.Context, eid []byte) (err error) {
 	ph := progress.Start(ctx, "delete old index", progress.Files, progress.Unknown)
 	defer func() { ph.Done(err) }()
 	var docs []string
-	if err := store.DeleteEvidenceIndex(ctx, db, eid, func(key []byte) {
+	if err := store.DeleteEvidenceIndex(ctx, s.db, eid, func(key []byte) {
 		docs = append(docs, string(key))
 		ph.Add(1)
 	}); err != nil {
 		return fmt.Errorf("delete the previous index: %w", err)
 	}
-	if err := fts.DeleteIndexedFiles(db, docs); err != nil {
-		return fmt.Errorf("delete the previous full-text documents: %w", err)
+	if len(docs) > 0 {
+		// A database with no full-text index has no documents to delete.
+		x, err := s.textIndex(false)
+		if err == nil {
+			err = x.DeleteIndexedFiles(docs)
+		}
+		if err != nil && !errors.Is(err, fts.ErrIndexNotReady) {
+			return fmt.Errorf("delete the previous full-text documents: %w", err)
+		}
 	}
-	if err := deleteGraphIndex(db, eid, true); err != nil {
+	if err := s.DeleteGraphIndex(eid, true); err != nil {
 		return fmt.Errorf("delete the previous index from the graph: %w", err)
 	}
 	return nil

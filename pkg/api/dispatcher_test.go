@@ -135,3 +135,35 @@ func TestDispatchRejectsNegativeTimeout(t *testing.T) {
 		t.Fatalf("got %+v, want invalid_request", env)
 	}
 }
+
+// TestDurationOfOperations: a response says how long its operation ran,
+// whether it succeeded or failed; a request refused before running has no
+// duration.
+func TestDurationOfOperations(t *testing.T) {
+	d := fakeDispatcher(func(_ context.Context, op string) (any, *coreerr.Error) {
+		time.Sleep(20 * time.Millisecond)
+		if op == "fail" {
+			return nil, coreerr.New(coreerr.CodeInvalidRequest, "no")
+		}
+		return map[string]int{"n": 1}, nil
+	})
+	duration := func(out string) (float64, bool) {
+		var env map[string]any
+		if err := json.Unmarshal([]byte(out), &env); err != nil {
+			t.Fatal(err)
+		}
+		ms, ok := env["duration_ms"].(float64)
+		return ms, ok
+	}
+	for _, op := range []string{"ok", "fail"} {
+		out := d.DispatchJSON(t.Context(), `{"version":"v1","product":"fake","operation":"`+op+`"}`)
+		if ms, ok := duration(out); !ok || ms < 20 {
+			t.Errorf("%s: duration_ms %v (present %v), want at least 20 in %s", op, ms, ok, out)
+		}
+	}
+	for _, req := range []string{`{`, `{"version":"v1","product":"none","operation":"x"}`} {
+		if _, ok := duration(d.DispatchJSON(t.Context(), req)); ok {
+			t.Errorf("refused request %s has a duration", req)
+		}
+	}
+}

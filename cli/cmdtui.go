@@ -19,6 +19,7 @@ import (
 	"indicer/lib/dbio"
 	"indicer/lib/dbopen"
 	duesgraph "indicer/lib/graph"
+	"indicer/lib/ingest"
 	"indicer/lib/microartefact"
 	"indicer/lib/near"
 	"indicer/lib/search"
@@ -190,7 +191,7 @@ func outcome(report string, err error) (tui.Outcome, error) {
 
 // store stores a file or folder, as `dues store` does with the options
 // the store screen gives.
-func (a *tuiActions) store(ctx context.Context, path string, o tui.StoreOptions) (tui.Outcome, error) {
+func (a *tuiActions) store(ctx context.Context, path string, o tui.StoreOptions) (_ tui.Outcome, err error) {
 	fi, err := os.Stat(path)
 	if err != nil {
 		return tui.Outcome{}, err
@@ -205,11 +206,15 @@ func (a *tuiActions) store(ctx context.Context, path string, o tui.StoreOptions)
 	}
 	var report bytes.Buffer
 	a.stored.Store(true)
+	// The session lasts one store job, not the TUI: between jobs the graph
+	// is free for the read-only views graphGate lets in.
+	sess := ingest.NewSession(a.h.DB)
 	if fi.IsDir() {
-		err = storeFolder(ctx, &report, a.h.DB, path, sopts)
+		err = storeFolder(ctx, &report, sess, path, sopts)
 	} else {
-		err = storeFile(ctx, &report, a.h.DB, path, sopts)
+		_, err = storeFile(ctx, &report, sess, path, sopts)
 	}
+	closeSession(sess, &err)
 	return outcome(report.String(), err)
 }
 

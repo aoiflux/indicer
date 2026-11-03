@@ -255,3 +255,45 @@ func TestIndexFilesCountsUnreadableText(t *testing.T) {
 		t.Fatal("a file whose text could not be read is not found by its name")
 	}
 }
+
+// openElsewhere opens the index at root as another holder would, waiting
+// briefly for its file lock.
+func openElsewhere(root string) (bleve.Index, error) {
+	return bleve.OpenUsing(util.FTSPath(root), map[string]any{"bolt_timeout": "200ms"})
+}
+
+// TestHeldIndexStaysOpen: an Index a run holds keeps the full-text index
+// open across the run's evidence, and across the package's one-shot calls,
+// which used to open and close it once each; Release closes it, once.
+func TestHeldIndexStaysOpen(t *testing.T) {
+	d, eid := storeFixture(t, "fat/fat16", true)
+	var jobs []fts.IndexedFileJob
+	for _, j := range jobsOf(t, d.DB, eid) {
+		jobs = append(jobs, j)
+	}
+	x, err := fts.Acquire(d.DB, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := x.IndexFiles(t.Context(), jobs); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := fts.IndexFiles(t.Context(), d.DB, jobs); err != nil {
+		t.Fatal(err)
+	}
+	if other, err := openElsewhere(d.Root); err == nil {
+		other.Close()
+		t.Fatal("the index was closed while a run held it")
+	}
+	if err := x.Release(); err != nil {
+		t.Fatal(err)
+	}
+	if err := x.Release(); err != nil {
+		t.Fatalf("second release: %v", err)
+	}
+	other, err := openElsewhere(d.Root)
+	if err != nil {
+		t.Fatalf("the index is still open after Release: %v", err)
+	}
+	other.Close()
+}

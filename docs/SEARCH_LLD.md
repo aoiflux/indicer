@@ -389,6 +389,10 @@ document when it writes a file again, and `DeleteIndexedFiles` removes both.
   process holds is an error, not a hang.
 - Only `IndexFiles`, on a writable database, creates a missing index. Every
   other caller gets `ErrIndexNotReady`. A search never builds an index.
+- `Acquire(db, create)` returns an `Index`, a reference held until
+  `Release`. Its `IndexFiles` and `DeleteIndexedFiles` work on the held
+  index. An ingest session holds one, so a folder store or a reindex opens
+  the index once instead of once per evidence (STORE_LLD, Sessions).
 
 ### Queries
 

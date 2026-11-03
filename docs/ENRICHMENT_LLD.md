@@ -330,6 +330,11 @@ partitions, their indexed files, and one FILE node for each.
 | `dues reindex` of evidence stored with `--enrich` | Same | Same |
 | `dues micro extract` | Same | Once per evidence whose files are not in the graph |
 
+Store and reindex open the graph once per run, through their ingest session
+(STORE_LLD, Sessions), and keep it open until the run ends. Each evidence
+then reuses the handle and its identity cache; before, each evidence opened
+the graph and replayed its whole log.
+
 `EnrichEvidenceIndex` refuses evidence that is not completed
 (`cnst.ErrIncompleteFile`). `EnrichAll` reads each evidence in transactions of
 its own, not under one held for the whole run.

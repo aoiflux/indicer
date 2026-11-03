@@ -81,6 +81,12 @@ A command that cannot take the lock fails at once with
 Inside one process, the server and the TUI run their own work side by side. A
 reset in the TUI is refused while other jobs run.
 
+`dues store <folder> --store-jobs N` stores up to N evidence of the folder at
+once (default 1; 0 picks a number for the machine). It suits folders of many
+small files: a large image already keeps the machine busy, so it is stored
+alone. Copies of one content are stored one after another, and the report
+reads as a store of one at a time (STORE_LLD, Parallel folder stores).
+
 ## After a crash or a kill
 
 DUES makes chunks durable before it records them, and records an ingest's
@@ -235,7 +241,7 @@ keys.
 | `color`, `plain`, `ci`, `no-fun`, `theme`, `taskbar` | top level |
 | `log-dir`, `temp-dir`, `debug` | top level |
 | `dbpath`, `password-file`, `preset`, `compress-level`, `low` | top level |
-| `pipeline`, `hash-strategy`, `io-engine`, `io-uring-queue-depth`, `store-workers`, `store-queue` | `store` |
+| `pipeline`, `hash-strategy`, `io-engine`, `io-uring-queue-depth`, `store-workers`, `store-queue`, `store-jobs` | `store` |
 | `restore-workers`, `restore-queue`, `restore-buffer-mb` | `restore` |
 | `listen`, `token-file`, `cors-origin` | `server` |
 | `log-dir`, `temp-dir` | `compression.json`, top level |

@@ -88,7 +88,7 @@ func addReverseRelations(ctx context.Context, h *dbopen.Handle) (*revrelSection,
 
 // quarantineContainerIndexes hides the indexes ingests before W6 built over
 // the raw bytes of EWF and VHD containers (ING-7).
-func quarantineContainerIndexes(ctx context.Context, h *dbopen.Handle) (*[]quarantinedIndex, error) {
+func quarantineContainerIndexes(ctx context.Context, h *dbopen.Handle) (_ *[]quarantinedIndex, err error) {
 	q, err := store.QuarantineRawContainerIndexes(ctx, h.DB)
 	if err != nil {
 		return nil, err
@@ -102,11 +102,14 @@ func quarantineContainerIndexes(ctx context.Context, h *dbopen.Handle) (*[]quara
 		return &rows, nil
 	}
 	console.Errorf("Quarantined %d index(es) built over raw container bytes; store each evidence again to index its decoded disk:\n", len(q))
+	// One session: the graph opens once for every quarantined index.
+	sess := ingest.NewSession(h.DB)
+	defer closeSession(sess, &err)
 	for _, e := range q {
 		console.Errorf("  %s (%s)\n", termsafe.Line(e.Name), e.Format)
 		// The graph hides the index too, as list does: its partitions and
 		// files go, the evidence node stays.
-		if err := ingest.DeleteGraphIndex(h.DB, e.ID, true); err != nil {
+		if err := sess.DeleteGraphIndex(e.ID, true); err != nil {
 			return &rows, fmt.Errorf("remove the quarantined index of %s from the graph: %w", termsafe.Line(e.Name), err)
 		}
 	}

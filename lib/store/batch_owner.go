@@ -151,7 +151,7 @@ func ingestChunksBatchOwner(parentCtx context.Context, p ChunkPass) (res ChunkRe
 			h := shape.chunkHash()
 			for c := range feed.chunks() {
 				n := int64(len(c.data))
-				isNew, werr := batchOwnerHashWorker(ctx, c.off, c.data, h, p.DB, containerMgr, seenChunks, taskCh, simhashWriter)
+				isNew, written, werr := batchOwnerHashWorker(ctx, c.off, c.data, h, p.DB, containerMgr, seenChunks, taskCh, simhashWriter)
 				c.release()
 				if werr != nil {
 					mu.Lock()
@@ -163,7 +163,7 @@ func ingestChunksBatchOwner(parentCtx context.Context, p ChunkPass) (res ChunkRe
 				chunks.Add(1)
 				meter.fed(n)
 				if isNew {
-					meter.stored(n)
+					meter.stored(n, written)
 				}
 			}
 		}()
@@ -218,7 +218,8 @@ func runBatchOwnerWriter(
 
 // batchOwnerHashWorker hashes the chunk data at idx, stores it unless this
 // pass or the database already did, and hands the result to the writer. h is
-// the worker's own chunk hasher. isNew is true when it stored the chunk.
+// the worker's own chunk hasher. isNew is true when it stored the chunk, and
+// written is then the bytes it wrote for it.
 func batchOwnerHashWorker(
 	ctx context.Context,
 	idx int64,
@@ -229,7 +230,7 @@ func batchOwnerHashWorker(
 	seenChunks *shardedChunkSet,
 	taskCh chan<- chunkTask,
 	simhashWriter *simhashAsyncWriter,
-) (isNew bool, err error) {
+) (isNew bool, written int64, err error) {
 	h.Reset()
 	h.Write(chunkBytes)
 	chash := h.Sum(nil)
@@ -241,16 +242,16 @@ func batchOwnerHashWorker(
 	var cmeta []byte
 	if !seenChunks.loadOrStore(chash) {
 		ckey := util.AppendToBytesSlice(cnst.ChonkNamespace, chash)
-		if cmeta, err = materializeChunkMeta(ckey, chunkBytes, db, containerMgr); err != nil {
-			return false, err
+		if cmeta, written, err = materializeChunkMeta(ckey, chunkBytes, db, containerMgr); err != nil {
+			return false, 0, err
 		}
 	}
 
 	select {
 	case taskCh <- chunkTask{index: idx, chash: chash, cmeta: cmeta, size: int64(len(chunkBytes))}:
-		return cmeta != nil, nil
+		return cmeta != nil, written, nil
 	case <-ctx.Done():
-		return false, context.Canceled
+		return false, 0, context.Canceled
 	}
 }
 

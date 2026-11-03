@@ -509,3 +509,41 @@ func TestUpdateAllocatesNothing(t *testing.T) {
 		t.Errorf("Update allocates %v times a frame", n)
 	}
 }
+
+// Items stored at once: every running item's share counts, the row follows
+// the one started last, and the others are named, whichever ends first.
+func TestEstimateItemsAtOnce(t *testing.T) {
+	ctx, r, c := newTest(t)
+	est := estimator(r, c)
+	all := Start(ctx, "evidence", Evidence, 2)
+	all.Weigh(1000)
+	item := func(name string, weight, size int64) (*Phase, *Phase) {
+		one := Start(Within(ctx, all), name, None, 0)
+		one.Weigh(weight)
+		ictx := Within(ctx, one)
+		PlanSteps(ictx, Step{"store", Bytes, size})
+		return one, Start(ictx, "store", Bytes, size)
+	}
+	a, sa := item("a", 600, 100)
+	b, sb := item("b", 400, 100)
+	c.advance(time.Second)
+	sa.Add(50)
+	sb.Add(25)
+	e := est()
+	if e.Mode != ModeItems || e.Item.Name != "b" || len(e.Others) != 1 || e.Others[0].Name != "a" || !near(e.Fraction, 0.4) {
+		t.Fatalf("two items at once: item %v, others %v, fraction %v", e.Item, e.Others, e.Fraction)
+	}
+	// b, the later, ends first: a still counts and is now the one followed.
+	sb.Add(75)
+	sb.Done(nil)
+	b.Done(nil)
+	all.Add(1)
+	e = est()
+	if e.Item == nil || e.Item.Name != "a" || len(e.Others) != 0 || !near(e.Fraction, 0.7) {
+		t.Fatalf("after b ended: item %v, others %v, fraction %v", e.Item, e.Others, e.Fraction)
+	}
+	sa.Add(50)
+	sa.Done(nil)
+	a.Done(nil)
+	all.Add(1)
+}

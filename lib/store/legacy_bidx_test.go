@@ -34,7 +34,7 @@ func TestReingestFindsChunksInLegacyBlockIndex(t *testing.T) {
 			prev := materializeChunk
 			t.Cleanup(func() { materializeChunk = prev })
 			var calls atomic.Int64
-			materializeChunk = func(key, data []byte, db *badger.DB, c *fio.ContainerManager) ([]byte, error) {
+			materializeChunk = func(key, data []byte, db *badger.DB, c *fio.ContainerManager) ([]byte, int64, error) {
 				calls.Add(1)
 				return prev(key, data, db, c)
 			}

@@ -178,11 +178,12 @@ func plainBeat(v progress.View, rate float64, now time.Time) string {
 	return fmtAmount(v.Done, v.Unit) + ", " + fmtRate(rate, v.Unit) + ", " + running
 }
 
-// footerFields are the command's totals: each tally, and "deduplicated"
-// when the command read bytes and only some of them were new.
+// footerFields are the command's totals: each tally, "deduplicated" when
+// the command read bytes and only some of them were new, and "compressed"
+// when it wrote new bytes.
 func footerFields(s progress.Snapshot) []string {
 	var fields []string
-	var read, fresh int64
+	var read, fresh, written int64
 	var haveRead, haveNew bool
 	for _, m := range s.Tallies {
 		fields = append(fields, m.Name+" "+fmtAmount(m.Value, m.Unit))
@@ -191,12 +192,17 @@ func footerFields(s progress.Snapshot) []string {
 			read, haveRead = m.Value, true
 		case m.Name == "new" && m.Unit == progress.Bytes:
 			fresh, haveNew = m.Value, true
+		case m.Name == "written" && m.Unit == progress.Bytes:
+			written = m.Value
 		}
 	}
 	ok := s.Outcome == progress.OK || s.Outcome == progress.Warning
 	if ok && haveRead && haveNew && read > 0 && fresh <= read {
 		dup := read - fresh
 		fields = append(fields, "deduplicated "+fmtBytes(dup)+" ("+itoa(int(dup*100/read))+"%)")
+	}
+	if ok && fresh > 0 && written > 0 {
+		fields = append(fields, "compressed "+Ratio(fresh, written))
 	}
 	return fields
 }

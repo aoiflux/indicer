@@ -396,9 +396,34 @@ reason).
 
 ## Ingest (`lib/ingest.Run`)
 
-`ingest.Run(ctx, db, Request)` stores one evidence. Its callers are
-`cli.storeFile` (`dues store` and the TUI), the server's uploads (`finalize`
-and `StreamFile`), and the compression product.
+`ingest.Run(ctx, db, Request)` stores one evidence. Its callers are the
+server's uploads (`finalize` and `StreamFile`) and the compression product.
+`dues store`, the TUI's store and `dues reindex` call the same steps through a
+session (below).
+
+### Sessions (`lib/ingest.Session`)
+
+A session is what a run of ingests shares: the database, and the full-text
+index and graph that `FTS` and `Enrich` write.
+
+- `NewSession(db)` opens nothing. The first evidence that has files to index
+  opens the full-text index (`fts.Acquire`). The first that enriches opens
+  the graph. Both stay open until `Close`.
+- One session lasts one `dues store` (file or folder), one TUI store job, one
+  `dues reindex`, or the graph deletions of one `repair --fix`. Before
+  sessions, each evidence opened and closed both stores, and each graph open
+  replayed the graph's whole log.
+- `Close` releases both, and does nothing the second time. The command joins
+  its error to its own, as it does the database's close error (CFG-8). The
+  database belongs to the caller and stays open.
+- A session is safe for concurrent use. A failed open is not kept: the next
+  evidence tries again. A closed session refuses `Run` and `Reindex` before
+  writing anything.
+- Transactions stay one per evidence. A session shares resources, not
+  commits.
+- `ingest.Run` and `ingest.Reindex` run in a session of their own.
+- `Session.Opens()` counts the opens. `StoreData COMPLETE` and `StoreFolder
+  COMPLETE` log them as `fts_opens` and `graph_opens`, at most 1 each.
 
 | `Request` field | Effect |
 | --- | --- |
@@ -459,6 +484,43 @@ FLUSHED, as a crash would, and recovery commits it.
 A folder store (`storeFolder`) stores each item of `evidence.Plan` in turn.
 A file that fails does not stop the rest. It returns an error naming the
 first failure, or a warning (exit 2) when any item was stored with warnings.
+
+### Parallel folder stores (`--store-jobs`)
+
+`--store-jobs N` (config `store.store-jobs`) stores up to N items of a folder
+at once, through `internal/workpool`. The default is 1; 0 picks
+`min(4, CPUs/4)`; low-resource mode always stores one at a time. One item at a
+time runs the plain loop, so a panic still reaches the crash handler.
+
+- **Same content stays sequential.** `folderItems` opens every item, jobs at a
+  time, for its decoded size. Items of one size get their fingerprint, and
+  items with equal size and fingerprint form a chain: they run one after
+  another, in folder order. The first is stored and the others become its
+  aliases, exactly as one at a time. Without chains, two copies would both
+  miss `findStored`, both store every chunk, and race at the commit (whose
+  single winner, `CommitEvidence`, stays as the backstop).
+- **Large items run alone.** An item of 256 MiB or more (decoded) starts when
+  nothing else runs, with the full pipeline, and nothing starts beside it.
+  Items after it wait, so it is never starved.
+- **Machine share.** Beside others, an item's chunk pass runs
+  `max(2, workers/jobs)` workers (`ChunkPass.MaxWorkers`), unless
+  `--store-workers` was given. Every pass allocates its feed ring when it
+  starts, and no more slots than the source has chunks (at least 2), so a
+  small file no longer takes the full 256 MiB ring.
+- **Reports in folder order.** Each item writes to its own writer
+  (`orderedOutput`): the first item not yet reported writes through, the
+  others are held until those before them are reported. Results, failures
+  and the first error are counted in folder order, so stdout and the error
+  are those of a store of one at a time.
+- **Errors and stops.** A failed item does not stop the others. A signal stops
+  new items; running ones stop, the finished ones are reported in order, and
+  the store returns the signal. A panic in an item stops the run the same
+  way and exits 70 (`lifecycle.InternalError`).
+- **Shared stores.** All items use the command's session (one database, one
+  full-text index, one graph). Graph writes take turns (`Handle.Writer`);
+  bleve batches and badger commits run side by side, and badger commits
+  concurrent transactions together.
+- `StoreFolder COMPLETE` logs `jobs`.
 
 ### The evidence source (`lib/evidence`)
 

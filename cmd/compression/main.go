@@ -57,6 +57,7 @@ const (
 
 	flagLogDir  = "log-dir"
 	flagTempDir = "temp-dir"
+	flagSummary = "summary"
 
 	usageText = `usage: compression [global options] <command> [flags]
 
@@ -67,6 +68,9 @@ global options (before the command):
   --log-dir DIR     directory for log files (default: the per-user cache directory)
   --temp-dir DIR    directory for temporary work directories (default: /tmp, or
                     AppData\Local\Temp on Windows); it must exist
+  --summary WHEN    after a file or archive command, also say on stderr what
+                    it did: sizes, ratio, time; auto (default: when stderr is
+                    a terminal), on or off
 
 The config file is one JSON object with the keys log-dir and temp-dir, each
 an absolute path. An option on the command line wins over the file. A file
@@ -118,6 +122,7 @@ func realMain(args []string) (code int) {
 // values for those the command line does not give.
 type globalFlags struct {
 	logDir, tempDir string
+	summary         string // auto, on or off
 	faults          faultFlags
 	set             map[string]bool // the options given
 	filled          map[string]bool // the options the config file gave
@@ -160,10 +165,14 @@ func parseGlobal(args []string) (globalFlags, []string, error) {
 	fs.BoolVar(&noConfig, configfile.FlagNoConfig, false, "read no config file")
 	fs.StringVar(&g.logDir, flagLogDir, "", "directory for log files")
 	fs.StringVar(&g.tempDir, flagTempDir, "", "directory for temporary work directories")
+	fs.StringVar(&g.summary, flagSummary, summaryAuto, "say what a file or archive command did, on stderr")
 	g.faults.register(fs)
 	parseErr := fs.Parse(args)
 	if parseErr != nil && !errors.Is(parseErr, flag.ErrHelp) {
 		return g, nil, parseErr
+	}
+	if g.summary != summaryAuto && g.summary != summaryOn && g.summary != summaryOff {
+		return g, nil, fmt.Errorf("--%s: unknown value %q; use auto, on or off", flagSummary, g.summary)
 	}
 	g.set, g.filled = map[string]bool{}, map[string]bool{}
 	fs.Visit(func(f *flag.Flag) { g.set[f.Name] = true })
@@ -249,6 +258,8 @@ type runner struct {
 	stdout   io.Writer
 	stderr   io.Writer
 	stdin    io.Reader
+	// summary: after a file or archive command, say what it did on stderr.
+	summary bool
 }
 
 // execute runs the command in args, after the global options g that
@@ -278,6 +289,7 @@ func execute(ctx context.Context, g globalFlags, args []string, err error, stdou
 		ctx:      ctx,
 		dispatch: platformapi.NewDefaultDispatcher(platformapi.Options{TempDir: g.tempDir}),
 		stdout:   stdout, stderr: stderr, stdin: stdin,
+		summary: g.summary == summaryOn || g.summary == summaryAuto && isTerminal(stderr),
 	}
 	if len(args) == 0 {
 		fmt.Fprintln(stderr, usageText)
@@ -419,7 +431,12 @@ func (r *runner) send(operation string, params map[string]any) int {
 		fmt.Fprintln(r.stderr, err)
 		return lifecycle.ExitInternal
 	}
-	return r.emit(r.dispatch.DispatchJSON(r.ctx, string(body)))
+	out := r.dispatch.DispatchJSON(r.ctx, string(body))
+	code := r.emit(out)
+	if r.summary {
+		writeSummary(r.stderr, operation, out)
+	}
+	return code
 }
 
 // emit prints the response envelope and returns its exit code.

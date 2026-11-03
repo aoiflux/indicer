@@ -26,6 +26,43 @@ func fmtBytes(n int64) string {
 	return sig3(v) + " " + units[i]
 }
 
+// Bytes is n as the progress display shows it, in IEC units with three
+// significant digits: "512 B", "4.20 GiB".
+func Bytes(n int64) string { return fmtBytes(n) }
+
+// Count is n with thousands separators: "182,344".
+func Count(n int64) string { return fmtCount(n) }
+
+// Duration is an elapsed time as the progress display shows it: "0.4s",
+// "38.2s", "12m05s".
+func Duration(d time.Duration) string { return fmtDuration(d) }
+
+// Ratio is a/b with three significant digits: "3.04x". It is "n/a" unless
+// both are positive.
+func Ratio(a, b int64) string {
+	if a <= 0 || b <= 0 {
+		return "n/a"
+	}
+	return sig3(float64(a)/float64(b)) + "x"
+}
+
+// Saved is how much smaller out is than in: "79.6% saved", or "grew 2.1%"
+// when out is the larger ("grew <0.1%" for less). It is "n/a" when in is
+// not positive.
+func Saved(in, out int64) string {
+	if in <= 0 {
+		return "n/a"
+	}
+	if out > in {
+		grew := float64(out-in) * 100 / float64(in)
+		if grew < 0.05 {
+			return "grew <0.1%"
+		}
+		return "grew " + strconv.FormatFloat(grew, 'f', 1, 64) + "%"
+	}
+	return strconv.FormatFloat(float64(in-out)*100/float64(in), 'f', 1, 64) + "% saved"
+}
+
 // sig3 formats v (1 <= v < 1024) with three significant digits.
 func sig3(v float64) string {
 	switch {

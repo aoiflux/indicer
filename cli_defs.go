@@ -71,6 +71,7 @@ type cliFlags struct {
 	enableRevRel        *bool
 	storeWorkers        *int
 	storeQueue          *int
+	storeJobs           *int
 
 	rpath             *string
 	restoreForce      *bool
@@ -234,6 +235,7 @@ func newCLIDefinition() cliDefinition {
 	flags.enableRevRel = commands.store.Flag(cnst.FlagEnableRevRel, "Persist reverse-relation keys during ingest (off by default for higher ingest throughput)").Short(cnst.FlagEnableRevRelShort).Default("false").Bool()
 	flags.storeWorkers = commands.store.Flag(cnst.FlagStoreWorkers, "Override batch-owner worker count (0 = mode-aware default)").Short(cnst.FlagStoreWorkersShort).Default("0").Int()
 	flags.storeQueue = commands.store.Flag(cnst.FlagStoreQueue, "Override batch-owner task queue depth (0 = mode-aware default)").Short(cnst.FlagStoreQueueShort).Default("0").Int()
+	flags.storeJobs = commands.store.Flag(cnst.FlagStoreJobs, "Evidence of a folder stored at once (default 1; 0 = chosen for this machine)").Default("1").Int()
 
 	commands.restore = app.Command(cnst.CmdRestore, "Restore file from database")
 	flags.rpath = commands.restore.Flag(cnst.FlagRestoreFilePath, "Path for restoring the file").Short(cnst.FlagRestoreFilePathShort).Default("restored").String()

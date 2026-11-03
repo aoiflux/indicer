@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"indicer/internal/console"
 	"indicer/internal/lifecycle"
+	"indicer/internal/ui"
 	"indicer/lib/cnst"
 	"indicer/lib/dbopen"
 	"indicer/lib/fsx"
@@ -18,7 +19,6 @@ import (
 	"time"
 
 	"github.com/dgraph-io/badger/v4"
-	"github.com/dustin/go-humanize"
 	"go.uber.org/zap"
 )
 
@@ -64,7 +64,7 @@ func RestoreData(ctx context.Context, opts DBOptions, rhash, rpath string, ropts
 		logging.GetLogger().Error("RestoreData RESTORE_ERROR", zap.Error(err), zap.String("restore_hash", rhash))
 		return err
 	}
-	console.Println("Restored file with size: ", humanize.Bytes(uint64(report.Size)))
+	console.Println("Restored file with size: ", ui.Bytes(report.Size))
 	console.Println(describeVerification(report))
 	warning := restoreWarning(report)
 	if warning != "" {

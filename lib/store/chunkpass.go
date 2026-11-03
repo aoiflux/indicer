@@ -39,6 +39,9 @@ type ChunkPass struct {
 	// Simhash also writes the SimHash signature of each chunk, which near's
 	// deep mode compares.
 	Simhash bool
+	// MaxWorkers caps the pass's workers; 0 leaves the configured width. A
+	// folder store running several evidence at once shares the machine so.
+	MaxWorkers int
 }
 
 // ChunkResult is what a chunk pass computed over exactly the bytes it stored.
@@ -52,6 +55,9 @@ type ChunkResult struct {
 	// time and their raw size; every other chunk was already stored, by
 	// this pass or before it (deduplicated).
 	NewChunks, NewBytes int64
+	// WrittenBytes is what the new chunks take on disk: their encoded size,
+	// compressed and, in an encrypted database, sealed.
+	WrittenBytes int64
 }
 
 // IngestChunks stores every chunk of p.Source, unless the database already
@@ -95,11 +101,19 @@ func shapeFor(p ChunkPass) passShape {
 		revrel:    p.RevRel,
 	}
 	s.workers, s.queueDepth = cnst.GetStorePipelineTuning(cnst.CONTAINERMODE)
+	if p.MaxWorkers > 0 {
+		s.workers = min(s.workers, p.MaxWorkers)
+	}
 	s.readers = 1
 	if p.Parallel {
 		s.readers = s.workers
 	}
 	s.slots = feedSlots(s.workers, s.chunk)
+	// The ring's buffers are allocated when the pass starts: a source of a
+	// few chunks needs no more of them than it has chunks.
+	if chunks := (p.Size + s.chunk - 1) / max(s.chunk, 1); chunks < int64(s.slots) {
+		s.slots = int(max(chunks, 2))
+	}
 	return s
 }
 
@@ -108,13 +122,13 @@ func (s passShape) feed(ctx context.Context, p ChunkPass, tap *digestTap) *chunk
 }
 
 // passMeter counts a chunk pass for its progress phase ("store", in bytes
-// read) and for the command's footer: bytes read, and bytes new to the
-// database. It is safe from every worker; with no reporter it only counts
-// what ChunkResult reports.
+// read) and for the command's footer: bytes read, bytes new to the
+// database, and the bytes written for them. It is safe from every worker;
+// with no reporter it only counts what ChunkResult reports.
 type passMeter struct {
-	phase                *progress.Phase
-	fresh, read, freshes *progress.Meter
-	newChunks, newBytes  atomic.Int64
+	phase                         *progress.Phase
+	fresh, read, freshes, written *progress.Meter
+	newChunks, newBytes, onDisk   atomic.Int64
 }
 
 func startPass(ctx context.Context, p ChunkPass) *passMeter {
@@ -130,6 +144,7 @@ func startPass(ctx context.Context, p ChunkPass) *passMeter {
 		fresh:   ph.Meter("new", progress.Bytes),
 		read:    progress.Tally(ctx, "read", progress.Bytes),
 		freshes: progress.Tally(ctx, "new", progress.Bytes),
+		written: progress.Tally(ctx, "written", progress.Bytes),
 	}
 }
 
@@ -139,12 +154,15 @@ func (m *passMeter) fed(n int64) {
 	m.read.Add(n)
 }
 
-// stored counts a chunk of n bytes stored for the first time.
-func (m *passMeter) stored(n int64) {
+// stored counts a chunk of n bytes stored for the first time, written as
+// written bytes.
+func (m *passMeter) stored(n, written int64) {
 	m.newChunks.Add(1)
 	m.newBytes.Add(n)
+	m.onDisk.Add(written)
 	m.fresh.Add(n)
 	m.freshes.Add(n)
+	m.written.Add(written)
 }
 
 func (m *passMeter) done(err error) { m.phase.Done(err) }
@@ -152,7 +170,7 @@ func (m *passMeter) done(err error) { m.phase.Done(err) }
 // passResult assembles the result once the pipeline finished cleanly.
 func passResult(tap *digestTap, root []byte, chunks int64, m *passMeter) ChunkResult {
 	res := ChunkResult{Chunks: chunks, PlainHash: tap.plain.Sum(nil), Root: root, Ranges: tap.rangeDigests(),
-		NewChunks: m.newChunks.Load(), NewBytes: m.newBytes.Load()}
+		NewChunks: m.newChunks.Load(), NewBytes: m.newBytes.Load(), WrittenBytes: m.onDisk.Load()}
 	if tap.ewf != nil {
 		r := tap.ewf.Result()
 		res.EWF = &r

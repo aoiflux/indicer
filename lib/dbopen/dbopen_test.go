@@ -66,7 +66,7 @@ func storeChunk(t *testing.T, db *badger.DB, data []byte) []byte {
 	t.Helper()
 	h := blake3.Sum256(data)
 	ckey := append([]byte(cnst.ChonkNamespace), h[:]...)
-	meta, err := dbio.MaterializeChonkNode(ckey, data, db, nil)
+	meta, _, err := dbio.MaterializeChonkNode(ckey, data, db, nil)
 	if err != nil {
 		t.Fatal(err)
 	}

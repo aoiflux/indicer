@@ -12,8 +12,8 @@ import (
 	"indicer/internal/testutil"
 	"indicer/internal/testutil/testdb"
 	"indicer/lib/cnst"
-
-	"github.com/dgraph-io/badger/v4"
+	"indicer/lib/ingest"
+	"indicer/lib/util"
 )
 
 // TestStoreZeroByteFile is an ING-11 regression: an empty file could not be
@@ -76,11 +76,11 @@ func TestStoreFolderContinuesPastErrors(t *testing.T) {
 
 	prev := storeOneFile
 	t.Cleanup(func() { storeOneFile = prev })
-	storeOneFile = func(ctx context.Context, w io.Writer, db *badger.DB, path string, sopts StoreOptions) error {
+	storeOneFile = func(ctx context.Context, w io.Writer, sess *ingest.Session, path string, sopts StoreOptions) (ingest.Bytes, error) {
 		if filepath.Base(path) == "b-bad.bin" {
-			return errors.New("simulated read failure")
+			return ingest.Bytes{}, errors.New("simulated read failure")
 		}
-		return prev(ctx, w, db, path, sopts)
+		return prev(ctx, w, sess, path, sopts)
 	}
 
 	opts := optsFor(filepath.Join(dir, "db"), matrixChunkKB, nil)
@@ -95,4 +95,40 @@ func TestStoreFolderContinuesPastErrors(t *testing.T) {
 		}
 	}
 	_ = bad
+}
+
+// TestStoreFolderOpensStoresOnce: a folder store with the full-text and graph
+// features opens the full-text index and the graph once for the whole
+// folder; each evidence opened and closed both before.
+func TestStoreFolderOpensStoresOnce(t *testing.T) {
+	testdb.Isolate(t)
+	d := testdb.Open(t, testdb.Default)
+	if err := util.EnsureBlobPath(d.Root); err != nil {
+		t.Fatal(err)
+	}
+	in := filepath.Join(t.TempDir(), "in")
+	if err := os.MkdirAll(in, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	for _, name := range []string{"fat/fat12", "fat/fat16", "part/mbr_two"} {
+		_, path := fixtureNamed(t, name)
+		data, err := os.ReadFile(path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(filepath.Join(in, filepath.Base(name)+".img"), data, 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	sess := ingest.NewSession(d.DB)
+	err := storeFolder(t.Context(), io.Discard, sess, in, StoreOptions{FTS: true, Enrich: true, Decode: true, Quiet: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got, want := sess.Opens(), (ingest.Opens{Text: 1, Graph: 1}); got != want {
+		t.Fatalf("opens = %+v, want %+v", got, want)
+	}
+	if err := sess.Close(); err != nil {
+		t.Fatal(err)
+	}
 }

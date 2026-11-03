@@ -198,8 +198,12 @@ Source: `internal/core/jsonbridge/jsonbridge.go`.
 ### Success
 
 ```json
-{ "version": "v1", "status": "ok", "result": { } }
+{ "version": "v1", "status": "ok", "result": { }, "duration_ms": 12 }
 ```
+
+`duration_ms` is how long the operation ran, in milliseconds, on success and
+on error. A request refused before it ran (a bad envelope, an unknown product)
+has none. For an async request it is the time to start the task.
 
 ### Error
 
@@ -344,8 +348,13 @@ Archives a file, a folder, or files given one by one.
   "output_path": "C:/evidence/case.duesarc", "output_files": ["C:/evidence/case.duesarc"],
   "input_is_dir": true, "input_bytes": 123456, "archive_bytes": 45678,
   "chunk_size_kb": 256, "split_size_mb": 0, "work_dir": "",
-  "archived_files": 10, "archived_dirs": 3, "skipped_inputs": 0, "skipped": [] }
+  "archived_files": 10, "archived_dirs": 3, "skipped_inputs": 0, "skipped": [],
+  "ratio": 2.703, "saved_percent": 63.0 }
 ```
+
+`ratio` is `input_bytes / archive_bytes` (3 decimals) and `saved_percent` is
+`1 - archive_bytes / input_bytes` in percent (1 decimal, negative when the
+archive is the larger). Both are absent unless both sizes are positive.
 
 ### extract_archive
 
@@ -566,8 +575,12 @@ Archives one file as a `.duesarc`.
 
 ```json
 { "input_path": "…", "output_path": "C:/evidence/report.pdf.duesarc",
-  "original_bytes": 123, "compressed_bytes": 45, "format": "duesarc" }
+  "original_bytes": 123, "compressed_bytes": 45, "format": "duesarc",
+  "ratio": 2.733, "saved_percent": 63.4 }
 ```
+
+`ratio` and `saved_percent` compare `original_bytes` with `compressed_bytes`,
+as in `create_archive`.
 
 ### decompress_file
 
@@ -592,7 +605,8 @@ Output:
 
 ```json
 { "input_path": "…", "output_path": "C:/evidence/report.pdf",
-  "original_bytes": 123, "compressed_bytes": 45, "format": "duesarc" }
+  "original_bytes": 123, "compressed_bytes": 45, "format": "duesarc",
+  "ratio": 2.733, "saved_percent": 63.4 }
 ```
 
 ## The .duesarc format
@@ -729,6 +743,18 @@ two.
 
 **Output:** the response envelope goes to stdout; everything else goes to
 stderr.
+
+**Summary:** after `create-archive`, `extract-archive`, `compress-file` and
+`decompress-file`, `--summary` (a global option, before the command) also says
+on stderr what the command did. `auto`, the default, does so when stderr is a
+terminal; `on` always; `off` never. `dispatch` has none, and neither does a
+failure: the envelope says it.
+
+```
+archived 1,204 files and 87 folders (3 skipped) in 12.4s
+  input 10.2 GiB, archive 3.10 GiB: 3.29x smaller, 69.6% saved
+  written as 4 parts, described by C:/evidence/case.duesarc.split.json
+```
 
 **Exit codes:**
 

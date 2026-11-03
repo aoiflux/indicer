@@ -56,16 +56,22 @@ func TestWaitLetsGoroutinesEnd(t *testing.T) {
 
 func TestWaitReportsWhatIsStillRunning(t *testing.T) {
 	before := ids()
-	stop := make(chan struct{})
+	started, stop := make(chan struct{}), make(chan struct{})
 	defer close(stop)
-	go blockUntil(stop)
+	go blockUntil(started, stop)
+	// Under load the goroutine could still be waiting to run, its stack
+	// not yet in blockUntil, when wait looked.
+	<-started
 	leaked := wait(before, 20*time.Millisecond)
 	if len(leaked) != 1 || !strings.Contains(leaked[0], "leakcheck.blockUntil(") {
 		t.Fatalf("want blockUntil reported, got:\n%s", leaked)
 	}
 }
 
-func blockUntil(stop chan struct{}) { <-stop }
+func blockUntil(started, stop chan struct{}) {
+	close(started)
+	<-stop
+}
 
 // TestSignalLoopIsProcessWide: signal.Notify starts goroutines that live as
 // long as the process, so they are not leaks.

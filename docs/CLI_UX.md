@@ -175,10 +175,13 @@ as docker draws its layers.
     a quarter: it only reads and hashes, and runs several times faster than
     store. `step 2/2` says which step runs; the amounts and the rate are that
     step's.
-  - A folder, or several evidence at once: items done plus the running item's
-    share (`12/340 evidence`). Each evidence weighs its size plus 4 MiB, about
+  - A folder, or several evidence at once: items done plus the running items'
+    shares (`12/340 evidence`). Each evidence weighs its size plus 4 MiB, about
     what one costs beyond its bytes, so a large evidence holds the bar as long
-    as it takes and a run of small ones still moves it.
+    as it takes and a run of small ones still moves it. With `--store-jobs`,
+    the rows follow the evidence started last, and one faint row names the
+    others running (`+2 more: b.bin, c.bin`); the plain heartbeat ends with
+    the same words.
   - One step of known size (full-text, graph): its own fraction.
   - Work of unknown size (the index's tail, compact): a sweep, a count and the
     time it has run, with no %.
@@ -218,7 +221,7 @@ beside it.
 dues: store: start, 4.20 GiB
 dues: store: 62%, 2.63 of 4.20 GiB, 148 MiB/s, eta 11s, overall 70% (step 2 of 2); index 121,804 files
 dues: store: done, 4.20 GiB in 38.2s, 112 MiB/s
-dues: done in 38.2s, read 4.20 GiB, new 2.88 GiB, deduplicated 1.32 GiB (31%)
+dues: done in 38.2s, read 4.20 GiB, new 2.88 GiB, written 1.10 GiB, deduplicated 1.32 GiB (31%), compressed 2.62x
 ```
 
 The heartbeat comes every 15 seconds at first, then every tenth of the time
@@ -234,8 +237,30 @@ renderer, so a later TUI can show the same overall row.
 ### Endings, rates and units
 
 The closing line says how the command ended and what it read, stored new and
-found already stored. "new" counts raw bytes before compression, not size on
-disk.
+found already stored. "new" counts raw bytes before compression; "written"
+is what those new bytes take on disk, compressed and, in an encrypted
+database, sealed; "compressed" is new divided by written.
+
+`dues store` also reports, on stdout, after each evidence it stored and after
+a folder:
+
+```
+Stored as evidence 3q2+7w== (10737418240 bytes, ewf) in 1m34s
+  10.0 GiB read, 6.21 GiB new, 2.04 GiB written: dedup 1.61x, compression 3.04x, 79.6% saved
+Folder store: 1,204 stored (2 with warnings), 1 failed, 3 skipped in 12m4s
+  41.3 GiB read, 9.80 GiB new, 3.92 GiB written: dedup 4.21x, compression 2.50x, 90.5% saved
+```
+
+- read: the evidence bytes the store read; new: those not stored before;
+  written: what the new ones take on disk.
+- dedup is read/new, compression is new/written, saved is 1 − written/read.
+  Content stored before shows "all deduplicated"; written above read (data
+  that does not compress, sealed) shows "grew 2.1%".
+- The counts cover the evidence's own bytes. Decoded content the index
+  stores (a compressed NTFS file, for example), the database's keys and the
+  index records are not counted. An alias stores nothing and has no such line.
+- The log's `StoreFile COMPLETE` and `StoreFolder COMPLETE` records carry the
+  exact counts as `read_bytes`, `new_bytes` and `written_bytes`.
 
 A bar shows 100% only for work that finished. A phase that failed or was
 interrupted shows where it stopped, and an interrupted store says how to

@@ -458,8 +458,9 @@ func GetFileSimhash(fid []byte, db *badger.DB) (uint64, error) {
 
 // MaterializeChonkNode performs the expensive chunk materialization work
 // (compression/encryption/container write or file write). It returns the
-// encoded C||| metadata to persist for the chunk.
-func MaterializeChonkNode(key, data []byte, db *badger.DB, containerMgr *fio.ContainerManager) ([]byte, error) {
+// encoded C||| metadata to persist for the chunk, and the bytes written for
+// it: its encoded size.
+func MaterializeChonkNode(key, data []byte, db *badger.DB, containerMgr *fio.ContainerManager) ([]byte, int64, error) {
 	originalSize := int64(len(data))
 
 	if containerMgr != nil {
@@ -469,12 +470,12 @@ func MaterializeChonkNode(key, data []byte, db *badger.DB, containerMgr *fio.Con
 	return materializeFileChonkNode(key, data, originalSize, db)
 }
 
-func materializeContainerChonkNode(key, data []byte, originalSize int64, db *badger.DB, containerMgr *fio.ContainerManager) ([]byte, error) {
+func materializeContainerChonkNode(key, data []byte, originalSize int64, db *badger.DB, containerMgr *fio.ContainerManager) ([]byte, int64, error) {
 	containerPath, offset, size, err := containerMgr.WriteChunkToContainer(key, func() ([]byte, error) {
 		return blobcodec.For(db).Encode(key, data)
 	})
 	if err != nil {
-		return nil, err
+		return nil, 0, err
 	}
 
 	metadata := structs.ChonkMetadata{
@@ -487,20 +488,20 @@ func materializeContainerChonkNode(key, data []byte, originalSize int64, db *bad
 	}
 	encodedMetadata, err := msgpack.Marshal(metadata)
 	if err != nil {
-		return nil, err
+		return nil, 0, err
 	}
-	return encodedMetadata, nil
+	return encodedMetadata, size, nil
 }
 
-func materializeFileChonkNode(key, data []byte, originalSize int64, db *badger.DB) ([]byte, error) {
+func materializeFileChonkNode(key, data []byte, originalSize int64, db *badger.DB) ([]byte, int64, error) {
 	data, err := blobcodec.For(db).Encode(key, data)
 	if err != nil {
-		return nil, err
+		return nil, 0, err
 	}
 
 	cfpath, err := fio.WriteChonk(KVDir(db), data, key, db.Opts().EncryptionKey)
 	if err != nil {
-		return nil, err
+		return nil, 0, err
 	}
 	dataLen := int64(len(data))
 
@@ -514,9 +515,9 @@ func materializeFileChonkNode(key, data []byte, originalSize int64, db *badger.D
 	}
 	encodedMetadata, err := msgpack.Marshal(metadata)
 	if err != nil {
-		return nil, err
+		return nil, 0, err
 	}
-	return encodedMetadata, nil
+	return encodedMetadata, dataLen, nil
 }
 
 func SetBatchNode(key, data []byte, batch *badger.WriteBatch) error {

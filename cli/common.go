@@ -10,6 +10,7 @@ import (
 	"indicer/lib/dbio"
 	"indicer/lib/dbmeta"
 	"indicer/lib/dbopen"
+	"indicer/lib/ingest"
 	"indicer/lib/logging"
 	"indicer/lib/store"
 
@@ -84,6 +85,14 @@ func Common(ctx context.Context, opts DBOptions, mode dbopen.Mode, recover bool)
 func closeDB(h *dbopen.Handle, errp *error) {
 	if cerr := h.Close(); cerr != nil {
 		*errp = errors.Join(*errp, fmt.Errorf("closing the database: %w", cerr))
+	}
+}
+
+// closeSession closes a command's ingest session, the full-text index and
+// graph it opened, and adds a close error to *errp, as closeDB does.
+func closeSession(s *ingest.Session, errp *error) {
+	if cerr := s.Close(); cerr != nil {
+		*errp = errors.Join(*errp, fmt.Errorf("closing the full-text index and graph: %w", cerr))
 	}
 }
 

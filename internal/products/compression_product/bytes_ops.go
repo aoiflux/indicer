@@ -95,6 +95,8 @@ func (s *Service) compressFile(ctx context.Context, req fileReq, report progress
 		OriginalBytes:   int(res.InputBytes),
 		CompressedBytes: int(res.ArchiveBytes),
 		Format:          archiveFormatDuesarc,
+		Ratio:           res.Ratio,
+		SavedPercent:    res.SavedPercent,
 	}, nil
 }
 
@@ -144,14 +146,14 @@ func (s *Service) decompressFile(ctx context.Context, req fileReq, report progre
 			return fileRes{}, opError(ctx, err, errDecompressFailed)
 		}
 		emitProgress(report, "finalizing", 98, "finalizing decompress file")
-		return fileRes{InputPath: input, OutputPath: out, OriginalBytes: int(written), CompressedBytes: int(size), Format: "zstd"}, nil
+		return withRatio(fileRes{InputPath: input, OutputPath: out, OriginalBytes: int(written), CompressedBytes: int(size), Format: "zstd"}), nil
 	case isZipSignature(head) && isDuesarc(input):
 		written, err := decompressDuesarcFile(ctx, s.temp, input, out, req.Password, limits, report)
 		if err != nil {
 			return fileRes{}, opError(ctx, err, errDecompressFailed)
 		}
 		emitProgress(report, "finalizing", 98, "finalizing decompress file")
-		return fileRes{InputPath: input, OutputPath: out, OriginalBytes: int(written), CompressedBytes: int(size), Format: archiveFormatDuesarc}, nil
+		return withRatio(fileRes{InputPath: input, OutputPath: out, OriginalBytes: int(written), CompressedBytes: int(size), Format: archiveFormatDuesarc}), nil
 	}
 	return fileRes{}, coreerr.NewWithDetails(coreerr.CodeInvalidRequest, "decompress_file reads zstd files and .duesarc archives of one file; use extract_archive for other archives", map[string]string{detailInputPath: input})
 }
@@ -219,4 +221,10 @@ func decompressDuesarcFile(ctx context.Context, temp *tempRoot, input, out, pass
 		return 0, err
 	}
 	return size, nil
+}
+
+// withRatio sets r's ratio fields from its sizes.
+func withRatio(r fileRes) fileRes {
+	r.Ratio, r.SavedPercent = sizeRatio(int64(r.OriginalBytes), int64(r.CompressedBytes))
+	return r
 }

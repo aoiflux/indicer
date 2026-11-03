@@ -524,6 +524,9 @@ func (rn *runner) plainBeatLine(now time.Time) {
 		}
 		text += "; " + clean(v.Name) + " " + plainCount(v)
 	}
+	if len(e.Others) > 0 {
+		text += "; " + othersRunning(e.Others)
+	}
 	rn.plainLine(strings.Join(path, " / "), text)
 }
 

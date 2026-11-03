@@ -3,6 +3,7 @@ package jsonbridge
 import (
 	"encoding/json"
 	"strconv"
+	"time"
 
 	coreerr "indicer/internal/core/errors"
 )
@@ -32,6 +33,9 @@ type Response struct {
 	Status  string         `json:"status"`
 	Error   *coreerr.Error `json:"error,omitempty"`
 	Result  any            `json:"result,omitempty"`
+	// DurationMS is how long the operation ran, in milliseconds; absent
+	// from a response to a request that was refused before it ran.
+	DurationMS *int64 `json:"duration_ms,omitempty"`
 }
 
 // TooLarge is the error for a request over MaxRequestBytes.
@@ -70,21 +74,38 @@ func DecodeRequest(input string) (Request, *coreerr.Error) {
 
 // EncodeOK encodes a result. A result that cannot be encoded becomes an
 // internal error.
-func EncodeOK(result any) string {
-	out, err := json.Marshal(Response{Version: CurrentVersion, Status: "ok", Result: result})
+func EncodeOK(result any) string { return encodeOK(result, nil) }
+
+// EncodeOKAfter is EncodeOK for an operation that ran for took.
+func EncodeOKAfter(result any, took time.Duration) string { return encodeOK(result, msOf(took)) }
+
+func encodeOK(result any, ms *int64) string {
+	out, err := json.Marshal(Response{Version: CurrentVersion, Status: "ok", Result: result, DurationMS: ms})
 	if err != nil {
-		return EncodeError(coreerr.NewWithDetails(coreerr.CodeInternal, "result could not be encoded", map[string]string{"cause": err.Error()}))
+		return encodeError(coreerr.NewWithDetails(coreerr.CodeInternal, "result could not be encoded", map[string]string{"cause": err.Error()}), ms)
 	}
 	return string(out)
 }
 
-func EncodeError(err *coreerr.Error) string {
+func EncodeError(err *coreerr.Error) string { return encodeError(err, nil) }
+
+// EncodeErrorAfter is EncodeError for an operation that ran for took.
+func EncodeErrorAfter(err *coreerr.Error, took time.Duration) string {
+	return encodeError(err, msOf(took))
+}
+
+func encodeError(err *coreerr.Error, ms *int64) string {
 	if err == nil {
 		err = coreerr.New(coreerr.CodeInternal, "unknown error")
 	}
-	out, merr := json.Marshal(Response{Version: CurrentVersion, Status: "error", Error: err})
+	out, merr := json.Marshal(Response{Version: CurrentVersion, Status: "error", Error: err, DurationMS: ms})
 	if merr != nil || len(out) == 0 {
 		return FallbackError
 	}
 	return string(out)
+}
+
+func msOf(d time.Duration) *int64 {
+	ms := d.Milliseconds()
+	return &ms
 }

@@ -64,6 +64,7 @@ type fileStore struct {
 	IOUringQueueDepth *int    `json:"io-uring-queue-depth"`
 	Workers           *int    `json:"store-workers"`
 	Queue             *int    `json:"store-queue"`
+	Jobs              *int    `json:"store-jobs"`
 }
 
 type fileRestore struct {
@@ -121,6 +122,7 @@ func (c *fileConfig) validate(f *configfile.File) error {
 		count("store."+cnst.FlagStoreIOUringQueueDepth, s.IOUringQueueDepth)
 		count("store."+cnst.FlagStoreWorkers, s.Workers)
 		count("store."+cnst.FlagStoreQueue, s.Queue)
+		count("store."+cnst.FlagStoreJobs, s.Jobs)
 	}
 	if r := c.Restore; r != nil {
 		count("restore."+cnst.FlagRestoreWorkers, r.Workers)
@@ -313,6 +315,7 @@ func (f cliFlags) bindings() []binding {
 		{cnst.CmdStore, cnst.FlagStoreIOUringQueueDepth, f.storeIOUringQueue},
 		{cnst.CmdStore, cnst.FlagStoreWorkers, f.storeWorkers},
 		{cnst.CmdStore, cnst.FlagStoreQueue, f.storeQueue},
+		{cnst.CmdStore, cnst.FlagStoreJobs, f.storeJobs},
 		{cnst.CmdRestore, cnst.FlagRestoreWorkers, f.restoreWorkers},
 		{cnst.CmdRestore, cnst.FlagRestoreQueue, f.restoreQueue},
 		{cnst.CmdRestore, cnst.FlagRestoreBufferMB, f.restoreBufferMB},

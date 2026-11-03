@@ -45,14 +45,14 @@ func TestChunkMetaVisibleOnlyAfterSync(t *testing.T) {
 				t.Cleanup(func() {
 					materializeChunk, syncChunkMaterial, setChunkMeta = prevMaterialize, prevSync, prevSet
 				})
-				materializeChunk = func(key, data []byte, db *badger.DB, c *fio.ContainerManager) ([]byte, error) {
-					meta, err := prevMaterialize(key, data, db, c)
+				materializeChunk = func(key, data []byte, db *badger.DB, c *fio.ContainerManager) ([]byte, int64, error) {
+					meta, written, err := prevMaterialize(key, data, db, c)
 					if err == nil {
 						mu.Lock()
 						produced[string(key)] = seq.Add(1)
 						mu.Unlock()
 					}
-					return meta, err
+					return meta, written, err
 				}
 				syncChunkMaterial = func(dir string, c *fio.ContainerManager) error {
 					syncs.Add(1)

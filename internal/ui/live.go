@@ -175,7 +175,20 @@ func (lv liveView) itemRows(e progress.Estimate, width int) []detail {
 	if len(pending) > 0 {
 		rows = append(rows, detail{lv.next(pending, 1, width), 2})
 	}
+	if len(e.Others) > 0 {
+		rows = append(rows, detail{ansi.Truncate("  "+lv.p.Faint(othersRunning(e.Others)), width, lv.g.Ellipsis), 3})
+	}
 	return rows
+}
+
+// othersRunning names the items running beside the one a row follows:
+// "+2 more: b.bin, c.bin".
+func othersRunning(others []*progress.View) string {
+	names := make([]string, len(others))
+	for i, o := range others {
+		names[i] = clean(o.Name)
+	}
+	return "+" + itoa(len(others)) + " more: " + strings.Join(names, ", ")
 }
 
 // trim keeps at most budget rows. The lowest rank goes first, oldest

@@ -35,7 +35,7 @@ func TestValidateFourMillionChunks(t *testing.T) {
 	data := testutil.RandomBytes(7, int(cs))
 	sum := blake3.Sum256(data)
 	ckey := append([]byte(cnst.ChonkNamespace), sum[:]...)
-	meta, err := dbio.MaterializeChonkNode(ckey, data, db.DB, nil)
+	meta, _, err := dbio.MaterializeChonkNode(ckey, data, db.DB, nil)
 	if err != nil {
 		t.Fatal(err)
 	}

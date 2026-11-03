@@ -228,6 +228,7 @@ const (
 	FlagStoreWorkers                = "store-workers"
 	FlagStoreWorkersShort           = 'w'
 	FlagStoreQueue                  = "store-queue"
+	FlagStoreJobs                   = "store-jobs"
 	FlagStoreQueueShort             = 'W'
 	FlagRestoreWorkers              = "restore-workers"
 	FlagRestoreWorkersShort         = 'y'

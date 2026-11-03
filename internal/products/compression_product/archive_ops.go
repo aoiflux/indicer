@@ -74,6 +74,7 @@ func (s *Service) createArchive(ctx context.Context, req createArchiveReq, repor
 	if res.ArchiveBytes, err = sumFileSizes(res.OutputFiles); err != nil {
 		return createArchiveRes{}, coreerr.NewWithDetails(coreerr.CodeInternal, errComputeArchiveSizeFailed, map[string]string{detailCause: err.Error()})
 	}
+	res.Ratio, res.SavedPercent = sizeRatio(res.InputBytes, res.ArchiveBytes)
 	emitProgress(report, "finalizing", 98, "finalizing archive")
 	return res, nil
 }

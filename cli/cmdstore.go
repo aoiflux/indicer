@@ -9,6 +9,8 @@ import (
 	"indicer/internal/lifecycle"
 	"indicer/internal/progress"
 	"indicer/internal/termsafe"
+	"indicer/internal/ui"
+	"indicer/internal/workpool"
 	"indicer/lib/dbopen"
 	"indicer/lib/evidence"
 	"indicer/lib/ingest"
@@ -21,7 +23,6 @@ import (
 	"path/filepath"
 	"time"
 
-	"github.com/dgraph-io/badger/v4"
 	"go.uber.org/zap"
 )
 
@@ -41,6 +42,11 @@ type StoreOptions struct {
 	RequireVerified bool
 	// Quiet shows no progress bar: the TUI owns the terminal.
 	Quiet bool
+	// Jobs is how many evidence of a folder are stored at once; 0 or 1, one
+	// at a time (StoreJobs reads --store-jobs).
+	Jobs int
+	// maxWorkers caps one evidence's chunk pass while others run beside it.
+	maxWorkers int
 }
 
 // StoreData stores the file or folder at evipath. syncIndex is accepted for
@@ -85,11 +91,15 @@ func StoreDataWithOptions(ctx context.Context, opts DBOptions, evipath string, s
 		return err
 	}
 
+	// One session for the whole store: the full-text index and the graph
+	// open once, when the first evidence needs them, not once per file.
+	sess := ingest.NewSession(h.DB)
+	defer closeSession(sess, &err)
 	if finfo.IsDir() {
 		console.Println("Storing Entire Folder")
-		err = storeFolder(ctx, console.Out(), h.DB, evipath, sopts)
+		err = storeFolder(ctx, console.Out(), sess, evipath, sopts)
 	} else {
-		err = storeFile(ctx, console.Out(), h.DB, evipath, sopts)
+		_, err = storeFile(ctx, console.Out(), sess, evipath, sopts)
 	}
 	// What did store is kept, so the value log is compacted either way.
 	compactValueLog(ctx, h, "StoreData")
@@ -97,7 +107,9 @@ func StoreDataWithOptions(ctx context.Context, opts DBOptions, evipath string, s
 		logging.GetLogger().Error("StoreData ERROR", zap.Error(err), zap.String("evidence_path", evipath))
 		return err
 	}
-	logging.GetLogger().Info("StoreData COMPLETE", zap.Int64("duration_ms", time.Since(start).Milliseconds()))
+	opens := sess.Opens()
+	logging.GetLogger().Info("StoreData COMPLETE", zap.Int64("duration_ms", time.Since(start).Milliseconds()),
+		zap.Int("fts_opens", opens.Text), zap.Int("graph_opens", opens.Graph))
 	return nil
 }
 
@@ -118,11 +130,14 @@ func itemWeight(size int64) int64 { return max(size, 0) + itemCost }
 // storeFolder stores every evidence in a folder, reporting to w. Segment sets
 // (EWF, split raw) are stored once, as one evidence; files that are not
 // regular are skipped and reported; a file that fails does not stop the rest
-// (ING-11).
-func storeFolder(ctx context.Context, w io.Writer, db *badger.DB, dir string, sopts StoreOptions) (err error) {
+// (ING-11). With sopts.Jobs above 1, several evidence are stored at once
+// (folderItems says which may not be), and the report reads as a store of
+// one at a time would.
+func storeFolder(ctx context.Context, w io.Writer, sess *ingest.Session, dir string, sopts StoreOptions) (err error) {
 	if sopts.Quiet {
 		ctx = progress.Without(ctx)
 	}
+	jobs := folderJobs(sopts.Jobs)
 	start := time.Now()
 	scan := progress.Start(ctx, "scan folder", progress.Files, progress.Unknown)
 	plan, err := evidence.Plan(progress.Within(ctx, scan), dir, sopts.Decode)
@@ -139,6 +154,7 @@ func storeFolder(ctx context.Context, w io.Writer, db *badger.DB, dir string, so
 	failed := all.Meter("failed", progress.Evidence)
 	defer func() { all.Done(err) }()
 	var stored, warned int
+	var total ingest.Bytes
 	var failures []string
 	var firstErr error
 	fail := func(path string, err error) {
@@ -155,44 +171,79 @@ func storeFolder(ctx context.Context, w io.Writer, db *badger.DB, dir string, so
 		logging.GetLogger().Warn("StoreFolder SKIP", zap.String("file_path", s.Path), zap.String("reason", s.Reason))
 		fmt.Fprintf(w, "Skipping %s: %s\n", termsafe.Line(s.Path), s.Reason)
 	}
-	for _, item := range plan.Items {
-		if err := ctx.Err(); err != nil {
-			return err
-		}
+	out := newOrderedOutput(w)
+	counts := make([]ingest.Bytes, len(plan.Items))
+	store := func(ctx context.Context, i int) error {
+		item := plan.Items[i]
 		name := item.Path
 		if rel, rerr := filepath.Rel(dir, item.Path); rerr == nil {
 			name = rel
 		}
 		one := progress.Start(progress.Within(ctx, all), name, progress.None, 0)
 		one.Weigh(itemWeight(item.Size))
-		err := storeOneFile(progress.Within(ctx, one), w, db, item.Path, sopts)
+		isopts := sopts
+		isopts.maxWorkers = innerWorkers(jobs)
+		counted, err := storeOneFile(progress.Within(ctx, one), out.of(i), sess, item.Path, isopts)
 		one.Done(err)
 		all.Add(1)
+		counts[i] = counted
+		return err
+	}
+	// report counts evidence i, in folder order.
+	report := func(i int, err error) {
+		out.skipTo(i)
+		defer out.reported(i)
+		item := plan.Items[i]
 		var warning *lifecycle.WarningError
 		switch {
 		case err == nil:
 			stored++
+			total.Add(counts[i])
 		case errors.As(err, &warning):
 			stored++
 			warned++
+			total.Add(counts[i])
+		case ctx.Err() != nil:
+			// Interrupted: the command reports that, not a failed file.
 		default:
-			if cerr := ctx.Err(); cerr != nil {
-				return cerr
-			}
 			logging.GetLogger().Error("StoreFolder STORE_FILE_ERROR", zap.Error(err), zap.String("file_path", item.Path))
 			fail(item.Path, err)
 			failed.Add(1)
 		}
 	}
+	if jobs == 1 {
+		for i := range plan.Items {
+			if err := ctx.Err(); err != nil {
+				return err
+			}
+			report(i, store(ctx, i))
+		}
+	} else {
+		items := folderItems(ctx, sess.DB(), plan.Items, sopts.Decode, jobs)
+		if err := workpool.Run(ctx, jobs, items, store, report); err != nil {
+			if cerr := ctx.Err(); cerr != nil {
+				return cerr
+			}
+			return &lifecycle.InternalError{Err: err}
+		}
+	}
+	if err := ctx.Err(); err != nil {
+		return err
+	}
 
 	fmt.Fprintln(w)
 	fmt.Fprintf(w, "Folder store: %d stored (%d with warnings), %d failed, %d skipped in %v\n", stored, warned, len(failures), len(plan.Skipped), time.Since(start))
+	if line := storageLine(total); line != "" {
+		fmt.Fprintln(w, " ", line)
+	}
 	for _, f := range failures {
 		fmt.Fprintln(w, "  failed:", termsafe.Line(f))
 	}
 	logging.GetLogger().Info("StoreFolder COMPLETE",
 		zap.Int64("duration_ms", time.Since(start).Milliseconds()),
-		zap.Int("stored", stored), zap.Int("warned", warned), zap.Int("failed", len(failures)), zap.Int("skipped", len(plan.Skipped)))
+		zap.Int("stored", stored), zap.Int("warned", warned), zap.Int("failed", len(failures)), zap.Int("skipped", len(plan.Skipped)),
+		zap.Int64("read_bytes", total.Read), zap.Int64("new_bytes", total.New), zap.Int64("written_bytes", total.Written),
+		zap.Int("jobs", jobs), zap.Int("fts_opens", sess.Opens().Text), zap.Int("graph_opens", sess.Opens().Graph))
 	switch {
 	case len(failures) > 0:
 		return fmt.Errorf("%d file(s) in %s failed to store, first %s: %w", len(failures), dir, failures[0], firstErr)
@@ -202,12 +253,13 @@ func storeFolder(ctx context.Context, w io.Writer, db *badger.DB, dir string, so
 	return nil
 }
 
-// storeFile stores one evidence and says how it ended, to w.
-func storeFile(ctx context.Context, w io.Writer, db *badger.DB, path string, sopts StoreOptions) error {
+// storeFile stores one evidence and says how it ended, to w. It returns the
+// bytes its chunk pass read, found new and wrote.
+func storeFile(ctx context.Context, w io.Writer, sess *ingest.Session, path string, sopts StoreOptions) (ingest.Bytes, error) {
 	start := time.Now()
 	logging.GetLogger().Info("StoreFile START", zap.String("file_path", path))
 	fmt.Fprintf(w, "\nStoring %s\n", termsafe.Line(path))
-	res, err := ingest.Run(ctx, db, ingest.Request{
+	res, err := sess.Run(ctx, ingest.Request{
 		Path:            path,
 		Decode:          sopts.Decode,
 		NoIndex:         sopts.NoIndex,
@@ -217,6 +269,7 @@ func storeFile(ctx context.Context, w io.Writer, db *badger.DB, path string, sop
 		Simhash:         sopts.Simhash,
 		RequireVerified: sopts.RequireVerified,
 		Quiet:           sopts.Quiet,
+		MaxWorkers:      sopts.maxWorkers,
 	})
 	if res.Outcome != "" {
 		reportIngest(w, res, time.Since(start))
@@ -229,18 +282,19 @@ func storeFile(ctx context.Context, w io.Writer, db *badger.DB, path string, sop
 		zap.String("outcome", string(res.Outcome)),
 		zap.String("evidence_id", base64.StdEncoding.EncodeToString(res.EvidenceID)),
 		zap.Int64("duration_ms", time.Since(start).Milliseconds()),
+		zap.Int64("read_bytes", res.Bytes.Read), zap.Int64("new_bytes", res.Bytes.New), zap.Int64("written_bytes", res.Bytes.Written),
 		zap.Error(err))
 	var incomplete *ingest.IndexIncompleteError
 	var mismatch *ingest.DigestMismatchError
 	switch {
 	case err == nil:
-		return nil
+		return res.Bytes, nil
 	case errors.As(err, &mismatch) && mismatch.Stored, errors.As(err, &incomplete):
 		// Stored, but something needs the examiner's attention: exit 2.
 		fmt.Fprintln(w, "Warning:", termsafe.Line(err.Error()))
-		return &lifecycle.WarningError{Err: err}
+		return res.Bytes, &lifecycle.WarningError{Err: err}
 	}
-	return err
+	return res.Bytes, err
 }
 
 // interruptHint tells the examiner what an interrupted store left and how
@@ -255,6 +309,23 @@ func interruptHint(ctx context.Context, res ingest.Result) {
 	}
 }
 
+// storageLine says what storing took: the bytes read, those new after
+// deduplication and what they take on disk, then how much smaller that is:
+// "10.0 GiB read, 6.21 GiB new, 2.04 GiB written: dedup 1.61x, compression
+// 3.04x, 79.6% saved". It is "" when nothing was read.
+func storageLine(b ingest.Bytes) string {
+	if b.Read <= 0 {
+		return ""
+	}
+	line := ui.Bytes(b.Read) + " read, " + ui.Bytes(b.New) + " new, " + ui.Bytes(b.Written) + " written: "
+	if b.New > 0 {
+		line += "dedup " + ui.Ratio(b.Read, b.New) + ", compression " + ui.Ratio(b.New, b.Written) + ", "
+	} else {
+		line += "all deduplicated, "
+	}
+	return line + ui.Saved(b.Read, b.Written)
+}
+
 // reportIngest says how an ingest ended, to w.
 func reportIngest(w io.Writer, res ingest.Result, took time.Duration) {
 	id := base64.StdEncoding.EncodeToString(res.EvidenceID)
@@ -267,6 +338,9 @@ func reportIngest(w io.Writer, res ingest.Result, took time.Duration) {
 			fmt.Fprintf(w, "Resumed an earlier, unfinished ingest of this file.\n")
 		}
 		fmt.Fprintf(w, "Stored as evidence %s (%d bytes, %s) in %v\n", id, res.Size, res.Source.Format, took)
+		if line := storageLine(res.Bytes); line != "" {
+			fmt.Fprintln(w, " ", line)
+		}
 	}
 	if c := res.Source.EWF; c != nil {
 		fmt.Fprintf(w, "EWF digests: %s\n", c.Result)

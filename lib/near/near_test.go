@@ -15,6 +15,7 @@ import (
 
 	"indicer/internal/progress"
 	"indicer/internal/testutil/fsfixture"
+	"indicer/internal/testutil/leakcheck"
 	"indicer/internal/testutil/testdb"
 	"indicer/lib/cnst"
 	"indicer/lib/dbio"
@@ -27,7 +28,7 @@ import (
 )
 
 func TestMain(m *testing.M) {
-	code := m.Run()
+	code := leakcheck.Run(m)
 	fsfixture.Cleanup()
 	os.Exit(code)
 }

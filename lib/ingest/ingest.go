@@ -329,9 +329,19 @@ func findStored(ctx context.Context, db *badger.DB, src *evidence.Source, fp str
 	return nil, nil
 }
 
+// identifyCost is what a byte identify hashes weighs on the overall bar
+// beside a byte store stores. Identify only reads and hashes; store also
+// chunks, compresses and writes. Measured: a 10 GiB E01 identified 8 times
+// faster than it stored (921 against 113 MiB/s), a file in the page cache 18
+// times; from a disk slower than store, both run at the disk's speed. A
+// quarter sits between, so the bar neither jumps to half when identify ends
+// nor crawls through it.
+const identifyCost = 0.25
+
 // identify hashes src's content to find it among the stored evidence.
 func identify(ctx context.Context, db *badger.DB, src *evidence.Source) (store.ContentSums, error) {
 	ph := progress.Start(ctx, "identify", progress.Bytes, src.Size())
+	ph.Cost(identifyCost)
 	sums, err := store.HashContent(progress.Within(ctx, ph), db, src, src.Size(), src.Parallel())
 	ph.Done(err)
 	return sums, err

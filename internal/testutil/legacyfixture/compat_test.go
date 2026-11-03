@@ -111,7 +111,7 @@ func TestLegacyRestore(t *testing.T) {
 				t.Run(r.Kind+":"+r.Name, func(t *testing.T) {
 					out := filepath.Join(work, "r"+strconv.Itoa(i)+".bin")
 					args := append([]string{"restore", r.Hash, "-f", out, "--dbpath", db}, f.ReadFlags(t)...)
-					cmdOut, runErr := runIn(work, bin, args...)
+					cmdOut, runErr := runIn(t, work, bin, args...)
 					got, size, hashErr := fileSHA256(out)
 					correct := runErr == nil && hashErr == nil && got == want.SHA256 && size == want.Size
 					if correct {
@@ -141,8 +141,9 @@ func knownDefect(f Fixture, r Restore) string {
 	return "unclassified"
 }
 
-func runIn(dir, bin string, args ...string) (string, error) {
-	cmd := exec.Command(bin, testutil.NoConfig(args)...)
+func runIn(t *testing.T, dir, bin string, args ...string) (string, error) {
+	t.Helper()
+	cmd := exec.Command(bin, testutil.IsolatedArgs(t, args)...)
 	cmd.Dir = dir
 	var buf bytes.Buffer
 	cmd.Stdout = &buf

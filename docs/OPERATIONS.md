@@ -224,6 +224,9 @@ names, exactly as typed; a command's own settings go in an object named after
 it (`store`, `restore`, `server`) and apply to that command only. The one
 exception is `dues tui`: it stores and restores in the same process, with no
 tuning flags of its own, so the `store` and `restore` objects tune it too.
+`dues server` does not take them: it stores uploads with the default store
+settings, since uploads run side by side and one upload's worker counts would
+be multiplied by the number running.
 Paths must be absolute: `~` is not expanded. `dues help config` lists the
 keys.
 

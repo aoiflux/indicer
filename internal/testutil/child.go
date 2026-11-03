@@ -12,6 +12,8 @@ import (
 	"sync"
 	"testing"
 	"time"
+
+	"indicer/internal/testutil/leakcheck"
 )
 
 // The flags StartChild starts a test binary with. Every test binary that
@@ -24,7 +26,7 @@ var (
 // RunChildScenarios lets one test binary act as its own subprocess. Call it
 // first in TestMain: when the binary was started by StartChild it runs the
 // named scenario with StartChild's arguments and exits with its return
-// code; otherwise it runs the tests.
+// code; otherwise it runs the tests through leakcheck.Run.
 //
 //	func TestMain(m *testing.M) {
 //		os.Exit(testutil.RunChildScenarios(m, map[string]func(args []string) int{
@@ -34,7 +36,7 @@ var (
 func RunChildScenarios(m *testing.M, scenarios map[string]func(args []string) int) int {
 	flag.Parse()
 	if *childScenario == "" {
-		return m.Run()
+		return leakcheck.Run(m)
 	}
 	fn, ok := scenarios[*childScenario]
 	if !ok {
@@ -87,15 +89,15 @@ func StartChild(tb testing.TB, scenario string, args ...string) *Child {
 }
 
 // StartDues starts bin, a faultinject build of dues or compression, in dir
-// with the fault spec faults ("" for none), args and no config file unless
-// args name one, as StartChild starts a scenario: output captured, the
-// first hit of each point reported to a fresh notification file, killed at
-// the end of the test if still running.
+// with the fault spec faults ("" for none) and args, kept apart from the
+// account as IsolatedArgs says, as StartChild starts a scenario: output
+// captured, the first hit of each point reported to a fresh notification
+// file, killed at the end of the test if still running.
 func StartDues(tb testing.TB, bin, dir, faults string, args ...string) *Child {
 	tb.Helper()
 	notify := newNotifyFile(tb)
 	flags := append(FaultArgs(faults), "--faults-notify="+notify)
-	cmd := exec.Command(bin, NoConfig(append(flags, args...))...)
+	cmd := exec.Command(bin, IsolatedArgs(tb, append(flags, args...))...)
 	cmd.Dir = dir
 	return startChild(tb, cmd, notify)
 }

@@ -44,19 +44,32 @@ func TestMain(m *testing.M) {
 	}))
 }
 
-// TestNoConfig: a binary a test runs reads no config file, unless the test
-// chooses one itself.
-func TestNoConfig(t *testing.T) {
+// TestIsolatedArgs: a binary a test runs reads no config file and writes
+// its log in a directory of the test's own, unless the test chooses a config
+// file or a log directory itself.
+func TestIsolatedArgs(t *testing.T) {
+	const logs = "<logs>"
 	for _, c := range []struct{ args, want []string }{
-		{nil, []string{"--no-config"}},
-		{[]string{"list", "--dbpath", "db"}, []string{"--no-config", "list", "--dbpath", "db"}},
+		{nil, []string{"--no-config", "--log-dir", logs}},
+		{[]string{"list", "--dbpath", "db"}, []string{"--no-config", "--log-dir", logs, "list", "--dbpath", "db"}},
 		{[]string{"--config", "c.json", "list"}, []string{"--config", "c.json", "list"}},
 		{[]string{"list", "--config=c.json"}, []string{"list", "--config=c.json"}},
-		{[]string{"--no-config", "list"}, []string{"--no-config", "list"}},
-		{[]string{"store", "--", "--config"}, []string{"--no-config", "store", "--", "--config"}},
+		{[]string{"--no-config", "list"}, []string{"--log-dir", logs, "--no-config", "list"}},
+		{[]string{"--log-dir", "L", "list"}, []string{"--no-config", "--log-dir", "L", "list"}},
+		{[]string{"list", "--log-dir=L"}, []string{"--no-config", "list", "--log-dir=L"}},
+		{[]string{"store", "--", "--config", "--log-dir"}, []string{"--no-config", "--log-dir", logs, "store", "--", "--config", "--log-dir"}},
 	} {
-		if got := NoConfig(c.args); !slices.Equal(got, c.want) {
-			t.Errorf("NoConfig(%q) = %q, want %q", c.args, got, c.want)
+		got := IsolatedArgs(t, slices.Clone(c.args))
+		for i := 1; i < len(got); i++ {
+			if got[i-1] == "--log-dir" && filepath.IsAbs(got[i]) {
+				if fi, err := os.Stat(got[i]); err != nil || !fi.IsDir() {
+					t.Errorf("IsolatedArgs(%q): log directory %s: %v", c.args, got[i], err)
+				}
+				got[i] = logs
+			}
+		}
+		if !slices.Equal(got, c.want) {
+			t.Errorf("IsolatedArgs(%q) = %q, want %q", c.args, got, c.want)
 		}
 	}
 }
@@ -205,18 +218,6 @@ func TestFakeClock(t *testing.T) {
 	}
 }
 
-func TestNoLeakedGoroutinesCatchesLeak(t *testing.T) {
-	stop := make(chan struct{})
-	ft := &fakeTB{TB: t}
-	NoLeakedGoroutines(ft)
-	go func() { <-stop }()
-	ft.runCleanups()
-	close(stop)
-	if !ft.failed {
-		t.Fatal("leak not reported")
-	}
-}
-
 func TestPeakHeapAndAllocBelow(t *testing.T) {
 	var keep []byte
 	peak := PeakHeap(func() { keep = make([]byte, 8<<20); time.Sleep(5 * time.Millisecond) })
@@ -276,8 +277,3 @@ func (f *fakeTB) Cleanup(fn func())     { f.cleanups = append(f.cleanups, fn) }
 func (f *fakeTB) Errorf(string, ...any) { f.failed = true }
 func (f *fakeTB) Fatalf(string, ...any) { f.failed = true }
 func (f *fakeTB) Skipf(string, ...any)  { f.skipped = true }
-func (f *fakeTB) runCleanups() {
-	for i := len(f.cleanups) - 1; i >= 0; i-- {
-		f.cleanups[i]()
-	}
-}

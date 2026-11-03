@@ -170,6 +170,42 @@ func TestEstimateAsyncIdentify(t *testing.T) {
 	}
 }
 
+// Identify's bytes cost a quarter of store's here: the bar shows the steps'
+// share of the time, not of the bytes read.
+func TestEstimateCost(t *testing.T) {
+	ctx, r, c := newTest(t)
+	est := estimator(r, c)
+	PlanSteps(ctx, Step{"identify", Bytes, 100}, Step{"store", Bytes, 100}, Step{"index", Files, Unknown})
+	id := Start(ctx, "identify", Bytes, 100)
+	id.Cost(0.25)
+	id.Add(60)
+	if e := est(); e.Mode != ModeWork || !near(e.Fraction, 15.0/125) || e.Done != 15 || e.Total != 125 {
+		t.Fatalf("identify at 60%%: %+v", e)
+	}
+	id.Add(40)
+	id.Done(nil)
+	Start(ctx, "store", Bytes, 100).Add(50)
+	if e := est(); e.Focus.Name != "store" || !near(e.Fraction, 75.0/125) {
+		t.Fatalf("store at half: %+v", e)
+	}
+	// A folder item's share of its own work is weighed the same way.
+	if f := workFraction(r.Snapshot(0).Phases); !near(f, 75.0/125) {
+		t.Fatalf("work fraction %v, want %v", f, 75.0/125)
+	}
+	// Anything but a finite number above 0 sets the cost back to 1.
+	for _, k := range []float64{0, -1, math.NaN(), math.Inf(1)} {
+		id.Cost(0.25)
+		id.Cost(k)
+		if v := r.Snapshot(0).Phases[0]; v.Name != "identify" || v.Cost != 0 {
+			t.Errorf("Cost(%v): %+v", k, v)
+		}
+	}
+	if e := est(); !near(e.Fraction, 150.0/200) {
+		t.Fatalf("at cost 1: %+v", e)
+	}
+	(*Phase)(nil).Cost(1)
+}
+
 // With --no-index the store is the only step.
 func TestEstimateNoIndex(t *testing.T) {
 	ctx, r, c := newTest(t)

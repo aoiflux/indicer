@@ -119,7 +119,9 @@ func TestConfigFile(t *testing.T) {
 		t.Errorf("compression's settings record in the file's log-dir: %v", rec)
 	}
 	compBroken := writeJSON(t, map[string]any{"log-dir": 5})
-	r = testutil.RunDues(t, comp, work, time.Minute, "--config", compBroken, "capabilities")
+	// compression starts its log before it reads the file, so the run is
+	// given a log directory of its own.
+	r = testutil.RunDues(t, comp, work, time.Minute, "--config", compBroken, "--log-dir", t.TempDir(), "capabilities")
 	if r.ExitCode != 2 || r.Stdout != "" || !strings.Contains(r.Stderr, compBroken+`:1:12: "log-dir": must be a string`) {
 		t.Errorf("compression with a broken file: exit %d\n%s", r.ExitCode, r.Combined())
 	}

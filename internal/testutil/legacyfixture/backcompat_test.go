@@ -78,7 +78,7 @@ func goodRestore(f Fixture) (Restore, VolumeFile, bool) {
 
 func mustRun(t *testing.T, dir, bin string, args ...string) string {
 	t.Helper()
-	out, err := runIn(dir, bin, args...)
+	out, err := runIn(t, dir, bin, args...)
 	if err != nil {
 		t.Fatalf("dues %s: %v\n%s", strings.Join(args, " "), err, out)
 	}
@@ -114,7 +114,7 @@ func TestLegacyReadsChangeNothing(t *testing.T) {
 			}
 			for _, args := range reads {
 				args = append(append(args, "--dbpath", db), f.ReadFlags(t)...)
-				out, err := runIn(work, bin, args...)
+				out, err := runIn(t, work, bin, args...)
 				var exit *exec.ExitError
 				// A search reports what it could not read (the container
 				// fixtures hold STO-1 damage) with exit code 2.

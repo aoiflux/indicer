@@ -14,6 +14,7 @@ package progress
 import (
 	"context"
 	"errors"
+	"math"
 	"slices"
 	"sync"
 	"sync/atomic"
@@ -276,6 +277,7 @@ type Phase struct {
 	planned        bool // listed by Plan before it started
 	weight         int64
 	weightDone     int64 // a group: the weight of its items that ended
+	cost           float64
 	unit           Unit
 	state          State
 	warn, reason   string
@@ -334,6 +336,23 @@ func (p *Phase) Weigh(w int64) {
 	}
 	p.r.mu.Lock()
 	p.weight = w
+	p.r.mu.Unlock()
+}
+
+// Cost says what one unit of p's work weighs beside its sibling steps' in
+// the overall measure; it is 1 until set, and a value that is not a finite
+// number above 0 sets it back to 1. Identify hashes a byte in a fraction of
+// the time store takes to store one, so its bytes cost less and the bar does
+// not race through it.
+func (p *Phase) Cost(c float64) {
+	if p == nil {
+		return
+	}
+	if !(c > 0) || math.IsInf(c, 0) {
+		c = 0
+	}
+	p.r.mu.Lock()
+	p.cost = c
 	p.r.mu.Unlock()
 }
 
@@ -593,6 +612,9 @@ type View struct {
 	// not weighed; on a group, all its items' together. WeightDone, on a
 	// group, is the weight of its items that ended.
 	Weight, WeightDone int64
+	// Cost is what one unit of the phase's work weighs beside its sibling
+	// steps' (see Phase.Cost); 0 means 1.
+	Cost float64
 }
 
 // MeterView is a meter's name and value.
@@ -630,7 +652,7 @@ type Snapshot struct {
 func (p *Phase) view(kids bool) View {
 	v := View{
 		ID: p.id, Name: p.name, Unit: p.unit, State: p.state, Planned: p.planned,
-		Done: p.done.Load(), Total: p.total.Load(), Weight: p.weight, WeightDone: p.weightDone,
+		Done: p.done.Load(), Total: p.total.Load(), Weight: p.weight, WeightDone: p.weightDone, Cost: p.cost,
 		Warn: p.warn, Reason: p.reason, Started: p.started, Ended: p.ended,
 	}
 	if n := p.note.Load(); n != nil {

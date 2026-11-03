@@ -111,13 +111,13 @@ func (r Result) LastLine() string {
 	return last
 }
 
-// RunDues runs the binary in dir with args, and no config file unless they
-// name one, killing it after timeout. Its output is never a terminal, so it
-// must hold no escape code unless the arguments ask for colour; a run that
-// breaks this fails the test.
+// RunDues runs the binary in dir with args, kept apart from the account as
+// IsolatedArgs says, killing it after timeout. Its output is never a
+// terminal, so it must hold no escape code unless the arguments ask for
+// colour; a run that breaks this fails the test.
 func RunDues(tb testing.TB, bin, dir string, timeout time.Duration, args ...string) Result {
 	tb.Helper()
-	cmd := exec.Command(bin, NoConfig(args)...)
+	cmd := exec.Command(bin, IsolatedArgs(tb, args)...)
 	cmd.Dir = dir
 	defer func() {
 		if !slices.Contains(args, "--color=always") {
@@ -154,20 +154,39 @@ func RunDues(tb testing.TB, bin, dir string, timeout time.Duration, args ...stri
 	return res
 }
 
-// NoConfig puts --no-config before args unless they choose a config file
-// themselves, so dues or compression run by a test never reads the
-// account's own file: home comes from the account, not from anything a
-// test can set. Every runner of a binary passes its arguments through it.
-func NoConfig(args []string) []string {
+// IsolatedArgs keeps a run of dues or compression apart from the account.
+// It puts --no-config before args unless they choose a config file, and
+// --log-dir with a directory of the test's own unless they choose a log
+// directory or a config file, which may give one. Home comes from the
+// account, not from anything a test can set, so a run left to the defaults
+// would read the account's own config file and write its log, and any
+// crash file, among the account's logs, whose rotation keeps only the
+// newest ten. Every runner of a binary passes its arguments through it.
+func IsolatedArgs(tb testing.TB, args []string) []string {
+	tb.Helper()
+	if !gives(args, "--config", "--log-dir") {
+		args = append([]string{"--log-dir", tb.TempDir()}, args...)
+	}
+	if !gives(args, "--config", "--no-config") {
+		args = append([]string{"--no-config"}, args...)
+	}
+	return args
+}
+
+// gives reports whether args, before any "--", give one of flags, as
+// "--flag value" or "--flag=value".
+func gives(args []string, flags ...string) bool {
 	for _, a := range args {
 		if a == "--" {
-			break
+			return false
 		}
-		if a == "--no-config" || a == "--config" || strings.HasPrefix(a, "--config=") {
-			return args
+		for _, f := range flags {
+			if a == f || strings.HasPrefix(a, f+"=") {
+				return true
+			}
 		}
 	}
-	return append([]string{"--no-config"}, args...)
+	return false
 }
 
 func stdoutOf(cmd *exec.Cmd) string { return cmd.Stdout.(*bytes.Buffer).String() }

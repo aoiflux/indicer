@@ -161,7 +161,7 @@ overall row for the whole command and, under it, a faint row for each step,
 as docker draws its layers.
 
 ```
-⠹ ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━╸──────────  81%  step 2/2  2.61/4.20 GiB  148 MiB/s  ETA ~11s
+⠹ ━━━━━━━━━━━━━━━━━━━━━━━━━━━━╸────────────  70%  step 2/2  2.63/4.20 GiB  148 MiB/s  ETA ~11s
   ✓ identify     4.20 GiB in 4.1s · 1.02 GiB/s
   ⠼ storing      62% · new 1.80 GiB · 31% dedup · encrypted
   ⠼ indexing     121,804 files · 3,120 files/s · partition 2, ntfs · …\config\SOFTWARE
@@ -171,10 +171,14 @@ as docker draws its layers.
 - **The overall row** measures the whole command:
   - Work that counts bytes (identify, store, entropy, partition hashes) is one
     fraction of all its bytes, steps still to come included, so the % never
-    goes back when one step ends and the next begins. `step 2/2` says which
-    step runs; the amounts and the rate are that step's.
+    goes back when one step ends and the next begins. Identify's bytes count
+    a quarter: it only reads and hashes, and runs several times faster than
+    store. `step 2/2` says which step runs; the amounts and the rate are that
+    step's.
   - A folder, or several evidence at once: items done plus the running item's
-    share (`12/340 evidence`).
+    share (`12/340 evidence`). Each evidence weighs its size plus 4 MiB, about
+    what one costs beyond its bytes, so a large evidence holds the bar as long
+    as it takes and a run of small ones still moves it.
   - One step of known size (full-text, graph): its own fraction.
   - Work of unknown size (the index's tail, compact): a sweep, a count and the
     time it has run, with no %.
@@ -212,7 +216,7 @@ beside it.
 
 ```
 dues: store: start, 4.20 GiB
-dues: store: 62%, 2.61 of 4.20 GiB, 148 MiB/s, eta 11s, overall 81% (step 2 of 2); index 121,804 files
+dues: store: 62%, 2.63 of 4.20 GiB, 148 MiB/s, eta 11s, overall 70% (step 2 of 2); index 121,804 files
 dues: store: done, 4.20 GiB in 38.2s, 112 MiB/s
 dues: done in 38.2s, read 4.20 GiB, new 2.88 GiB, deduplicated 1.32 GiB (31%)
 ```
@@ -347,8 +351,9 @@ The tests cover what a test can see. Before a release, look at these by hand:
 - `internal/e2e/config_file_test.go`: the config file's settings apply and a
   flag wins over them, `dues config` shows each source, and a broken file
   stops the command before it writes anything. Every test runner passes
-  `--no-config` (`testutil.NoConfig`), so the account's own file never
-  changes a test.
+  `--no-config` and a log directory of its own (`testutil.IsolatedArgs`), so
+  the account's own file never changes a test and the account's logs stay
+  its own.
 - `internal/e2e/pty_test.go` and `pty_faultinject_test.go`: the binary on a
   real pseudo-terminal under WSL (see [TESTING.md](TESTING.md)).
 - `tui/styles_test.go`: the TUI's styles in both themes against the same

@@ -10,13 +10,14 @@ import (
 	"testing"
 
 	"indicer/internal/lifecycle"
+	"indicer/internal/testutil/leakcheck"
 	"indicer/lib/logging"
 )
 
 func TestMain(m *testing.M) {
 	// No test reads the account's own config file.
 	defaultConfigPath = func() (string, error) { return filepath.Join("testdata", "no-such-config.json"), nil }
-	os.Exit(m.Run())
+	os.Exit(leakcheck.Run(m))
 }
 
 func writeConfig(t *testing.T, content string) string {

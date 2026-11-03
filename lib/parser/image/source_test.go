@@ -11,11 +11,12 @@ import (
 	"testing"
 
 	"indicer/internal/testutil/fsfixture"
+	"indicer/internal/testutil/leakcheck"
 	"indicer/lib/parser/core"
 )
 
 func TestMain(m *testing.M) {
-	code := m.Run()
+	code := leakcheck.Run(m)
 	fsfixture.Cleanup()
 	os.Exit(code)
 }

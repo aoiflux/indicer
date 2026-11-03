@@ -155,6 +155,8 @@ Every object is described by a `BaseFile`:
 
 ## Browser uploads (v2)
 
+Uploads and `StreamFile` are stored with the default store settings: the store tuning flags and the config file's `store` object apply to `dues store` and the TUI, not to the server.
+
 An upload is a session. Its bytes are written in order, at offsets the client names, so an upload that is cut off can carry on where the server says it stopped. All endpoints take and give JSON, except `chunk`, which takes raw bytes.
 
 **1. Start.**

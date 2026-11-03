@@ -250,7 +250,8 @@ and boundaries:
 
 | Package | Use it for |
 |---|---|
-| `internal/testutil` | I/O fault injectors (`FailingReaderAt`, `ShortReaderAt`, `NewENOSPCWriter`, `ShortWriter`, `ErrCloser`, slow and blocking readers); deterministic data (`RandomBytes`, `WriteRandomFile`); `TreeHash` and `AssertNoFilesMatching`; gates (`NewDirFlag` and the mount flags `ENOSPCDir`, `LowSpaceDir`, `ReadOnlySrc` and `ReadOnlyDB`; `RequireLinuxNonRoot`; `LongTest`); leak and memory checks (`NoLeakedGoroutines`, `AllocBelow`, `PeakHeap`); `FakeClock`; subprocess scenarios (`RunChildScenarios`, `StartChild`, `NotifyPoint`, `ChildNotifyFile`, `WaitForPoint`, `Kill`, `Interrupt`), which get their settings as arguments; the built binary (`BuildDues`, `BuildBinary`, `RunDues`, `StartDues`, `FaultArgs`, `NoConfig`; the build functions take build tags); and `HashFile`, `HashRange` |
+| `internal/testutil` | I/O fault injectors (`FailingReaderAt`, `ShortReaderAt`, `NewENOSPCWriter`, `ShortWriter`, `ErrCloser`, slow and blocking readers); deterministic data (`RandomBytes`, `WriteRandomFile`); `TreeHash` and `AssertNoFilesMatching`; gates (`NewDirFlag` and the mount flags `ENOSPCDir`, `LowSpaceDir`, `ReadOnlySrc` and `ReadOnlyDB`; `RequireLinuxNonRoot`; `LongTest`); memory checks (`AllocBelow`, `PeakHeap`); `FakeClock`; subprocess scenarios (`RunChildScenarios`, `StartChild`, `NotifyPoint`, `ChildNotifyFile`, `WaitForPoint`, `Kill`, `Interrupt`), which get their settings as arguments; the built binary (`BuildDues`, `BuildBinary`, `RunDues`, `StartDues`, `FaultArgs`, `IsolatedArgs`; the build functions take build tags); and `HashFile`, `HashRange` |
+| `internal/testutil/leakcheck` | `Run`, which every test package's `TestMain` calls (below) |
 | `internal/testutil/vtscreen` | A small terminal for asserting what a person would see (below) |
 | `internal/testutil/testdb` | Opening throwaway databases. `ForEachMode` runs a test once per storage mode (default, encrypted, quick, container). Every helper snapshots and restores the process-wide layout globals, so tests using it must not call `t.Parallel`. |
 | `internal/faultinject` | Making the code fail at named points (see below) |
@@ -261,14 +262,29 @@ escape code, unless the run asked for colour (`--color=always`). Parse `list` an
 the run header and notes are on stderr.
 
 No test reads the account's own config file (`~/.config/dues/dues.json` or
-`compression.json`), which could otherwise change any result: DUES finds the
-home directory from the account, so no test setting can move it. `RunDues`
-and `StartDues` put `--no-config` before the arguments unless they name a
-config file, through `testutil.NoConfig`; a test that runs a binary any other
-way passes its arguments through `NoConfig` too (the environment, PTY and
-legacy-database tests do). In-process tests of `package main`, in the root and
-in `cmd/compression`, point the default file at a missing one in `TestMain`.
-A test of the config file writes its own and passes `--config`.
+`compression.json`), which could otherwise change any result, and no test
+writes among the account's logs, whose rotation keeps only the newest ten:
+DUES finds the home directory from the account, so no test setting can move
+either. `RunDues` and `StartDues` pass their arguments through
+`testutil.IsolatedArgs`, which puts `--no-config` before them unless they
+name a config file, and `--log-dir` with a directory of the test's own
+unless they name a log directory or a config file. A test that runs a binary
+any other way passes its arguments through `IsolatedArgs` too (the
+environment, PTY and legacy-database tests do). In-process tests of
+`package main`, in the root and in `cmd/compression`, point the default file
+at a missing one in `TestMain`. A test of the config file writes its own and
+passes `--config`, and a log directory too when the file names none.
+
+Every test package runs its tests through `leakcheck.Run`, from its
+`TestMain`: `os.Exit(leakcheck.Run(m))`, or `testutil.RunChildScenarios`,
+which calls it. When the tests pass, it waits up to 5 s for every goroutine
+they started to end, then fails the binary and prints the stacks of any still
+running. This holds invariant I6, that nothing an operation starts outlives
+it, for the whole suite. Goroutines running before the tests (those package
+init starts) and the standard library's signal goroutines are not counted;
+fuzzing is not checked. A guard test fails when a package with tests has no
+such `TestMain`. It works with `t.Parallel`, since it looks only once every
+test has ended; its report names the function that started each goroutine.
 
 Terminal output itself is tested against a small terminal emulator,
 `internal/testutil/vtscreen`:

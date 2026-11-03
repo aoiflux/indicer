@@ -67,7 +67,8 @@ const (
 	// ModeNone: nothing runs.
 	ModeNone Mode = iota
 	// ModeWork: the work steps, the steps that count bytes, as one
-	// fraction of all their bytes, those still to come included.
+	// fraction of all their bytes, those still to come included. A step's
+	// bytes count times its Cost.
 	ModeWork
 	// ModeItems: a folder, or several evidence: items done, plus the
 	// running item's share of its own work. Items the group weighs (by
@@ -87,7 +88,8 @@ type Estimate struct {
 	// 0 in Activity and None.
 	Fraction float64
 	// Done and Total, in Unit, are what Fraction measures: the bytes of
-	// the work steps, the items, or Focus's own count.
+	// the work steps (each step's weighed by its Cost), the items, or
+	// Focus's own count.
 	Done, Total int64
 	Unit        Unit
 	// Focus is the step the row talks about; FocusPath names the phases
@@ -275,7 +277,7 @@ func (t *Tracker) items(scopeOf []View, g, item *View, now time.Time, finished b
 // still to come.
 func (t *Tracker) work(vs []View, key uint64, now time.Time, finished bool) (Estimate, bool) {
 	var e Estimate
-	var weight, credit int64
+	var weight, credit float64
 	focus, next, run, ended := -1, -1, -1, 0
 	for i := range vs {
 		v := &vs[i]
@@ -285,7 +287,7 @@ func (t *Tracker) work(vs []View, key uint64, now time.Time, finished bool) (Est
 		if !inWork(vs, i) {
 			continue
 		}
-		w, c, _ := weigh(v)
+		w, c := costed(v)
 		weight += w
 		credit += c
 		e.Steps++
@@ -307,8 +309,8 @@ func (t *Tracker) work(vs []View, key uint64, now time.Time, finished bool) (Est
 	if focus < 0 && (next < 0 || ended == 0) {
 		return Estimate{}, false
 	}
-	e.Mode, e.Scope, e.Unit, e.Done, e.Total = ModeWork, vs, Bytes, credit, weight
-	e.Fraction = t.show(shownKey{ModeWork, key}, float64(credit)/float64(weight), finished)
+	e.Mode, e.Scope, e.Unit, e.Done, e.Total = ModeWork, vs, Bytes, int64(credit), int64(weight)
+	e.Fraction = t.show(shownKey{ModeWork, key}, credit/weight, finished)
 	at := focus
 	switch {
 	case focus >= 0:
@@ -414,6 +416,17 @@ func weigh(v *View) (weight, credit int64, ok bool) {
 	return 0, 0, false
 }
 
+// costed is weigh's weight and credit for a work step v, each times v's
+// cost.
+func costed(v *View) (weight, credit float64) {
+	w, c, _ := weigh(v)
+	k := v.Cost
+	if k <= 0 {
+		k = 1
+	}
+	return float64(w) * k, float64(c) * k
+}
+
 // inWork reports whether vs[i] is a work step: byte work that was planned,
 // that began while other byte work was still to come, or that is the only
 // byte work. Byte work begun after all the rest (partition hashes without
@@ -444,10 +457,10 @@ func inWork(vs []View, i int) bool {
 
 // workFraction is how much of vs's byte work is done; 0 with none.
 func workFraction(vs []View) float64 {
-	var weight, credit int64
+	var weight, credit float64
 	for i := range vs {
 		if inWork(vs, i) {
-			w, c, _ := weigh(&vs[i])
+			w, c := costed(&vs[i])
 			weight += w
 			credit += c
 		}
@@ -455,7 +468,7 @@ func workFraction(vs []View) float64 {
 	if weight == 0 {
 		return 0
 	}
-	return float64(credit) / float64(weight)
+	return credit / weight
 }
 
 // othersRun reports whether a sibling of vs[i] runs too.

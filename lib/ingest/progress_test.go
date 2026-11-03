@@ -67,6 +67,9 @@ func TestIngestSkippedIndexAndIdentify(t *testing.T) {
 	if v := ps["identify"]; v.State != progress.OK || v.Done != res.Size {
 		t.Errorf("identify %+v, want the content hashed once", v)
 	}
+	if v := ps["identify"]; v.Cost != identifyCost {
+		t.Errorf("identify costs %v, want %v", v.Cost, identifyCost)
+	}
 	if v := ps["index"]; v.State != progress.Skipped || v.Reason == "" {
 		t.Errorf("index %+v, want skipped with a reason", v)
 	}

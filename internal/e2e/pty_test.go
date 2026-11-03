@@ -59,7 +59,7 @@ func runPTY(t *testing.T, script, bin, work string, cols int, args ...string) (s
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
 	defer cancel()
 	line := "stty cols " + strconv.Itoa(cols) + " rows 30; exec " + shQuote(bin)
-	for _, a := range testutil.NoConfig(append([]string{"--no-fun", "--log-dir", t.TempDir()}, args...)) {
+	for _, a := range testutil.IsolatedArgs(t, append([]string{"--no-fun"}, args...)) {
 		line += " " + shQuote(a)
 	}
 	cmd := exec.CommandContext(ctx, script, "-qec", line, "/dev/null")

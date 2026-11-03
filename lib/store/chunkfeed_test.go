@@ -15,6 +15,7 @@ import (
 
 	"indicer/internal/testutil"
 	"indicer/internal/testutil/fsfixture"
+	"indicer/internal/testutil/leakcheck"
 	"indicer/internal/testutil/testdb"
 	"indicer/lib/cnst"
 	"indicer/lib/dbio"
@@ -212,7 +213,7 @@ func newEvidenceRecord(size int64) structs.EvidenceFile {
 }
 
 func TestMain(m *testing.M) {
-	code := m.Run()
+	code := leakcheck.Run(m)
 	fsfixture.Cleanup()
 	os.Exit(code)
 }

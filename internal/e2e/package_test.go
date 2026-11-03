@@ -10,7 +10,8 @@ import (
 )
 
 // TestPackage runs dues package black box: export a database with an
-// evidence, inspect and verify the package, and see verify fail, naming
+// evidence, inspect and verify the package, deeply too, reading the
+// evidence back from a copy that is then removed, and see verify fail, naming
 // the file, once a byte of the package changes; import it as a new
 // database, which lists the evidence, and not over one; split, the parts
 // verify from any of them.
@@ -36,6 +37,14 @@ func TestPackage(t *testing.T) {
 	}
 	if v := duesMust(t, bin, work, "package", "verify", "case.duesarc").Stdout; !strings.Contains(v, "Package case.duesarc is intact") {
 		t.Errorf("verify:\n%s", v)
+	}
+	scratch := t.TempDir()
+	deep := duesMust(t, bin, work, "package", "verify", "case.duesarc", "--deep", "--temp-dir", scratch)
+	if !strings.Contains(deep.Stdout, "its database opens, and 1 evidence read back against their chunk hashes") || !strings.Contains(deep.Stderr, "Verified 1 evidence; 0 damaged.") {
+		t.Errorf("verify --deep:\n%s", deep.Combined())
+	}
+	if left, _ := os.ReadDir(scratch); len(left) > 0 {
+		t.Errorf("verify --deep left %s in --temp-dir", left[0].Name())
 	}
 
 	r := duesRun(t, bin, work, "package", "export", "--dbpath", db, "--out", "case.duesarc")

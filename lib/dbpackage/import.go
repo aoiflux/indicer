@@ -20,6 +20,7 @@ import (
 	"indicer/lib/dbopen"
 	"indicer/lib/fsx"
 	"indicer/lib/graph/schema"
+	"indicer/lib/store"
 )
 
 const (
@@ -113,7 +114,7 @@ func Import(ctx context.Context, opts ImportOptions) (res ImportResult, err erro
 		}
 	}()
 
-	if err := writeFiles(ctx, p, entries, stage); err != nil {
+	if err := writeFiles(ctx, p, entries, stage, "import"); err != nil {
 		return res, err
 	}
 	if res.Opened, err = checkImported(ctx, stage, m, opts, &res.Notices); err != nil {
@@ -183,27 +184,41 @@ func checkReadable(m duesarc.DatabaseManifest) error {
 
 // newStage makes the locked directory an import of root writes in.
 func newStage(root string) (string, *fsx.Lock, error) {
-	stage, err := os.MkdirTemp(filepath.Dir(root), "."+filepath.Base(root)+stageMarker+"*")
-	if err != nil {
-		return "", nil, err
-	}
-	lock, err := fsx.TryLock(filepath.Join(stage, stageLockName), false)
-	if err != nil {
-		_ = os.RemoveAll(stage)
-		return "", nil, err
-	}
-	if err := os.Chmod(stage, cnst.DirPerm); err != nil {
-		_ = lock.Unlock()
-		_ = os.RemoveAll(stage)
-		return "", nil, err
-	}
-	return stage, lock, nil
+	return lockedDir(filepath.Dir(root), "."+filepath.Base(root)+stageMarker+"*", stageLockName)
 }
 
 // sweepStages removes the directories earlier imports of root left, when
 // killed, and no process holds.
 func sweepStages(root string) {
-	parent, prefix := filepath.Dir(root), "."+filepath.Base(root)+stageMarker
+	sweepLocked(filepath.Dir(root), "."+filepath.Base(root)+stageMarker, stageLockName)
+}
+
+// lockedDir makes a new directory in parent, named by pattern as for
+// os.MkdirTemp, and locks lockName in it, so that no sweep removes it while
+// it is in use.
+func lockedDir(parent, pattern, lockName string) (string, *fsx.Lock, error) {
+	dir, err := os.MkdirTemp(parent, pattern)
+	if err != nil {
+		return "", nil, err
+	}
+	lock, err := fsx.TryLock(filepath.Join(dir, lockName), false)
+	if err != nil {
+		_ = os.RemoveAll(dir)
+		return "", nil, err
+	}
+	if err := os.Chmod(dir, cnst.DirPerm); err != nil {
+		_ = lock.Unlock()
+		_ = os.RemoveAll(dir)
+		return "", nil, err
+	}
+	return dir, lock, nil
+}
+
+// sweepLocked removes the directories in parent whose names start with
+// prefix, made by lockedDir with lockName, that are older than
+// staleStageAge and that no process holds: left by a process that was
+// killed.
+func sweepLocked(parent, prefix, lockName string) {
 	entries, err := os.ReadDir(parent)
 	if err != nil {
 		return
@@ -217,7 +232,7 @@ func sweepStages(root string) {
 			continue
 		}
 		p := filepath.Join(parent, e.Name())
-		if lock, err := fsx.TryLock(filepath.Join(p, stageLockName), false); err == nil {
+		if lock, err := fsx.TryLock(filepath.Join(p, lockName), false); err == nil {
 			_ = lock.Unlock()
 			_ = os.RemoveAll(p)
 		}
@@ -226,8 +241,9 @@ func sweepStages(root string) {
 
 // writeFiles writes the package's directories and files into stage,
 // through os.Root so that no name reaches outside it, checking each file
-// against the manifest as it is written and syncing it.
-func writeFiles(ctx context.Context, p *Package, entries map[string]*zip.File, stage string) error {
+// against the manifest as it is written and syncing it. label names the
+// progress phase.
+func writeFiles(ctx context.Context, p *Package, entries map[string]*zip.File, stage, label string) error {
 	r, err := os.OpenRoot(stage)
 	if err != nil {
 		return err
@@ -244,7 +260,7 @@ func writeFiles(ctx context.Context, p *Package, entries map[string]*zip.File, s
 		}
 	}
 	bad := &DamagedError{}
-	ph := progress.Start(ctx, "import", progress.Bytes, m.Bytes())
+	ph := progress.Start(ctx, label, progress.Bytes, m.Bytes())
 	for _, f := range m.Files {
 		if err := ctx.Err(); err != nil {
 			ph.Done(err)
@@ -308,21 +324,36 @@ func checkImported(ctx context.Context, stage string, m duesarc.DatabaseManifest
 		*notices = append(*notices, "the database is encrypted and no password was given: its files were checked against the package, but the database was not opened")
 		return false, nil
 	}
-	h, err := dbopen.Open(ctx, dbopen.Request{Path: stage, Mode: dbopen.ReadOnly, Creds: opts.Creds, TempDir: opts.TempDir})
-	if err != nil {
-		return false, fmt.Errorf("the imported database does not open: %w", err)
-	}
-	*notices = append(*notices, h.Notices...)
-	stats, err := evidenceStats(ctx, h.DB)
-	if err = errors.Join(err, h.Close()); err != nil {
+	if err := openStaged(ctx, stage, m, opts.Creds, opts.TempDir, notices, nil); err != nil {
 		return false, err
 	}
 	// The open made the root lock file; the target gets its own.
 	if err := fsx.Remove(filepath.Join(stage, dbopen.LockName)); err != nil {
 		return false, err
 	}
-	if want := m.Stats; want != nil && *want != *stats {
-		return false, fmt.Errorf("the imported database holds %d evidence of %d bytes; the package says %d of %d", stats.Evidence, stats.LogicalBytes, want.Evidence, want.LogicalBytes)
-	}
 	return true, nil
+}
+
+// openStaged opens the database written into dir read-only, as a reader
+// would, and compares the evidence it counts with the manifest's. With
+// report set, it also reads back every chunk of every evidence against its
+// hash (store.VerifyEvidence) into report.
+func openStaged(ctx context.Context, dir string, m duesarc.DatabaseManifest, creds dbmeta.Credentials, tempDir string, notices *[]string, report *store.VerifyReport) (err error) {
+	h, err := dbopen.Open(ctx, dbopen.Request{Path: dir, Mode: dbopen.ReadOnly, Creds: creds, TempDir: tempDir})
+	if err != nil {
+		return fmt.Errorf("the package's database does not open: %w", err)
+	}
+	defer func() { err = errors.Join(err, h.Close()) }()
+	*notices = append(*notices, h.Notices...)
+	stats, err := evidenceStats(ctx, h.DB)
+	if err != nil {
+		return err
+	}
+	if want := m.Stats; want != nil && *want != *stats {
+		return fmt.Errorf("the package's database holds %d evidence of %d bytes; its manifest says %d of %d", stats.Evidence, stats.LogicalBytes, want.Evidence, want.LogicalBytes)
+	}
+	if report != nil {
+		*report, err = store.VerifyEvidence(ctx, h.DB)
+	}
+	return err
 }

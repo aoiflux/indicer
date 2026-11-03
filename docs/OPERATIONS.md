@@ -405,6 +405,24 @@ have the same content hash, which can go in case notes.
 their sidecar, then every file against its size and SHA-256, and that nothing
 is missing or added. Each problem is named, and any fails the command (exit 1).
 
+`--deep` also checks the database the package holds, as `dues repair
+--verify` checks a data root:
+- The files are copied into `dues-verify-*` in `--temp-dir` (default: the
+  system's temporary directory), each checked against the manifest as it is
+  written. This needs the package's size free there.
+- The copy is opened read-only and its evidence counted against the manifest.
+  Then every chunk of every evidence is read back against its hash. Each
+  evidence gets an `OK` or `DAMAGED` line on stderr, and any damaged one fails
+  the command (exit 1).
+- An encrypted database needs its password (`--password-file` or
+  `--password-stdin`).
+- The copy is removed afterwards, also on failure or interruption. A copy
+  left by a killed verify is removed by the next deep verify.
+
+A package can match its manifest and still hold damaged evidence: the
+manifest records the files as they were at export. Only `--deep` reads the
+evidence.
+
 `dues package import PACKAGE --dbpath TARGET` makes a new database from a
 package:
 - TARGET must be missing or an empty folder. An import never merges into a

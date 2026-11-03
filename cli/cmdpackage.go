@@ -131,15 +131,25 @@ func describePackage(w io.Writer, p *dbpackage.Package) {
 	}
 }
 
-// PackageVerify checks a package against its manifest.
-func PackageVerify(ctx context.Context, path string) error {
+// PackageVerify checks a package against its manifest. With deep, it also
+// copies the database into the temporary directory, opens it read-only with
+// opts' credentials and reads every evidence back, as repair --verify does.
+func PackageVerify(ctx context.Context, opts DBOptions, path string, deep bool) error {
 	start := time.Now()
 	p, err := dbpackage.Open(path)
 	if err != nil {
 		return err
 	}
 	defer p.Close()
-	res, err := p.Verify(ctx)
+	var res dbpackage.VerifyResult
+	if deep {
+		res, err = p.VerifyDeep(ctx, dbpackage.DeepOptions{Creds: opts.Creds, TempDir: opts.TempDir})
+	} else {
+		res, err = p.Verify(ctx)
+	}
+	for _, n := range res.Notices {
+		ui.Notef("%s", n)
+	}
 	if bad, ok := errors.AsType[*dbpackage.DamagedError](err); ok {
 		for _, pr := range bad.Problems {
 			ui.Errorf("%s: %s", termsafe.Line(pr.Name), termsafe.Line(pr.Reason))
@@ -153,13 +163,26 @@ func PackageVerify(ctx context.Context, path string) error {
 	if err != nil {
 		return err
 	}
+	if ev := res.Evidence; ev != nil {
+		if err := printVerifyReport(*ev); err != nil {
+			logging.GetLogger().Error("PackageVerify EVIDENCE_DAMAGED", zap.String("path", p.Path), zap.Int("verified", ev.Verified), zap.Int("damaged", ev.Problems))
+			return fmt.Errorf("package %s: its files match the manifest, but %w", p.Path, err)
+		}
+	}
 	took := time.Since(start)
-	logging.GetLogger().Info("PackageVerify COMPLETE", zap.String("path", p.Path), zap.Int("files", res.Files),
-		zap.Int64("bytes", res.Bytes), zap.Bool("sidecar", res.SidecarChecked), zap.Int64("duration_ms", took.Milliseconds()))
+	fields := []zap.Field{zap.String("path", p.Path), zap.Int("files", res.Files), zap.Int64("bytes", res.Bytes),
+		zap.Bool("sidecar", res.SidecarChecked), zap.Bool("deep", deep), zap.Int64("duration_ms", took.Milliseconds())}
+	if ev := res.Evidence; ev != nil {
+		fields = append(fields, zap.Int("evidence_verified", ev.Verified))
+	}
+	logging.GetLogger().Info("PackageVerify COMPLETE", fields...)
 	w := console.Out()
 	fmt.Fprintf(w, "Package %s is intact: %s files, %s checked in %s\n", p.Path, ui.Count(int64(res.Files)), ui.Bytes(res.Bytes), ui.Duration(took))
 	if res.SidecarChecked {
 		fmt.Fprintf(w, "  its %d parts match their sidecar\n", p.Parts)
+	}
+	if ev := res.Evidence; ev != nil {
+		fmt.Fprintf(w, "  its database opens, and %s evidence read back against their chunk hashes\n", ui.Count(int64(ev.Verified)))
 	}
 	fmt.Fprintf(w, "  content sha256 %s\n", termsafe.Line(p.Manifest.ContentSHA256))
 	return nil

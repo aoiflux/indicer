@@ -146,6 +146,7 @@ type cliFlags struct {
 	pkgHostInfo       *bool
 	pkgInspectPath    *string
 	pkgVerifyPath     *string
+	pkgVerifyDeep     *bool
 	pkgImportPath     *string
 }
 
@@ -343,6 +344,7 @@ func newCLIDefinition() cliDefinition {
 	flags.pkgInspectPath = commands.pkgInspect.Arg("package", "The package, or a part or the sidecar of a split one").Required().String()
 	commands.pkgVerify = commands.pkg.Command(cmdPackageVerify, "Check every file of a package against its manifest")
 	flags.pkgVerifyPath = commands.pkgVerify.Arg("package", "The package, or a part or the sidecar of a split one").Required().String()
+	flags.pkgVerifyDeep = commands.pkgVerify.Flag("deep", "Also copy the database into --temp-dir, open it read-only and read every evidence back against its chunk hashes").Default("false").Bool()
 	commands.pkgImport = commands.pkg.Command(cmdPackageImport, "Make a new database, at --dbpath, from a package")
 	flags.pkgImportPath = commands.pkgImport.Arg("package", "The package, or a part or the sidecar of a split one").Required().String()
 

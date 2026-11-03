@@ -1,0 +1,9 @@
+# Line endings that must survive a Windows checkout. With
+# core.autocrlf=true, git writes CRLF on checkout. Then bash stops at
+# "set -o pipefail\r", and byte-compared golden files no longer match.
+
+# Shell scripts run in WSL and on Linux: always LF.
+*.sh text eol=lf
+
+# Test data is compared byte for byte: check it out exactly as stored.
+**/testdata/** -text

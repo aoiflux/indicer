@@ -669,13 +669,20 @@ func printPackageInspectHelp() {
 
 func printPackageVerifyHelp() {
 	printHelpHeader("package verify")
-	fmt.Fprintln(helpOut, "Usage: dues package verify PACKAGE [global options]")
+	fmt.Fprintln(helpOut, "Usage: dues package verify PACKAGE [--deep] [global options]")
 	fmt.Fprintln(helpOut, "Reads the whole package and checks it: a split package's parts against their")
 	fmt.Fprintln(helpOut, "sidecar, then every file against the size and SHA-256 its manifest gives, and")
 	fmt.Fprintln(helpOut, "that nothing is missing or added. Each problem is named; any fails the command.")
+	printHelpSection("Options")
+	fmt.Fprintln(helpOut, "  --deep  Also check the database the package holds: copy it into --temp-dir,")
+	fmt.Fprintln(helpOut, "          open the copy read-only, count its evidence against the manifest")
+	fmt.Fprintln(helpOut, "          and read every evidence back against its chunk hashes, as repair")
+	fmt.Fprintln(helpOut, "          --verify does. It needs the package's size free there, and the")
+	fmt.Fprintln(helpOut, "          password of an encrypted database. The copy is removed afterwards.")
 	printExamples(
 		"dues package verify caseA.duesarc",
 		"dues package verify caseA.duesarc.001",
+		"dues package verify caseB.duesarc --deep --password-file ./pw",
 	)
 }
 

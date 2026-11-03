@@ -235,6 +235,12 @@ func verifyEvidence(ctx context.Context, h *dbopen.Handle) (*store.VerifyReport,
 	if err != nil {
 		return &report, err
 	}
+	return &report, printVerifyReport(report)
+}
+
+// printVerifyReport prints a line for each evidence a verify read back and
+// the totals, and fails when any is damaged.
+func printVerifyReport(report store.VerifyReport) error {
 	p := ui.For(console.Err())
 	for _, r := range report.Results {
 		if r.Problem == "" {
@@ -245,9 +251,9 @@ func verifyEvidence(ctx context.Context, h *dbopen.Handle) (*store.VerifyReport,
 	}
 	console.Errorf("Verified %d evidence; %d damaged.\n", report.Verified, report.Problems)
 	if report.Problems > 0 {
-		return &report, &VerifyError{Problems: report.Problems, Verified: report.Verified}
+		return &VerifyError{Problems: report.Problems, Verified: report.Verified}
 	}
-	return &report, nil
+	return nil
 }
 
 // upgradeBlockIndex moves the block index of a database written in the

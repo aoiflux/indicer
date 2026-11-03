@@ -515,8 +515,8 @@ func buildCommandHandlers(cliDef cliDefinition, dbOpts cli.DBOptions, tuning pip
 			return cli.PackageInspect(*cliDef.flags.pkgInspectPath)
 		},
 		cliDef.commands.pkgVerify.FullCommand(): func(ctx context.Context) error {
-			logging.GetLogger().Info("Command: package verify", zap.String("package", *cliDef.flags.pkgVerifyPath))
-			return cli.PackageVerify(ctx, *cliDef.flags.pkgVerifyPath)
+			logging.GetLogger().Info("Command: package verify", zap.String("package", *cliDef.flags.pkgVerifyPath), zap.Bool("deep", *cliDef.flags.pkgVerifyDeep))
+			return cli.PackageVerify(ctx, dbOpts, *cliDef.flags.pkgVerifyPath, *cliDef.flags.pkgVerifyDeep)
 		},
 		cliDef.commands.pkgImport.FullCommand(): func(ctx context.Context) error {
 			logging.GetLogger().Info("Command: package import", zap.String("package", *cliDef.flags.pkgImportPath), zap.String("dbpath", *cliDef.flags.dbpath))

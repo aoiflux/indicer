@@ -12,6 +12,7 @@ import (
 
 	"indicer/internal/duesarc"
 	"indicer/internal/progress"
+	"indicer/lib/store"
 )
 
 // maxProblems bounds the problems an error lists; Count has them all.
@@ -116,6 +117,11 @@ type VerifyResult struct {
 	// SidecarChecked is set when a split package's parts were checked
 	// against their sidecar.
 	SidecarChecked bool
+	// Evidence is what a deep verify read back from the database; nil
+	// after Verify.
+	Evidence *store.VerifyReport
+	// Notices are one-line messages for the user from a deep verify's open.
+	Notices []string
 }
 
 // Verify checks a package against its manifest: a split package's parts
@@ -124,19 +130,36 @@ type VerifyResult struct {
 // match comes back as a *DamagedError.
 func (p *Package) Verify(ctx context.Context) (VerifyResult, error) {
 	var res VerifyResult
+	entries, bad, err := p.checkListing(ctx, &res)
+	if err != nil {
+		return res, err
+	}
+	return res, p.checkContents(ctx, entries, bad, &res)
+}
+
+// checkListing checks a split package's parts against their sidecar and
+// matches the zip's entries to the manifest (entries).
+func (p *Package) checkListing(ctx context.Context, res *VerifyResult) (map[string]*zip.File, *DamagedError, error) {
 	if p.zip.In.Verified() {
 		if err := p.zip.In.Verify(ctx); err != nil {
-			return res, err
+			return nil, nil, err
 		}
 		res.SidecarChecked = true
 	}
-	m := p.Manifest
 	entries, bad := p.entries()
+	return entries, bad, nil
+}
+
+// checkContents reads every entry the manifest lists and is there, checks
+// it against the manifest, and adds what does not match to bad, which it
+// returns when it holds anything.
+func (p *Package) checkContents(ctx context.Context, entries map[string]*zip.File, bad *DamagedError, res *VerifyResult) error {
+	m := p.Manifest
 	ph := progress.Start(ctx, "verify", progress.Bytes, m.Bytes())
 	for _, f := range m.Files {
 		if err := ctx.Err(); err != nil {
 			ph.Done(err)
-			return res, err
+			return err
 		}
 		zf := entries[f.Path]
 		if zf == nil {
@@ -144,7 +167,7 @@ func (p *Package) Verify(ctx context.Context) (VerifyResult, error) {
 		}
 		if reason, err := checkEntry(ctx, zf, f, io.Discard, ph); err != nil {
 			ph.Done(err)
-			return res, err
+			return err
 		} else if reason != "" {
 			bad.add(zf.Name, reason)
 			continue
@@ -154,10 +177,10 @@ func (p *Package) Verify(ctx context.Context) (VerifyResult, error) {
 	}
 	if bad.Count > 0 {
 		ph.Done(bad)
-		return res, bad
+		return bad
 	}
 	ph.Done(nil)
-	return res, nil
+	return nil
 }
 
 // entries matches the zip's entries to the manifest. It returns each listed

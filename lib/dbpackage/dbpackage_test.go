@@ -560,7 +560,7 @@ func TestImportRefuses(t *testing.T) {
 		}
 		return data, true
 	}, nil)
-	if _, err := Import(ctx, ImportOptions{Package: miscounted, Path: target}); err == nil || !strings.Contains(err.Error(), "the package says 5") {
+	if _, err := Import(ctx, ImportOptions{Package: miscounted, Path: target}); err == nil || !strings.Contains(err.Error(), "its manifest says 5") {
 		t.Errorf("a database that does not hold what the package says: %v", err)
 	}
 	noStage(t, target, false)

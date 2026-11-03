@@ -417,7 +417,7 @@ func waitHealthy(t *testing.T, addr string, srv *testutil.Child) {
 	t.Fatalf("server at %s never became healthy\n%s", addr, srv.Output())
 }
 
-// upload sends path to the server with upload v2, in one chunk.
+// upload sends path to the server as a browser upload, in one chunk.
 func upload(addr, path string) error {
 	data, err := os.ReadFile(path)
 	if err != nil {

@@ -219,7 +219,7 @@ const (
 	corsAllowHeaders = "Authorization, Content-Type, Connect-Protocol-Version, Connect-Timeout-Ms, " +
 		"Connect-Accept-Encoding, Connect-Content-Encoding, Grpc-Timeout, X-Grpc-Web, X-User-Agent, " +
 		"Upload-Id, Upload-Offset"
-	corsExposeHeaders = "Grpc-Status, Grpc-Message, Grpc-Status-Details-Bin, Request-Id, Upload-Offset, Deprecation"
+	corsExposeHeaders = "Grpc-Status, Grpc-Message, Grpc-Status-Details-Bin, Request-Id, Upload-Offset"
 )
 
 // withCORS lets browser pages from loopback origins, on any port, and from

@@ -101,8 +101,7 @@ type session struct {
 	fileType   string
 	hash       string // the client's, base64
 	sum        hash.Hash
-	size       int64 // declared; -1 when not
-	v1         bool  // started without a declared size (deprecated)
+	size       int64 // declared; -1 when not (a StreamFile without size)
 
 	// Guarded by uploads.mu.
 	offset   int64
@@ -354,7 +353,7 @@ func (m *uploads) checkHash(h string) (string, error) {
 }
 
 // start opens a session for a file of size bytes (-1: not declared).
-func (m *uploads) start(path, ftype, h string, size int64, v1 bool) (*session, *uploadError) {
+func (m *uploads) start(path, ftype, h string, size int64) (*session, *uploadError) {
 	if err := checkClientPath(path); err != nil {
 		return nil, uploadErr(http.StatusBadRequest, "%v", err)
 	}
@@ -397,16 +396,13 @@ func (m *uploads) start(path, ftype, h string, size int64, v1 bool) (*session, *
 	}
 	now := m.now()
 	s := &session{
-		id: id, path: part, f: f, clientPath: path, fileType: ft, hash: h, sum: m.hasher(), size: size, v1: v1,
+		id: id, path: part, f: f, clientPath: path, fileType: ft, hash: h, sum: m.hasher(), size: size,
 		created: now, last: now, state: stateReceiving,
 		op: make(chan struct{}, 1), done: make(chan struct{}),
 	}
 	m.sessions[id] = s
 	m.s.log.Info("upload started", zap.String("upload_id", id), zap.String("client_path", truncate(path, 512)),
-		zap.Int64("size", size), zap.Bool("v1", v1))
-	if v1 {
-		m.s.log.Warn("upload v1 (no declared size, no offsets) is deprecated", zap.String("upload_id", id))
-	}
+		zap.Int64("size", size))
 	return s, nil
 }
 
@@ -441,6 +437,12 @@ func (m *uploads) write(s *session, off int64, p []byte) (int64, *uploadError) {
 	}
 	if s.size >= 0 && cur+n > s.size {
 		return cur, &uploadError{status: http.StatusRequestEntityTooLarge, msg: fmt.Sprintf("the chunk goes past the declared size of %d bytes", s.size), offset: cur}
+	}
+	// Without a declared size, nothing was checked at start: the cap on one
+	// upload applies to what arrives, so a stream cannot fill the disk the
+	// database is on.
+	if s.size < 0 && cur+n > m.lim.MaxSize {
+		return cur, &uploadError{status: http.StatusRequestEntityTooLarge, msg: fmt.Sprintf("the upload goes past the %d bytes one upload may hold", m.lim.MaxSize), offset: cur}
 	}
 	if n == 0 {
 		return cur, nil
@@ -677,8 +679,9 @@ func (s *Server) uploadRoutes() {
 	s.handle(s.mux, "POST /web/upload/chunk", route{maxBody: maxChunk, idleRead: time.Minute, write: time.Minute}, http.HandlerFunc(s.handleUploadChunk))
 	s.handle(s.mux, "POST /web/upload/status", js, http.HandlerFunc(s.handleUploadStatus))
 	s.handle(s.mux, "POST /web/upload/abort", js, http.HandlerFunc(s.handleUploadAbort))
-	// A v1 finalize waits for its ingest, however long that takes.
-	s.handle(s.mux, "POST /web/upload/finalize", route{maxBody: s.cfg.Limits.MaxJSONBody, read: 30 * time.Second}, http.HandlerFunc(s.handleUploadFinalize))
+	// A finalize answers once FinalizeWait has passed, at the latest.
+	fin := route{maxBody: s.cfg.Limits.MaxJSONBody, read: 30 * time.Second, write: s.uploads.lim.FinalizeWait + 30*time.Second}
+	s.handle(s.mux, "POST /web/upload/finalize", fin, http.HandlerFunc(s.handleUploadFinalize))
 }
 
 func (s *Server) stopUploads() {
@@ -703,13 +706,6 @@ func writeUploadError(w http.ResponseWriter, r *http.Request, e *uploadError) {
 	writeJSON(w, e.status, body)
 }
 
-// deprecated marks a response to a v1 upload.
-func deprecated(w http.ResponseWriter, s *session) {
-	if s.v1 {
-		w.Header().Set("Deprecation", "true")
-	}
-}
-
 // session finds the session a request names, or answers 404.
 func (s *Server) session(w http.ResponseWriter, r *http.Request, id string) *session {
 	if id == "" {
@@ -729,7 +725,8 @@ func (s *Server) session(w http.ResponseWriter, r *http.Request, id string) *ses
 //	{"file_path": "...", "file_type": "...", "file_hash": "<base64>", "size": N}
 //	→ {"upload_id": "...", "offset": 0, "size": N, "chunk_max": ..., "expires_at": "..."}
 //
-// A request without size is a v1 upload: deprecated, but still served.
+// size is required: the server checks it against its cap and its free space
+// before taking any bytes.
 func (s *Server) handleUploadStart(w http.ResponseWriter, r *http.Request) {
 	var req struct {
 		FilePath string `json:"file_path"`
@@ -740,28 +737,28 @@ func (s *Server) handleUploadStart(w http.ResponseWriter, r *http.Request) {
 	if !decodeJSON(w, r, &req) {
 		return
 	}
-	size := int64(-1)
-	if req.Size != nil {
-		if *req.Size < 0 {
-			httpError(w, r, http.StatusBadRequest, "size must not be negative")
-			return
-		}
-		size = *req.Size
+	switch {
+	case req.Size == nil:
+		// Upload v1 started without a size; it is no longer served.
+		httpError(w, r, http.StatusBadRequest, "size is required: uploads without a declared size are not served")
+		return
+	case *req.Size < 0:
+		httpError(w, r, http.StatusBadRequest, "size must not be negative")
+		return
 	}
-	sess, uerr := s.uploads.start(req.FilePath, req.FileType, req.FileHash, size, req.Size == nil)
+	sess, uerr := s.uploads.start(req.FilePath, req.FileType, req.FileHash, *req.Size)
 	if uerr != nil {
 		writeUploadError(w, r, uerr)
 		return
 	}
-	deprecated(w, sess)
 	st := s.uploads.status(sess)
 	writeJSON(w, http.StatusOK, struct {
 		UploadID  string    `json:"upload_id"`
 		Offset    int64     `json:"offset"`
-		Size      *int64    `json:"size,omitempty"`
+		Size      int64     `json:"size"`
 		ChunkMax  int       `json:"chunk_max"`
 		ExpiresAt time.Time `json:"expires_at"`
-	}{sess.id, 0, st.Size, maxChunk, st.ExpiresAt})
+	}{sess.id, 0, sess.size, maxChunk, st.ExpiresAt})
 }
 
 // handleUploadChunk writes one chunk.
@@ -773,23 +770,20 @@ func (s *Server) handleUploadStart(w http.ResponseWriter, r *http.Request) {
 //	→ {"ok": true, "offset": <bytes held>}, and Upload-Offset
 //
 // An offset other than what the session holds is 409 with the offset it
-// holds, unless the chunk is one it already has, which is 200. A v1 session
-// may leave the offset out: the chunk goes at the end.
+// holds, unless the chunk is one it already has, which is 200.
 func (s *Server) handleUploadChunk(w http.ResponseWriter, r *http.Request) {
 	sess := s.session(w, r, r.Header.Get("Upload-Id"))
 	if sess == nil {
 		return
 	}
-	off := int64(-1)
-	if h := r.Header.Get("Upload-Offset"); h != "" {
-		v, err := strconv.ParseInt(h, 10, 64)
-		if err != nil || v < 0 {
-			httpError(w, r, http.StatusBadRequest, "Upload-Offset must be a byte offset")
-			return
-		}
-		off = v
-	} else if !sess.v1 {
+	h := r.Header.Get("Upload-Offset")
+	if h == "" {
 		httpError(w, r, http.StatusBadRequest, "Upload-Offset is required")
+		return
+	}
+	off, err := strconv.ParseInt(h, 10, 64)
+	if err != nil || off < 0 {
+		httpError(w, r, http.StatusBadRequest, "Upload-Offset must be a byte offset")
 		return
 	}
 	body, err := io.ReadAll(r.Body)
@@ -807,7 +801,6 @@ func (s *Server) handleUploadChunk(w http.ResponseWriter, r *http.Request) {
 	}
 	held, uerr := s.uploads.write(sess, off, body)
 	sess.unlock()
-	deprecated(w, sess)
 	if uerr != nil {
 		writeUploadError(w, r, uerr)
 		return
@@ -874,10 +867,10 @@ func (s *Server) handleUploadAbort(w http.ResponseWriter, r *http.Request) {
 	}{true})
 }
 
-// handleUploadFinalize stores a session's file, once. A v2 session must
-// hold every declared byte. The answer is the result, or 202 with the
-// session's status when the ingest takes longer than FinalizeWait (a v1
-// session waits for it); calling again, or status, gives the result.
+// handleUploadFinalize stores a session's file, once. The session must hold
+// every declared byte. The answer is the result, or 202 with the session's
+// status when the ingest takes longer than FinalizeWait; calling again, or
+// status, gives the result.
 //
 //	POST /web/upload/finalize {"upload_id": "..."} → uploadResult
 func (s *Server) handleUploadFinalize(w http.ResponseWriter, r *http.Request) {
@@ -889,12 +882,7 @@ func (s *Server) handleUploadFinalize(w http.ResponseWriter, r *http.Request) {
 	if sess == nil {
 		return
 	}
-	wait := s.uploads.lim.FinalizeWait
-	if sess.v1 {
-		wait = 0
-	}
-	res, uerr, pending := s.uploads.finalize(r.Context(), sess, wait)
-	deprecated(w, sess)
+	res, uerr, pending := s.uploads.finalize(r.Context(), sess, s.uploads.lim.FinalizeWait)
 	switch {
 	case pending:
 		writeJSON(w, http.StatusAccepted, s.uploads.status(sess))
@@ -923,7 +911,7 @@ func (s *Server) streamUpload(ctx context.Context, stream *connect.ClientStream[
 	if size <= 0 {
 		size = -1
 	}
-	sess, uerr := s.uploads.start(meta.GetFilePath(), meta.GetFileType(), meta.GetFileHash(), size, false)
+	sess, uerr := s.uploads.start(meta.GetFilePath(), meta.GetFileType(), meta.GetFileHash(), size)
 	if uerr != nil {
 		return nil, uploadRPCError(uerr)
 	}

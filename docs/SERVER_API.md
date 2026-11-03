@@ -43,7 +43,7 @@ A missing or wrong token gets `401 Unauthorized` with `WWW-Authenticate: Bearer 
 - **Preflights.** Preflights are answered `204` without needing the token, and allow:
   - methods `GET, POST, OPTIONS`
   - request headers `Authorization`, `Content-Type`, the Connect and gRPC-Web headers, `Upload-Id` and `Upload-Offset`
-- **Exposed headers.** `Grpc-Status`, `Grpc-Message`, `Grpc-Status-Details-Bin`, `Request-Id`, `Upload-Offset` and `Deprecation`.
+- **Exposed headers.** `Grpc-Status`, `Grpc-Message`, `Grpc-Status-Details-Bin`, `Request-Id` and `Upload-Offset`.
 - **Host names.** On a loopback address the `Host` header must name a loopback host, or the request gets `421 Misdirected Request`. This stops a page whose name was rebound to 127.0.0.1 (DNS rebinding) from reaching the server.
 
 ## Limits and timeouts
@@ -144,7 +144,7 @@ Every object is described by a `BaseFile`:
   - `file_path`
   - `file_hash`, as for `AppendIfExists`
   - optionally `file_type`
-  - optionally `size`: more bytes than this are refused, and fewer fail the upload
+  - optionally `size`: more bytes than this are refused, and fewer fail the upload. Without it, a stream is refused once it passes 256 GiB, the cap on one upload.
 - Each later message carries `file` bytes, in order.
 - It is stored like a browser upload (below). The reply is the stored evidence.
 - A client that goes away mid-stream leaves nothing behind.
@@ -152,8 +152,9 @@ Every object is described by a `BaseFile`:
   - `data_loss`: a hash mismatch
   - `resource_exhausted`: the server is full or busy
   - `failed_precondition`: a stream that ends short of its `size`
+  - `out_of_range`: a `size` over 256 GiB, or a stream without `size` that passes it
 
-## Browser uploads (v2)
+## Browser uploads
 
 Uploads and `StreamFile` are stored with the default store settings: the store tuning flags and the config file's `store` object apply to `dues store` and the TUI, not to the server.
 
@@ -170,7 +171,7 @@ POST /web/upload/start
 - **Fields.**
   - `file_hash` is the base64 of the file's plain content hash, as for `AppendIfExists`, and must be of the right length.
   - `file_type` is optional: at most 64 characters of `a-z`, `0-9`, `_`, `-` and `.`.
-  - `size` is the file's size.
+  - `size` is the file's size. It is required: a start without it (the removed v1 protocol, which had no sizes and no offsets) is refused.
 - **Refusals.**
   - `400`: a bad field
   - `413`: a size over 256 GiB
@@ -191,6 +192,7 @@ Upload-Offset: <offset>
   - A chunk entirely within what the session already holds is a retry whose answer was lost. It gets `200` and writes nothing.
   - Any other offset gets `409` with the held offset, in `offset` and in `Upload-Offset`. Send from there.
 - **Refusals.**
+  - `400`: a missing or bad `Upload-Offset`
   - `413`: a chunk over `chunk_max`, or past the declared size
   - `507`: the server's disk is full. The session keeps what it held before the chunk, and the chunk can be sent again
   - `404`: an unknown or expired session
@@ -230,10 +232,6 @@ POST /web/upload/abort {"upload_id": "…"}
 - A session ends 30 minutes after its last chunk or status call, and in any case 24 hours after it started. What it received is then removed.
 - A finished session's result is kept for 10 minutes.
 - Sessions do not survive a restart: the server removes leftover uploads when it starts.
-
-## Browser uploads (v1, deprecated)
-
-A `start` without `size` opens a v1 session. Its chunks may leave out `Upload-Offset`, and are appended. Its `finalize` waits for the result however long storing takes. v1 sessions are still served, with `Deprecation: true` on their responses and a warning in the server's log. Clients should move to v2, which can resume.
 
 ## Shutdown
 

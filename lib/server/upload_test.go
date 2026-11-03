@@ -100,7 +100,7 @@ func postJSON(t *testing.T, ls *liveServer, path string, v any) reply {
 	return post(t, newReq(t, "POST", ls.url+path, bytes.NewReader(b)))
 }
 
-// chunk sends data at off; off < 0 sends no Upload-Offset (v1).
+// chunk sends data at off; off < 0 sends no Upload-Offset.
 func chunk(t *testing.T, ls *liveServer, id string, off int64, data []byte) reply {
 	t.Helper()
 	req := newReq(t, "POST", ls.url+"/web/upload/chunk", bytes.NewReader(data))
@@ -179,7 +179,7 @@ func TestUploadV2(t *testing.T) {
 	}
 	r := start(t, ls, `C:\case\disk.img`, "Windows_FAT", plainHash(db, data), int64(len(data)))
 	id := r.str("upload_id")
-	if r.status != 200 || id == "" || r.num("chunk_max") != maxChunk || r.header.Get("Deprecation") != "" {
+	if r.status != 200 || id == "" || r.num("chunk_max") != maxChunk || r.num("size") != int64(len(data)) {
 		t.Fatalf("start: %d %v", r.status, r.body)
 	}
 	third := int64(len(data) / 3)
@@ -252,30 +252,25 @@ func TestUploadV2(t *testing.T) {
 	}
 }
 
-// SRV-3: a v1 upload (no declared size, no offsets) still works, marked
-// deprecated.
-func TestUploadV1StillServed(t *testing.T) {
+// Upload v1 is gone: a start without size opens no session, and a chunk
+// without Upload-Offset is refused.
+func TestUploadNeedsSizeAndOffset(t *testing.T) {
 	ls := uploadServer(t, nil, nil)
 	db := ls.deps.DB
-	data := bytes.Repeat([]byte("v1 upload "), 50_000)
+	data := []byte("no size")
 	r := start(t, ls, "/home/x/v1.bin", "", plainHash(db, data), -1)
-	id := r.str("upload_id")
-	if r.status != 200 || r.header.Get("Deprecation") != "true" {
-		t.Fatalf("start: %d %v %v", r.status, r.body, r.header)
+	if r.status != http.StatusBadRequest || !strings.Contains(r.str("error"), "size is required") || r.str("upload_id") != "" {
+		t.Fatalf("start without size: %d %v", r.status, r.body)
 	}
-	for i := 0; i < len(data); i += 100_000 {
-		if r := chunk(t, ls, id, -1, data[i:min(i+100_000, len(data))]); r.status != 200 || r.header.Get("Deprecation") != "true" {
-			t.Fatalf("chunk at %d: %d %v", i, r.status, r.body)
-		}
+	if files := partFiles(t, ls); len(files) != 0 {
+		t.Errorf("a start without size left %v", files)
 	}
-	fin := postJSON(t, ls, "/web/upload/finalize", map[string]string{"upload_id": id})
-	if fin.status != 200 || fin.str("outcome") != "stored" {
-		t.Fatalf("finalize: %d %v", fin.status, fin.body)
+	id := start(t, ls, "/home/x/v2.bin", "", plainHash(db, data), int64(len(data))).str("upload_id")
+	if r := chunk(t, ls, id, -1, data); r.status != http.StatusBadRequest || !strings.Contains(r.str("error"), "Upload-Offset is required") {
+		t.Errorf("chunk without Upload-Offset: %d %v", r.status, r.body)
 	}
-	c := pbconnect.NewDuesServiceClient(http.DefaultClient, ls.url)
-	list, err := c.GetEviFiles(context.Background(), connect.NewRequest(&pb.GetEviFilesReq{}))
-	if err != nil || len(list.Msg.EviFile) != 1 || list.Msg.EviFile[0].FileId != fin.body["evi_file"].(map[string]any)["file_id"] {
-		t.Fatalf("listing after a v1 upload: %v %v", err, list)
+	if st := postJSON(t, ls, "/web/upload/status", map[string]string{"upload_id": id}); st.num("offset") != 0 {
+		t.Errorf("a refused chunk was written: %v", st.body)
 	}
 }
 
@@ -651,6 +646,43 @@ func TestStreamFile(t *testing.T) {
 	_ = wrong.Send(&pb.StreamFileReq{Payload: &pb.StreamFileReq_File{File: []byte("z")}})
 	if _, err := wrong.CloseAndReceive(); connect.CodeOf(err) != connect.CodeDataLoss {
 		t.Errorf("a wrong hash: %v", err)
+	}
+}
+
+// A StreamFile without size is checked at start against nothing, so the cap
+// on one upload applies to the bytes it sends: up to the cap is stored, one
+// byte more is refused and leaves nothing behind.
+func TestStreamFileWithoutSizeIsCapped(t *testing.T) {
+	lim := DefaultUploadLimits()
+	lim.MaxSize = 1 << 20
+	ls := uploadServer(t, &lim, nil)
+	db := ls.deps.DB
+	c := pbconnect.NewDuesServiceClient(http.DefaultClient, ls.url)
+	send := func(data []byte) error {
+		stream := c.StreamFile(context.Background())
+		_ = stream.Send(&pb.StreamFileReq{Payload: &pb.StreamFileReq_FileMeta{FileMeta: &pb.StreamFileMeta{
+			FilePath: fmt.Sprintf("/client/%d.bin", len(data)), FileHash: plainHash(db, data),
+		}}})
+		for i := 0; i < len(data); i += 256 << 10 {
+			// A refused message ends the stream; its error comes with the reply.
+			if stream.Send(&pb.StreamFileReq{Payload: &pb.StreamFileReq_File{File: data[i:min(i+256<<10, len(data))]}}) != nil {
+				break
+			}
+		}
+		_, err := stream.CloseAndReceive()
+		return err
+	}
+	if err := send(bytes.Repeat([]byte("a"), int(lim.MaxSize))); err != nil {
+		t.Fatalf("a stream of the cap: %v", err)
+	}
+	if err := send(bytes.Repeat([]byte("b"), int(lim.MaxSize)+1)); connect.CodeOf(err) != connect.CodeOutOfRange {
+		t.Errorf("a stream past the cap: %v", err)
+	}
+	if files := partFiles(t, ls); len(files) != 0 {
+		t.Errorf("a refused stream left %v", files)
+	}
+	if n := evidenceCount(t, db); n != 1 {
+		t.Errorf("%d evidence, want 1", n)
 	}
 }
 

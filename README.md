@@ -55,6 +55,10 @@ Behaviour that changed:
   view).
 - The server listens on loopback only, unless `--listen` and a token say
   otherwise.
+- Browser uploads declare the file's `size` at `start` and send every chunk
+  with `Upload-Offset`, so an upload that is cut off can resume. The earlier
+  protocol, without a size and with appended chunks, is refused (`400`). A
+  `StreamFile` without `size` is refused once it passes 256 GiB.
 - Read commands open the database read-only, so several can run at once, and
   they work on read-only media.
 - On Linux and macOS a new data root is readable by its owner only (mode 0700

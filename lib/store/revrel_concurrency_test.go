@@ -1,6 +1,7 @@
 package store
 
 import (
+	"errors"
 	"fmt"
 	"sync"
 	"testing"
@@ -25,7 +26,6 @@ func TestRevrelConcurrentIngestsKeepEveryRelation(t *testing.T) {
 		t.Run(name, func(t *testing.T) {
 			db := testdb.Open(t, testdb.Default)
 			util.SetChonkSize(4)
-			cnst.ENABLEREVREL = true
 			if err := util.EnsureBlobPath(db.DB.Opts().Dir); err != nil {
 				t.Fatal(err)
 			}
@@ -38,7 +38,7 @@ func TestRevrelConcurrentIngestsKeepEveryRelation(t *testing.T) {
 			errs := make(chan error, ingests)
 			for i := range ingests {
 				ids[i] = []byte(fmt.Sprintf("e%d", i))
-				p := ChunkPass{DB: db.DB, ID: ids[i], Source: byteReaderAt(content), Size: int64(len(content)), Quiet: true}
+				p := ChunkPass{DB: db.DB, ID: ids[i], Source: byteReaderAt(content), Size: int64(len(content)), Quiet: true, RevRel: true}
 				wg.Go(func() {
 					if _, err := pass(t.Context(), p); err != nil {
 						errs <- err
@@ -81,6 +81,65 @@ func TestRevrelConcurrentIngestsKeepEveryRelation(t *testing.T) {
 			})
 			if err != nil {
 				t.Fatal(err)
+			}
+		})
+	}
+}
+
+// TestChunkPassOptionsArePerPass: reverse relations and signatures are
+// options of one pass. Two passes run at once, one with both and one with
+// neither, and each writes only what it asked for. They were process
+// globals, which TUI stores running side by side could not set apart.
+func TestChunkPassOptionsArePerPass(t *testing.T) {
+	for name, pass := range chunkPasses {
+		t.Run(name, func(t *testing.T) {
+			db := testdb.Open(t, testdb.Default)
+			util.SetChonkSize(4)
+			if err := util.EnsureBlobPath(db.DB.Opts().Dir); err != nil {
+				t.Fatal(err)
+			}
+			cs := int(cnst.ChonkSize)
+			with, without := testutil.RandomBytes(61, 6*cs), testutil.RandomBytes(62, 6*cs)
+			var wg sync.WaitGroup
+			errs := make(chan error, 2)
+			for _, p := range []ChunkPass{
+				{DB: db.DB, ID: []byte("with"), Source: byteReaderAt(with), Size: int64(len(with)), Quiet: true, RevRel: true, Simhash: true},
+				{DB: db.DB, ID: []byte("without"), Source: byteReaderAt(without), Size: int64(len(without)), Quiet: true},
+			} {
+				wg.Go(func() {
+					if _, err := pass(t.Context(), p); err != nil {
+						errs <- err
+					}
+				})
+			}
+			wg.Wait()
+			close(errs)
+			for err := range errs {
+				t.Fatal(err)
+			}
+
+			for _, c := range []struct {
+				id      string
+				content []byte
+				want    bool
+			}{{"with", with, true}, {"without", without, false}} {
+				for i := range 6 {
+					chash, err := util.GetChonkHash(c.content[i*cs:(i+1)*cs], cnst.GetHashAlgo())
+					if err != nil {
+						t.Fatal(err)
+					}
+					related, err := dbio.ChunkOccursAt(db.DB, chash, int64(i*cs), []byte(c.id))
+					if err != nil {
+						t.Fatal(err)
+					}
+					_, err = dbio.GetChonkSignature(chash, db.DB)
+					if err != nil && !errors.Is(err, badger.ErrKeyNotFound) {
+						t.Fatal(err)
+					}
+					if signed := err == nil; related != c.want || signed != c.want {
+						t.Errorf("pass %q, chunk %d: reverse relation %t, signature %t; want both %t", c.id, i, related, signed, c.want)
+					}
+				}
 			}
 		})
 	}

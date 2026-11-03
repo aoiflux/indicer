@@ -33,6 +33,12 @@ type ChunkPass struct {
 	EWF *image.EWFMeta
 	// Quiet reports no progress.
 	Quiet bool
+	// RevRel also writes each chunk's reverse relation, which near needs to
+	// find where else a chunk occurs.
+	RevRel bool
+	// Simhash also writes the SimHash signature of each chunk, which near's
+	// deep mode compares.
+	Simhash bool
 }
 
 // ChunkResult is what a chunk pass computed over exactly the bytes it stored.
@@ -78,6 +84,7 @@ type passShape struct {
 	queueDepth int
 	readers    int
 	slots      int
+	revrel     bool
 }
 
 func shapeFor(p ChunkPass) passShape {
@@ -85,6 +92,7 @@ func shapeFor(p ChunkPass) passShape {
 		chunk:     dbmeta.ChunkSize(p.DB),
 		chunkHash: dbmeta.ChunkHasher(p.DB),
 		fileHash:  dbmeta.FileHasher(p.DB),
+		revrel:    p.RevRel,
 	}
 	s.workers, s.queueDepth = cnst.GetStorePipelineTuning(cnst.CONTAINERMODE)
 	s.readers = 1

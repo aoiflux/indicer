@@ -21,6 +21,12 @@ import (
 // FLUSHED, as an ingest does before its commit.
 func flushedEvidence(t *testing.T, db *badger.DB, path string, content []byte) []byte {
 	t.Helper()
+	return flushEvidence(t, db, path, content, false)
+}
+
+// flushEvidence is flushedEvidence, writing reverse relations when revrel.
+func flushEvidence(t *testing.T, db *badger.DB, path string, content []byte, revrel bool) []byte {
+	t.Helper()
 	if err := util.EnsureBlobPath(db.Opts().Dir); err != nil {
 		t.Fatal(err)
 	}
@@ -33,7 +39,7 @@ func flushedEvidence(t *testing.T, db *badger.DB, path string, content []byte) [
 	if err != nil {
 		t.Fatal(err)
 	}
-	res, err := IngestChunks(t.Context(), ChunkPass{DB: db, ID: eid, Source: bytes.NewReader(content), Size: int64(len(content)), Quiet: true})
+	res, err := IngestChunks(t.Context(), ChunkPass{DB: db, ID: eid, Source: bytes.NewReader(content), Size: int64(len(content)), Quiet: true, RevRel: revrel})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -75,18 +81,15 @@ func countPrefix(t *testing.T, db *badger.DB, prefix []byte) int {
 func TestCommitAliasesStoredContent(t *testing.T) {
 	db := testdb.Open(t, testdb.Default)
 	util.SetChonkSize(4)
-	prev := cnst.ENABLEREVREL
-	cnst.ENABLEREVREL = true
-	t.Cleanup(func() { cnst.ENABLEREVREL = prev })
 	content := testutil.RandomBytes(11, 5*4096+7)
 
-	first := flushedEvidence(t, db.DB, "/case/a.dd", content)
+	first := flushEvidence(t, db.DB, "/case/a.dd", content, true)
 	res, err := CommitEvidence(db.DB, first)
 	if err != nil || res.Outcome != CommitStored || !bytes.Equal(res.Winner, first) {
 		t.Fatalf("first commit: %+v, %v", res, err)
 	}
 
-	second := flushedEvidence(t, db.DB, "/case/copy.dd", content)
+	second := flushEvidence(t, db.DB, "/case/copy.dd", content, true)
 	if bytes.Equal(first, second) {
 		t.Fatal("a second path resumed the first attempt")
 	}

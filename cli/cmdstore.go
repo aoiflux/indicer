@@ -30,6 +30,9 @@ type StoreOptions struct {
 	NoIndex bool
 	// FTS and Enrich run the full-text and graph features after the commit.
 	FTS, Enrich bool
+	// RevRel and Simhash write each chunk's reverse relation and SimHash
+	// signature, which near and its deep mode need.
+	RevRel, Simhash bool
 	// Decode stores a recognised container (EWF, VHD/VHDX, split raw)
 	// decoded (D5). The compression product turns it off: an archive must
 	// give back exactly the file it was given.
@@ -61,6 +64,8 @@ func StoreDataWithOptions(ctx context.Context, opts DBOptions, evipath string, s
 		zap.Bool("no_index", sopts.NoIndex),
 		zap.Bool("enable_fts", sopts.FTS),
 		zap.Bool("enable_enrichment", sopts.Enrich),
+		zap.Bool("revrel", sopts.RevRel),
+		zap.Bool("simhash", sopts.Simhash),
 		zap.Bool("decode", sopts.Decode),
 	)
 	finfo, err := os.Stat(evipath)
@@ -208,6 +213,8 @@ func storeFile(ctx context.Context, w io.Writer, db *badger.DB, path string, sop
 		NoIndex:         sopts.NoIndex,
 		FTS:             sopts.FTS,
 		Enrich:          sopts.Enrich,
+		RevRel:          sopts.RevRel,
+		Simhash:         sopts.Simhash,
 		RequireVerified: sopts.RequireVerified,
 		Quiet:           sopts.Quiet,
 	})

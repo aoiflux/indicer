@@ -21,7 +21,8 @@ const (
 
 const (
 	nearFocusInput = iota
-	nearFocusDeep  // "in" only
+	nearFocusDeep
+	nearFocusAdvanced
 	nearFocusAnalyze
 	nearFields
 )
@@ -50,7 +51,7 @@ type nearScreen struct {
 	modes  list.Model
 	mode   string // "" while choosing
 	input  textinput.Model
-	deep   bool
+	opts   NearOptions
 	focus  int
 	run    running
 	asked  string
@@ -92,14 +93,6 @@ func (s *nearScreen) escape() bool {
 }
 
 func (s *nearScreen) setFocus(f int) {
-	if s.mode == nearOut && f == nearFocusDeep {
-		// The TUI offers deep mode for stored objects only; skip it.
-		if s.focus == nearFocusAnalyze {
-			f = nearFocusInput
-		} else {
-			f = nearFocusAnalyze
-		}
-	}
 	s.focus = f
 	if f == nearFocusInput {
 		s.input.Focus()
@@ -170,13 +163,12 @@ func (s *nearScreen) key(msg tea.KeyPressMsg) tea.Cmd {
 		switch s.focus {
 		case nearFocusInput, nearFocusAnalyze:
 			return s.start()
-		case nearFocusDeep:
-			s.deep = !s.deep
+		default:
+			s.toggle()
 		}
 		return nil
 	case "space":
-		if s.focus == nearFocusDeep {
-			s.deep = !s.deep
+		if s.toggle() {
 			return nil
 		}
 	}
@@ -189,6 +181,19 @@ func (s *nearScreen) key(msg tea.KeyPressMsg) tea.Cmd {
 	return nil
 }
 
+// toggle flips the checkbox that has the focus, and reports whether one had.
+func (s *nearScreen) toggle() bool {
+	switch s.focus {
+	case nearFocusDeep:
+		s.opts.Deep = !s.opts.Deep
+	case nearFocusAdvanced:
+		s.opts.Advanced = !s.opts.Advanced
+	default:
+		return false
+	}
+	return true
+}
+
 func (s *nearScreen) start() tea.Cmd {
 	if s.run.active() {
 		return nil
@@ -199,27 +204,21 @@ func (s *nearScreen) start() tea.Cmd {
 		return nil
 	}
 	var name string
-	var fn func(context.Context) (any, error)
+	var near func(context.Context, string, NearOptions) (Outcome, error)
 	switch s.mode {
 	case nearIn:
-		nearInFn, deep := s.env.actions.NearIn, s.deep
-		if nearInFn == nil {
-			s.status = status{statusError, "Error: NeAR is not available"}
-			return nil
-		}
-		name = "near " + truncate(input, 12)
-		fn = func(ctx context.Context) (any, error) { return nearInFn(ctx, input, deep) }
+		name, near = "near "+truncate(input, 12), s.env.actions.NearIn
 	case nearOut:
-		nearOutFn := s.env.actions.NearOut
-		if nearOutFn == nil {
-			s.status = status{statusError, "Error: NeAR is not available"}
-			return nil
-		}
-		name = "near " + filepath.Base(input)
-		fn = func(ctx context.Context) (any, error) { return nearOutFn(ctx, input) }
+		name, near = "near "+filepath.Base(input), s.env.actions.NearOut
 	default:
 		return nil
 	}
+	if near == nil {
+		s.status = status{statusError, "Error: NeAR is not available"}
+		return nil
+	}
+	opts := s.opts
+	fn := func(ctx context.Context) (any, error) { return near(ctx, input, opts) }
 	id, cmd, err := s.env.run(name, sharedJob, fn)
 	if err != nil {
 		s.status = errStatus(err)
@@ -249,13 +248,18 @@ func (s *nearScreen) view() string {
 	if s.focus == nearFocusInput {
 		label = st.selected.Render(label)
 	}
-	parts := []string{title, st.input.Render(label + "\n" + s.input.View())}
-	if s.mode == nearIn {
-		deep := checkbox(s.deep, "Deep: also match similar chunks (slower)")
-		if s.focus == nearFocusDeep {
-			deep = st.selected.Render(deep)
+	option := func(f int, on bool, label string) string {
+		box := checkbox(on, label)
+		if s.focus == f {
+			box = st.selected.Render(box)
 		}
-		parts = append(parts, deep)
+		return box
+	}
+	parts := []string{
+		title,
+		st.input.Render(label + "\n" + s.input.View()),
+		option(nearFocusDeep, s.opts.Deep, "Deep: also match similar chunks (needs chunk signatures; slower)") + "\n" +
+			option(nearFocusAdvanced, s.opts.Advanced, "Advanced deep: re-rank the closest candidates by whole-file similarity (slower)"),
 	}
 	stat := s.status.render(st)
 	if s.run.active() {

@@ -17,12 +17,12 @@ import (
 func TestStatsWithReverseRelations(t *testing.T) {
 	db := testdb.Open(t, testdb.Default)
 	util.SetChonkSize(4)
-	cnst.ENABLEREVREL = true
 	cs := int(cnst.ChonkSize)
 	a := testutil.RandomBytes(51, 6*cs)
 	b := append(append([]byte{}, a[:3*cs]...), testutil.RandomBytes(52, 3*cs)...)
-	runChunkPass(t, ingestChunksBatchOwner, db.DB, "a", a)
-	runChunkPass(t, ingestChunksBatchOwner, db.DB, "b", b)
+	for id, content := range map[string][]byte{"a": a, "b": b} {
+		runPass(t, ingestChunksBatchOwner, ChunkPass{DB: db.DB, ID: []byte(id), Source: byteReaderAt(content), Size: int64(len(content)), Quiet: true, RevRel: true})
+	}
 
 	s, err := GatherStats(t.Context(), db.DB)
 	if err != nil {

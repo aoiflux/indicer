@@ -66,20 +66,22 @@ Both commands open the database read-only (`dbopen.ReadOnly`).
 | 2 | The report file exists, `--top-k` is out of range, or some stored evidence has no reverse relations (`lifecycle.WarningError`). |
 | 1 | Any other failure, including `ErrNoReverseRelations` and `ErrNoStoredEvidence`. |
 
-**TUI.** The TUI calls `near.In` with its deep option and `near.Out` without
-it, both with `Force`. It never runs phase 2.
+**TUI.** The TUI calls `near.In` and `near.Out` with its Deep and Advanced
+deep checkboxes as `Deep` and `Verify`, and with `Force`. Its database is
+writable, so phase 2 caches the full-file signatures it computes.
 
 ## Data near reads
 
 | Key | Holds | Written by |
 | --- | --- | --- |
 | `R\|\|\|:<owner>\|\|\|<offset>` | The chunk hash at an offset of an evidence or a materialised object | Every store |
-| `RA\|\|\|:`, `Я\|\|\|:`, `RAS\|\|\|:` | Reverse relations: where a chunk occurs. The three forms are one key per occurrence, the older per-offset maps, and segments. | `store --revrel`, `repair --fix --revrel` |
-| `S\|\|\|:<chash>` | A chunk's 64-bit SimHash signature (`util.ChunkSimHash64`) | `store --simhash` |
+| `RA\|\|\|:`, `Я\|\|\|:`, `RAS\|\|\|:` | Reverse relations: where a chunk occurs. The three forms are one key per occurrence, the older per-offset maps, and segments. | `store --revrel` (in the TUI, **Reverse relations**), `repair --fix --revrel` |
+| `S\|\|\|:<chash>` | A chunk's 64-bit SimHash signature (`util.ChunkSimHash64`) | `store --simhash` (in the TUI, **Chunk signatures**) |
 | `F\|\|\|:<record key>` | A cached full-file SimHash | Phase 2, on a writable database |
 
 An evidence record's `Features` say what it was stored with (`revrel`,
-`simhash`).
+`simhash`). The decoded content its index stores gets the same, at ingest and
+at reindex, which follows those features.
 
 ## Per-call state
 

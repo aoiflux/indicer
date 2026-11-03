@@ -53,6 +53,9 @@ type Request struct {
 	NoIndex bool
 	// FTS and Enrich run the full-text and graph features after the commit.
 	FTS, Enrich bool
+	// RevRel writes each chunk's reverse relation, which near needs; Simhash
+	// writes each chunk's SimHash signature, which near's deep mode compares.
+	RevRel, Simhash bool
 	// RequireVerified fails an EWF ingest whose stored digests do not match
 	// the decoded image, instead of storing it flagged.
 	RequireVerified bool
@@ -267,11 +270,11 @@ func newRecord(db *badger.DB, src *evidence.Source, info structs.EvidenceSource,
 	rec.HashStrategy = cnst.StoreHashStrategy
 	rec.Fingerprint = fp
 	rec.Source = &info
-	if cnst.ENABLEREVREL {
-		rec.Features = append(rec.Features, "revrel")
+	if req.RevRel {
+		rec.Features = append(rec.Features, store.FeatureRevrel)
 	}
-	if cnst.ENABLESIMHASH {
-		rec.Features = append(rec.Features, "simhash")
+	if req.Simhash {
+		rec.Features = append(rec.Features, store.FeatureSimhash)
 	}
 	if req.FTS {
 		rec.Features = append(rec.Features, "fts")
@@ -375,13 +378,14 @@ func run(ctx context.Context, db *badger.DB, src *evidence.Source, eid []byte, n
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
-			idx, idxErr = runIndex(idxCtx, index.Options{DB: db, EvidenceID: eid, EvidenceName: name, Image: src.Image(), Entropy: req.Enrich})
+			idx, idxErr = runIndex(idxCtx, index.Options{DB: db, EvidenceID: eid, EvidenceName: name, Image: src.Image(), Entropy: req.Enrich, RevRel: req.RevRel, Simhash: req.Simhash})
 		}()
 	}
 
 	chunks, err := ingestChunks(ctx, store.ChunkPass{
 		DB: db, ID: eid, Source: src.Image(), Size: src.Size(),
 		Parallel: src.Parallel(), Ranges: ranges, EWF: src.EWF(), Quiet: req.Quiet,
+		RevRel: req.RevRel, Simhash: req.Simhash,
 	})
 	if err != nil {
 		stopIndex(fmt.Errorf("storage failed: %w", err))

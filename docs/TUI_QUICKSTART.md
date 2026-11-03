@@ -65,18 +65,33 @@ and DUES exits with code 130 or 143.
 ### Store
 
 Enter the path of a file or a folder and press `Enter` (or the **Store**
-button). Evidence is stored as `dues store` stores it with its default
-options: containers (EWF, VHD/VHDX, split raw) decoded and the content
-indexed. The **Skip the index** checkbox stores the bytes only. A file whose
-content is already stored is recorded as an alias of the evidence holding it.
+button). Evidence is stored as `dues store` stores it: containers (EWF,
+VHD/VHDX, split raw) decoded and the content indexed. A file whose content is
+already stored is recorded as an alias of the evidence holding it.
+
+The checkboxes are the options of `dues store`, all off at first. They keep
+their state while the TUI runs.
+
+| Checkbox | `dues store` option | What it adds |
+|---|---|---|
+| **Skip the index** | `--no-index` | Stores the bytes only. |
+| **Reverse relations** | `--revrel` | Where each chunk occurs, which NeAR needs. |
+| **Chunk signatures** | `--simhash` | A SimHash signature per chunk, which deep NeAR compares. |
+| **Full-text index** | `--fts` | The index `dues search --fts` uses. Needs the index. |
+| **Graph enrichment** | `--enrich` | Entropy and the file hierarchy in the graph. Needs the index. |
+
+With **Skip the index** ticked, the last two are turned off and cannot be
+chosen. Reverse relations and signatures make a store slower. `dues repair
+--fix --revrel` adds reverse relations to evidence already stored; signatures
+can only be written when the evidence is stored.
+
+While a store with graph enrichment runs, the micro-artefact screen does not
+read the graph and says so: opening it read-only then would stop the store
+from writing it.
 
 The screen shows the store's report: the evidence ID, the index state, and any
 warning (for example EWF digests that do not match). **Cancel** goes back to
 the menu.
-
-The TUI does not record reverse relations, the full-text index or graph
-enrichment. NeAR needs reverse relations: `dues store --revrel` records them,
-and `dues repair --fix --revrel` adds them to evidence already stored.
 
 ### List
 
@@ -105,9 +120,16 @@ that fails leaves the file as it was.
 ### NeAR
 
 Choose a stored object or a file outside the database, enter its ID or path,
-and press **Analyse**. For a stored object, the **Deep** checkbox also matches
-similar chunks. The report replaces `near_report.json` in the working
-directory.
+and press **Analyse**. Two checkboxes, in either mode, are the options of
+`dues near`:
+- **Deep** (`--deep`) also matches similar chunks. It compares chunk
+  signatures, so it finds only evidence stored with them.
+- **Advanced deep** (`--advanced-deep`) re-ranks the closest candidates by
+  whole-file similarity. The signatures it computes are kept in the database
+  for later runs.
+
+NeAR needs reverse relations, and says which evidence has none. The report
+replaces `near_report.json` in the working directory.
 
 ### Reset
 

@@ -35,14 +35,19 @@ returning what it did:
 
 | Action | Implemented with |
 |---|---|
-| `Store(ctx, path, StoreOptions) (Outcome, error)` | `storeFile`/`storeFolder`, the code `dues store` runs, writing its report to a buffer |
+| `Store(ctx, path, StoreOptions) (Outcome, error)` | `storeFile`/`storeFolder`, the code `dues store` runs, writing its report to a buffer. `StoreOptions` are `dues store`'s `--no-index`, `--revrel`, `--simhash`, `--fts` and `--enrich` |
 | `Search(ctx, query)` | `search.SearchReport`, and the summary lines `dues search` prints |
 | `Restore(ctx, id, path, replace)` | `restoreToPath` (verified, atomic). An existing file without `replace` is `tui.ErrTargetExists` |
-| `NearIn`, `NearOut` | `near.In`, `near.Out`, and the summary `dues near` prints |
+| `NearIn`, `NearOut` (`ctx, query, NearOptions`) | `near.In`, `near.Out`, and the summary `dues near` prints. `NearOptions` are `--deep` and `--advanced-deep` |
 | `Reset(ctx)` | `dbopen.Handle.Reset`, which also clears the graph and the full-text index |
 | `List(ctx, limit) (EvidenceList, error)` | Completed evidence records, at most `limit`, and the total |
 | `Stats(ctx)` | `store.GatherStats` |
 | `Micro(ctx) (MicroView, error)` | The graph opened read-only; `TopFiles` (500 files, 20 artefacts each) |
+
+A read-only graph handle open in the process makes a writable open fail, so
+`tuiActions` keeps the two apart (`graphGate`). A store with enrichment waits
+for the micro views already reading the graph. While it runs, a micro view is
+refused with a message saying so.
 
 An `Outcome` is the action's report, line by line. `Warning` marks what the
 command line reports with exit code 2 (a `lifecycle.WarningError`): the action
@@ -123,11 +128,11 @@ type screen interface {
 
 | File | Screen |
 |---|---|
-| `tuistore.go` | Path, a skip-index checkbox, Store and Cancel; "store another?" |
+| `tuistore.go` | Path, the store options as checkboxes (full text and enrichment unavailable without the index), Store and Cancel; "store another?", which hides the options |
 | `tuilist.go` | Evidence list (`listLimit` 5,000), copy, restore with a replace question |
 | `tuisearch.go` | Query; the field always has focus |
 | `tuirestore.go` | ID and path, Restore and Cancel; replace question (No chosen); "restore another?" |
-| `tuinear.go` | Mode list, input, a deep-mode checkbox (stored objects only), Analyse |
+| `tuinear.go` | Mode list, input, Deep and Advanced deep checkboxes, Analyse |
 | `tuireset.go` | Typed confirmation, No then Yes; Yes is disabled until the folder name is typed and nothing else runs |
 | `tuistats.go` | Statistics in a viewport |
 | `tuimicro.go` | Micro-artefact tree in a viewport |

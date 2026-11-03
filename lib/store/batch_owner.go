@@ -111,7 +111,7 @@ func ingestChunksBatchOwner(parentCtx context.Context, p ChunkPass) (res ChunkRe
 	defer func() { meter.done(err) }()
 
 	var simhashWriter *simhashAsyncWriter
-	if cnst.ENABLESIMHASH {
+	if p.Simhash {
 		simhashWriter = newSimhashAsyncWriter(p.DB, cnst.GetMaxThreadCount())
 		defer func() {
 			simhashErr := simhashWriter.wait()
@@ -296,7 +296,7 @@ func batchOwnerWriteLoop(
 		if err := processRel(task.index, fhash, task.chash, db, batch); err != nil {
 			return fail(err)
 		}
-		if err := processRevRel(task.index, fhash, task.chash, batch); err != nil {
+		if err := processRevRel(shape.revrel, task.index, fhash, task.chash, batch); err != nil {
 			return fail(err)
 		}
 	}

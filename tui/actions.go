@@ -30,8 +30,8 @@ type Actions struct {
 	Restore func(ctx context.Context, id, path string, replace bool) (Outcome, error)
 	// NearIn and NearOut find what shares content with a stored object, or
 	// with a file outside the database, and write the report.
-	NearIn  func(ctx context.Context, id string, deep bool) (Outcome, error)
-	NearOut func(ctx context.Context, path string) (Outcome, error)
+	NearIn  func(ctx context.Context, id string, opts NearOptions) (Outcome, error)
+	NearOut func(ctx context.Context, path string, opts NearOptions) (Outcome, error)
 	// Reset empties the database.
 	Reset func(ctx context.Context) error
 	// List lists at most limit completed evidence, and how many there are.
@@ -43,9 +43,17 @@ type Actions struct {
 	Micro func(ctx context.Context) (MicroView, error)
 }
 
-// StoreOptions are the store screen's options.
+// StoreOptions are the store screen's options, as `dues store` takes them:
+// NoIndex is --no-index, RevRel --revrel, Simhash --simhash, FTS --fts and
+// Enrich --enrich. FTS and Enrich are never set with NoIndex.
 type StoreOptions struct {
-	NoIndex bool
+	NoIndex, RevRel, Simhash, FTS, Enrich bool
+}
+
+// NearOptions are the NeAR screen's options: Deep is --deep, Advanced
+// --advanced-deep.
+type NearOptions struct {
+	Deep, Advanced bool
 }
 
 // Outcome is what a finished action did, line by line. Warning marks an

@@ -47,6 +47,9 @@ type Options struct {
 	// Entropy also computes each file's entropy from the bytes the pass
 	// reads, for graph enrichment, so enrichment need not read them again.
 	Entropy bool
+	// RevRel and Simhash are the evidence's store options, which the
+	// decoded content the pass stores gets too.
+	RevRel, Simhash bool
 }
 
 // Partition is one partition record a pass wrote.

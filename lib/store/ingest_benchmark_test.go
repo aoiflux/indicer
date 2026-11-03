@@ -150,10 +150,6 @@ func BenchmarkIngestMetadataPathHotspots(b *testing.B) {
 	})
 
 	b.Run("process_revrel_append_primary/files_32/chunks_16", func(b *testing.B) {
-		// processRevRel writes nothing unless reverse relations are on.
-		oldRevRel := cnst.ENABLEREVREL
-		cnst.ENABLEREVREL = true
-		defer func() { cnst.ENABLEREVREL = oldRevRel }()
 		db := openRevRelBenchDB(b)
 		defer db.Close()
 
@@ -251,11 +247,9 @@ func ingestBatchOwnerWorkerWorkload(db *badger.DB, mappedFile []byte, fileCount 
 }
 
 func ingestBatchOwnerWorkerOnce(db *badger.DB, fhash, mappedFile []byte, enableSimhash bool) error {
-	prev := cnst.ENABLESIMHASH
-	cnst.ENABLESIMHASH = enableSimhash
-	defer func() { cnst.ENABLESIMHASH = prev }()
 	_, err := ingestChunksBatchOwner(context.Background(), ChunkPass{
 		DB: db, ID: fhash, Source: byteReaderAt(mappedFile), Size: int64(len(mappedFile)), Quiet: true,
+		Simhash: enableSimhash,
 	})
 	return err
 }
@@ -277,7 +271,7 @@ func ingestMetadataWorkloadWithOffset(db *badger.DB, fileCount int, chunkHashes 
 				batch.Cancel()
 				return err
 			}
-			if err := processRevRel(index, fhash, chash, batch); err != nil {
+			if err := processRevRel(false, index, fhash, chash, batch); err != nil {
 				batch.Cancel()
 				return err
 			}
@@ -322,7 +316,7 @@ func ingestProcessRevRelWorkloadMode(db *badger.DB, fileCount int, chunkHashes [
 		batch := db.NewWriteBatch()
 		for chunkIdx, chash := range chunkHashes {
 			index := int64(chunkIdx) * cnst.ChonkSize
-			if err := processRevRel(index, fhash, chash, batch); err != nil {
+			if err := processRevRel(true, index, fhash, chash, batch); err != nil {
 				batch.Cancel()
 				return err
 			}
@@ -527,7 +521,7 @@ func BenchmarkIngestBatchOwnershipSteadyState(b *testing.B) {
 }
 
 // BenchmarkIngestBatchOwnershipSimhashToggle measures the live batch-owner
-// worker path with ENABLESIMHASH flipped on and off. This makes the simhash
+// worker path with signatures on and off. This makes the simhash
 // cost visible in the same ingest shape the production code uses.
 func BenchmarkIngestBatchOwnershipSimhashToggle(b *testing.B) {
 	ensureBenchmarkCodecs(b)
@@ -551,12 +545,6 @@ func BenchmarkIngestBatchOwnershipSimhashToggle(b *testing.B) {
 			db := openRevRelBenchDB(b)
 			defer db.Close()
 
-			oldEnableSimhash := cnst.ENABLESIMHASH
-			cnst.ENABLESIMHASH = false
-			defer func() {
-				cnst.ENABLESIMHASH = oldEnableSimhash
-			}()
-
 			b.ResetTimer()
 			for i := 0; i < b.N; i++ {
 				if err := ingestBatchOwnerWorkerWorkload(db, mappedFile, workload.files, i*workload.files, false); err != nil {
@@ -568,12 +556,6 @@ func BenchmarkIngestBatchOwnershipSimhashToggle(b *testing.B) {
 		b.Run("simhash_on/"+workload.name, func(b *testing.B) {
 			db := openRevRelBenchDB(b)
 			defer db.Close()
-
-			oldEnableSimhash := cnst.ENABLESIMHASH
-			cnst.ENABLESIMHASH = true
-			defer func() {
-				cnst.ENABLESIMHASH = oldEnableSimhash
-			}()
 
 			b.ResetTimer()
 			for i := 0; i < b.N; i++ {
@@ -625,7 +607,7 @@ func batchOwnerWriteLoopBenchmarkDirect(fhash []byte, db *badger.DB, tasks []chu
 			batch.Cancel()
 			return err
 		}
-		if err := processRevRel(task.index, fhash, task.chash, batch); err != nil {
+		if err := processRevRel(false, task.index, fhash, task.chash, batch); err != nil {
 			batch.Cancel()
 			return err
 		}

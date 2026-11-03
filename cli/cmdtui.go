@@ -9,6 +9,7 @@ import (
 	"indicer/internal/ui"
 	"os"
 	"strings"
+	"sync"
 	"sync/atomic"
 
 	"indicer/internal/console"
@@ -88,6 +89,67 @@ type tuiActions struct {
 	// stored is set once a store has run, so the value log is compacted at
 	// the end, as after `dues store`.
 	stored atomic.Bool
+	graph  graphGate
+}
+
+// graphGate keeps the TUI's read-only views of the graph apart from its
+// stores that enrich. While a read-only handle on the graph is open in the
+// process, a writable open fails (lib/graph does not escalate), so a store
+// that enriches waits for the views already reading, and no view starts
+// while such a store runs.
+type graphGate struct {
+	mu        sync.Mutex
+	views     int
+	enriching int
+	idle      chan struct{} // closed when the last view ends; nil with none
+}
+
+// errGraphBusy is a view's answer while a store writes the graph.
+var errGraphBusy = errors.New("a store is writing the graph; open this view again when it ends")
+
+// view runs fn, which reads the graph, unless a store that enriches runs.
+func (g *graphGate) view(fn func() error) error {
+	g.mu.Lock()
+	if g.enriching > 0 {
+		g.mu.Unlock()
+		return errGraphBusy
+	}
+	if g.views++; g.idle == nil {
+		g.idle = make(chan struct{})
+	}
+	g.mu.Unlock()
+	defer func() {
+		g.mu.Lock()
+		if g.views--; g.views == 0 {
+			close(g.idle)
+			g.idle = nil
+		}
+		g.mu.Unlock()
+	}()
+	return fn()
+}
+
+// enrich waits for the views reading the graph to end, and keeps new ones
+// from starting until done is called.
+func (g *graphGate) enrich(ctx context.Context) (done func(), err error) {
+	g.mu.Lock()
+	g.enriching++
+	wait := g.idle
+	g.mu.Unlock()
+	done = func() {
+		g.mu.Lock()
+		g.enriching--
+		g.mu.Unlock()
+	}
+	if wait != nil {
+		select {
+		case <-wait:
+		case <-ctx.Done():
+			done()
+			return nil, context.Cause(ctx)
+		}
+	}
+	return done, nil
 }
 
 func (a *tuiActions) info() tui.Info {
@@ -126,14 +188,22 @@ func outcome(report string, err error) (tui.Outcome, error) {
 	return out, err
 }
 
-// store stores a file or folder, as `dues store` does with default options.
+// store stores a file or folder, as `dues store` does with the options
+// the store screen gives.
 func (a *tuiActions) store(ctx context.Context, path string, o tui.StoreOptions) (tui.Outcome, error) {
 	fi, err := os.Stat(path)
 	if err != nil {
 		return tui.Outcome{}, err
 	}
+	sopts := StoreOptions{NoIndex: o.NoIndex, RevRel: o.RevRel, Simhash: o.Simhash, FTS: o.FTS, Enrich: o.Enrich, Decode: true, Quiet: true}
+	if sopts.Enrich && !sopts.NoIndex {
+		done, err := a.graph.enrich(ctx)
+		if err != nil {
+			return tui.Outcome{}, err
+		}
+		defer done()
+	}
 	var report bytes.Buffer
-	sopts := StoreOptions{NoIndex: o.NoIndex, Decode: true, Quiet: true}
 	a.stored.Store(true)
 	if fi.IsDir() {
 		err = storeFolder(ctx, &report, a.h.DB, path, sopts)
@@ -179,14 +249,20 @@ func (a *tuiActions) restore(ctx context.Context, id, path string, replace bool)
 	return out, nil
 }
 
-func (a *tuiActions) nearIn(ctx context.Context, id string, deep bool) (tui.Outcome, error) {
-	o, err := near.In(ctx, a.h.DB, id, near.Options{Deep: deep, Force: true})
-	return nearOutcome(o, err)
+func (a *tuiActions) nearIn(ctx context.Context, id string, o tui.NearOptions) (tui.Outcome, error) {
+	out, err := near.In(ctx, a.h.DB, id, nearOptions(o))
+	return nearOutcome(out, err)
 }
 
-func (a *tuiActions) nearOut(ctx context.Context, path string) (tui.Outcome, error) {
-	o, err := near.Out(ctx, a.h.DB, path, near.Options{Force: true})
-	return nearOutcome(o, err)
+func (a *tuiActions) nearOut(ctx context.Context, path string, o tui.NearOptions) (tui.Outcome, error) {
+	out, err := near.Out(ctx, a.h.DB, path, nearOptions(o))
+	return nearOutcome(out, err)
+}
+
+// nearOptions are the NeAR screen's options as near takes them. The TUI
+// replaces the report of its previous analysis, as it always has.
+func nearOptions(o tui.NearOptions) near.Options {
+	return near.Options{Deep: o.Deep, Verify: o.Advanced, Force: true}
 }
 
 func nearOutcome(o near.Outcome, err error) (tui.Outcome, error) {
@@ -256,9 +332,18 @@ func (a *tuiActions) stats(ctx context.Context) (*store.DBStats, error) {
 }
 
 // micro reads the files with the most micro-artefacts from the graph, opened
-// read-only; a database without a graph has none.
+// read-only; a database without a graph has none. While a store enriches,
+// the graph is not read (graphGate).
 func (a *tuiActions) micro(ctx context.Context) (view tui.MicroView, err error) {
-	repo, err := microartefact.OpenGrapheneRepositoryReadOnly(a.h.Root)
+	err = a.graph.view(func() error {
+		view, err = readMicro(ctx, a.h.Root)
+		return err
+	})
+	return view, err
+}
+
+func readMicro(ctx context.Context, root string) (view tui.MicroView, err error) {
+	repo, err := microartefact.OpenGrapheneRepositoryReadOnly(root)
 	if errors.Is(err, duesgraph.ErrNoGraph) {
 		return view, nil
 	}

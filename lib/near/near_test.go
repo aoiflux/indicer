@@ -17,7 +17,6 @@ import (
 	"indicer/internal/testutil/fsfixture"
 	"indicer/internal/testutil/leakcheck"
 	"indicer/internal/testutil/testdb"
-	"indicer/lib/cnst"
 	"indicer/lib/dbio"
 	"indicer/lib/ingest"
 	"indicer/lib/store"
@@ -63,8 +62,7 @@ func storeFile(t *testing.T, db *badger.DB, name string, content []byte, revrel,
 	if err := os.WriteFile(path, content, 0o600); err != nil {
 		t.Fatal(err)
 	}
-	cnst.ENABLEREVREL, cnst.ENABLESIMHASH = revrel, simhash
-	res, err := ingest.Run(t.Context(), db, ingest.Request{Path: path, Decode: true, Quiet: true, NoIndex: true})
+	res, err := ingest.Run(t.Context(), db, ingest.Request{Path: path, Decode: true, Quiet: true, NoIndex: true, RevRel: revrel, Simhash: simhash})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -229,13 +227,12 @@ func TestNearAttributesToFiles(t *testing.T) {
 	}
 	other := append([]byte(nil), img...)
 	copy(other[len(other)-4:], "tail") // the last chunk differs, so it is another evidence
-	cnst.ENABLEREVREL = true
 	put := func(name string, content []byte) []byte {
 		path := filepath.Join(t.TempDir(), name)
 		if err := os.WriteFile(path, content, 0o600); err != nil {
 			t.Fatal(err)
 		}
-		res, err := ingest.Run(t.Context(), d.DB, ingest.Request{Path: path, Decode: true, Quiet: true})
+		res, err := ingest.Run(t.Context(), d.DB, ingest.Request{Path: path, Decode: true, Quiet: true, RevRel: true})
 		if err != nil {
 			t.Fatal(err)
 		}

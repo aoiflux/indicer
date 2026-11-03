@@ -219,8 +219,6 @@ func applyRuntimeConfig(parsed string, cliDef cliDefinition, src sources) (pipel
 			})
 		}
 
-		cnst.ENABLESIMHASH = *f.enableSimhash
-		cnst.ENABLEREVREL = *f.enableRevRel
 		if set[cnst.FlagStoreAsyncFileWrite] {
 			// Retired with STO-4: every chunk blob is now synced before its
 			// metadata is written.
@@ -360,11 +358,13 @@ func runSettings(parsed string, cliDef cliDefinition, tuning pipelineTuning) []u
 	if cnst.CompressLevel != "default" {
 		s = append(s, ui.Setting{Key: "compress", Value: cnst.CompressLevel, Phrase: "zstd " + cnst.CompressLevel})
 	}
-	if cnst.ENABLESIMHASH {
-		s = append(s, on("simhash", "simhash"))
-	}
-	if cnst.ENABLEREVREL {
-		s = append(s, on("revrel", "revrel"))
+	if parsed == cliDef.commands.store.FullCommand() {
+		if *cliDef.flags.enableSimhash {
+			s = append(s, on("simhash", "simhash"))
+		}
+		if *cliDef.flags.enableRevRel {
+			s = append(s, on("revrel", "revrel"))
+		}
 	}
 	n := func(key string, v int, phrase string) ui.Setting {
 		return ui.Setting{Key: key, Value: strconv.Itoa(v), Phrase: fmt.Sprintf(phrase, v)}

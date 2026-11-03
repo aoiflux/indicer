@@ -73,7 +73,7 @@ func ingestChunksStaged(parentCtx context.Context, p ChunkPass) (res ChunkResult
 	defer func() { meter.done(err) }()
 
 	var simhashWriter *simhashAsyncWriter
-	if cnst.ENABLESIMHASH {
+	if p.Simhash {
 		simhashWriter = newSimhashAsyncWriter(p.DB, cnst.GetMaxThreadCount())
 		defer func() {
 			simhashErr := simhashWriter.wait()
@@ -355,7 +355,7 @@ func stagedDiskWriterLoop(
 			if err := processRel(item.offset, fhash, chash, db, batch); err != nil {
 				return err
 			}
-			if err := processRevRel(item.offset, fhash, chash, batch); err != nil {
+			if err := processRevRel(shape.revrel, item.offset, fhash, chash, batch); err != nil {
 				return err
 			}
 		}

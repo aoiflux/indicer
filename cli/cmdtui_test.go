@@ -10,13 +10,21 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"indicer/internal/console"
 	"indicer/internal/lifecycle"
+	"indicer/internal/testutil"
 	"indicer/internal/testutil/testdb"
 	"indicer/internal/ui"
+	"indicer/lib/cnst"
+	"indicer/lib/dbio"
 	"indicer/lib/dbopen"
+	duesgraph "indicer/lib/graph"
+	"indicer/lib/util"
 	"indicer/tui"
+
+	"github.com/dgraph-io/badger/v4"
 )
 
 // tuiActionsOn opens dbPath as TUICmd does and returns its actions.
@@ -117,7 +125,7 @@ func TestTUIActions(t *testing.T) {
 	if err != nil || len(out.Lines) < 2 || !strings.Contains(out.Lines[0], "objects hold a match. Report: ") || !strings.HasPrefix(out.Lines[1], "Searched 2 evidence") {
 		t.Fatalf("search: %v %+v", err, out)
 	}
-	if _, err := acts.NearIn(ctx, row.ID, false); err == nil || !strings.Contains(err.Error(), "repair --fix --revrel") {
+	if _, err := acts.NearIn(ctx, row.ID, tui.NearOptions{}); err == nil || !strings.Contains(err.Error(), "repair --fix --revrel") {
 		t.Fatalf("near without reverse relations: %v", err)
 	}
 	stats, err := acts.Stats(ctx)
@@ -137,6 +145,157 @@ func TestTUIActions(t *testing.T) {
 	}
 	if _, err := acts.Store(ctx, first, tui.StoreOptions{}); err != nil {
 		t.Fatalf("store after reset: %v", err)
+	}
+}
+
+// TestTUIStoreOptions: a store from the TUI writes what its options ask.
+// The TUI's NeAR then finds what the TUI stored, deep NeAR matches similar
+// chunks of a file outside the database, Advanced deep runs phase 2, and
+// the full-text index and the graph are built. The TUI used to store with
+// none of them, so its own NeAR could not search what it had stored.
+func TestTUIStoreOptions(t *testing.T) {
+	testdb.Isolate(t)
+	testdb.EnsureCodecs(t)
+	t.Chdir(t.TempDir()) // near writes its report here
+	cs := matrixChunkKB << 10
+	content := testutil.RandomBytes(71, 8*cs)
+	shares := append(append([]byte(nil), content[:6*cs]...), testutil.RandomBytes(72, 2*cs)...)
+	similar := append([]byte(nil), content...)
+	for i := 0; i < len(similar); i += cs {
+		similar[i+100] ^= 0xff
+		similar[i+3000] ^= 0xff
+	}
+	dir := t.TempDir()
+	first := writeFile(t, filepath.Join(dir, "first.bin"), content)
+	second := writeFile(t, filepath.Join(dir, "second.bin"), shares)
+	outside := writeFile(t, filepath.Join(t.TempDir(), "similar.bin"), similar)
+	_, image := fixtureNamed(t, "fat/fat16")
+
+	a, acts := tuiActionsOn(t, filepath.Join(t.TempDir(), "db"))
+	ctx := t.Context()
+	for _, s := range []struct {
+		path string
+		opts tui.StoreOptions
+	}{
+		{first, tui.StoreOptions{RevRel: true, Simhash: true}},
+		{second, tui.StoreOptions{RevRel: true, Simhash: true}},
+		{image, tui.StoreOptions{RevRel: true, FTS: true, Enrich: true}},
+	} {
+		if out, err := acts.Store(ctx, s.path, s.opts); err != nil || out.Warning {
+			t.Fatalf("store %s: %v %+v", s.path, err, out)
+		}
+	}
+	rows, err := acts.List(ctx, 10)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var firstID string
+	for _, r := range rows.Rows {
+		if r.Name == "first.bin" {
+			firstID = r.ID
+		}
+	}
+
+	near := func(out tui.Outcome, err error) string {
+		t.Helper()
+		if err != nil || out.Warning || len(out.Lines) == 0 {
+			t.Fatalf("near: %v %+v", err, out)
+		}
+		return out.Lines[0]
+	}
+	if got := near(acts.NearIn(ctx, firstID, tui.NearOptions{})); !strings.HasPrefix(got, "Matched 6 of 8 distinct chunks") {
+		t.Errorf("near in: %s", got)
+	}
+	if got := near(acts.NearOut(ctx, outside, tui.NearOptions{})); !strings.HasPrefix(got, "Matched 0 of 8 distinct chunks") {
+		t.Errorf("near out without deep: %s", got)
+	}
+	if got := near(acts.NearOut(ctx, outside, tui.NearOptions{Deep: true})); !strings.HasPrefix(got, "Matched 8 of 8 distinct chunks") {
+		t.Errorf("deep near out: %s", got)
+	}
+	if n := countKeys(t, a.h.DB, cnst.FileSimhashNamespace); n != 0 {
+		t.Fatalf("%d full-file signatures cached before phase 2 ran", n)
+	}
+	near(acts.NearIn(ctx, firstID, tui.NearOptions{Advanced: true}))
+	if n := countKeys(t, a.h.DB, cnst.FileSimhashNamespace); n == 0 {
+		t.Error("Advanced deep cached no full-file signature: phase 2 did not run")
+	}
+
+	root := dbio.KVDir(a.h.DB)
+	if _, err := os.Stat(util.FTSPath(root)); err != nil {
+		t.Errorf("no full-text index: %v", err)
+	}
+	if !duesgraph.Exists(root) {
+		t.Error("no graph after a store with enrichment")
+	}
+	if _, err := acts.Micro(ctx); err != nil {
+		t.Errorf("micro view: %v", err)
+	}
+}
+
+func countKeys(t *testing.T, db *badger.DB, prefix string) int {
+	t.Helper()
+	n := 0
+	err := db.View(func(txn *badger.Txn) error {
+		opts := badger.DefaultIteratorOptions
+		opts.Prefix, opts.PrefetchValues = []byte(prefix), false
+		it := txn.NewIterator(opts)
+		defer it.Close()
+		for it.Rewind(); it.Valid(); it.Next() {
+			n++
+		}
+		return nil
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	return n
+}
+
+// TestGraphGate: a store that enriches waits for the graph views already
+// reading, and no view starts while it runs; a view that ends lets it go. A
+// read-only handle open in the process would make its writable open fail.
+func TestGraphGate(t *testing.T) {
+	var g graphGate
+	reading, release := make(chan struct{}), make(chan struct{})
+	viewed := make(chan error, 1)
+	go func() {
+		viewed <- g.view(func() error {
+			close(reading)
+			<-release
+			return nil
+		})
+	}()
+	<-reading
+
+	ctx, cancel := context.WithCancel(t.Context())
+	cancel()
+	if _, err := g.enrich(ctx); !errors.Is(err, context.Canceled) {
+		t.Fatalf("a cancelled store waiting for a view: %v", err)
+	}
+	started := make(chan func(), 1)
+	go func() {
+		done, err := g.enrich(t.Context())
+		if err != nil {
+			t.Error(err)
+		}
+		started <- done
+	}()
+	select {
+	case <-started:
+		t.Fatal("a store enriched while a view read the graph")
+	case <-time.After(50 * time.Millisecond):
+	}
+	close(release)
+	if err := <-viewed; err != nil {
+		t.Fatal(err)
+	}
+	done := <-started
+	if err := g.view(func() error { t.Error("a view read the graph while a store enriched"); return nil }); !errors.Is(err, errGraphBusy) {
+		t.Fatalf("a view while a store enriches: %v", err)
+	}
+	done()
+	if err := g.view(func() error { return nil }); err != nil {
+		t.Fatalf("a view after the store: %v", err)
 	}
 }
 

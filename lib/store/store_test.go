@@ -18,18 +18,12 @@ import (
 func TestProcessRevRelSkippedWhenDisabled(t *testing.T) {
 	db := openTestDB(t)
 
-	prev := cnst.ENABLEREVREL
-	cnst.ENABLEREVREL = false
-	t.Cleanup(func() {
-		cnst.ENABLEREVREL = prev
-	})
-
 	index := int64(0)
 	fhash := []byte("file-disabled")
 	chash := []byte("chunk-disabled")
 
 	batch := db.NewWriteBatch()
-	if err := processRevRel(index, fhash, chash, batch); err != nil {
+	if err := processRevRel(false, index, fhash, chash, batch); err != nil {
 		batch.Cancel()
 		t.Fatalf("processRevRel disabled: %v", err)
 	}
@@ -47,18 +41,12 @@ func TestProcessRevRelSkippedWhenDisabled(t *testing.T) {
 func TestProcessRevRelWritesWhenEnabled(t *testing.T) {
 	db := openTestDB(t)
 
-	prev := cnst.ENABLEREVREL
-	cnst.ENABLEREVREL = true
-	t.Cleanup(func() {
-		cnst.ENABLEREVREL = prev
-	})
-
 	index := int64(0)
 	fhash := []byte("file-enabled")
 	chash := []byte("chunk-enabled")
 
 	batch := db.NewWriteBatch()
-	if err := processRevRel(index, fhash, chash, batch); err != nil {
+	if err := processRevRel(true, index, fhash, chash, batch); err != nil {
 		batch.Cancel()
 		t.Fatalf("processRevRel enabled: %v", err)
 	}

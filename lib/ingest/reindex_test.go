@@ -10,6 +10,7 @@ import (
 	"indicer/lib/cnst"
 	"indicer/lib/dbio"
 	"indicer/lib/index"
+	"indicer/lib/store"
 	"indicer/lib/structs"
 
 	"github.com/dgraph-io/badger/v4"
@@ -95,6 +96,61 @@ func TestReindexRebuildsTheSameIndex(t *testing.T) {
 			}
 		})
 	}
+}
+
+// TestStoreOptionsReachDecodedContent: the reverse relations and signatures
+// an evidence is stored with are recorded in its features and cover the
+// decoded content its index stores, at ingest and again at reindex. Reindex
+// stored that content without them, whatever the evidence was stored with.
+func TestStoreOptionsReachDecodedContent(t *testing.T) {
+	db := openDB(t)
+	res, err := Run(t.Context(), db, Request{Path: fixture(t, "ntfs/ntfs_compressed"), Decode: true, Quiet: true, RevRel: true, Simhash: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	eid := res.EvidenceID
+	e, err := dbio.GetEvidenceFile(eid, db)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !hasFeature(e, store.FeatureRevrel) || !hasFeature(e, store.FeatureSimhash) {
+		t.Fatalf("features %v, want revrel and simhash", e.Features)
+	}
+	check := func(when string) {
+		t.Helper()
+		decoded := 0
+		err := index.ForEachIndexed(t.Context(), db, eid, func(_ []byte, rec structs.IndexedFile) error {
+			if rec.Content == nil || rec.Content.Kind != structs.ContentMaterialized || rec.Size == 0 {
+				return nil
+			}
+			decoded++
+			oid := rec.Content.ObjectID
+			chash, err := dbio.RelationAt(db, oid, 0)
+			if err != nil {
+				return err
+			}
+			related, err := dbio.ChunkOccursAt(db, chash, 0, oid)
+			if err != nil {
+				return err
+			}
+			_, serr := dbio.GetChonkSignature(chash, db)
+			if !related || serr != nil {
+				t.Errorf("%s: %s: reverse relation %t, signature error %v", when, rec.Path, related, serr)
+			}
+			return nil
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if decoded == 0 {
+			t.Fatalf("%s: no decoded content to check", when)
+		}
+	}
+	check("after the ingest")
+	if _, err := Reindex(t.Context(), db, eid, ReindexOptions{}); err != nil {
+		t.Fatal(err)
+	}
+	check("after reindex")
 }
 
 // TestReindexAfterAFailedIndex: an index pass that failed at ingest is

@@ -149,33 +149,52 @@ func TestQIsText(t *testing.T) {
 	}
 }
 
-// TestNearDeepIsACheckbox (TUI-4): d is text in the NeAR input; deep mode is
-// toggled on its own checkbox.
-func TestNearDeepIsACheckbox(t *testing.T) {
-	var gotDeep record[bool]
-	d := newDriver(t, Actions{NearIn: func(_ context.Context, id string, deep bool) (Outcome, error) {
-		gotDeep.add(deep)
-		return Outcome{Lines: []string{"Matched " + id}}, nil
-	}})
+// TestNearOptionsAreCheckboxes (TUI-4): Deep and Advanced deep are
+// checkboxes in both modes, typing d into the query is text, and the
+// analysis gets what is ticked.
+func TestNearOptionsAreCheckboxes(t *testing.T) {
+	type call struct {
+		mode, query string
+		opts        NearOptions
+	}
+	var calls record[call]
+	near := func(mode string) func(context.Context, string, NearOptions) (Outcome, error) {
+		return func(_ context.Context, query string, o NearOptions) (Outcome, error) {
+			calls.add(call{mode, query, o})
+			return Outcome{Lines: []string{"Matched " + query}}, nil
+		}
+	}
+	d := newDriver(t, Actions{NearIn: near(nearIn), NearOut: near(nearOut)})
 	d.open(StateNear)
 	d.press("enter") // a stored object
 	d.typeText("dd")
 	s := d.m.screen.(*nearScreen)
-	if s.deep || s.input.Value() != "dd" {
-		t.Fatalf("typing dd: deep %v, input %q", s.deep, s.input.Value())
+	if s.opts.Deep || s.input.Value() != "dd" {
+		t.Fatalf("typing dd: deep %v, input %q", s.opts.Deep, s.input.Value())
 	}
 	d.press("tab", "space")
-	if !s.deep || !d.shows("☑ Deep") {
-		t.Fatalf("space on the checkbox: deep %v", s.deep)
+	if !s.opts.Deep || !d.shows("☑ Deep") {
+		t.Fatalf("space on the checkbox: deep %v", s.opts.Deep)
 	}
 	d.press("enter", "enter")
-	if !s.deep {
-		t.Fatal("enter twice on the checkbox: deep off")
+	if !s.opts.Deep || s.opts.Advanced {
+		t.Fatalf("enter twice on the checkbox: %+v", s.opts)
 	}
-	d.press("tab", "enter")
-	d.until("the analysis ends", func() bool { return gotDeep.len() == 1 && !s.run.active() })
-	if !gotDeep.get()[0] || !d.shows("Matched dd") {
-		t.Fatalf("near in: deep %v; screen:\n%s", gotDeep.get(), d.view())
+	d.press("tab", "tab", "enter") // past Advanced deep to Analyse
+	d.until("the analysis ends", func() bool { return calls.len() == 1 && !s.run.active() })
+	if c := calls.get()[0]; c != (call{nearIn, "dd", NearOptions{Deep: true}}) || !d.shows("Matched dd") {
+		t.Fatalf("near in got %+v; screen:\n%s", c, d.view())
+	}
+
+	d.press("esc", "down", "enter") // a file outside the database
+	if s.mode != nearOut || !d.shows("☑ Deep") || !d.shows("☐ Advanced deep") {
+		t.Fatalf("near out: mode %q; screen:\n%s", s.mode, d.view())
+	}
+	d.typeText("x.bin")
+	d.press("tab", "space", "tab", "space", "tab", "enter")
+	d.until("the analysis ends", func() bool { return calls.len() == 2 && !s.run.active() })
+	if c := calls.get()[1]; c != (call{nearOut, "x.bin", NearOptions{Advanced: true}}) {
+		t.Fatalf("near out got %+v", c)
 	}
 }
 
@@ -204,7 +223,7 @@ func TestCancelReturnsToMenu(t *testing.T) {
 	for _, c := range []struct {
 		state State
 		tabs  int
-	}{{StateStore, 3}, {StateRestore, 3}} {
+	}{{StateStore, storeFocusCancel}, {StateRestore, 3}} {
 		d := newDriver(t, Actions{})
 		d.open(c.state)
 		for range c.tabs {
@@ -316,10 +335,12 @@ func TestStoreScreen(t *testing.T) {
 		t.Fatalf("enter with no path: %v", calls.get())
 	}
 	d.typeText(" a b ")
-	d.press("tab", "space", "tab", "enter")
+	// Skip the index, then past reverse relations and chunk signatures; the
+	// full-text index and enrichment need the index, so focus skips them.
+	d.press("tab", "space", "tab", "tab", "tab", "enter")
 	s := d.m.screen.(*storeScreen)
 	d.until("the store ends", func() bool { return calls.len() == 1 && !s.run.active() })
-	if c := calls.get()[0]; c.path != "a b" || !c.opts.NoIndex {
+	if c := calls.get()[0]; c.path != "a b" || c.opts != (StoreOptions{NoIndex: true}) {
 		t.Fatalf("store got %+v", c)
 	}
 	if s.status.kind != statusWarn || !d.shows("Warning: 2 EWF chunk tables failed") || !d.shows("Store another file or folder?") {
@@ -334,6 +355,65 @@ func TestStoreScreen(t *testing.T) {
 	d.until("the store ends", func() bool { return calls.len() == 2 && !s.run.active() })
 	if !d.shows("Error: open bad: no such file") || d.shows("Store another") {
 		t.Fatalf("a failed store; screen:\n%s", d.view())
+	}
+}
+
+// TestStoreOptions: the store gets the options ticked. The full-text index
+// and enrichment read the index, so skipping it turns them off, and the
+// focus passes them by while they cannot be chosen.
+func TestStoreOptions(t *testing.T) {
+	var got record[StoreOptions]
+	d := newDriver(t, Actions{Store: func(_ context.Context, _ string, o StoreOptions) (Outcome, error) {
+		got.add(o)
+		return Outcome{Lines: []string{"Stored as evidence AAA"}}, nil
+	}})
+	d.open(StateStore)
+	s := d.m.screen.(*storeScreen)
+	d.typeText("ev.bin")
+	d.press("tab", "tab", "space", "tab", "space", "tab", "space", "tab", "space", "tab", "enter")
+	d.until("the store ends", func() bool { return got.len() == 1 && !s.run.active() })
+	if o := got.get()[0]; o != (StoreOptions{RevRel: true, Simhash: true, FTS: true, Enrich: true}) {
+		t.Fatalf("store got %+v", o)
+	}
+
+	d.press("enter") // store another
+	d.typeText("ev2.bin")
+	d.press("tab", "space")
+	if s.opts[optFTS] || s.opts[optEnrich] || !d.shows("☐ Full-text index: for `dues search --fts` (needs the index)") {
+		t.Fatalf("skipping the index left %v; screen:\n%s", s.opts, d.view())
+	}
+	d.press("tab", "tab", "tab")
+	if s.focus != storeFocusStore {
+		t.Fatalf("focus %d after the options, want the Store button", s.focus)
+	}
+	d.press("shift+tab")
+	if s.focus != storeFocusOption(optSimhash) {
+		t.Fatalf("focus %d going back, want chunk signatures", s.focus)
+	}
+	d.press("tab", "enter")
+	d.until("the store ends", func() bool { return got.len() == 2 && !s.run.active() })
+	if o := got.get()[1]; o != (StoreOptions{NoIndex: true, RevRel: true, Simhash: true}) {
+		t.Fatalf("second store got %+v", o)
+	}
+}
+
+// TestStoreQuestionFits: after a store on an 80 by 24 terminal, the report
+// and the question whether to store another are on screen; the options give
+// way to them.
+func TestStoreQuestionFits(t *testing.T) {
+	d := newDriver(t, Actions{Store: func(context.Context, string, StoreOptions) (Outcome, error) {
+		return Outcome{Lines: []string{"Storing ev.bin", "Stored as evidence AAA (16 bytes, raw) in 1s",
+			"Index complete: 1 partitions, 3 of 3 files indexed", "Warning: 2 EWF chunk tables failed"}, Warning: true}, nil
+	}})
+	d.send(tea.WindowSizeMsg{Width: 80, Height: 24})
+	d.open(StateStore)
+	s := d.m.screen.(*storeScreen)
+	d.typeText("ev.bin")
+	d.press("enter")
+	d.until("the store ends", func() bool { return !s.run.active() && s.another.open })
+	view := d.view()
+	if n := strings.Count(view, "\n") + 1; n > 24 || !d.shows("Store another file or folder?") || !d.shows("Warning: 2 EWF") {
+		t.Fatalf("%d lines; screen:\n%s", n, view)
 	}
 }
 

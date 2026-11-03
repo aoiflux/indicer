@@ -70,7 +70,18 @@ func Reindex(ctx context.Context, db *badger.DB, eid []byte, opts ReindexOptions
 	}
 	defer closeImg()
 
-	req := Request{FTS: opts.FTS || hasFeature(e, "fts"), Enrich: opts.Enrich || hasFeature(e, "enrich")}
+	// Decoded content the index stores gets what the evidence was stored
+	// with. Evidence stored before W6 records no features; its chunks are
+	// asked instead.
+	revrel, err := store.HasReverseRelations(db, eid, e)
+	if err != nil {
+		return res, err
+	}
+	simhash, err := store.HasSignatures(db, eid, e)
+	if err != nil {
+		return res, err
+	}
+	req := Request{FTS: opts.FTS || hasFeature(e, "fts"), Enrich: opts.Enrich || hasFeature(e, "enrich"), RevRel: revrel, Simhash: simhash}
 	progress.PlanSteps(ctx, append([]progress.Step{
 		{Name: "delete old index", Unit: progress.Files, Total: progress.Unknown},
 		{Name: "index", Unit: progress.Files, Total: progress.Unknown},
@@ -86,7 +97,10 @@ func Reindex(ctx context.Context, db *badger.DB, eid []byte, opts ReindexOptions
 	if err := setIndexInfo(db, eid, info); err != nil {
 		return res, err
 	}
-	idx, idxErr := runIndex(ctx, index.Options{DB: db, EvidenceID: eid, EvidenceName: e.Name, Image: img, Entropy: req.Enrich})
+	idx, idxErr := runIndex(ctx, index.Options{
+		DB: db, EvidenceID: eid, EvidenceName: e.Name, Image: img, Entropy: req.Enrich,
+		RevRel: req.RevRel, Simhash: req.Simhash,
+	})
 	res.Partitions = idx.Partitions
 	info.Coverage, info.Finished = idx.Coverage, time.Now().UnixNano()
 	switch {

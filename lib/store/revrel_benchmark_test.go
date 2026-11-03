@@ -18,11 +18,10 @@ const revRelSyntheticAppendShards = 16
 func BenchmarkProcessRevRel(b *testing.B) {
 	ensureBenchmarkCodecs(b)
 
-	// processRevRel writes nothing unless reverse relations are on.
-	oldQuickOpt, oldRevRel := cnst.QUICKOPT, cnst.ENABLEREVREL
-	cnst.QUICKOPT, cnst.ENABLEREVREL = true, true
+	oldQuickOpt := cnst.QUICKOPT
+	cnst.QUICKOPT = true
 	defer func() {
-		cnst.QUICKOPT, cnst.ENABLEREVREL = oldQuickOpt, oldRevRel
+		cnst.QUICKOPT = oldQuickOpt
 	}()
 
 	b.Run("existing_same_file_noop", func(b *testing.B) {
@@ -44,7 +43,7 @@ func BenchmarkProcessRevRel(b *testing.B) {
 		b.ResetTimer()
 		for i := 0; i < b.N; i++ {
 			batch := db.NewWriteBatch()
-			err := processRevRel(index, fhash, chash, batch)
+			err := processRevRel(true, index, fhash, chash, batch)
 			if err != nil {
 				batch.Cancel()
 				b.Fatalf("processRevRel noop path failed: %v", err)
@@ -74,7 +73,7 @@ func BenchmarkProcessRevRel(b *testing.B) {
 		for i := 0; i < b.N; i++ {
 			batch := db.NewWriteBatch()
 			fhash := []byte(fmt.Sprintf("bench-file-%d", i))
-			err := processRevRel(index, fhash, chash, batch)
+			err := processRevRel(true, index, fhash, chash, batch)
 			if err != nil {
 				batch.Cancel()
 				b.Fatalf("processRevRel write path failed: %v", err)

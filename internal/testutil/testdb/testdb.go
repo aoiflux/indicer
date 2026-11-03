@@ -59,7 +59,6 @@ type Globals struct {
 	StorePipelineMode, StoreIOEngine                      string
 	ChonkSize                                             int64
 	MemOpt, QuickOpt, ContainerMode, LegacyBlockIndex     bool
-	EnableSimhash, EnableRevrel                           bool
 	StoreIOUringQueueDepth, StoreWorkerCount              int
 	StoreTaskQueueDepth, RestoreWorkerCount               int
 	RestoreTaskQueueDepth                                 int
@@ -80,8 +79,6 @@ func Snapshot() Globals {
 		QuickOpt:               cnst.QUICKOPT,
 		ContainerMode:          cnst.CONTAINERMODE,
 		LegacyBlockIndex:       cnst.LegacyBlockIndex,
-		EnableSimhash:          cnst.ENABLESIMHASH,
-		EnableRevrel:           cnst.ENABLEREVREL,
 		StoreIOUringQueueDepth: cnst.StoreIOUringQueueDepth,
 		StoreWorkerCount:       cnst.StoreWorkerCount,
 		StoreTaskQueueDepth:    cnst.StoreTaskQueueDepth,
@@ -104,8 +101,6 @@ func (g Globals) Restore() {
 	cnst.QUICKOPT = g.QuickOpt
 	cnst.CONTAINERMODE = g.ContainerMode
 	cnst.LegacyBlockIndex = g.LegacyBlockIndex
-	cnst.ENABLESIMHASH = g.EnableSimhash
-	cnst.ENABLEREVREL = g.EnableRevrel
 	cnst.StoreIOUringQueueDepth = g.StoreIOUringQueueDepth
 	cnst.StoreWorkerCount = g.StoreWorkerCount
 	cnst.StoreTaskQueueDepth = g.StoreTaskQueueDepth

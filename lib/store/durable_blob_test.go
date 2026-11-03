@@ -32,14 +32,19 @@ var chunkPasses = map[string]chunkPassFunc{
 // returns the evidence ID its relations are keyed by.
 func runChunkPass(t testing.TB, pass chunkPassFunc, db *badger.DB, fhash string, content []byte) []byte {
 	t.Helper()
-	if err := util.EnsureBlobPath(db.Opts().Dir); err != nil {
+	return runPass(t, pass, ChunkPass{DB: db, ID: []byte(fhash), Source: byteReaderAt(content), Size: int64(len(content)), Quiet: true})
+}
+
+// runPass runs the chunk pass p with pass and returns its ID.
+func runPass(t testing.TB, pass chunkPassFunc, p ChunkPass) []byte {
+	t.Helper()
+	if err := util.EnsureBlobPath(p.DB.Opts().Dir); err != nil {
 		t.Fatal(err)
 	}
-	id := []byte(fhash)
-	if _, err := pass(t.Context(), ChunkPass{DB: db, ID: id, Source: byteReaderAt(content), Size: int64(len(content)), Quiet: true}); err != nil {
-		t.Fatalf("chunk pass for %s: %v", fhash, err)
+	if _, err := pass(t.Context(), p); err != nil {
+		t.Fatalf("chunk pass for %s: %v", p.ID, err)
 	}
-	return id
+	return p.ID
 }
 
 // blobFiles lists the chunk blobs in the database's blob directory.

@@ -12,18 +12,39 @@ import (
 	"charm.land/lipgloss/v2"
 )
 
+// The store screen's options, in the order they are shown.
 const (
-	storeFocusPath = iota
-	storeFocusNoIndex
-	storeFocusStore
-	storeFocusCancel
-	storeFields
+	optNoIndex = iota
+	optRevRel
+	optSimhash
+	optFTS
+	optEnrich
+	storeOptionCount
 )
+
+var storeOptionLabels = [storeOptionCount]string{
+	"Skip the index: store the bytes only",
+	"Reverse relations: needed by NeAR (slower store)",
+	"Chunk signatures: needed by deep NeAR (slower store)",
+	"Full-text index: for `dues search --fts`",
+	"Graph enrichment: entropy and the file hierarchy in the graph",
+}
+
+// The fields focus moves through: the path, each option, the buttons.
+const (
+	storeFocusPath   = 0
+	storeFocusStore  = storeOptionCount + 1
+	storeFocusCancel = storeOptionCount + 2
+	storeFields      = storeOptionCount + 3
+)
+
+// storeFocusOption is the focus of option i.
+func storeFocusOption(i int) int { return i + 1 }
 
 type storeScreen struct {
 	env     *env
 	path    textinput.Model
-	noIndex bool
+	opts    [storeOptionCount]bool
 	focus   int
 	run     running
 	status  status
@@ -44,6 +65,20 @@ func (s *storeScreen) resize()       { s.path.SetWidth(max(24, s.env.width-14)) 
 func (s *storeScreen) job() int      { return s.run.id }
 func (s *storeScreen) typing() bool  { return s.focus == storeFocusPath && !s.another.open }
 
+// option is the option the focus is on, or -1.
+func (s *storeScreen) option() int {
+	if i := s.focus - 1; i >= 0 && i < storeOptionCount {
+		return i
+	}
+	return -1
+}
+
+// available reports whether option i can be chosen: the full-text index and
+// enrichment read the index, so they need it.
+func (s *storeScreen) available(i int) bool {
+	return !s.opts[optNoIndex] || (i != optFTS && i != optEnrich)
+}
+
 func (s *storeScreen) setFocus(f int) {
 	s.focus = f
 	if f == storeFocusPath {
@@ -51,6 +86,32 @@ func (s *storeScreen) setFocus(f int) {
 	} else {
 		s.path.Blur()
 	}
+}
+
+// move moves the focus by step, past options that cannot be chosen.
+func (s *storeScreen) move(step int) {
+	f := s.focus
+	for {
+		f = (f + step + storeFields) % storeFields
+		if i := f - 1; i < 0 || i >= storeOptionCount || s.available(i) {
+			break
+		}
+	}
+	s.setFocus(f)
+}
+
+// toggle flips the option the focus is on, and reports whether it was on
+// one. Skipping the index turns off what needs it.
+func (s *storeScreen) toggle() bool {
+	i := s.option()
+	if i < 0 {
+		return false
+	}
+	s.opts[i] = !s.opts[i]
+	if i == optNoIndex && s.opts[i] {
+		s.opts[optFTS], s.opts[optEnrich] = false, false
+	}
+	return true
 }
 
 func (s *storeScreen) update(msg tea.Msg) tea.Cmd {
@@ -98,25 +159,23 @@ func (s *storeScreen) update(msg tea.Msg) tea.Cmd {
 func (s *storeScreen) key(msg tea.KeyPressMsg) tea.Cmd {
 	switch msg.String() {
 	case "tab", "down":
-		s.setFocus((s.focus + 1) % storeFields)
+		s.move(1)
 		return nil
 	case "shift+tab", "up":
-		s.setFocus((s.focus + storeFields - 1) % storeFields)
+		s.move(-1)
 		return nil
 	case "enter":
 		switch s.focus {
 		case storeFocusPath, storeFocusStore:
 			return s.start()
-		case storeFocusNoIndex:
-			s.noIndex = !s.noIndex
 		case storeFocusCancel:
 			// Cancel goes back to the menu; it used to quit (TUI-4).
 			return back
 		}
+		s.toggle()
 		return nil
 	case "space":
-		if s.focus == storeFocusNoIndex {
-			s.noIndex = !s.noIndex
+		if s.toggle() {
 			return nil
 		}
 	}
@@ -142,7 +201,11 @@ func (s *storeScreen) start() tea.Cmd {
 		s.status = status{statusError, "Error: storing is not available"}
 		return nil
 	}
-	opts := StoreOptions{NoIndex: s.noIndex}
+	o := s.opts
+	opts := StoreOptions{
+		NoIndex: o[optNoIndex], RevRel: o[optRevRel], Simhash: o[optSimhash],
+		FTS: o[optFTS] && !o[optNoIndex], Enrich: o[optEnrich] && !o[optNoIndex],
+	}
 	id, cmd, err := s.env.run("store "+filepath.Base(path), sharedJob, func(ctx context.Context) (any, error) {
 		return store(ctx, path, opts)
 	})
@@ -162,12 +225,19 @@ func (s *storeScreen) view() string {
 	if s.focus == storeFocusPath {
 		label = st.selected.Render(label)
 	}
-	option := checkbox(s.noIndex, "Skip the index: store the bytes only")
-	if s.focus == storeFocusNoIndex {
-		option = st.selected.Render(option)
+	options := make([]string, 0, storeOptionCount+1)
+	for i, text := range storeOptionLabels {
+		box := checkbox(s.opts[i], text)
+		switch {
+		case !s.available(i):
+			box = st.dim.Render(box + " (needs the index)")
+		case s.focus == storeFocusOption(i):
+			box = st.selected.Render(box)
+		}
+		options = append(options, box)
 	}
-	layout := st.dim.Render(fmt.Sprintf("Chunks of %d KiB, hashed with %s: the database's own layout, fixed when it was created.",
-		e.info.ChunkKiB, clean(e.info.ChunkHash)))
+	options = append(options, st.dim.Render(fmt.Sprintf("Chunks of %d KiB, hashed with %s: the database's own layout, fixed when it was created.",
+		e.info.ChunkKiB, clean(e.info.ChunkHash))))
 	buttons := lipgloss.JoinHorizontal(lipgloss.Left,
 		button(st, "Store", s.focus == storeFocusStore), button(st, "Cancel", s.focus == storeFocusCancel))
 	stat := s.status.render(st)
@@ -175,13 +245,16 @@ func (s *storeScreen) view() string {
 		stat = st.info.Render(fmt.Sprintf("Storing %s… %s", clean(strings.TrimSpace(s.path.Value())), since(s.run.since)))
 	}
 	help := "Tab/↑/↓: Move | Enter: Select | Space: Toggle | esc: Back (a store keeps running) | ctrl+x: Cancel the store"
+	optionsView := strings.Join(options, "\n")
 	if s.another.open {
-		help = ""
+		// The question and the report need the room; the options apply to
+		// the next store, which the question asks about.
+		help, optionsView = "", ""
 	}
 	return e.frame(joinLines(
 		st.title.Render("Store evidence"),
 		st.input.Render(label+"\n"+s.path.View()),
-		option+"\n"+layout,
+		optionsView,
 		buttons,
 		stat,
 		outcomeLines(s.out, e.width-8),

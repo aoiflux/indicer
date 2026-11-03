@@ -354,7 +354,8 @@ func buildCommandHandlers(cliDef cliDefinition, dbOpts cli.DBOptions, tuning pip
 				zap.Bool("no_index", *cliDef.flags.noIndex),
 				zap.Bool("fts_enabled", *cliDef.flags.enableFTS),
 				zap.Bool("enrichment_enabled", *cliDef.flags.enableEnrichment),
-				zap.Bool("reverse_relations_enabled", cnst.ENABLEREVREL),
+				zap.Bool("reverse_relations_enabled", *cliDef.flags.enableRevRel),
+				zap.Bool("simhash_enabled", *cliDef.flags.enableSimhash),
 				zap.Int("store_workers", *cliDef.flags.storeWorkers),
 				zap.Int("store_queue", *cliDef.flags.storeQueue),
 				zap.Int("store_workers_effective", tuning.storeWorkers),
@@ -363,6 +364,8 @@ func buildCommandHandlers(cliDef cliDefinition, dbOpts cli.DBOptions, tuning pip
 				NoIndex:         *cliDef.flags.noIndex,
 				FTS:             *cliDef.flags.enableFTS,
 				Enrich:          *cliDef.flags.enableEnrichment,
+				RevRel:          *cliDef.flags.enableRevRel,
+				Simhash:         *cliDef.flags.enableSimhash,
 				Decode:          true,
 				RequireVerified: *cliDef.flags.requireVerified,
 			})

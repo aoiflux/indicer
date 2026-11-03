@@ -70,8 +70,6 @@ var CONTAINERMODE bool
 // mode (D9): chunk locations not in C||| are looked up in its block index.
 // Only the manifest sets it.
 var LegacyBlockIndex bool
-var ENABLESIMHASH = false  // compute and persist per-chunk simhash signatures during ingest (opt-in via --simhash)
-var ENABLEREVREL = false   // persist reverse-relation writes during ingest (opt-in via --revrel)
 var CompressLevel = "best" // per-chunk zstd ingest level: fast | default | best
 var StoreHashStrategy = SyncHashStrategy
 var HochoMode = HochoModeBaseline

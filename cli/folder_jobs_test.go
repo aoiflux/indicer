@@ -2,16 +2,21 @@ package cli
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
+	"errors"
 	"io"
+	"maps"
 	"os"
 	"path/filepath"
 	"regexp"
 	"strings"
 	"testing"
+	"time"
 
 	"indicer/internal/testutil"
 	"indicer/internal/testutil/testdb"
+	"indicer/lib/evidence"
 	"indicer/lib/ingest"
 	"indicer/lib/logging"
 	"indicer/lib/util"
@@ -109,6 +114,127 @@ func TestFolderJobsReadAsOneAtATime(t *testing.T) {
 	}
 	if len(aliasesFour) != 2 {
 		t.Fatalf("jobs 4 recorded aliases %v, want the two later copies", aliasesFour)
+	}
+}
+
+// TestFolderJobsAliasAcrossFormats: one disk in different formats is one
+// content. An EWF set and the raw disk it holds, and a raw disk and its VHD,
+// dynamic VHD and VHDX, stored four at a time, alias the first of each in
+// folder order, as a store of one at a time does; a disk of the same size
+// with other content is stored.
+func TestFolderJobsAliasAcrossFormats(t *testing.T) {
+	testdb.Isolate(t)
+	testdb.EnsureCodecs(t)
+	in := filepath.Join(t.TempDir(), "in")
+	if err := os.MkdirAll(in, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	place := func(name string, r io.Reader) string {
+		t.Helper()
+		p := filepath.Join(in, name)
+		f, err := os.Create(p)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, err := io.Copy(f, r); err != nil {
+			t.Fatal(err)
+		}
+		if err := f.Close(); err != nil {
+			t.Fatal(err)
+		}
+		return p
+	}
+	copyOf := func(name, from string) string {
+		t.Helper()
+		f, err := os.Open(from)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer f.Close()
+		return place(name, f)
+	}
+
+	m, first := fixtureNamed(t, "ewf/fat12_multiseg")
+	var ewf string
+	for i, seg := range m.Segments {
+		p := copyOf("a-disk"+filepath.Ext(seg), filepath.Join(filepath.Dir(first), seg))
+		if i == 0 {
+			ewf = p
+		}
+	}
+	src, err := evidence.Open(t.Context(), ewf, evidence.Options{Decode: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	raw := place("b-disk.img", io.NewSectionReader(src, 0, src.Size()))
+	src.Close()
+	fixture := func(name, as string) string {
+		_, p := fixtureNamed(t, name)
+		return copyOf(as, p)
+	}
+	vhd := fixture("vhd/fat16_fixed_vhd", "c-fat16.vhd")
+	want := map[string]string{raw: ewf}
+	for _, f := range []struct{ name, as string }{
+		{"fat/fat16", "d-fat16.img"},
+		{"vhd/fat16_dynamic_vhd", "e-fat16-dyn.vhd"},
+		{"vhd/fat16_vhdx", "f-fat16.vhdx"},
+	} {
+		want[fixture(f.name, f.as)] = vhd
+	}
+	fixture("ext/ext4", "g-ext4.img")
+
+	one, aliasesOne := storeReport(t, in, 1)
+	four, aliasesFour := storeReport(t, in, 4)
+	if one != four {
+		t.Fatalf("jobs 4 printed\n%s\n\njobs 1 printed\n%s", four, one)
+	}
+	if !maps.Equal(aliasesOne, want) || !maps.Equal(aliasesFour, want) {
+		t.Fatalf("aliases with jobs 1 %v and with jobs 4 %v, want %v", aliasesOne, aliasesFour, want)
+	}
+}
+
+// TestFolderJobsReportFailuresInFolderOrder: evidence stored at once that
+// fail are listed in folder order, and the error names the first in folder
+// order, whichever failed first.
+func TestFolderJobsReportFailuresInFolderOrder(t *testing.T) {
+	testdb.Isolate(t)
+	testdb.EnsureCodecs(t)
+	in := filepath.Join(t.TempDir(), "in")
+	for i, name := range []string{"a.bin", "b-bad.bin", "c.bin", "d-bad.bin"} {
+		testutil.WriteRandomFile(t, in, name, uint64(300+i), 5000+i*97)
+	}
+	prev := storeOneFile
+	t.Cleanup(func() { storeOneFile = prev })
+	laterFailed := make(chan struct{})
+	storeOneFile = func(ctx context.Context, w io.Writer, sess *ingest.Session, path string, sopts StoreOptions) (ingest.Bytes, error) {
+		switch filepath.Base(path) {
+		case "b-bad.bin":
+			select { // fail after d-bad.bin; one at a time, d never comes
+			case <-laterFailed:
+			case <-time.After(10 * time.Second):
+			}
+			return ingest.Bytes{}, errors.New("b failed")
+		case "d-bad.bin":
+			close(laterFailed)
+			return ingest.Bytes{}, errors.New("d failed")
+		}
+		return prev(ctx, w, sess, path, sopts)
+	}
+
+	d := testdb.Open(t, testdb.Default)
+	if err := util.EnsureBlobPath(d.Root); err != nil {
+		t.Fatal(err)
+	}
+	sess := ingest.NewSession(d.DB)
+	defer sess.Close()
+	var out bytes.Buffer
+	err := storeFolder(t.Context(), &out, sess, in, StoreOptions{Decode: true, Quiet: true, Jobs: 4})
+	if want := "first " + filepath.Join(in, "b-bad.bin") + ": b failed"; err == nil || !strings.Contains(err.Error(), want) {
+		t.Fatalf("folder store = %v, want an error naming %q", err, want)
+	}
+	b, dd := strings.Index(out.String(), "failed: "+filepath.Join(in, "b-bad.bin")), strings.Index(out.String(), "failed: "+filepath.Join(in, "d-bad.bin"))
+	if b < 0 || dd < b {
+		t.Fatalf("failures listed out of folder order:\n%s", out.String())
 	}
 }
 

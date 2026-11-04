@@ -264,7 +264,7 @@ func TestVerifyNamesWhatIsWrong(t *testing.T) {
 
 // TestOpenRefusesABadManifest: a manifest whose list does not match its
 // content hash, or that a newer DUES wrote, is refused before anything is
-// read.
+// read; a package cut short is damaged.
 func TestOpenRefusesABadManifest(t *testing.T) {
 	res := export(t, ExportOptions{Path: newRoot(t, dbmeta.NoPassword())})
 	editManifest := func(change func(m map[string]any)) string {
@@ -294,6 +294,19 @@ func TestOpenRefusesABadManifest(t *testing.T) {
 	files := editManifest(func(m map[string]any) { delete(m, "kind") })
 	if _, err := Open(files); err == nil || !strings.Contains(err.Error(), "not a DUES database") {
 		t.Errorf("an archive of files: %v", err)
+	}
+	data, err := os.ReadFile(res.Output)
+	if err != nil {
+		t.Fatal(err)
+	}
+	cut := filepath.Join(t.TempDir(), "cut.duesarc")
+	if err := os.WriteFile(cut, data[:len(data)/2], 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := Open(cut); err == nil {
+		t.Error("opened a package cut short")
+	} else if _, ok := errors.AsType[*duesarc.DamagedError](err); !ok {
+		t.Errorf("a package cut short: %v, want a *duesarc.DamagedError", err)
 	}
 }
 

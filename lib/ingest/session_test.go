@@ -56,6 +56,45 @@ func TestSessionOpensEachStoreOnce(t *testing.T) {
 	}
 }
 
+// TestSessionRetriesAFailedOpen: a store that fails to open is not kept as
+// failed. The next evidence that needs it tries again, and opens it once the
+// cause is gone (another process held it, say).
+func TestSessionRetriesAFailedOpen(t *testing.T) {
+	db := openDB(t)
+	root := dbio.KVDir(db)
+	blocked := []string{util.FTSPath(root), util.GraphPath(root)}
+	for _, p := range blocked {
+		if err := os.WriteFile(p, []byte("not a store"), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	s := NewSession(db)
+	defer s.Close()
+	if _, err := s.textIndex(true); err == nil {
+		t.Fatal("opened a full-text index that is a file")
+	}
+	if _, err := s.graphStore(true); err == nil {
+		t.Fatal("opened a graph that is a file")
+	}
+	for _, p := range blocked {
+		if err := os.Remove(p); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if x, err := s.textIndex(true); err != nil || x == nil {
+		t.Fatalf("full-text index after the cause went: %v, %v", x, err)
+	}
+	if g, err := s.graphStore(true); err != nil || g == nil {
+		t.Fatalf("graph after the cause went: %v, %v", g, err)
+	}
+	if got, want := s.Opens(), (Opens{Text: 1, Graph: 1}); got != want {
+		t.Fatalf("opens = %+v, want %+v", got, want)
+	}
+	if err := s.Close(); err != nil {
+		t.Fatal(err)
+	}
+}
+
 // TestSessionMakesNoIndexWithoutFiles: full-text indexing of an evidence
 // with no indexed files neither opens nor creates the index, as before
 // sessions; and a reindex of a database without a graph creates none.

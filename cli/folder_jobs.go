@@ -6,9 +6,11 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"math"
 	"runtime"
 	"slices"
 	"sync"
+	"time"
 
 	"indicer/internal/appconfig"
 	"indicer/internal/lifecycle"
@@ -80,7 +82,7 @@ func folderItems(ctx context.Context, db *badger.DB, items []evidence.PlanItem, 
 	open := func(i int) (*evidence.Source, error) {
 		return evidence.Open(ctx, items[i].Path, evidence.Options{Decode: decode})
 	}
-	_ = workpool.Run(ctx, jobs, make([]workpool.Item, len(items)), func(_ context.Context, i int) error {
+	_, _ = workpool.Run(ctx, jobs, make([]workpool.Item, len(items)), func(_ context.Context, i int) error {
 		sizes[i] = -1
 		if src, err := open(i); err == nil {
 			sizes[i] = src.Size()
@@ -103,7 +105,7 @@ func folderItems(ctx context.Context, db *badger.DB, items []evidence.PlanItem, 
 		}
 	}
 	keys := make([]string, len(shared))
-	_ = workpool.Run(ctx, jobs, make([]workpool.Item, len(shared)), func(_ context.Context, k int) error {
+	_, _ = workpool.Run(ctx, jobs, make([]workpool.Item, len(shared)), func(_ context.Context, k int) error {
 		i := shared[k]
 		src, err := open(i)
 		if err != nil {
@@ -240,4 +242,28 @@ func (iw itemWriter) Write(p []byte) (int, error) {
 		o.held[iw.i] = b
 	}
 	return b.Write(p)
+}
+
+// poolFields are the log fields of a run of items that took took: how many,
+// and how many a second; and, when the pool ran them (pool not nil), how long
+// each worker was busy and held back with items left, and the share of the
+// workers' time spent in items (workpool.Stats).
+func poolFields(items int, took time.Duration, pool *workpool.Stats) []zap.Field {
+	perSecond := 0.0
+	if took > 0 {
+		perSecond = float64(items) / took.Seconds()
+	}
+	fields := []zap.Field{zap.Int("items", items), zap.Float64("items_per_s", math.Round(perSecond*10)/10)}
+	if pool == nil {
+		return fields
+	}
+	ms := func(ds []time.Duration) []int64 {
+		out := make([]int64, len(ds))
+		for i, d := range ds {
+			out[i] = d.Milliseconds()
+		}
+		return out
+	}
+	return append(fields, zap.Int64s("busy_ms", ms(pool.Busy)), zap.Int64s("held_ms", ms(pool.Held)),
+		zap.Float64("utilization", math.Round(pool.Utilization()*100)/100))
 }

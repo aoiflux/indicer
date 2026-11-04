@@ -537,7 +537,16 @@ time runs the plain loop, so a panic still reaches the crash handler.
   full-text index, one graph). Graph writes take turns (`Handle.Writer`);
   bleve batches and badger commits run side by side, and badger commits
   concurrent transactions together.
-- `StoreFolder COMPLETE` logs `jobs`.
+- **How the pool ran.** `StoreFolder COMPLETE` logs `jobs`, `items` and
+  `items_per_s` (over the whole store, scan included). When items ran at
+  once it adds, one entry per worker, `busy_ms` (time in items) and
+  `held_ms` (time waiting while every item left was held back by its chain
+  or a large item), and `utilization`, the share of the workers' time spent
+  in items (`workpool.Stats`). Low utilization with high `held_ms` means
+  chains or large items held the workers back; with low `held_ms`, they ran
+  out of items, as when a large item last in the folder runs alone. No queue
+  wait is logged: every item is queued at the start, so its wait is only
+  its place in the folder.
 
 `dues reindex --store-jobs N` runs the same pool over the evidence it
 selected (flag only; the config key is the store command's). The reports
@@ -549,7 +558,8 @@ documents, graph nodes) is keyed by IDs derived from its own evidence ID
 evidence never touch the same key. The chunks they read are shared, and a
 reindex never deletes chunks. Beside others, the objects an evidence's index
 stores get the same share of workers, and the memory check counts one
-chunk pass per evidence. `repair --reindex-failed` reindexes one at a time.
+chunk pass per evidence. `Reindex COMPLETE` logs the run as `StoreFolder
+COMPLETE` does. `repair --reindex-failed` reindexes one at a time.
 
 ### The evidence source (`lib/evidence`)
 

@@ -118,6 +118,7 @@ func TestReindexCommand(t *testing.T) {
 func TestReindexJobsReadAsOneAtATime(t *testing.T) {
 	testdb.Isolate(t)
 	testdb.EnsureCodecs(t)
+	records := logRecordsOf(t)
 	d := testdb.Open(t, testdb.Default)
 	if err := util.EnsureBlobPath(d.Root); err != nil {
 		t.Fatal(err)
@@ -151,6 +152,12 @@ func TestReindexJobsReadAsOneAtATime(t *testing.T) {
 	if len(sumOne.Evidence) != 10 || sumOne.Failed != 0 {
 		t.Fatalf("reindex of the folder's evidence: %+v, %v", sumOne, errOne)
 	}
+	recs := records("Reindex COMPLETE")
+	if len(recs) != 2 {
+		t.Fatalf("%d Reindex COMPLETE records, want 2", len(recs))
+	}
+	checkPoolRecord(t, recs[0], 10, 1)
+	checkPoolRecord(t, recs[1], 10, 4)
 
 	// Four at once that do not fit in memory: refused when the user asked
 	// for them, one at a time when they were chosen for this machine.

@@ -234,6 +234,7 @@ func storeFolder(ctx context.Context, w io.Writer, sess *ingest.Session, dir str
 			failed.Add(1)
 		}
 	}
+	var pool *workpool.Stats
 	if jobs == 1 {
 		for i := range plan.Items {
 			if err := ctx.Err(); err != nil {
@@ -242,12 +243,14 @@ func storeFolder(ctx context.Context, w io.Writer, sess *ingest.Session, dir str
 			report(i, store(ctx, i))
 		}
 	} else {
-		if err := workpool.Run(ctx, jobs, items, store, report); err != nil {
+		st, err := workpool.Run(ctx, jobs, items, store, report)
+		if err != nil {
 			if cerr := ctx.Err(); cerr != nil {
 				return cerr
 			}
 			return &lifecycle.InternalError{Err: err}
 		}
+		pool = &st
 	}
 	if err := ctx.Err(); err != nil {
 		return err
@@ -261,11 +264,13 @@ func storeFolder(ctx context.Context, w io.Writer, sess *ingest.Session, dir str
 	for _, f := range failures {
 		fmt.Fprintln(w, "  failed:", termsafe.Line(f))
 	}
-	logging.GetLogger().Info("StoreFolder COMPLETE",
-		zap.Int64("duration_ms", time.Since(start).Milliseconds()),
+	took := time.Since(start)
+	logging.GetLogger().Info("StoreFolder COMPLETE", append([]zap.Field{
+		zap.Int64("duration_ms", took.Milliseconds()),
 		zap.Int("stored", stored), zap.Int("warned", warned), zap.Int("failed", len(failures)), zap.Int("skipped", len(plan.Skipped)),
 		zap.Int64("read_bytes", total.Read), zap.Int64("new_bytes", total.New), zap.Int64("written_bytes", total.Written),
-		zap.Int("jobs", jobs), zap.Int("fts_opens", sess.Opens().Text), zap.Int("graph_opens", sess.Opens().Graph))
+		zap.Int("jobs", jobs), zap.Int("fts_opens", sess.Opens().Text), zap.Int("graph_opens", sess.Opens().Graph),
+	}, poolFields(len(plan.Items), took, pool)...)...)
 	switch {
 	case len(failures) > 0:
 		return fmt.Errorf("%d file(s) in %s failed to store, first %s: %w", len(failures), dir, failures[0], firstErr)

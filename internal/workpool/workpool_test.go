@@ -71,7 +71,7 @@ func TestOrderChainsAndHeavyItems(t *testing.T) {
 	for i := range delays {
 		delays[i] = time.Duration(rnd.IntN(2000)) * time.Microsecond
 	}
-	err := Run(t.Context(), 4, items, func(_ context.Context, i int) error {
+	_, err := Run(t.Context(), 4, items, func(_ context.Context, i int) error {
 		r.enter(i, items)
 		time.Sleep(delays[i])
 		r.leave(i)
@@ -103,7 +103,7 @@ func TestHeavyItemIsNotStarved(t *testing.T) {
 	items[3].Heavy = true
 	var started []int
 	var mu sync.Mutex
-	err := Run(t.Context(), 4, items, func(_ context.Context, i int) error {
+	_, err := Run(t.Context(), 4, items, func(_ context.Context, i int) error {
 		mu.Lock()
 		started = append(started, i)
 		mu.Unlock()
@@ -128,7 +128,7 @@ func TestHeavyItemIsNotStarved(t *testing.T) {
 func TestErrorsDoNotStopOthers(t *testing.T) {
 	items := make([]Item, 20)
 	errs := make([]error, len(items))
-	err := Run(t.Context(), 3, items, func(_ context.Context, i int) error {
+	_, err := Run(t.Context(), 3, items, func(_ context.Context, i int) error {
 		if i%4 == 1 {
 			return fmt.Errorf("item %d failed", i)
 		}
@@ -153,7 +153,7 @@ func TestCancelStopsStarting(t *testing.T) {
 	items := make([]Item, 100)
 	var ran atomic.Int64
 	var reported []int
-	err := Run(ctx, 4, items, func(ctx context.Context, i int) error {
+	_, err := Run(ctx, 4, items, func(ctx context.Context, i int) error {
 		ran.Add(1)
 		if i == 2 {
 			cancel(cause)
@@ -182,7 +182,7 @@ func TestPanicStopsTheRun(t *testing.T) {
 	t.Cleanup(func() { safe.SetStrict(prev) })
 	items := make([]Item, 50)
 	var ran atomic.Int64
-	err := Run(t.Context(), 2, items, func(ctx context.Context, i int) error {
+	_, err := Run(t.Context(), 2, items, func(ctx context.Context, i int) error {
 		ran.Add(1)
 		if i == 5 {
 			panic("boom")
@@ -206,7 +206,7 @@ func TestGoroutinesAreBounded(t *testing.T) {
 	items := make([]Item, 10000)
 	before := runtime.NumGoroutine()
 	var peak atomic.Int64
-	err := Run(t.Context(), 4, items, func(context.Context, int) error {
+	_, err := Run(t.Context(), 4, items, func(context.Context, int) error {
 		if n := int64(runtime.NumGoroutine() - before); n > peak.Load() {
 			peak.Store(n)
 		}
@@ -217,5 +217,44 @@ func TestGoroutinesAreBounded(t *testing.T) {
 	}
 	if p := peak.Load(); p > 8 {
 		t.Fatalf("%d goroutines above the start, want about 4", p)
+	}
+}
+
+// TestStatsSayHowTheRunWasSpent: Busy counts each goroutine's time in items,
+// and Held the time one waited while the items left were held back, here by
+// the earlier item of their chain.
+func TestStatsSayHowTheRunWasSpent(t *testing.T) {
+	waits := make(chan struct{})
+	var once sync.Once
+	holding = func() { once.Do(func() { close(waits) }) }
+	t.Cleanup(func() { holding = func() {} })
+	const hold = 20 * time.Millisecond
+	st, err := Run(t.Context(), 2, []Item{{Key: "a"}, {Key: "a"}}, func(_ context.Context, i int) error {
+		if i == 0 {
+			// The other goroutine waits for this item, its chain's first.
+			<-waits
+			time.Sleep(hold)
+		}
+		return nil
+	}, func(int, error) {})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(st.Busy) != 2 || len(st.Held) != 2 {
+		t.Fatalf("stats for %d and %d goroutines, want 2", len(st.Busy), len(st.Held))
+	}
+	if busy, held := st.Busy[0]+st.Busy[1], st.Held[0]+st.Held[1]; busy < hold || held < hold || st.Wall < hold {
+		t.Fatalf("busy %v, held %v in %v; want each at least %v", busy, held, st.Wall, hold)
+	}
+	if u := st.Utilization(); u <= 0 || u > 1 {
+		t.Fatalf("utilization %v, want in (0, 1]", u)
+	}
+
+	full := Stats{Wall: 2 * time.Second, Busy: []time.Duration{time.Second, 3 * time.Second}}
+	if u := full.Utilization(); u != 1 {
+		t.Fatalf("4 s busy of 2 goroutines in 2 s: utilization %v, want 1", u)
+	}
+	if u := (Stats{Busy: []time.Duration{time.Second}}).Utilization(); u != 0 {
+		t.Fatalf("a run that took no time: utilization %v, want 0", u)
 	}
 }

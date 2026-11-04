@@ -86,6 +86,7 @@ type reindexSummary struct {
 // reindex of one at a time would. One that fails does not stop the rest; an
 // index left incomplete exits 2.
 func reindexEvidence(ctx context.Context, db *badger.DB, ro ReindexOptions, w io.Writer) (sum reindexSummary, err error) {
+	began := time.Now()
 	sum.Evidence = []reindexOutcome{}
 	targets, err := reindexTargets(db, ro)
 	if err != nil {
@@ -180,6 +181,7 @@ func reindexEvidence(ctx context.Context, db *badger.DB, ro ReindexOptions, w io
 		}
 		sum.Evidence = append(sum.Evidence, o)
 	}
+	var pool *workpool.Stats
 	if jobs == 1 {
 		for i := range targets {
 			if err := ctx.Err(); err != nil {
@@ -188,16 +190,24 @@ func reindexEvidence(ctx context.Context, db *badger.DB, ro ReindexOptions, w io
 			report(i, reindex(ctx, i))
 		}
 	} else {
-		if err := workpool.Run(ctx, jobs, items, reindex, report); err != nil {
+		st, err := workpool.Run(ctx, jobs, items, reindex, report)
+		if err != nil {
 			if cerr := ctx.Err(); cerr != nil {
 				return sum, cerr
 			}
 			return sum, &lifecycle.InternalError{Err: err}
 		}
+		pool = &st
 	}
 	if err := ctx.Err(); err != nil {
 		return sum, err
 	}
+	took := time.Since(began)
+	logging.GetLogger().Info("Reindex COMPLETE", append([]zap.Field{
+		zap.Int64("duration_ms", took.Milliseconds()),
+		zap.Int("incomplete", sum.Incomplete), zap.Int("failed", sum.Failed),
+		zap.Int("jobs", jobs), zap.Int("fts_opens", sess.Opens().Text), zap.Int("graph_opens", sess.Opens().Graph),
+	}, poolFields(len(targets), took, pool)...)...)
 	if len(targets) > 1 {
 		fmt.Fprintf(w, "\nReindex: %d evidence, %d with an incomplete index, %d failed\n", len(targets), sum.Incomplete, sum.Failed)
 	}

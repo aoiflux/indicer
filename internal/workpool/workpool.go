@@ -16,12 +16,14 @@
 //   - A panic in an item stops the run the same way, and Run returns it as a
 //     *safe.PanicError.
 //
-// Run starts exactly jobs goroutines, however many items there are.
+// Run starts exactly jobs goroutines, however many items there are, and
+// says how they spent the run (Stats).
 package workpool
 
 import (
 	"context"
 	"sync"
+	"time"
 
 	"indicer/internal/safe"
 )
@@ -35,22 +37,51 @@ type Item struct {
 	Heavy bool
 }
 
+// Stats is how the goroutines of a run spent it, one entry each.
+type Stats struct {
+	// Wall is how long the run took.
+	Wall time.Duration
+	// Busy is the time each goroutine spent in items.
+	Busy []time.Duration
+	// Held is the time each goroutine waited with items left to start, all
+	// held back: by the earlier items of their chains, or by a heavy item,
+	// which waits for the running ones and runs alone.
+	Held []time.Duration
+}
+
+// Utilization is the share of the goroutines' time spent in items, from 0 to
+// 1; 0 for a run that took no time.
+func (s Stats) Utilization() float64 {
+	if s.Wall <= 0 || len(s.Busy) == 0 {
+		return 0
+	}
+	var busy time.Duration
+	for _, b := range s.Busy {
+		busy += b
+	}
+	return float64(busy) / (float64(s.Wall) * float64(len(s.Busy)))
+}
+
 // Run runs do for each of items, on at most jobs goroutines (at least 1),
 // and calls done for each that ran, as the package describes.
-func Run(ctx context.Context, jobs int, items []Item, do func(ctx context.Context, i int) error, done func(i int, err error)) error {
+func Run(ctx context.Context, jobs int, items []Item, do func(ctx context.Context, i int) error, done func(i int, err error)) (Stats, error) {
 	jobs = max(jobs, 1)
 	runCtx, stop := context.WithCancelCause(ctx)
 	defer stop(nil)
-	s := newScheduler(items)
+	s := newScheduler(items, jobs)
+	busy := make([]time.Duration, jobs)
+	start := time.Now()
 	var wg sync.WaitGroup
-	for range jobs {
+	for g := range jobs {
 		wg.Go(func() {
 			for {
-				i, ok := s.next(runCtx)
+				i, ok := s.next(runCtx, g)
 				if !ok {
 					return
 				}
+				began := time.Now()
 				err := safe.Call(safe.Site{Component: "workpool", Op: "item"}, func() error { return do(runCtx, i) })
+				busy[g] += time.Since(began)
 				if safe.IsPanic(err) {
 					stop(err)
 				}
@@ -59,8 +90,9 @@ func Run(ctx context.Context, jobs int, items []Item, do func(ctx context.Contex
 		})
 	}
 	wg.Wait()
+	st := Stats{Wall: time.Since(start), Busy: busy, Held: s.held}
 	s.flush(done)
-	return context.Cause(runCtx)
+	return st, context.Cause(runCtx)
 }
 
 // state is where one item is.
@@ -87,10 +119,12 @@ type scheduler struct {
 	busy              int // items running
 	heavy             bool
 	stopped           bool
+	// held is how long each goroutine waited for an item to start.
+	held []time.Duration
 }
 
-func newScheduler(items []Item) *scheduler {
-	s := &scheduler{items: items, state: make([]state, len(items)), errs: make([]error, len(items)), prev: make([]int, len(items))}
+func newScheduler(items []Item, jobs int) *scheduler {
+	s := &scheduler{items: items, state: make([]state, len(items)), errs: make([]error, len(items)), prev: make([]int, len(items)), held: make([]time.Duration, jobs)}
 	s.cond = sync.NewCond(&s.mu)
 	last := map[string]int{}
 	for i, it := range items {
@@ -106,9 +140,9 @@ func newScheduler(items []Item) *scheduler {
 	return s
 }
 
-// next blocks until an item may start, and returns it; ok is false when
-// none will: every item started, or ctx ended.
-func (s *scheduler) next(ctx context.Context) (int, bool) {
+// next blocks until an item may start, and returns it to goroutine g; ok is
+// false when none will: every item started, or ctx ended.
+func (s *scheduler) next(ctx context.Context, g int) (int, bool) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if !s.stopped {
@@ -140,9 +174,16 @@ func (s *scheduler) next(ctx context.Context) (int, bool) {
 		if s.first >= len(s.items) {
 			return 0, false
 		}
+		holding()
+		waited := time.Now()
 		s.cond.Wait()
+		s.held[g] += time.Since(waited)
 	}
 }
+
+// holding is called, under the scheduler's lock, when a goroutine starts to
+// wait for an item; tests replace it to know one waits.
+var holding = func() {}
 
 // ready finds the lowest waiting item that may start now.
 func (s *scheduler) ready() (int, bool) {

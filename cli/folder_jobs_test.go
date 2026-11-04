@@ -2,6 +2,8 @@ package cli
 
 import (
 	"bytes"
+	"encoding/json"
+	"io"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -11,6 +13,7 @@ import (
 	"indicer/internal/testutil"
 	"indicer/internal/testutil/testdb"
 	"indicer/lib/ingest"
+	"indicer/lib/logging"
 	"indicer/lib/util"
 )
 
@@ -123,4 +126,67 @@ func TestStoreJobs(t *testing.T) {
 	if n, _ := StoreJobs(8); n != 8 {
 		t.Errorf("StoreJobs(8) = %d", n)
 	}
+}
+
+// logRecordsOf logs the rest of the test to a file of its own, and returns
+// a reader of its records with a message.
+func logRecordsOf(t *testing.T) func(msg string) []map[string]any {
+	t.Helper()
+	info := logging.Init(logging.Config{Dir: t.TempDir(), Stderr: io.Discard})
+	t.Cleanup(func() { _ = logging.Close() })
+	return func(msg string) []map[string]any {
+		t.Helper()
+		_ = logging.Sync()
+		b, err := os.ReadFile(info.Path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		var recs []map[string]any
+		for line := range strings.SplitSeq(string(b), "\n") {
+			var r map[string]any
+			if json.Unmarshal([]byte(line), &r) == nil && r["msg"] == msg {
+				recs = append(recs, r)
+			}
+		}
+		return recs
+	}
+}
+
+// checkPoolRecord checks what a folder store's or a reindex's completion
+// record says of its run: its items and, with jobs above 1, how each worker
+// spent it.
+func checkPoolRecord(t *testing.T, r map[string]any, items, jobs int) {
+	t.Helper()
+	if r["items"] != float64(items) || r["jobs"] != float64(jobs) {
+		t.Fatalf("%s: %v items at %v jobs, want %d at %d", r["msg"], r["items"], r["jobs"], items, jobs)
+	}
+	if perSecond, _ := r["items_per_s"].(float64); perSecond <= 0 {
+		t.Fatalf("%s: %v items a second", r["msg"], r["items_per_s"])
+	}
+	busy, _ := r["busy_ms"].([]any)
+	held, _ := r["held_ms"].([]any)
+	u, _ := r["utilization"].(float64)
+	switch {
+	case jobs == 1 && (r["busy_ms"] != nil || r["held_ms"] != nil || r["utilization"] != nil):
+		t.Fatalf("%s: pool fields for a run of one at a time: %v", r["msg"], r)
+	case jobs > 1 && (len(busy) != jobs || len(held) != jobs || u <= 0 || u > 1):
+		t.Fatalf("%s: busy_ms %v, held_ms %v, utilization %v; want one per worker and a share", r["msg"], busy, held, u)
+	}
+}
+
+// TestFolderRecordSaysHowThePoolRan: the StoreFolder COMPLETE record counts
+// the items and, when several ran at once, how each worker spent the store.
+func TestFolderRecordSaysHowThePoolRan(t *testing.T) {
+	testdb.Isolate(t)
+	testdb.EnsureCodecs(t)
+	records := logRecordsOf(t)
+	dir := folderForJobs(t)
+	storeReport(t, dir, 1)
+	storeReport(t, dir, 4)
+	recs := records("StoreFolder COMPLETE")
+	if len(recs) != 2 {
+		t.Fatalf("%d StoreFolder COMPLETE records, want 2", len(recs))
+	}
+	checkPoolRecord(t, recs[0], 12, 1)
+	checkPoolRecord(t, recs[1], 12, 4)
 }

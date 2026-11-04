@@ -24,6 +24,7 @@ import (
 	"indicer/lib/dbmeta"
 	"indicer/lib/parser/core"
 	"indicer/lib/parser/scan"
+	"indicer/lib/store"
 	"indicer/lib/structs"
 
 	"github.com/dgraph-io/badger/v4"
@@ -53,6 +54,10 @@ type Options struct {
 	// MaxWorkers caps the chunk pass of each object the pass stores
 	// (store.ChunkPass); 0 leaves the configured width.
 	MaxWorkers int
+	// Credit is the evidence's place in a run of ingests (store.Credit). The
+	// chunk pass of each object the pass stores comes after the evidence's
+	// own.
+	Credit store.Credit
 }
 
 // Partition is one partition record a pass wrote.

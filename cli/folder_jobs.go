@@ -189,11 +189,13 @@ type orderedOutput struct {
 	mu   sync.Mutex
 	w    io.Writer
 	head int
-	held map[int]*bytes.Buffer
+	// held is what each evidence after the head wrote, in order: text, and
+	// what it asked to run once its report reaches w (atReport).
+	held map[int][]func(io.Writer)
 }
 
 func newOrderedOutput(w io.Writer) *orderedOutput {
-	return &orderedOutput{w: w, held: map[int]*bytes.Buffer{}}
+	return &orderedOutput{w: w, held: map[int][]func(io.Writer){}}
 }
 
 // of is evidence i's writer.
@@ -205,10 +207,7 @@ func (o *orderedOutput) reported(i int) {
 	o.mu.Lock()
 	defer o.mu.Unlock()
 	o.head = i + 1
-	if b := o.held[o.head]; b != nil {
-		_, _ = o.w.Write(b.Bytes())
-		delete(o.held, o.head)
-	}
+	o.flush(o.head)
 }
 
 // skipTo makes i the head: the evidence before it never ran.
@@ -218,10 +217,15 @@ func (o *orderedOutput) skipTo(i int) {
 	for ; o.head < i; o.head++ {
 		delete(o.held, o.head)
 	}
-	if b := o.held[o.head]; b != nil {
-		_, _ = o.w.Write(b.Bytes())
-		delete(o.held, o.head)
+	o.flush(o.head)
+}
+
+// flush writes what evidence i held. It is called under o.mu.
+func (o *orderedOutput) flush(i int) {
+	for _, part := range o.held[i] {
+		part(o.w)
 	}
+	delete(o.held, i)
 }
 
 type itemWriter struct {
@@ -236,12 +240,34 @@ func (iw itemWriter) Write(p []byte) (int, error) {
 	if iw.i == o.head {
 		return o.w.Write(p)
 	}
-	b := o.held[iw.i]
-	if b == nil {
-		b = new(bytes.Buffer)
-		o.held[iw.i] = b
+	text := bytes.Clone(p)
+	o.held[iw.i] = append(o.held[iw.i], func(w io.Writer) { _, _ = w.Write(text) })
+	return len(p), nil
+}
+
+// later runs f once the evidence's report reaches w: at once for the head,
+// otherwise when every evidence before it has been reported.
+func (iw itemWriter) later(f func(io.Writer)) {
+	o := iw.o
+	o.mu.Lock()
+	defer o.mu.Unlock()
+	if iw.i == o.head {
+		f(o.w)
+		return
 	}
-	return b.Write(p)
+	o.held[iw.i] = append(o.held[iw.i], f)
+}
+
+// atReport runs f once what was written to w so far reaches where w writes:
+// at once, except for an evidence of a folder whose report is held, which
+// runs it when every evidence before it has been reported, so that f sees
+// what they did. f writes to the writer it is given.
+func atReport(w io.Writer, f func(io.Writer)) {
+	if l, ok := w.(interface{ later(func(io.Writer)) }); ok {
+		l.later(f)
+		return
+	}
+	f(w)
 }
 
 // poolFields are the log fields of a run of items that took took: how many,

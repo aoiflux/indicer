@@ -83,6 +83,7 @@ func ingestChunksStaged(parentCtx context.Context, p ChunkPass) (res ChunkResult
 	}
 
 	writes := joinChunkWriter(p.DB)
+	writes.credit = p.Credit
 	defer writes.leave(&err)
 
 	ctx, cancel := context.WithCancel(parentCtx)
@@ -408,7 +409,7 @@ func materializeChunkMeta(
 	db *badger.DB,
 	writes *passChunks,
 ) (meta []byte, written int64, fresh bool, err error) {
-	return writes.store(ckey, func() ([]byte, int64, error) {
+	meta, written, fresh, err = writes.store(ckey, func() ([]byte, int64, error) {
 		stored, err := dbio.ChunkStored(ckey, db)
 		if err != nil || stored {
 			return nil, 0, err
@@ -418,8 +419,18 @@ func materializeChunkMeta(
 				return nil, 0, err
 			}
 		}
-		return materializeChunk(ckey, cdata, db, writes.containers())
+		cmeta, n, err := materializeChunk(ckey, cdata, db, writes.containers())
+		if err == nil && cmeta != nil {
+			// Under the claim, so before another pass can find the chunk.
+			writes.credit.Ledger.stored(ckey, writes.credit, int64(len(cdata)), n)
+		}
+		return cmeta, n, err
 	})
+	if err == nil && !fresh {
+		// Stored by another pass of the run, or before it.
+		writes.credit.Ledger.found(ckey, writes.credit)
+	}
+	return meta, written, fresh, err
 }
 
 // materializeChunk encodes one chunk and writes its blob or container record;

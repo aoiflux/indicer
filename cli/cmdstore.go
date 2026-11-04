@@ -51,6 +51,8 @@ type StoreOptions struct {
 	AutoJobs bool
 	// maxWorkers caps one evidence's chunk pass while others run beside it.
 	maxWorkers int
+	// credit is the evidence's place in its folder (store.ChunkCredits).
+	credit store.Credit
 }
 
 // StoreData stores the file or folder at evipath. syncIndex is accepted for
@@ -191,6 +193,10 @@ func storeFolder(ctx context.Context, w io.Writer, sess *ingest.Session, dir str
 		fmt.Fprintf(w, "Skipping %s: %s\n", termsafe.Line(s.Path), s.Reason)
 	}
 	out := newOrderedOutput(w)
+	// The evidence count the chunks they share as a store of one at a time
+	// would: new for the first in folder order, whichever stored it.
+	credits := store.NewChunkCredits()
+	creditOf := func(i int) store.Credit { return store.Credit{Ledger: credits, Item: i} }
 	counts := make([]ingest.Bytes, len(plan.Items))
 	store := func(ctx context.Context, i int) error {
 		item := plan.Items[i]
@@ -206,26 +212,30 @@ func storeFolder(ctx context.Context, w io.Writer, sess *ingest.Session, dir str
 			// alone, with all of it.
 			isopts.maxWorkers = innerWorkers(jobs)
 		}
+		isopts.credit = creditOf(i)
 		counted, err := storeOneFile(progress.Within(ctx, one), out.of(i), sess, item.Path, isopts)
 		one.Done(err)
 		all.Add(1)
 		counts[i] = counted
 		return err
 	}
-	// report counts evidence i, in folder order.
+	// report counts evidence i, in folder order. Every evidence before it
+	// has ended, so what it stored is final.
 	report := func(i int, err error) {
 		out.skipTo(i)
 		defer out.reported(i)
+		defer credits.Settle(i)
 		item := plan.Items[i]
+		counted := credited(counts[i], creditOf(i))
 		var warning *lifecycle.WarningError
 		switch {
 		case err == nil:
 			stored++
-			total.Add(counts[i])
+			total.Add(counted)
 		case errors.As(err, &warning):
 			stored++
 			warned++
-			total.Add(counts[i])
+			total.Add(counted)
 		case ctx.Err() != nil:
 			// Interrupted: the command reports that, not a failed file.
 		default:
@@ -243,7 +253,9 @@ func storeFolder(ctx context.Context, w io.Writer, sess *ingest.Session, dir str
 			report(i, store(ctx, i))
 		}
 	} else {
-		st, err := workpool.Run(ctx, jobs, items, store, report)
+		// The ledger holds what evidence stored ahead of others before them;
+		// while it is full, only the first unfinished starts.
+		st, err := workpool.RunHeld(ctx, jobs, items, credits.Full, store, report)
 		if err != nil {
 			if cerr := ctx.Err(); cerr != nil {
 				return cerr
@@ -284,6 +296,11 @@ func storeFolder(ctx context.Context, w io.Writer, sess *ingest.Session, dir str
 // bytes its chunk pass read, found new and wrote.
 func storeFile(ctx context.Context, w io.Writer, sess *ingest.Session, path string, sopts StoreOptions) (ingest.Bytes, error) {
 	start := time.Now()
+	if sopts.credit.Ledger == nil {
+		// A run of its own: the evidence's pass still comes before those of
+		// the objects its index stores beside it.
+		sopts.credit = store.Credit{Ledger: store.NewChunkCredits()}
+	}
 	logging.GetLogger().Info("StoreFile START", zap.String("file_path", path))
 	fmt.Fprintf(w, "\nStoring %s\n", termsafe.Line(path))
 	res, err := sess.Run(ctx, ingest.Request{
@@ -297,20 +314,28 @@ func storeFile(ctx context.Context, w io.Writer, sess *ingest.Session, path stri
 		RequireVerified: sopts.RequireVerified,
 		Quiet:           sopts.Quiet,
 		MaxWorkers:      sopts.maxWorkers,
+		Credit:          sopts.credit,
 	})
+	took := time.Since(start)
+	// What it stored is final once the evidence before it ended, which is
+	// when it is reported and logged (atReport).
+	counted := func() ingest.Bytes { return credited(res.Bytes, sopts.credit) }
 	if res.Outcome != "" {
-		reportIngest(w, res, time.Since(start))
+		reportIngest(w, res, took, counted)
 	}
 	if ctx.Err() != nil {
 		interruptHint(ctx, res)
 	}
-	logging.GetLogger().Info("StoreFile COMPLETE",
-		zap.String("file_path", path),
-		zap.String("outcome", string(res.Outcome)),
-		zap.String("evidence_id", base64.StdEncoding.EncodeToString(res.EvidenceID)),
-		zap.Int64("duration_ms", time.Since(start).Milliseconds()),
-		zap.Int64("read_bytes", res.Bytes.Read), zap.Int64("new_bytes", res.Bytes.New), zap.Int64("written_bytes", res.Bytes.Written),
-		zap.Error(err))
+	atReport(w, func(io.Writer) {
+		b := counted()
+		logging.GetLogger().Info("StoreFile COMPLETE",
+			zap.String("file_path", path),
+			zap.String("outcome", string(res.Outcome)),
+			zap.String("evidence_id", base64.StdEncoding.EncodeToString(res.EvidenceID)),
+			zap.Int64("duration_ms", took.Milliseconds()),
+			zap.Int64("read_bytes", b.Read), zap.Int64("new_bytes", b.New), zap.Int64("written_bytes", b.Written),
+			zap.Error(err))
+	})
 	var incomplete *ingest.IndexIncompleteError
 	var mismatch *ingest.DigestMismatchError
 	switch {
@@ -353,8 +378,24 @@ func storageLine(b ingest.Bytes) string {
 	return line + ui.Saved(b.Read, b.Written)
 }
 
-// reportIngest says how an ingest ended, to w.
-func reportIngest(w io.Writer, res ingest.Result, took time.Duration) {
+// credited is b, what an evidence's chunk pass counted, as a store of one at
+// a time would count it: with the chunks a pass before it took, or it took
+// from one after (store.ChunkCredits). It is final once every evidence
+// before it has ended.
+func credited(b ingest.Bytes, c store.Credit) ingest.Bytes {
+	n, written := c.Ledger.Adjust(c.Item)
+	b.New += n
+	b.Written += written
+	return b
+}
+
+// reportIngest says how an ingest ended, to w. counted is what its storing
+// counted (nil: res.Bytes), asked once the report reaches where w writes
+// (atReport).
+func reportIngest(w io.Writer, res ingest.Result, took time.Duration, counted func() ingest.Bytes) {
+	if counted == nil {
+		counted = func() ingest.Bytes { return res.Bytes }
+	}
 	id := base64.StdEncoding.EncodeToString(res.EvidenceID)
 	switch res.Outcome {
 	case store.CommitAliased:
@@ -365,9 +406,11 @@ func reportIngest(w io.Writer, res ingest.Result, took time.Duration) {
 			fmt.Fprintf(w, "Resumed an earlier, unfinished ingest of this file.\n")
 		}
 		fmt.Fprintf(w, "Stored as evidence %s (%d bytes, %s) in %v\n", id, res.Size, res.Source.Format, took)
-		if line := storageLine(res.Bytes); line != "" {
-			fmt.Fprintln(w, " ", line)
-		}
+		atReport(w, func(w io.Writer) {
+			if line := storageLine(counted()); line != "" {
+				fmt.Fprintln(w, " ", line)
+			}
+		})
 	}
 	if c := res.Source.EWF; c != nil {
 		fmt.Fprintf(w, "EWF digests: %s\n", c.Result)

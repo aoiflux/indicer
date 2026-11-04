@@ -42,6 +42,9 @@ type ChunkPass struct {
 	// MaxWorkers caps the pass's workers; 0 leaves the configured width. A
 	// folder store running several evidence at once shares the machine so.
 	MaxWorkers int
+	// Credit places the pass in a run whose passes count new chunks as one
+	// at a time would (ChunkCredits); the zero Credit counts what it stores.
+	Credit Credit
 }
 
 // ChunkResult is what a chunk pass computed over exactly the bytes it stored.
@@ -56,7 +59,9 @@ type ChunkResult struct {
 	// this pass or before it (deduplicated).
 	NewChunks, NewBytes int64
 	// WrittenBytes is what the new chunks take on disk: their encoded size,
-	// compressed and, in an encrypted database, sealed.
+	// compressed and, in an encrypted database, sealed. In a run
+	// (ChunkPass.Credit), ChunkCredits.Adjust says what to add to NewBytes
+	// and WrittenBytes for what a pass at a time would have counted.
 	WrittenBytes int64
 }
 
@@ -73,6 +78,9 @@ func IngestChunks(ctx context.Context, p ChunkPass) (ChunkResult, error) {
 	}
 	if p.Quiet {
 		ctx = progress.Without(ctx)
+	}
+	if c := p.Credit; !c.Object {
+		defer c.Ledger.evidenceEnded(c.Item)
 	}
 	if cnst.StorePipelineMode == cnst.StorePipelineStaged {
 		return ingestChunksStaged(ctx, p)

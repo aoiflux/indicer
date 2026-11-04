@@ -64,6 +64,10 @@ type Request struct {
 	// MaxWorkers caps the chunk pass's workers, and those of each object the
 	// index pass stores; 0 leaves the configured width (store.ChunkPass).
 	MaxWorkers int
+	// Credit places the ingest in a run of ingests that count the chunks
+	// they share as one at a time, in order, would (store.ChunkCredits): the
+	// evidence of a folder store.
+	Credit store.Credit
 }
 
 // Result is how an ingest ended.
@@ -91,7 +95,9 @@ type Result struct {
 // Bytes counts an ingest's chunk pass: the bytes it read, those new to the
 // database after deduplication, and what the new ones take on disk,
 // compressed and, in an encrypted database, sealed. Decoded content the
-// index pass stores is not counted.
+// index pass stores is not counted. In a run (Request.Credit), New and
+// Written are what the evidence's pass stored first;
+// store.ChunkCredits.Adjust says what to add for a pass at a time.
 type Bytes struct {
 	Read, New, Written int64
 }
@@ -411,7 +417,7 @@ func (s *Session) run(ctx context.Context, src *evidence.Source, eid []byte, nam
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
-			idx, idxErr = runIndex(idxCtx, index.Options{DB: db, EvidenceID: eid, EvidenceName: name, Image: src.Image(), Entropy: req.Enrich, RevRel: req.RevRel, Simhash: req.Simhash, MaxWorkers: req.MaxWorkers})
+			idx, idxErr = runIndex(idxCtx, index.Options{DB: db, EvidenceID: eid, EvidenceName: name, Image: src.Image(), Entropy: req.Enrich, RevRel: req.RevRel, Simhash: req.Simhash, MaxWorkers: req.MaxWorkers, Credit: req.Credit})
 		}()
 	}
 
@@ -419,6 +425,7 @@ func (s *Session) run(ctx context.Context, src *evidence.Source, eid []byte, nam
 		DB: db, ID: eid, Source: src.Image(), Size: src.Size(),
 		Parallel: src.Parallel(), Ranges: ranges, EWF: src.EWF(), Quiet: req.Quiet,
 		RevRel: req.RevRel, Simhash: req.Simhash, MaxWorkers: req.MaxWorkers,
+		Credit: req.Credit,
 	})
 	if err != nil {
 		stopIndex(fmt.Errorf("storage failed: %w", err))

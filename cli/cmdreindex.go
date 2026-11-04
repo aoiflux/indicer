@@ -144,7 +144,7 @@ func reindexEvidence(ctx context.Context, db *badger.DB, ro ReindexOptions, w io
 		one.Done(err)
 		all.Add(1)
 		if res.Index != nil {
-			reportIngest(iw, res, time.Since(start))
+			reportIngest(iw, res, time.Since(start), nil)
 		}
 		logging.GetLogger().Info("Reindex EVIDENCE",
 			zap.String("evidence_id", id),

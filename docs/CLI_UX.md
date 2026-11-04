@@ -253,6 +253,10 @@ Folder store: 1,204 stored (2 with warnings), 1 failed, 3 skipped in 12m4s
 
 - read: the evidence bytes the store read; new: those not stored before;
   written: what the new ones take on disk.
+- Evidence of a folder that share chunks count them as a store of one at a
+  time would, also with `--store-jobs`: new for the first in folder order.
+  Within one evidence, its own bytes come before the decoded content its
+  index stores beside it.
 - dedup is read/new, compression is new/written, saved is 1 − written/read.
   Content stored before shows "all deduplicated"; written above read (data
   that does not compress, sealed) shows "grew 2.1%".

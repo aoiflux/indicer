@@ -15,6 +15,8 @@
 //     done for every item that ran, in index order, and returns ctx's cause.
 //   - A panic in an item stops the run the same way, and Run returns it as a
 //     *safe.PanicError.
+//   - With RunHeld, the caller can hold back every item but the first not yet
+//     finished, which always may start, so the run never stalls.
 //
 // Run starts exactly jobs goroutines, however many items there are, and
 // says how they spent the run (Stats).
@@ -44,8 +46,8 @@ type Stats struct {
 	// Busy is the time each goroutine spent in items.
 	Busy []time.Duration
 	// Held is the time each goroutine waited with items left to start, all
-	// held back: by the earlier items of their chains, or by a heavy item,
-	// which waits for the running ones and runs alone.
+	// held back: by the earlier items of their chains, by a heavy item,
+	// which waits for the running ones and runs alone, or by RunHeld's hold.
 	Held []time.Duration
 }
 
@@ -65,10 +67,19 @@ func (s Stats) Utilization() float64 {
 // Run runs do for each of items, on at most jobs goroutines (at least 1),
 // and calls done for each that ran, as the package describes.
 func Run(ctx context.Context, jobs int, items []Item, do func(ctx context.Context, i int) error, done func(i int, err error)) (Stats, error) {
+	return RunHeld(ctx, jobs, items, nil, do, done)
+}
+
+// RunHeld is Run, but while hold reports true no item starts except the
+// first not yet finished: a caller whose finished items keep something for
+// the earlier ones bounds it so. hold is asked before an item starts, and
+// again once an item finishes and once done returns; nil never holds.
+func RunHeld(ctx context.Context, jobs int, items []Item, hold func() bool, do func(ctx context.Context, i int) error, done func(i int, err error)) (Stats, error) {
 	jobs = max(jobs, 1)
 	runCtx, stop := context.WithCancelCause(ctx)
 	defer stop(nil)
 	s := newScheduler(items, jobs)
+	s.hold = hold
 	busy := make([]time.Duration, jobs)
 	start := time.Now()
 	var wg sync.WaitGroup
@@ -119,6 +130,10 @@ type scheduler struct {
 	busy              int // items running
 	heavy             bool
 	stopped           bool
+	// unfinished is the lowest index not yet finished, the one item hold
+	// never holds back.
+	unfinished int
+	hold       func() bool
 	// held is how long each goroutine waited for an item to start.
 	held []time.Duration
 }
@@ -190,9 +205,13 @@ func (s *scheduler) ready() (int, bool) {
 	if s.heavy {
 		return 0, false
 	}
+	held := s.hold != nil && s.hold()
 	for i := s.first; i < len(s.items); i++ {
 		if s.state[i] != waiting {
 			continue
+		}
+		if held && i != s.unfinished {
+			return 0, false
 		}
 		if s.items[i].Heavy {
 			// Alone, and nothing after it starts first.
@@ -216,6 +235,9 @@ func (s *scheduler) finish(i int, err error, done func(int, error)) {
 	s.mu.Lock()
 	s.state[i], s.errs[i] = finished, err
 	s.busy--
+	for s.unfinished < len(s.items) && s.state[s.unfinished] >= finished {
+		s.unfinished++
+	}
 	if s.items[i].Heavy {
 		s.heavy = false
 	}
@@ -250,5 +272,9 @@ func (s *scheduler) report(done func(int, error), all bool) {
 		s.mu.Lock()
 		s.reportedTo++
 		s.mu.Unlock()
+		if s.hold != nil {
+			// done may have let go of what held the others back.
+			s.cond.Broadcast()
+		}
 	}
 }

@@ -508,6 +508,23 @@ time runs the plain loop, so a panic still reaches the crash handler.
   once between them, through the claims of their chunk passes (see "What
   both pipelines write"), so the database and its size are those of a store
   of one at a time.
+- **Shared chunks count as one at a time.** Which item stores a shared chunk
+  first depends on timing, so the passes do not count it by that: it is new
+  for the first item in folder order that has it (`store.ChunkCredits`).
+  Each chunk pass has a place in the run: its item's in the folder, and
+  within an item the evidence's own pass before those of the objects its
+  index stores beside it, which one at a time runs at once as well. The
+  ledger holds each chunk stored that a pass before its owner may still
+  need. A pass that finds a chunk stored by one after it takes it over: its
+  bytes, and those written for it, move from the owner's item to its own
+  (`Adjust`). Only an evidence's own pass counts bytes, so a chunk taken by
+  or from an object's pass moves them one way only. When an item is
+  reported, every item before it has ended, so its counts are final;
+  `Settle` then lets go of what only those items could take. A chunk no
+  pass before its owner can need is not held, so one at a time holds only
+  what an evidence's objects store while its own pass runs. Past 65,536
+  chunks held (a few MiB), no item starts but the first not yet finished
+  (`workpool.RunHeld`) until some are let go.
 - **Large items run alone.** An item of 256 MiB or more (decoded) starts when
   nothing else runs, with the full pipeline, and nothing starts beside it.
   Items after it wait, so it is never starved.
@@ -532,7 +549,9 @@ time runs the plain loop, so a panic still reaches the crash handler.
   (`orderedOutput`): the first item not yet reported writes through, the
   others are held until those before them are reported. Results, failures
   and the first error are counted in folder order, so stdout and the error
-  are those of a store of one at a time.
+  are those of a store of one at a time. An item's storage line and its
+  `StoreFile COMPLETE` record are written when its report reaches stdout
+  (`atReport`), so their counts are final.
 - **Errors and stops.** A failed item does not stop the others. A signal stops
   new items; running ones stop, the finished ones are reported in order, and
   the store returns the signal. A panic in an item stops the run the same
@@ -544,10 +563,11 @@ time runs the plain loop, so a panic still reaches the crash handler.
 - **How the pool ran.** `StoreFolder COMPLETE` logs `jobs`, `items` and
   `items_per_s` (over the whole store, scan included). When items ran at
   once it adds, one entry per worker, `busy_ms` (time in items) and
-  `held_ms` (time waiting while every item left was held back by its chain
-  or a large item), and `utilization`, the share of the workers' time spent
-  in items (`workpool.Stats`). Low utilization with high `held_ms` means
-  chains or large items held the workers back; with low `held_ms`, they ran
+  `held_ms` (time waiting while every item left was held back by its chain,
+  a large item or a full ledger), and `utilization`, the share of the
+  workers' time spent in items (`workpool.Stats`). Low utilization with high
+  `held_ms` means chains or large items held the workers back; with low
+  `held_ms`, they ran
   out of items, as when a large item last in the folder runs alone. No queue
   wait is logged: every item is queued at the start, so its wait is only
   its place in the folder.
@@ -624,12 +644,16 @@ database already holds it intact, and writes the object's relations.
 | `Ranges` | Ranges whose plain hash to compute (partition-table entries). |
 | `EWF` | The set's stored metadata, whose digests to check. |
 | `Quiet` | No progress bar. |
+| `Credit` | The pass's place in a run whose passes count shared chunks as one at a time would (`store.ChunkCredits`); zero for none. |
 
 `ChunkResult` holds the chunk count, the plain hash, the content root, the
 range digests and the EWF digest result. All are computed over exactly the
 bytes stored. It also holds `NewChunks` and `NewBytes`: the chunks, and their
 raw bytes, that this pass stored for the first time. The run's closing line
-reports them as "new", and the rest of what was read as "deduplicated".
+reports them as "new", and the rest of what was read as "deduplicated". In a
+run (`Credit`), `ChunkCredits.Adjust` says what to add to `NewBytes` and
+`WrittenBytes` for the chunks a pass before it took from it, or it from a
+pass after.
 
 The pass reports a `store` phase in bytes, with a `new` meter, and adds to the
 command's `read` and `new` tallies (`internal/progress`). Workers add outside
@@ -720,7 +744,8 @@ are stored once, but every occurrence gets its relation.
   (`passChunks.store`), and asks the database inside the claim. A pass that
   needs the chunk while the claim stands waits for it and records the same
   `C|||` itself, so its evidence never depends on another pass committing;
-  the chunk counts as new and written only for the pass that stored it. A
+  the chunk counts as new and written only for the pass that stored it, or
+  in a run for the first pass in the run's order (`store.ChunkCredits`). A
   claim ends when its pass does, committed or failed; a claim whose write
   failed is dropped at once, and the next pass stores the chunk itself.
 - `C|||:<chunk hash>`, through the barrier, for each chunk it wrote.

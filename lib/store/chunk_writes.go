@@ -49,6 +49,9 @@ var claimFound = func() {}
 type passChunks struct {
 	w       *chunkWriter
 	claimed []string // the claims this pass holds, under w.mu
+	// credit counts the chunks the pass stores, or finds stored, in its run
+	// (ChunkCredits).
+	credit Credit
 }
 
 // joinChunkWriter gives a pass its part in db's chunkWriter, which the first

@@ -4,7 +4,7 @@ import (
 	"context"
 	"sync"
 
-	"indicer/cli"
+	"indicer/internal/ui"
 	"indicer/lib/cnst"
 	"indicer/lib/dbmeta"
 	"indicer/lib/dbopen"
@@ -109,13 +109,22 @@ func useOperationEncoder() (func(), error) {
 	}, nil
 }
 
-// archiveDBOptions opens an archive's embedded DUES database. An empty
-// password means none: the database is unencrypted, or a legacy one keyed
-// with the empty password.
-func archiveDBOptions(dbPath, password string, chunkSizeKB int) cli.DBOptions {
+// openArchiveDB opens an archive's embedded DUES database and prints the
+// open's notices, as the dues commands do. An empty password means none:
+// the database is unencrypted, or a legacy one keyed with the empty
+// password. It recovers nothing: one operation writes an archive's
+// database, and the others only read it.
+func openArchiveDB(ctx context.Context, dbPath, password string, chunkSizeKB int, mode dbopen.Mode) (*dbopen.Handle, error) {
 	creds := dbmeta.NoPassword()
 	if password != "" {
 		creds = dbmeta.Password(password)
 	}
-	return cli.DBOptions{Path: dbPath, Creds: creds, Layout: dbopen.Requested{ChunkKiB: chunkSizeKB}}
+	h, err := dbopen.Open(ctx, dbopen.Request{Path: dbPath, Mode: mode, Creds: creds, Layout: dbopen.Requested{ChunkKiB: chunkSizeKB}, WrittenBy: "dues"})
+	if err != nil {
+		return nil, err
+	}
+	for _, n := range h.Notices {
+		ui.Notef("%s", n)
+	}
+	return h, nil
 }

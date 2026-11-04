@@ -21,7 +21,7 @@ The manifest (`dues-manifest.json`) records the storage in `layout.storage`:
 - A new database gets `container` when it is created with `--container` (`-x`), and `file` otherwise (`storageOf`, `lib/dbopen/dbopen.go`). No new database gets `container-bidx`.
 - An existing database keeps the storage it was created with. `dbopen.ApplyToGlobals` sets `cnst.CONTAINERMODE` from the manifest, so every command reads and writes the way the database was written.
 - An explicit `--container` that contradicts the manifest is a usage error, which names the database's storage (`checkRequested`). On a `container-bidx` database, `--container` is accepted.
-- When `dues` creates a file-storage database with chunks smaller than 128 KiB, it recommends `--container` (`cli/common.go`).
+- When `dues` creates a file-storage database with chunks smaller than 128 KiB, it recommends `--container`, in a notice from `dbopen.Open` (`lib/dbopen/dbopen.go`).
 
 ## Files on disk
 

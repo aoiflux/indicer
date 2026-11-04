@@ -543,7 +543,7 @@ func buildCommandHandlers(cliDef cliDefinition, dbOpts cli.DBOptions, tuning pip
 			if err != nil {
 				return err
 			}
-			err = api.Server(ctx, dbOpts, api.Options{
+			err = api.Server(ctx, dbOpts.Request(), api.Options{
 				Listen:      *cliDef.flags.serverListen,
 				Token:       token,
 				CORSOrigins: *cliDef.flags.serverCORSOrigins,

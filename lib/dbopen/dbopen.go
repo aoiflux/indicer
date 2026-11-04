@@ -3,8 +3,10 @@
 // Open resolves the data root, takes the root lock, reads (or for a legacy
 // database infers) the manifest, checks the password before badger is
 // touched, opens badger with the options the manifest fixes, and checks the
-// manifest against the marker stored inside badger. A read-only open never
-// writes: no manifest, no marker, no recovery, and no database is created.
+// manifest against the marker stored inside badger. With Recover, a writable
+// open then finishes or fails the ingests a crash left incomplete. A
+// read-only open never writes: no manifest, no marker, no recovery, and no
+// database is created.
 package dbopen
 
 import (
@@ -31,6 +33,7 @@ import (
 	"indicer/lib/dbmeta"
 	"indicer/lib/fsx"
 	"indicer/lib/logging"
+	"indicer/lib/store"
 
 	"github.com/dgraph-io/badger/v4"
 	"github.com/dgraph-io/badger/v4/options"
@@ -82,6 +85,11 @@ type Request struct {
 	// media makes its temporary badger directory (--temp-dir). Empty means
 	// osdirs.Temp.
 	TempDir string
+	// Recover makes a writable open finish or fail, before it returns, the
+	// ingests a crash left incomplete (store.RecoverIncompleteIngests).
+	// Repair, which inspects them first, and the compression product leave
+	// it off. A read-only open never recovers (CFG-11).
+	Recover bool
 }
 
 // Handle is an open database.
@@ -177,8 +185,24 @@ func Open(ctx context.Context, req Request) (*Handle, error) {
 		zap.String("root", root), zap.Bool("read_only", h.ReadOnly), zap.Bool("created", h.Created),
 		zap.String("encryption", h.Manifest.Encryption.Scheme), zap.Int("chunk_kib", h.Manifest.Layout.ChunkKiB),
 		zap.String("storage", h.Manifest.Layout.Storage), zap.Strings("notices", h.Notices))
+	if req.Recover && !h.ReadOnly {
+		report, err := store.RecoverIncompleteIngests(ctx, h.DB)
+		if err != nil {
+			return nil, errors.Join(err, h.Close())
+		}
+		if report.MarkedFailed > 0 {
+			logging.GetLogger().Warn("dbopen STARTUP_RECOVERY_MARKED_FAILED",
+				zap.Int("marked_failed", report.MarkedFailed),
+				zap.Int("incomplete_found", report.IncompleteFound),
+			)
+		}
+	}
 	return h, nil
 }
+
+// containerAdviceKiB is the chunk size under which a new database that keeps
+// a file per chunk is advised to use containers instead.
+const containerAdviceKiB = 128
 
 func (h *Handle) open(ctx context.Context, req Request) error {
 	exists := dbmeta.HasDatabase(h.Root)
@@ -232,6 +256,9 @@ func (h *Handle) open(ctx context.Context, req Request) error {
 	dbmeta.RegisterManifest(h.DB, m)
 	ApplyToGlobals(m)
 	h.keepBlockIndexLookup()
+	if l := m.Layout; h.Created && l.ChunkKiB < containerAdviceKiB && l.Storage == dbmeta.StorageFile {
+		h.notice("the chunk size is %d KiB (under %d KiB); --container packs small chunks into container files of up to 1 GB, which suits filesystems better", l.ChunkKiB, containerAdviceKiB)
+	}
 
 	if !h.ReadOnly {
 		h.sweepTemps()

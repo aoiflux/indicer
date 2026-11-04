@@ -15,7 +15,6 @@ import (
 
 	"github.com/dgraph-io/badger/v4"
 
-	"indicer/cli"
 	"indicer/internal/duesarc"
 	"indicer/internal/testutil"
 	"indicer/lib/dbio"
@@ -138,7 +137,7 @@ func makeV1Archive(t *testing.T, src, archive string, namesOnly bool) {
 	dbPath := filepath.Join(work, manifestDbRelativePath)
 	ctx := context.Background()
 	err := withStoreRuntime(ctx, func() error {
-		h, err := cli.Common(ctx, archiveDBOptions(dbPath, "", 256), dbopen.ReadWrite, false)
+		h, err := openArchiveDB(ctx, dbPath, "", 256, dbopen.ReadWrite)
 		if err != nil {
 			return err
 		}

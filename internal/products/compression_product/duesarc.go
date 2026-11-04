@@ -17,7 +17,6 @@ import (
 
 	"github.com/dgraph-io/badger/v4"
 
-	"indicer/cli"
 	"indicer/internal/duesarc"
 	"indicer/lib/blobcodec"
 	"indicer/lib/cnst"
@@ -199,7 +198,7 @@ func createDuesarc(ctx context.Context, tmp *tempRoot, req createArchiveReq, in 
 	}
 	dbPath := filepath.Join(wd.path, manifestDbRelativePath)
 	err = withStoreRuntime(ctx, func() (err error) {
-		h, err := cli.Common(ctx, archiveDBOptions(dbPath, req.Password, chunkKiB), dbopen.ReadWrite, false)
+		h, err := openArchiveDB(ctx, dbPath, req.Password, chunkKiB, dbopen.ReadWrite)
 		if err != nil {
 			return err
 		}
@@ -388,7 +387,7 @@ func (s *stagedArchive) openDB(ctx context.Context, password string) (*dbopen.Ha
 	if chunk <= 0 {
 		chunk = defaultChunkSizeKB
 	}
-	h, err := cli.Common(ctx, archiveDBOptions(dbPath, password, chunk), dbopen.ReadOnly, false)
+	h, err := openArchiveDB(ctx, dbPath, password, chunk, dbopen.ReadOnly)
 	if err != nil {
 		return nil, err
 	}

@@ -6,13 +6,11 @@ import (
 	"fmt"
 	"indicer/internal/progress"
 	"indicer/internal/ui"
-	"indicer/lib/cnst"
 	"indicer/lib/dbio"
 	"indicer/lib/dbmeta"
 	"indicer/lib/dbopen"
 	"indicer/lib/ingest"
 	"indicer/lib/logging"
-	"indicer/lib/store"
 
 	"go.uber.org/zap"
 )
@@ -39,42 +37,25 @@ func LegacyKeyOptions(chonkSize int, dbpath string, key []byte) DBOptions {
 	return DBOptions{Path: dbpath, Creds: creds, Layout: dbopen.Requested{ChunkKiB: chonkSize}}
 }
 
-// Common opens the database for a command. A writable open also finishes or
-// fails ingests a crash left incomplete, unless recover is false (repair
-// inspects them first). Read-only opens change nothing (CFG-11).
+// Request is the open opts describe. The caller sets its mode, and whether a
+// writable open recovers the ingests a crash left incomplete.
+func (o DBOptions) Request() dbopen.Request {
+	return dbopen.Request{Path: o.Path, Creds: o.Creds, Layout: o.Layout, WrittenBy: "dues", TempDir: o.TempDir}
+}
+
+// Common opens the database for a command and prints the open's notices. A
+// writable open also finishes or fails ingests a crash left incomplete,
+// unless recover is false (repair inspects them first). Read-only opens
+// change nothing (CFG-11).
 func Common(ctx context.Context, opts DBOptions, mode dbopen.Mode, recover bool) (*dbopen.Handle, error) {
-	h, err := dbopen.Open(ctx, dbopen.Request{
-		Path:      opts.Path,
-		Mode:      mode,
-		Creds:     opts.Creds,
-		Layout:    opts.Layout,
-		WrittenBy: "dues",
-		TempDir:   opts.TempDir,
-	})
+	req := opts.Request()
+	req.Mode, req.Recover = mode, recover
+	h, err := dbopen.Open(ctx, req)
 	if err != nil {
 		return nil, err
 	}
 	for _, n := range h.Notices {
 		ui.Notef("%s", n)
-	}
-
-	// Recommend container mode for small chunk sizes.
-	if l := h.Manifest.Layout; h.Created && l.ChunkKiB < 128 && !cnst.CONTAINERMODE {
-		ui.Notef("the chunk size is %d KiB (under 128 KiB); --container packs small chunks into container files of up to 1 GB, which suits filesystems better", l.ChunkKiB)
-	}
-
-	if h.ReadOnly || !recover {
-		return h, nil
-	}
-	recoveryReport, err := store.RecoverIncompleteIngests(ctx, h.DB)
-	if err != nil {
-		return nil, errors.Join(err, h.Close())
-	}
-	if recoveryReport.MarkedFailed > 0 {
-		logging.GetLogger().Warn("Common STARTUP_RECOVERY_MARKED_FAILED",
-			zap.Int("marked_failed", recoveryReport.MarkedFailed),
-			zap.Int("incomplete_found", recoveryReport.IncompleteFound),
-		)
 	}
 	return h, nil
 }

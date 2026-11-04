@@ -189,9 +189,13 @@ A read-only open never rotates badger's data key. Badger rewrites
 `KEYREGISTRY` to rotate it, and a read-only open that tries ends the process
 (CFG-14).
 
-`cli.Common` wraps `dbopen.Open` for every command. It prints the open's
-notices as `dues: note: ...`. On a writable open with `recover` set it then
-runs `store.RecoverIncompleteIngests`.
+`cli.Common` opens the database for every command and prints the open's
+notices as `dues: note: ...`. `dues server` and the compression product call
+`dbopen.Open` themselves and print the notices the same way: no package but
+the `dues` command imports `cli` (`TestOnlyMainImportsTheCLI`). A writable
+open with `Request.Recover` set runs `store.RecoverIncompleteIngests` before
+`Open` returns. A new database that keeps a file per chunk, with chunks under
+128 KiB, gets a notice advising `--container`.
 
 ### Read-only media
 
@@ -978,9 +982,9 @@ like any other content:
 
 ## Recovery (`RecoverEvidence`)
 
-A writable open through `cli.Common` runs `store.RecoverIncompleteIngests`,
-unless its caller turns recovery off (`repair`, and the compression product
-when it creates an archive). It scans the evidence records (`forEachEvidenceRecord` reads `E|||:` keys
+A writable `dbopen.Open` with `Recover` set runs
+`store.RecoverIncompleteIngests`: every command through `cli.Common`, and
+`dues server`. `repair` and the compression product leave it off. It scans the evidence records (`forEachEvidenceRecord` reads `E|||:` keys
 only) and passes each one `NeedsRecovery` selects to
 `store.RecoverEvidence`. `repair --fix` uses the same function.
 

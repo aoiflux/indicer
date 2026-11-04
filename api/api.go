@@ -7,7 +7,6 @@ import (
 	"errors"
 	"fmt"
 
-	"indicer/cli"
 	"indicer/internal/console"
 	"indicer/internal/lifecycle"
 	"indicer/internal/ui"
@@ -23,19 +22,24 @@ type Options struct {
 	CORSOrigins []string
 }
 
-// Server serves the database opts names until ctx ends. A configuration
-// problem is a usage error found before the database is opened. A stop that
-// leaves work running (server.ErrUncleanShutdown) leaves the database as it
-// is, for recovery at its next open.
-func Server(ctx context.Context, opts cli.DBOptions, so Options) (err error) {
+// Server serves the database db names until ctx ends. It opens it writable,
+// and first finishes or fails the ingests a crash left incomplete. A
+// configuration problem is a usage error found before the database is
+// opened. A stop that leaves work running (server.ErrUncleanShutdown) leaves
+// the database as it is, for recovery at its next open.
+func Server(ctx context.Context, db dbopen.Request, so Options) (err error) {
 	cfg := server.Config{Listen: so.Listen, Token: so.Token, CORSOrigins: so.CORSOrigins, Limits: server.DefaultLimits()}
 	if err := cfg.Validate(); err != nil {
 		return lifecycle.Usagef("server: %v", err)
 	}
-	h, err := cli.Common(ctx, opts, dbopen.ReadWrite, true)
+	db.Mode, db.Recover = dbopen.ReadWrite, true
+	h, err := dbopen.Open(ctx, db)
 	if err != nil {
 		printErr("Server startup failed", []string{fmt.Sprintf("Database connection failed: %v", err)})
 		return err
+	}
+	for _, n := range h.Notices {
+		ui.Notef("%s", n)
 	}
 	unclean := false
 	defer func() {

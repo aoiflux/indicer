@@ -8,8 +8,8 @@ import (
 	"testing"
 
 	"indicer/api"
-	"indicer/cli"
 	"indicer/internal/lifecycle"
+	"indicer/lib/dbopen"
 )
 
 // TestServerTokenSources: the token comes from --token-file only. DUES_TOKEN
@@ -83,7 +83,7 @@ func TestServerFlagsParse(t *testing.T) {
 // token is a usage error, found before the database is opened or created.
 func TestServerRefusesExposureWithoutToken(t *testing.T) {
 	root := filepath.Join(t.TempDir(), "db")
-	err := api.Server(context.Background(), cli.DBOptions{Path: root}, api.Options{Listen: []string{"0.0.0.0:0"}})
+	err := api.Server(context.Background(), dbopen.Request{Path: root}, api.Options{Listen: []string{"0.0.0.0:0"}})
 	if lifecycle.ExitCode(err) != lifecycle.ExitUsage || !strings.Contains(err.Error(), "token") {
 		t.Fatalf("error %v (exit %d), want a usage error naming the token", err, lifecycle.ExitCode(err))
 	}

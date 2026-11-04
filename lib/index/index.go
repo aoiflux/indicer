@@ -50,6 +50,9 @@ type Options struct {
 	// RevRel and Simhash are the evidence's store options, which the
 	// decoded content the pass stores gets too.
 	RevRel, Simhash bool
+	// MaxWorkers caps the chunk pass of each object the pass stores
+	// (store.ChunkPass); 0 leaves the configured width.
+	MaxWorkers int
 }
 
 // Partition is one partition record a pass wrote.

@@ -39,6 +39,9 @@ type ReindexOptions struct {
 	// Jobs is how many evidence are reindexed at once (StoreJobs reads
 	// --store-jobs); 0 or 1 reindexes one at a time.
 	Jobs int
+	// AutoJobs says Jobs was chosen for this machine: fewer run when that
+	// many would not fit in memory, where a number the user gave is refused.
+	AutoJobs bool
 }
 
 // ReindexData rebuilds the indexes ro selects.
@@ -95,6 +98,20 @@ func reindexEvidence(ctx context.Context, db *badger.DB, ro ReindexOptions, w io
 		fmt.Fprintln(w, "Nothing to reindex.")
 		return sum, nil
 	}
+	// Evidence share nothing a reindex deletes or writes: records, objects,
+	// full-text documents and graph nodes are keyed by their evidence's own
+	// ID. So none are chained; a large one runs alone, and the others share
+	// the machine and its memory: each holds the chunk pass of an object its
+	// index pass stores.
+	jobs := folderJobs(ro.Jobs)
+	items := make([]workpool.Item, len(targets))
+	sizes := make([]int64, len(targets))
+	for i, t := range targets {
+		items[i].Heavy, sizes[i] = t.size >= heavyItem, t.size
+	}
+	if jobs, err = jobsInMemory(db, jobs, ro.AutoJobs, items, sizes, 1); err != nil {
+		return sum, err
+	}
 	// One session for the whole reindex: the full-text index and the graph
 	// open once, not once per evidence.
 	sess := ingest.NewSession(db)
@@ -118,7 +135,11 @@ func reindexEvidence(ctx context.Context, db *badger.DB, ro ReindexOptions, w io
 		fmt.Fprintf(iw, "\nReindexing %s (%s)\n", termsafe.Line(t.name), id)
 		one := progress.Start(progress.Within(ctx, all), t.name, progress.None, 0)
 		one.Weigh(itemWeight(t.size))
-		res, err := sess.Reindex(progress.Within(ctx, one), t.id, ingest.ReindexOptions{Source: ro.Source, FTS: ro.FTS, Enrich: ro.Enrich})
+		opts := ingest.ReindexOptions{Source: ro.Source, FTS: ro.FTS, Enrich: ro.Enrich}
+		if jobs > 1 && !items[i].Heavy {
+			opts.MaxWorkers = innerWorkers(jobs)
+		}
+		res, err := sess.Reindex(progress.Within(ctx, one), t.id, opts)
 		one.Done(err)
 		all.Add(1)
 		if res.Index != nil {
@@ -159,7 +180,7 @@ func reindexEvidence(ctx context.Context, db *badger.DB, ro ReindexOptions, w io
 		}
 		sum.Evidence = append(sum.Evidence, o)
 	}
-	if jobs := folderJobs(ro.Jobs); jobs == 1 {
+	if jobs == 1 {
 		for i := range targets {
 			if err := ctx.Err(); err != nil {
 				return sum, err
@@ -167,13 +188,6 @@ func reindexEvidence(ctx context.Context, db *badger.DB, ro ReindexOptions, w io
 			report(i, reindex(ctx, i))
 		}
 	} else {
-		// Evidence share nothing a reindex deletes or writes: records,
-		// objects, full-text documents and graph nodes are keyed by their
-		// evidence's own ID. So none are chained; a large one runs alone.
-		items := make([]workpool.Item, len(targets))
-		for i, t := range targets {
-			items[i].Heavy = t.size >= heavyItem
-		}
 		if err := workpool.Run(ctx, jobs, items, reindex, report); err != nil {
 			if cerr := ctx.Err(); cerr != nil {
 				return sum, cerr

@@ -117,6 +117,22 @@ func shapeFor(p ChunkPass) passShape {
 	return s
 }
 
+// PassMemory is about the most memory a chunk pass over size bytes holds at
+// once with maxWorkers (0, the configured width): its feed ring, allocated
+// when it starts, a chunk being encoded by each busy worker (a worker keeps
+// its ring slot until it is done, so no more are busy than the ring has
+// slots), and in the staged pipeline the encoded chunks queued for its
+// writer.
+func PassMemory(db *badger.DB, size int64, maxWorkers int) int64 {
+	s := shapeFor(ChunkPass{DB: db, Size: max(size, 0), MaxWorkers: maxWorkers})
+	chunks := max((max(size, 0)+s.chunk-1)/max(s.chunk, 1), 1)
+	held := int64(s.slots) + min(int64(s.workers), int64(s.slots), chunks)
+	if cnst.StorePipelineMode == cnst.StorePipelineStaged {
+		held += min(int64(s.queueDepth), chunks)
+	}
+	return held * s.chunk
+}
+
 func (s passShape) feed(ctx context.Context, p ChunkPass, tap *digestTap) *chunkFeed {
 	return startChunkFeed(ctx, feedOptions{src: p.Source, end: p.Size, chunk: s.chunk, readers: s.readers, slots: s.slots, tap: tap})
 }

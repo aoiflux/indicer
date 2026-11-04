@@ -61,8 +61,8 @@ type Request struct {
 	RequireVerified bool
 	// Quiet shows no progress bar.
 	Quiet bool
-	// MaxWorkers caps the chunk pass's workers; 0 leaves the configured
-	// width (store.ChunkPass).
+	// MaxWorkers caps the chunk pass's workers, and those of each object the
+	// index pass stores; 0 leaves the configured width (store.ChunkPass).
 	MaxWorkers int
 }
 
@@ -411,7 +411,7 @@ func (s *Session) run(ctx context.Context, src *evidence.Source, eid []byte, nam
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
-			idx, idxErr = runIndex(idxCtx, index.Options{DB: db, EvidenceID: eid, EvidenceName: name, Image: src.Image(), Entropy: req.Enrich, RevRel: req.RevRel, Simhash: req.Simhash})
+			idx, idxErr = runIndex(idxCtx, index.Options{DB: db, EvidenceID: eid, EvidenceName: name, Image: src.Image(), Entropy: req.Enrich, RevRel: req.RevRel, Simhash: req.Simhash, MaxWorkers: req.MaxWorkers})
 		}()
 	}
 

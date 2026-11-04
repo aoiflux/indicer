@@ -376,6 +376,7 @@ func buildCommandHandlers(cliDef cliDefinition, dbOpts cli.DBOptions, tuning pip
 				Decode:          true,
 				RequireVerified: *cliDef.flags.requireVerified,
 				Jobs:            jobs,
+				AutoJobs:        *cliDef.flags.storeJobs == 0,
 			})
 		},
 		cliDef.commands.restore.FullCommand(): func(ctx context.Context) error {
@@ -434,13 +435,14 @@ func buildCommandHandlers(cliDef cliDefinition, dbOpts cli.DBOptions, tuning pip
 				return err
 			}
 			return cli.ReindexData(ctx, dbOpts, cli.ReindexOptions{
-				IDs:    *cliDef.flags.reindexIDs,
-				Failed: *cliDef.flags.reindexFailed,
-				All:    *cliDef.flags.reindexAll,
-				Source: *cliDef.flags.reindexSource,
-				FTS:    *cliDef.flags.reindexFTS,
-				Enrich: *cliDef.flags.reindexEnrich,
-				Jobs:   jobs,
+				IDs:      *cliDef.flags.reindexIDs,
+				Failed:   *cliDef.flags.reindexFailed,
+				All:      *cliDef.flags.reindexAll,
+				Source:   *cliDef.flags.reindexSource,
+				FTS:      *cliDef.flags.reindexFTS,
+				Enrich:   *cliDef.flags.reindexEnrich,
+				Jobs:     jobs,
+				AutoJobs: *cliDef.flags.reindexJobs == 0,
 			})
 		},
 		cliDef.commands.nearIn.FullCommand(): func(ctx context.Context) error {

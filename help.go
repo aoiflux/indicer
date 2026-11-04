@@ -464,10 +464,12 @@ func printStoreHelp() {
 	fmt.Fprintln(helpOut, "  --store-workers, -w N   Override worker count (0 = mode-aware default)")
 	fmt.Fprintln(helpOut, "  --store-queue, -W N     Override task queue depth (0 = mode-aware default)")
 	fmt.Fprintln(helpOut, "  --store-jobs N          Evidence of a folder stored at once (default 1).")
-	fmt.Fprintln(helpOut, "                          0 picks a number for this machine; low-resource")
-	fmt.Fprintln(helpOut, "                          mode stores one at a time. Large evidence and")
-	fmt.Fprintln(helpOut, "                          evidence that may hold the same content are")
-	fmt.Fprintln(helpOut, "                          stored alone, and the report keeps folder order.")
+	fmt.Fprintln(helpOut, "                          0 picks a number for this machine that fits in")
+	fmt.Fprintln(helpOut, "                          memory; a number that does not fit is refused.")
+	fmt.Fprintln(helpOut, "                          Low-resource mode stores one at a time. Large")
+	fmt.Fprintln(helpOut, "                          evidence and evidence that may hold the same")
+	fmt.Fprintln(helpOut, "                          content are stored alone, and the report keeps")
+	fmt.Fprintln(helpOut, "                          folder order.")
 	fmt.Fprintln(helpOut, "  --revrel, -R            Persist reverse-relation keys during ingest (off by default)")
 	fmt.Fprintln(helpOut, "  --io-engine, -I         Write engine [auto|stdlib|io-uring]; auto uses stdlib")
 	fmt.Fprintln(helpOut, "  --io-uring-queue-depth, -j  io-uring queue depth (0 = auto-tuned)")
@@ -604,8 +606,9 @@ func printReindexHelp() {
 	fmt.Fprintln(helpOut, "  --enrich     Also write the graph nodes")
 	fmt.Fprintln(helpOut, "  --store-jobs N")
 	fmt.Fprintln(helpOut, "               Evidence reindexed at once (default 1; 0 picks a number for")
-	fmt.Fprintln(helpOut, "               this machine). A large one runs alone; the report reads as one")
-	fmt.Fprintln(helpOut, "               at a time.")
+	fmt.Fprintln(helpOut, "               this machine that fits in memory, and a number that does not")
+	fmt.Fprintln(helpOut, "               fit is refused). A large one runs alone; the report reads as")
+	fmt.Fprintln(helpOut, "               one at a time.")
 	printExamples(
 		"dues reindex --failed",
 		"dues reindex <hash>",

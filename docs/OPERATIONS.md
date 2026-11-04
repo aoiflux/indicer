@@ -88,6 +88,10 @@ once (default 1; 0 picks a number for the machine). It suits folders of many
 small files: a large image already keeps the machine busy, so it is stored
 alone. Copies of one content are stored one after another, and the report
 reads as a store of one at a time (STORE_LLD, Parallel folder stores).
+The evidence stored at once must fit in a quarter of the free memory: a
+number that does not fit is refused before anything is stored, and 0 picks
+no more than fit. Large chunks (`--chonksize`) are what usually make them
+not fit.
 `dues reindex --store-jobs N` does the same for the evidence a reindex
 selects. That suits `--all` over many small evidence. The config file's
 `store.store-jobs` applies to `store` only.

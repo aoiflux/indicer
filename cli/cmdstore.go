@@ -45,6 +45,10 @@ type StoreOptions struct {
 	// Jobs is how many evidence of a folder are stored at once; 0 or 1, one
 	// at a time (StoreJobs reads --store-jobs).
 	Jobs int
+	// AutoJobs says Jobs was chosen for this machine (--store-jobs 0): a
+	// folder store runs fewer when that many would not fit in memory, where
+	// a number the user gave is refused.
+	AutoJobs bool
 	// maxWorkers caps one evidence's chunk pass while others run beside it.
 	maxWorkers int
 }
@@ -145,6 +149,21 @@ func storeFolder(ctx context.Context, w io.Writer, sess *ingest.Session, dir str
 	if err != nil {
 		return err
 	}
+	// Which evidence may run beside which, and how many at once fit in
+	// memory: each holds its chunk pass and, while indexing, one for an
+	// object it stores.
+	var items []workpool.Item
+	if jobs > 1 {
+		var sizes []int64
+		items, sizes = folderItems(ctx, sess.DB(), plan.Items, sopts.Decode, jobs)
+		passes := 2
+		if sopts.NoIndex {
+			passes = 1
+		}
+		if jobs, err = jobsInMemory(sess.DB(), jobs, sopts.AutoJobs, items, sizes, passes); err != nil {
+			return err
+		}
+	}
 	all := progress.Start(ctx, "evidence", progress.Evidence, int64(len(plan.Items)))
 	var weight int64
 	for _, item := range plan.Items {
@@ -182,7 +201,11 @@ func storeFolder(ctx context.Context, w io.Writer, sess *ingest.Session, dir str
 		one := progress.Start(progress.Within(ctx, all), name, progress.None, 0)
 		one.Weigh(itemWeight(item.Size))
 		isopts := sopts
-		isopts.maxWorkers = innerWorkers(jobs)
+		if jobs > 1 && !items[i].Heavy {
+			// Beside others: a share of the machine. A heavy one runs
+			// alone, with all of it.
+			isopts.maxWorkers = innerWorkers(jobs)
+		}
 		counted, err := storeOneFile(progress.Within(ctx, one), out.of(i), sess, item.Path, isopts)
 		one.Done(err)
 		all.Add(1)
@@ -219,7 +242,6 @@ func storeFolder(ctx context.Context, w io.Writer, sess *ingest.Session, dir str
 			report(i, store(ctx, i))
 		}
 	} else {
-		items := folderItems(ctx, sess.DB(), plan.Items, sopts.Decode, jobs)
 		if err := workpool.Run(ctx, jobs, items, store, report); err != nil {
 			if cerr := ctx.Err(); cerr != nil {
 				return cerr

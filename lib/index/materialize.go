@@ -86,7 +86,7 @@ func (ix *indexer) materialize(op *openPartition, iid []byte, f *structs.Indexed
 	if ix.opts.Entropy {
 		sr.counts = new(entropy.Counter)
 	}
-	res, err := store.IngestChunks(ix.ctx, store.ChunkPass{DB: ix.opts.DB, ID: iid, Source: sr, Size: size, Quiet: true, RevRel: ix.opts.RevRel, Simhash: ix.opts.Simhash})
+	res, err := store.IngestChunks(ix.ctx, store.ChunkPass{DB: ix.opts.DB, ID: iid, Source: sr, Size: size, Quiet: true, RevRel: ix.opts.RevRel, Simhash: ix.opts.Simhash, MaxWorkers: ix.opts.MaxWorkers})
 	if src.c != nil {
 		_ = src.c.Close() // a read-only stream; what was read was checked
 	}

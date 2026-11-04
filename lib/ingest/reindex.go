@@ -29,6 +29,9 @@ type ReindexOptions struct {
 	// FTS and Enrich run the features after the pass. A reindex runs the
 	// ones the evidence was stored with as well.
 	FTS, Enrich bool
+	// MaxWorkers caps the chunk pass of each object the index pass stores;
+	// 0 leaves the configured width.
+	MaxWorkers int
 }
 
 // ErrNotReindexable means an evidence cannot be indexed again: it is not
@@ -110,7 +113,7 @@ func (s *Session) Reindex(ctx context.Context, eid []byte, opts ReindexOptions) 
 	}
 	idx, idxErr := runIndex(ctx, index.Options{
 		DB: db, EvidenceID: eid, EvidenceName: e.Name, Image: img, Entropy: req.Enrich,
-		RevRel: req.RevRel, Simhash: req.Simhash,
+		RevRel: req.RevRel, Simhash: req.Simhash, MaxWorkers: opts.MaxWorkers,
 	})
 	res.Partitions = idx.Partitions
 	info.Coverage, info.Finished = idx.Coverage, time.Now().UnixNano()

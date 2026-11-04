@@ -2,19 +2,25 @@ package cli
 
 import (
 	"bytes"
+	"cmp"
 	"context"
 	"fmt"
 	"io"
 	"runtime"
+	"slices"
 	"sync"
 
+	"indicer/internal/appconfig"
 	"indicer/internal/lifecycle"
 	"indicer/internal/workpool"
 	"indicer/lib/cnst"
 	"indicer/lib/dbmeta"
 	"indicer/lib/evidence"
+	"indicer/lib/logging"
+	"indicer/lib/store"
 
 	"github.com/dgraph-io/badger/v4"
+	"go.uber.org/zap"
 )
 
 // maxStoreJobs bounds --store-jobs: past a few, evidence stored at once only
@@ -66,10 +72,11 @@ func innerWorkers(jobs int) int {
 // stores one content twice at once, and the first in folder order is stored
 // while the others become its aliases, as in a store of one at a time. An
 // evidence that cannot be opened chains with nothing: its own store fails, or
-// decides alone. The opens run jobs at a time.
-func folderItems(ctx context.Context, db *badger.DB, items []evidence.PlanItem, decode bool, jobs int) []workpool.Item {
+// decides alone. The opens run jobs at a time. sizes are the decoded sizes,
+// -1 for an evidence that could not be opened.
+func folderItems(ctx context.Context, db *badger.DB, items []evidence.PlanItem, decode bool, jobs int) (_ []workpool.Item, sizes []int64) {
 	out := make([]workpool.Item, len(items))
-	sizes := make([]int64, len(items))
+	sizes = make([]int64, len(items))
 	open := func(i int) (*evidence.Source, error) {
 		return evidence.Open(ctx, items[i].Path, evidence.Options{Decode: decode})
 	}
@@ -111,7 +118,64 @@ func folderItems(ctx context.Context, db *badger.DB, items []evidence.PlanItem, 
 	for k, i := range shared {
 		out[i].Key = keys[k]
 	}
-	return out
+	return out, sizes
+}
+
+// jobsBudget is the memory the evidence run at once may hold between them: a
+// quarter of the memory free now, as for one store's workers and queue.
+// Tests replace it.
+var jobsBudget = func() int64 { return appconfig.MemoryBudget(appconfig.Machine()) }
+
+// jobsInMemory is how many evidence may run at once, of jobs asked for, in
+// jobsBudget. Each evidence beside others holds what passes chunk passes of
+// its size hold (store.PassMemory): its own, and one for an object its index
+// pass stores. A heavy one runs alone, as one store does, and is not counted. Jobs the user gave that do not fit are
+// refused; jobs chosen for this machine (auto) come down until they fit.
+func jobsInMemory(db *badger.DB, jobs int, auto bool, items []workpool.Item, sizes []int64, passes int) (int, error) {
+	if jobs <= 1 {
+		return jobs, nil
+	}
+	budget := jobsBudget()
+	lane := func(i, jobs int) int64 { return int64(passes) * store.PassMemory(db, sizes[i], innerWorkers(jobs)) }
+	fit, need := fitJobs(jobs, items, lane, budget)
+	if fit == jobs {
+		return jobs, nil
+	}
+	if !auto {
+		return 0, lifecycle.Usagef("--%s %d: %d evidence at once with %d KiB chunks need %d MiB in flight, over the %d MiB budget; lower --%s",
+			cnst.FlagStoreJobs, jobs, jobs, dbmeta.ChunkSize(db)>>10, need>>20, budget>>20, cnst.FlagStoreJobs)
+	}
+	logging.GetLogger().Info("Store jobs reduced to fit memory",
+		zap.Int("jobs", jobs), zap.Int("fit", fit), zap.Int64("need_bytes", need), zap.Int64("budget_bytes", budget))
+	return fit, nil
+}
+
+// fitJobs is the most jobs, from 1 up to jobs, whose worst case fits in
+// budget: the j items that are not heavy and hold the most, lane(i, j)
+// bytes each, running together. need is that worst case for jobs. One at a
+// time always fits.
+func fitJobs(jobs int, items []workpool.Item, lane func(i, jobs int) int64, budget int64) (fit int, need int64) {
+	worst := func(j int) int64 {
+		var lanes []int64
+		for i, it := range items {
+			if !it.Heavy {
+				lanes = append(lanes, lane(i, j))
+			}
+		}
+		slices.SortFunc(lanes, func(a, b int64) int { return cmp.Compare(b, a) })
+		var sum int64
+		for _, b := range lanes[:min(j, len(lanes))] {
+			sum += b
+		}
+		return sum
+	}
+	need = worst(jobs)
+	for fit = jobs; fit > 1; fit-- {
+		if worst(fit) <= budget {
+			break
+		}
+	}
+	return fit, need
 }
 
 // orderedOutput gives each evidence of a folder its own writer onto w, so

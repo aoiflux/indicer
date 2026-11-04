@@ -130,17 +130,17 @@ func TestReindexJobsReadAsOneAtATime(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	reindex := func(jobs int) (string, reindexSummary, error) {
+	reindex := func(jobs int, auto bool) (string, reindexSummary, error) {
 		var out bytes.Buffer
-		sum, err := reindexEvidence(progress.Without(t.Context()), d.DB, ReindexOptions{All: true, FTS: true, Enrich: true, Jobs: jobs}, &out)
+		sum, err := reindexEvidence(progress.Without(t.Context()), d.DB, ReindexOptions{All: true, FTS: true, Enrich: true, Jobs: jobs, AutoJobs: auto}, &out)
 		var lines []string
 		for _, line := range strings.Split(out.String(), "\n") {
 			lines = append(lines, tookTime.ReplaceAllString(line, " in T"))
 		}
 		return strings.Join(lines, "\n"), sum, err
 	}
-	one, sumOne, errOne := reindex(1)
-	four, sumFour, errFour := reindex(4)
+	one, sumOne, errOne := reindex(1, false)
+	four, sumFour, errFour := reindex(4, false)
 	if one != four {
 		t.Fatalf("jobs 4 printed\n%s\n\njobs 1 printed\n%s", four, one)
 	}
@@ -150,5 +150,16 @@ func TestReindexJobsReadAsOneAtATime(t *testing.T) {
 	// Ten evidence: the folder's twelve files hold two copies of a third.
 	if len(sumOne.Evidence) != 10 || sumOne.Failed != 0 {
 		t.Fatalf("reindex of the folder's evidence: %+v, %v", sumOne, errOne)
+	}
+
+	// Four at once that do not fit in memory: refused when the user asked
+	// for them, one at a time when they were chosen for this machine.
+	withJobsBudget(t, 1)
+	var usage *lifecycle.UsageError
+	if out, _, err := reindex(4, false); !errors.As(err, &usage) || !strings.Contains(err.Error(), "--store-jobs 4") || strings.TrimSpace(out) != "" {
+		t.Fatalf("--store-jobs 4 over the budget: %v, printed %q; want a usage error naming it, before any reindex", err, out)
+	}
+	if auto, sumAuto, errAuto := reindex(4, true); auto != one || fmt.Sprint(errAuto) != fmt.Sprint(errOne) || !reflect.DeepEqual(sumAuto, sumOne) {
+		t.Fatalf("jobs chosen for this machine, over the budget, printed\n%s\nended %+v, %v; want what one at a time did", auto, sumAuto, errAuto)
 	}
 }

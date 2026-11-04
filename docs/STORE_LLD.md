@@ -504,9 +504,21 @@ time runs the plain loop, so a panic still reaches the crash handler.
   Items after it wait, so it is never starved.
 - **Machine share.** Beside others, an item's chunk pass runs
   `max(2, workers/jobs)` workers (`ChunkPass.MaxWorkers`), unless
-  `--store-workers` was given. Every pass allocates its feed ring when it
-  starts, and no more slots than the source has chunks (at least 2), so a
-  small file no longer takes the full 256 MiB ring.
+  `--store-workers` was given, and so does the pass of each object its index
+  pass stores (`index.Options.MaxWorkers`). Every pass allocates its feed
+  ring when it starts, and no more slots than the source has chunks (at
+  least 2), so a small file no longer takes the full 256 MiB ring.
+- **Memory.** Before the first item starts, the jobs are checked against the
+  budget one store's workers and queue have: a quarter of the free memory,
+  at least 256 MiB. An item beside others holds two chunk passes of its size
+  (its own, and one for an object its index stores; one with `--no-index`),
+  each its ring plus a chunk per busy worker, and no more workers are busy
+  than the ring has slots (`store.PassMemory`, at the database's chunk
+  size). The worst case is the N items holding the most running
+  together; large items run alone and are not counted. A number given with
+  `--store-jobs` that does not fit is refused (exit 2) before anything is
+  stored; `0` comes down to the most that fit, and the log says so (`Store
+  jobs reduced to fit memory`).
 - **Reports in folder order.** Each item writes to its own writer
   (`orderedOutput`): the first item not yet reported writes through, the
   others are held until those before them are reported. Results, failures
@@ -530,8 +542,9 @@ writes (partitions, indexed records, materialised objects, full-text
 documents, graph nodes) is keyed by IDs derived from its own evidence ID
 (`index.PartitionID`, `index.IndexedID`, the graph's file node IDs), so two
 evidence never touch the same key. The chunks they read are shared, and a
-reindex never deletes chunks. `repair --reindex-failed` reindexes one at a
-time.
+reindex never deletes chunks. Beside others, the objects an evidence's index
+stores get the same share of workers, and the memory check counts one
+chunk pass per evidence. `repair --reindex-failed` reindexes one at a time.
 
 ### The evidence source (`lib/evidence`)
 

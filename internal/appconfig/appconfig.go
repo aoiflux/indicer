@@ -323,8 +323,12 @@ func (r *resolver) resolveCompressLevel() {
 func (r *resolver) maxWorkers() int { return max(64, 8*r.sys.CPUs) }
 
 // memoryBudget is how many bytes of chunks may be in flight at once.
-func (r *resolver) memoryBudget() int64 {
-	return max(int64(minMemoryBudget), int64(r.sys.AvailableRAM/4))
+func (r *resolver) memoryBudget() int64 { return MemoryBudget(r.sys) }
+
+// MemoryBudget is how many bytes of chunks may be in flight at once on sys:
+// a quarter of its free memory, and never less than minMemoryBudget.
+func MemoryBudget(sys Sys) int64 {
+	return max(int64(minMemoryBudget), int64(sys.AvailableRAM/4))
 }
 
 // checkCounts validates explicit worker and queue overrides.

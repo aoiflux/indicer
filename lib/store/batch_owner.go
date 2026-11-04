@@ -121,11 +121,8 @@ func ingestChunksBatchOwner(parentCtx context.Context, p ChunkPass) (res ChunkRe
 		}()
 	}
 
-	var containerMgr *fio.ContainerManager
-	if cnst.CONTAINERMODE {
-		containerMgr = fio.NewContainerManager(dbio.KVDir(p.DB))
-		defer closeContainerManager(&err, containerMgr)
-	}
+	writes := joinChunkWriter(p.DB)
+	defer writes.leave(&err)
 
 	// ctx is cancelled when the caller cancels or any stage fails, which
 	// stops the feed and lets every worker drain.
@@ -134,7 +131,7 @@ func ingestChunksBatchOwner(parentCtx context.Context, p ChunkPass) (res ChunkRe
 
 	taskCh := make(chan chunkTask, shape.queueDepth)
 	writerResCh := make(chan writerResult, 1)
-	go runBatchOwnerWriter(p.ID, shape, p.DB, containerMgr, taskCh, cancel, writerResCh)
+	go runBatchOwnerWriter(p.ID, shape, p.DB, writes.containers(), taskCh, cancel, writerResCh)
 
 	tap := newDigestTap(shape.fileHash, p.Ranges, p.EWF)
 	feed := shape.feed(ctx, p, tap)
@@ -151,7 +148,7 @@ func ingestChunksBatchOwner(parentCtx context.Context, p ChunkPass) (res ChunkRe
 			h := shape.chunkHash()
 			for c := range feed.chunks() {
 				n := int64(len(c.data))
-				isNew, written, werr := batchOwnerHashWorker(ctx, c.off, c.data, h, p.DB, containerMgr, seenChunks, taskCh, simhashWriter)
+				isNew, written, werr := batchOwnerHashWorker(ctx, c.off, c.data, h, p.DB, writes, seenChunks, taskCh, simhashWriter)
 				c.release()
 				if werr != nil {
 					mu.Lock()
@@ -193,13 +190,6 @@ func mergeDeferredErr(target *error, incoming error) {
 	*target = incoming
 }
 
-func closeContainerManager(target *error, containerMgr *fio.ContainerManager) {
-	if containerMgr == nil {
-		return
-	}
-	mergeDeferredErr(target, containerMgr.Close())
-}
-
 func runBatchOwnerWriter(
 	fhash []byte,
 	shape passShape,
@@ -217,16 +207,17 @@ func runBatchOwnerWriter(
 }
 
 // batchOwnerHashWorker hashes the chunk data at idx, stores it unless this
-// pass or the database already did, and hands the result to the writer. h is
-// the worker's own chunk hasher. isNew is true when it stored the chunk, and
-// written is then the bytes it wrote for it.
+// pass, another pass running beside it or the database already did, and
+// hands the result to the writer. h is the worker's own chunk hasher. isNew
+// is true when it stored the chunk, and written is then the bytes it wrote
+// for it.
 func batchOwnerHashWorker(
 	ctx context.Context,
 	idx int64,
 	chunkBytes []byte,
 	h hash.Hash,
 	db *badger.DB,
-	containerMgr *fio.ContainerManager,
+	writes *passChunks,
 	seenChunks *shardedChunkSet,
 	taskCh chan<- chunkTask,
 	simhashWriter *simhashAsyncWriter,
@@ -242,14 +233,14 @@ func batchOwnerHashWorker(
 	var cmeta []byte
 	if !seenChunks.loadOrStore(chash) {
 		ckey := util.AppendToBytesSlice(cnst.ChonkNamespace, chash)
-		if cmeta, written, err = materializeChunkMeta(ckey, chunkBytes, db, containerMgr); err != nil {
+		if cmeta, written, isNew, err = materializeChunkMeta(ckey, chunkBytes, db, writes); err != nil {
 			return false, 0, err
 		}
 	}
 
 	select {
 	case taskCh <- chunkTask{index: idx, chash: chash, cmeta: cmeta, size: int64(len(chunkBytes))}:
-		return cmeta != nil, written, nil
+		return isNew, written, nil
 	case <-ctx.Done():
 		return false, 0, context.Canceled
 	}

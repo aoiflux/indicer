@@ -7,7 +7,6 @@ import (
 	"indicer/internal/diskspace"
 	"indicer/lib/cnst"
 	"indicer/lib/dbio"
-	"indicer/lib/fio"
 	"indicer/lib/util"
 	"sync"
 
@@ -83,11 +82,8 @@ func ingestChunksStaged(parentCtx context.Context, p ChunkPass) (res ChunkResult
 		}()
 	}
 
-	var containerMgr *fio.ContainerManager
-	if cnst.CONTAINERMODE {
-		containerMgr = fio.NewContainerManager(dbio.KVDir(p.DB))
-		defer closeContainerManager(&err, containerMgr)
-	}
+	writes := joinChunkWriter(p.DB)
+	defer writes.leave(&err)
 
 	ctx, cancel := context.WithCancel(parentCtx)
 	defer cancel()
@@ -123,7 +119,7 @@ func ingestChunksStaged(parentCtx context.Context, p ChunkPass) (res ChunkResult
 	writerWG.Add(1)
 	go func() {
 		defer writerWG.Done()
-		root, werr := stagedDiskWriterLoop(p.ID, shape, batchSize, p.DB, containerMgr, writeCh, meter)
+		root, werr := stagedDiskWriterLoop(p.ID, shape, batchSize, p.DB, writes, writeCh, meter)
 		writerResCh <- stagedWriterResult{root: root, err: werr}
 		if werr != nil {
 			reportErr(werr)
@@ -308,7 +304,7 @@ func stagedDiskWriterLoop(
 	shape passShape,
 	batchSize int,
 	db *badger.DB,
-	containerMgr *fio.ContainerManager,
+	writes *passChunks,
 	writeCh <-chan stagedWriteChunk,
 	meter *passMeter,
 ) ([]byte, error) {
@@ -317,7 +313,7 @@ func stagedDiskWriterLoop(
 		return nil, err
 	}
 
-	barrier := newChunkMetaBarrier(dbio.KVDir(db), containerMgr, batch)
+	barrier := newChunkMetaBarrier(dbio.KVDir(db), writes.containers(), batch)
 	hocho := newHochoAccumulator(shape.fileHash, shape.chunk, 0)
 	pending := make([]stagedWriteChunk, 0, batchSize)
 
@@ -342,10 +338,11 @@ func stagedDiskWriterLoop(
 			if !item.dup {
 				var err error
 				var written int64
-				if cmeta, written, err = materializeChunkMeta(ckey, item.data, db, containerMgr); err != nil {
+				var fresh bool
+				if cmeta, written, fresh, err = materializeChunkMeta(ckey, item.data, db, writes); err != nil {
 					return err
 				}
-				if cmeta != nil {
+				if fresh {
 					meter.stored(int64(len(item.data)), written)
 				}
 			}
@@ -399,24 +396,30 @@ func stagedDiskWriterLoop(
 }
 
 // materializeChunkMeta stores the chunk under ckey unless the database
-// already holds it intact, and returns the metadata to record for it. It
-// returns nil when the chunk was already stored.
+// already holds it intact, and returns the metadata to record for it: nil
+// when the chunk was already stored. A chunk another pass beside this one
+// stores, or stored and has not committed, is not stored again: its
+// metadata is returned, with fresh false and written 0 (passChunks.store).
+// The database is asked inside the claim, so a pass that ends between the
+// two cannot be missed by both.
 func materializeChunkMeta(
 	ckey []byte,
 	cdata []byte,
 	db *badger.DB,
-	containerMgr *fio.ContainerManager,
-) ([]byte, int64, error) {
-	stored, err := dbio.ChunkStored(ckey, db)
-	if err != nil || stored {
-		return nil, 0, err
-	}
-	if dir := dbio.KVDir(db); dir != "" {
-		if err := diskspace.GuardFor(dir).Add(len(cdata)); err != nil {
+	writes *passChunks,
+) (meta []byte, written int64, fresh bool, err error) {
+	return writes.store(ckey, func() ([]byte, int64, error) {
+		stored, err := dbio.ChunkStored(ckey, db)
+		if err != nil || stored {
 			return nil, 0, err
 		}
-	}
-	return materializeChunk(ckey, cdata, db, containerMgr)
+		if dir := dbio.KVDir(db); dir != "" {
+			if err := diskspace.GuardFor(dir).Add(len(cdata)); err != nil {
+				return nil, 0, err
+			}
+		}
+		return materializeChunk(ckey, cdata, db, writes.containers())
+	})
 }
 
 // materializeChunk encodes one chunk and writes its blob or container record;

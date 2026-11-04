@@ -499,6 +499,11 @@ time runs the plain loop, so a panic still reaches the crash handler.
   aliases, exactly as one at a time. Without chains, two copies would both
   miss `findStored`, both store every chunk, and race at the commit (whose
   single winner, `CommitEvidence`, stays as the backstop).
+- **Shared chunks are stored once.** Different content can share chunks (a
+  common start, runs of zeros). Items running at once store such a chunk
+  once between them, through the claims of their chunk passes (see "What
+  both pipelines write"), so the database and its size are those of a store
+  of one at a time.
 - **Large items run alone.** An item of 256 MiB or more (decoded) starts when
   nothing else runs, with the full pipeline, and nothing starts beside it.
   Items after it wait, so it is never starved.
@@ -639,8 +644,12 @@ Both pipelines take their shape from the database (`shapeFor`):
   buffers, never fewer than 2.
 
 Storage mode comes from `cnst.CONTAINERMODE`, which `ApplyToGlobals` sets
-from the manifest. In container mode the pass opens one
-`fio.ContainerManager` and closes it at the end.
+from the manifest. The chunk passes of one database that run at once in a
+process (evidence stored side by side, an evidence and the objects its index
+stores) share a `chunkWriter` (`chunk_writes.go`), which the first opens and
+the last closes. In container mode it holds the one `fio.ContainerManager`
+they write through, so a pass's barrier, syncing it, also makes durable a
+frame another pass wrote.
 
 ### The chunk feed (`chunkfeed.go`)
 
@@ -685,11 +694,21 @@ are stored once, but every occurrence gets its relation.
 
 ### What both pipelines write
 
-- The chunk's bytes, once per pass and only when `dbio.ChunkStored` is false.
-  That is when the chunk has no location, its metadata does not decode, its
-  blob is not the size the metadata records, or its container is too short
-  to hold it. A re-ingest or resumed attempt therefore rewrites torn blobs
-  and skips intact ones.
+- The chunk's bytes, once among the passes running at once, and only when
+  `dbio.ChunkStored` is false. That is when the chunk has no location, its
+  metadata does not decode, its blob is not the size the metadata records,
+  or its container is too short to hold it. A re-ingest or resumed attempt
+  therefore rewrites torn blobs and skips intact ones.
+- **Claims.** A pass's chunks reach the database only as the pass ends, so
+  passes at once that share a chunk would each find it missing and each
+  store it: in container mode a frame per pass, of which all but one are
+  lost space nothing reclaims. The first pass to store a chunk claims it
+  (`passChunks.store`), and asks the database inside the claim. A pass that
+  needs the chunk while the claim stands waits for it and records the same
+  `C|||` itself, so its evidence never depends on another pass committing;
+  the chunk counts as new and written only for the pass that stored it. A
+  claim ends when its pass does, committed or failed; a claim whose write
+  failed is dropped at once, and the next pass stores the chunk itself.
 - `C|||:<chunk hash>`, through the barrier, for each chunk it wrote.
 - `R|||:<ID>|||<offset>` for every chunk, its value the chunk hash. The
   offset is the chunk's byte offset in decimal.

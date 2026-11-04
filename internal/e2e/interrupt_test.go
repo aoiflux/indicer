@@ -7,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -114,6 +115,45 @@ func TestInterruptedWrites(t *testing.T) {
 				l.recoverAndCheck(ref)
 			})
 		}
+	}
+}
+
+// TestInterruptedFolderJobs interrupts a folder store running four evidence
+// at a time, while two are under way. It must stop with the signal's code,
+// and recovery and the store run again must leave what one uninterrupted
+// store of the folder leaves.
+func TestInterruptedFolderJobs(t *testing.T) {
+	folder := func(l *crashLab) string {
+		dir := filepath.Join(l.work, "case")
+		if err := os.MkdirAll(dir, 0o755); err != nil {
+			t.Fatal(err)
+		}
+		for _, f := range l.files {
+			copyFile(t, f, filepath.Join(dir, filepath.Base(f)))
+		}
+		for i := range 4 {
+			l.sums[testutil.FileSHA256(t, testutil.WriteRandomFile(t, dir, fmt.Sprintf("own-%d.bin", i), uint64(300+i), 200<<10+i))] = true
+		}
+		return dir
+	}
+	refLab := newCrashLab(t)
+	refLab.must("store", folder(refLab))
+	ref := refLab.list()
+	for _, sig := range signals() {
+		t.Run(sig.name, func(t *testing.T) {
+			l := newCrashLab(t)
+			dir := folder(l)
+			l.interrupt(sig, faultinject.IngestAfterPending, "@2", "store", dir, "--store-jobs", "4")
+			l.must("repair", "--fix", "--reindex-failed")
+			l.must("store", dir, "--store-jobs", "4")
+			got := l.list()
+			if !slices.Equal(got.lines, ref.lines) {
+				t.Fatalf("listing after recovery differs from an uninterrupted store\ngot:\n%s\nwant:\n%s",
+					strings.Join(got.lines, "\n"), strings.Join(ref.lines, "\n"))
+			}
+			l.checkStored(got)
+			l.noLeftovers()
+		})
 	}
 }
 

@@ -8,8 +8,10 @@ goroutines hand their encoded chunks to it over a buffered channel and wait
 for the location it assigns.
 
 Format v2 (STO-1/2/3). Every container is a new file, blob/ctr-<uuidv7>.blob,
-created exclusively, so no session ever appends to a file another session
-wrote, and the offsets a session records are offsets in the file it created.
+created exclusively, so no manager ever appends to a file another manager
+wrote, and the offsets it hands out are offsets in a file it created. The
+chunk passes of one database running at once in a process share a manager
+(lib/store chunk_writes.go).
 The file starts with a 64-byte header:
 
 	[0:8]   magic "DUESCTR2"
@@ -48,7 +50,6 @@ Legacy containers (named from a per-manager counter, possibly compressed to
 
 import (
 	"bytes"
-	"encoding/base64"
 	"encoding/binary"
 	"errors"
 	"fmt"
@@ -116,8 +117,6 @@ type ContainerManager struct {
 	writeQueue       chan *WriteRequest
 	writerDone       chan struct{}
 	acceptMu         sync.RWMutex
-	seenMu           sync.RWMutex
-	seen             map[string]WriteResponse // in-run dedup by chunk key
 	closed           bool
 	closeOnce        sync.Once
 }
@@ -130,25 +129,17 @@ func NewContainerManager(dbpath string) *ContainerManager {
 		writeBackend: getWriteBackend(),
 		writeQueue:   make(chan *WriteRequest, 1000),
 		writerDone:   make(chan struct{}),
-		seen:         make(map[string]WriteResponse),
 	}
 	go cm.writerLoop()
 	return cm
 }
 
-// WriteChunkToContainer appends the chunk ckey to a container, unless this
-// manager has already written it. encode returns the bytes to store (see
-// lib/blobcodec); it runs in the caller's goroutine and only for chunks not
-// yet written. The returned offset and size locate the encoded bytes.
+// WriteChunkToContainer appends the chunk ckey to a container. encode returns
+// the bytes to store (see lib/blobcodec); it runs in the caller's goroutine.
+// The returned offset and size locate the encoded bytes. Whether a chunk
+// needs writing is the caller's to decide: lib/store stores each chunk once
+// among the passes sharing a manager.
 func (cm *ContainerManager) WriteChunkToContainer(ckey []byte, encode func() ([]byte, error)) (containerPath string, offset int64, size int64, err error) {
-	hashKey := base64.RawURLEncoding.EncodeToString(ckey)
-	cm.seenMu.RLock()
-	if cached, ok := cm.seen[hashKey]; ok {
-		cm.seenMu.RUnlock()
-		return cached.containerPath, cached.offset, cached.size, cached.err
-	}
-	cm.seenMu.RUnlock()
-
 	hash := bytes.TrimPrefix(ckey, []byte(cnst.ChonkNamespace))
 	if len(hash) > maxFrameHash {
 		return "", 0, 0, fmt.Errorf("chunk hash of %d bytes exceeds the container limit of %d", len(hash), maxFrameHash)
@@ -161,13 +152,6 @@ func (cm *ContainerManager) WriteChunkToContainer(ckey []byte, encode func() ([]
 	resp, err := cm.submit(&WriteRequest{hash: hash, data: data})
 	if err != nil {
 		return "", 0, 0, err
-	}
-	if resp.err == nil {
-		cm.seenMu.Lock()
-		if _, exists := cm.seen[hashKey]; !exists {
-			cm.seen[hashKey] = resp
-		}
-		cm.seenMu.Unlock()
 	}
 	return resp.containerPath, resp.offset, resp.size, resp.err
 }

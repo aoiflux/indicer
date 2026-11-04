@@ -630,7 +630,10 @@ Both pipelines take their shape from the database (`shapeFor`):
   `--store-workers` and `--store-queue` override them. On the command line,
   `appconfig.Resolve` first fits both to a memory budget: it lowers the
   defaults with a warning for large chunks, and rejects explicit values over
-  the budget.
+  the budget. The chunks it counts are an existing database's own, read from
+  its manifest before the open (`dbopen.ChunkKiBOf`); `--chonksize` counts
+  only for a new database (or one written before manifests, whose first
+  writable open records them).
 - Readers: 1, or the worker count for a parallel source.
 - Buffer slots (`feedSlots`): four per worker, at most about 256 MiB of
   buffers, never fewer than 2.

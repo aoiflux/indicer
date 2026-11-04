@@ -1,16 +1,31 @@
 package main
 
 import (
+	"errors"
+	"path/filepath"
 	"strings"
 	"testing"
 
 	"indicer/internal/lifecycle"
 	"indicer/internal/testutil/testdb"
 	"indicer/lib/cnst"
+	"indicer/lib/dbopen"
 )
 
 // configure parses args the way run does and applies the runtime config.
 func configure(t *testing.T, args ...string) (pipelineTuning, error) {
+	t.Helper()
+	// No test reads the chunk size of a database it did not make: with no
+	// --dbpath, that would be the account's own.
+	prev := databaseChunkKiB
+	t.Cleanup(func() { databaseChunkKiB = prev })
+	databaseChunkKiB = func(string) int { return 0 }
+	return configureOn(t, args...)
+}
+
+// configureOn is configure, reading the chunk size of the database at
+// --dbpath, as run does.
+func configureOn(t *testing.T, args ...string) (pipelineTuning, error) {
 	t.Helper()
 	testdb.Isolate(t)
 	cliDef := newCLIDefinition()
@@ -174,6 +189,27 @@ func TestConfigStoreTuningOverrides(t *testing.T) {
 	}
 	if w, q := cnst.GetStorePipelineTuning(cnst.CONTAINERMODE); w != 3 || q != 9 {
 		t.Fatalf("pipeline sees %d/%d, want 3/9", w, q)
+	}
+}
+
+// TestConfigFitsTheDatabasesChunks: a store's workers and queue are fitted to
+// the chunks of the database it opens, not to --chonksize's default: 8
+// workers and a queue of 4096 hold 1 GiB of 256 KiB chunks, and 256 GiB of
+// this database's 64 MiB ones.
+func TestConfigFitsTheDatabasesChunks(t *testing.T) {
+	testdb.Isolate(t)
+	root := filepath.Join(t.TempDir(), "db")
+	h, err := dbopen.Open(t.Context(), dbopen.Request{Path: root, Mode: dbopen.ReadWrite, Layout: dbopen.Requested{ChunkKiB: 65536}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := h.Close(); err != nil {
+		t.Fatal(err)
+	}
+	_, err = configureOn(t, "-d", root, "store", "-w", "8", "-W", "4096", "x")
+	var usage *lifecycle.UsageError
+	if !errors.As(err, &usage) || !strings.Contains(err.Error(), "the database's 65536 KiB chunks") {
+		t.Fatalf("store -w 8 -W 4096 into a database of 64 MiB chunks: %v; want a usage error naming its chunks", err)
 	}
 }
 

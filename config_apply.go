@@ -114,6 +114,10 @@ func firstLine(s string) string {
 	return s
 }
 
+// databaseChunkKiB is the chunk size of an existing database at a --dbpath
+// (dbopen.ChunkKiBOf); tests replace it.
+var databaseChunkKiB = dbopen.ChunkKiBOf
+
 // applyRuntimeConfig validates the settings, from the command line and the
 // config file, and sets the runtime globals from them. Every rejected flag
 // is reported together, as a usage error (exit code 2). Adjustments that
@@ -147,6 +151,10 @@ func applyRuntimeConfig(parsed string, cliDef cliDefinition, src sources) (pipel
 		Origin:            src.origins(),
 	}
 	switch parsed {
+	case cnst.CmdStore, cnst.CmdServer, cnst.CmdTui, cnst.CmdRestore:
+		// Their workers and queues hold chunks: the fit needs the size of
+		// the database's own, which a --chonksize cannot change.
+		raw.DBChunkKiB = databaseChunkKiB(*f.dbpath)
 	case cliDef.commands.nearIn.FullCommand():
 		raw.NearTopK = *f.inTopK
 	case cliDef.commands.nearOut.FullCommand():

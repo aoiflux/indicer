@@ -63,6 +63,11 @@ type Raw struct {
 	Command string // kingpin's full command, e.g. "store" or "near in"
 
 	ChunkKiB int
+	// DBChunkKiB is the chunk size of the database the command opens, when
+	// it exists and says so (its manifest); 0 for a new database. Workers
+	// and queues are fitted to the chunks they will hold: the database's
+	// own, whatever --chonksize says.
+	DBChunkKiB int
 
 	Preset            string
 	QuickModePreset   bool
@@ -359,7 +364,11 @@ func (r *resolver) fitBudget(defW, defQ, workers, queue int, workersFlag, queueF
 	w = max(w, 1)
 	q = max(q, w)
 
-	chunk := int64(r.eff.ChunkKiB) << 10
+	kib, fromDB := r.eff.ChunkKiB, r.raw.DBChunkKiB > 0
+	if fromDB {
+		kib = r.raw.DBChunkKiB
+	}
+	chunk := int64(kib) << 10
 	if chunk <= 0 {
 		return w, q
 	}
@@ -368,16 +377,27 @@ func (r *resolver) fitBudget(defW, defQ, workers, queue int, workersFlag, queueF
 		return w, q
 	}
 	if workers > 0 || queue > 0 {
+		if fromDB {
+			// The database fixed its chunk size; only the counts can change.
+			r.reject(workersFlag, "%d workers and a queue of %d with the database's %d KiB chunks need %d MiB in flight, over the %d MiB budget; lower --%s or --%s",
+				w, q, kib, int64(w+q)*chunk>>20, r.memoryBudget()>>20, workersFlag, queueFlag)
+			return w, q
+		}
 		r.reject(workersFlag, "%d workers and a queue of %d with %d KiB chunks need %d MiB in flight, over the %d MiB budget; lower --%s, --%s or --%s",
-			w, q, r.eff.ChunkKiB, int64(w+q)*chunk>>20, r.memoryBudget()>>20, workersFlag, queueFlag, FlagChunkSize)
+			w, q, kib, int64(w+q)*chunk>>20, r.memoryBudget()>>20, workersFlag, queueFlag, FlagChunkSize)
 		return w, q
 	}
 	// The largest chunk (64 MiB) against the smallest budget still leaves four
 	// slots, so this never goes below two workers and a queue of two.
 	w = min(w, max(int(slots/2), 1))
 	q = max(min(q, int(slots)-w), w)
+	if fromDB {
+		r.warn(workersFlag, "the database's %d KiB chunks: reduced to %d workers and a queue of %d to stay within %d MiB of memory",
+			kib, w, q, r.memoryBudget()>>20)
+		return w, q
+	}
 	r.warn(FlagChunkSize, "%d KiB chunks: reduced to %d workers and a queue of %d to stay within %d MiB of memory",
-		r.eff.ChunkKiB, w, q, r.memoryBudget()>>20)
+		kib, w, q, r.memoryBudget()>>20)
 	return w, q
 }
 

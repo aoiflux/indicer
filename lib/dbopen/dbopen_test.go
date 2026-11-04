@@ -202,6 +202,21 @@ func TestReadOnlyNeverCreates(t *testing.T) {
 	}
 }
 
+// TestChunkKiBOf: the chunk size of an existing database is read from its
+// manifest, before any open; there is none for a new database.
+func TestChunkKiBOf(t *testing.T) {
+	root := setup(t)
+	if got := ChunkKiBOf(root); got != 0 {
+		t.Fatalf("ChunkKiBOf(a new database) = %d, want 0", got)
+	}
+	open(t, Request{Path: root, Mode: ReadWrite, Layout: Requested{ChunkKiB: 64}}).Close()
+	for _, path := range []string{root, filepath.Join(root, cnst.KVDBDIR)} {
+		if got := ChunkKiBOf(path); got != 64 {
+			t.Fatalf("ChunkKiBOf(%s) = %d, want 64", path, got)
+		}
+	}
+}
+
 func TestLayoutConflicts(t *testing.T) {
 	root := setup(t)
 	open(t, Request{Path: root, Mode: ReadWrite, Layout: Requested{ChunkKiB: 64}}).Close()

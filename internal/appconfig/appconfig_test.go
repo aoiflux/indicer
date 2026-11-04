@@ -227,6 +227,39 @@ func TestIngestingCommandsFitMemoryBudget(t *testing.T) {
 	}
 }
 
+// TestTuningFitsTheDatabasesChunks: an existing database's chunks are what
+// the workers and queues hold, whatever --chonksize says; its defaults that do
+// not fit come down, and counts the user gave that do not fit are refused
+// without asking for another chunk size, which the database fixed.
+func TestTuningFitsTheDatabasesChunks(t *testing.T) {
+	sys := Sys{CPUs: 8, AvailableRAM: 4 << 30} // a 1 GiB budget
+	if eff, issues, err := Resolve(base(cnst.CmdStore), sys); err != nil || len(issues) != 0 {
+		t.Fatalf("256 KiB chunks: %+v, %v, %v; want the defaults", eff, issues, err)
+	}
+	for _, cmd := range []string{cnst.CmdStore, cnst.CmdRestore} {
+		eff, issues, err := Resolve(with(base(cmd), func(r *Raw) { r.DBChunkKiB = 65536 }), sys)
+		if err != nil {
+			t.Fatalf("%s: %v", cmd, err)
+		}
+		w, q := eff.StoreWorkers, eff.StoreQueue
+		if cmd == cnst.CmdRestore {
+			w, q = eff.RestoreWorkers, eff.RestoreQueue
+		}
+		if w < 1 || int64(w+q)*64<<20 > 1<<30 {
+			t.Fatalf("%s: %d workers and a queue of %d of 64 MiB chunks exceed the 1 GiB budget", cmd, w, q)
+		}
+		if len(issues) != 1 || !strings.Contains(issues[0].Message, "the database's 65536 KiB chunks") {
+			t.Fatalf("%s: issues %v, want one naming the database's chunks", cmd, issues)
+		}
+	}
+	_, _, err := Resolve(with(base(cnst.CmdStore), func(r *Raw) {
+		r.DBChunkKiB, r.StoreWorkers, r.Set = 65536, 16, set(FlagStoreWorkers)
+	}), sys)
+	if err == nil || !strings.Contains(err.Error(), "the database's 65536 KiB chunks") || strings.Contains(err.Error(), FlagChunkSize) {
+		t.Fatalf("--store-workers 16 over the budget: %v; want a refusal naming the database's chunks, not --%s", err, FlagChunkSize)
+	}
+}
+
 func TestMachineReportsCPUs(t *testing.T) {
 	if Machine().CPUs < 1 {
 		t.Fatal("no CPUs reported")

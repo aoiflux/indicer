@@ -317,7 +317,7 @@ A truncated file or an EWF mismatch then prints a `Warning:` line.
 ### Tuning
 
 - Workers default to the CPU count, halved in low-resource mode and clamped to 2–16. The queue defaults to 4 × workers (`cnst.DefaultRestoreTuning`).
-- `internal/appconfig` range-checks explicit values (workers up to max(64, 8 × CPUs), queue up to 65536) and checks them against an in-flight memory budget. A rejected value is a usage error.
+- `internal/appconfig` range-checks explicit values (workers up to max(64, 8 × CPUs), queue up to 65536) and checks them against an in-flight memory budget, in the database's own chunk size (read from its manifest). A rejected value is a usage error.
 - The reorder window bounds the decoded data in flight, whatever the queue depth.
 - The container read cache gets `cnst.GetCacheLimit()`, at most 4 GiB.
 - The TUI restores with the config file's `restore` settings, or the defaults: it has no tuning flags.

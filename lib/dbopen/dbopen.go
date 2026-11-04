@@ -143,6 +143,22 @@ func ResolveRoot(path string) (string, error) {
 	return filepath.Abs(clean)
 }
 
+// ChunkKiBOf is the chunk size of the database at path, from its manifest,
+// for fitting a command's workers before it opens the database. It is 0 when
+// no manifest can be read (a new database, one written before manifests, a
+// damaged one): the open settles those.
+func ChunkKiBOf(path string) int {
+	root, err := ResolveRoot(path)
+	if err != nil {
+		return 0
+	}
+	m, err := dbmeta.Load(root)
+	if err != nil {
+		return 0
+	}
+	return m.Layout.ChunkKiB
+}
+
 // Open opens the database req describes.
 func Open(ctx context.Context, req Request) (*Handle, error) {
 	if err := ctx.Err(); err != nil {

@@ -522,6 +522,17 @@ time runs the plain loop, so a panic still reaches the crash handler.
   concurrent transactions together.
 - `StoreFolder COMPLETE` logs `jobs`.
 
+`dues reindex --store-jobs N` runs the same pool over the evidence it
+selected (flag only; the config key is the store command's). The reports
+come out in selection order, the counts are kept in that order, and a large
+evidence runs alone, as above. Nothing is chained: what a reindex deletes and
+writes (partitions, indexed records, materialised objects, full-text
+documents, graph nodes) is keyed by IDs derived from its own evidence ID
+(`index.PartitionID`, `index.IndexedID`, the graph's file node IDs), so two
+evidence never touch the same key. The chunks they read are shared, and a
+reindex never deletes chunks. `repair --reindex-failed` reindexes one at a
+time.
+
 ### The evidence source (`lib/evidence`)
 
 `evidence.Open(ctx, path, Options{Decode})` returns a `*evidence.Source`, safe

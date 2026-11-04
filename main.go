@@ -427,7 +427,12 @@ func buildCommandHandlers(cliDef cliDefinition, dbOpts cli.DBOptions, tuning pip
 				zap.String("dbpath", *cliDef.flags.dbpath),
 				zap.Strings("ids", *cliDef.flags.reindexIDs),
 				zap.Bool("failed", *cliDef.flags.reindexFailed),
-				zap.Bool("all", *cliDef.flags.reindexAll))
+				zap.Bool("all", *cliDef.flags.reindexAll),
+				zap.Int("store_jobs", *cliDef.flags.reindexJobs))
+			jobs, err := cli.StoreJobs(*cliDef.flags.reindexJobs)
+			if err != nil {
+				return err
+			}
 			return cli.ReindexData(ctx, dbOpts, cli.ReindexOptions{
 				IDs:    *cliDef.flags.reindexIDs,
 				Failed: *cliDef.flags.reindexFailed,
@@ -435,6 +440,7 @@ func buildCommandHandlers(cliDef cliDefinition, dbOpts cli.DBOptions, tuning pip
 				Source: *cliDef.flags.reindexSource,
 				FTS:    *cliDef.flags.reindexFTS,
 				Enrich: *cliDef.flags.reindexEnrich,
+				Jobs:   jobs,
 			})
 		},
 		cliDef.commands.nearIn.FullCommand(): func(ctx context.Context) error {

@@ -107,6 +107,7 @@ type cliFlags struct {
 	reindexSource *string
 	reindexFTS    *bool
 	reindexEnrich *bool
+	reindexJobs   *int
 
 	deep            *bool
 	inVerify        *bool
@@ -290,6 +291,7 @@ func newCLIDefinition() cliDefinition {
 	flags.reindexSource = commands.reindex.Flag("source", "Read the evidence from this file instead of the stored chunks (one evidence; its content must match)").String()
 	flags.reindexFTS = commands.reindex.Flag(cnst.FlagEnableFts, "Also build the full-text index").Default("false").Bool()
 	flags.reindexEnrich = commands.reindex.Flag(cnst.FlagEnableEnrichment, "Also upsert the graph nodes").Default("false").Bool()
+	flags.reindexJobs = commands.reindex.Flag(cnst.FlagStoreJobs, "Evidence reindexed at once (default 1; 0 = chosen for this machine)").Default("1").Int()
 
 	commands.near = app.Command(cnst.CmdNear, "Get NeAR file objects")
 	commands.nearIn = commands.near.Command(cnst.SubCmdIn, "Finds NeAR objects & generates GReAt graph for file INside of the database")

@@ -13,6 +13,7 @@ import (
 	"indicer/internal/console"
 	"indicer/internal/lifecycle"
 	"indicer/internal/termsafe"
+	"indicer/internal/workpool"
 	"indicer/lib/cnst"
 	"indicer/lib/dbio"
 	"indicer/lib/dbopen"
@@ -35,6 +36,9 @@ type ReindexOptions struct {
 	Source string
 	// FTS and Enrich also run those features.
 	FTS, Enrich bool
+	// Jobs is how many evidence are reindexed at once (StoreJobs reads
+	// --store-jobs); 0 or 1 reindexes one at a time.
+	Jobs int
 }
 
 // ReindexData rebuilds the indexes ro selects.
@@ -74,8 +78,10 @@ type reindexSummary struct {
 	Failed     int              `json:"failed"`
 }
 
-// reindexEvidence reindexes each selected evidence in turn, reporting on w.
-// One that fails does not stop the rest; an index left incomplete exits 2.
+// reindexEvidence reindexes each selected evidence, reporting on w. With
+// ro.Jobs above 1, several are reindexed at once, and the report reads as a
+// reindex of one at a time would. One that fails does not stop the rest; an
+// index left incomplete exits 2.
 func reindexEvidence(ctx context.Context, db *badger.DB, ro ReindexOptions, w io.Writer) (sum reindexSummary, err error) {
 	sum.Evidence = []reindexOutcome{}
 	targets, err := reindexTargets(db, ro)
@@ -103,37 +109,45 @@ func reindexEvidence(ctx context.Context, db *badger.DB, ro ReindexOptions, w io
 	all.Weigh(weight)
 	failed := all.Meter("failed", progress.Evidence)
 	defer func() { all.Done(err) }()
-	for _, t := range targets {
-		if err := ctx.Err(); err != nil {
-			return sum, err
-		}
+	out := newOrderedOutput(w)
+	reindex := func(ctx context.Context, i int) error {
+		t := targets[i]
+		iw := out.of(i)
 		start := time.Now()
 		id := base64.StdEncoding.EncodeToString(t.id)
-		fmt.Fprintf(w, "\nReindexing %s (%s)\n", termsafe.Line(t.name), id)
+		fmt.Fprintf(iw, "\nReindexing %s (%s)\n", termsafe.Line(t.name), id)
 		one := progress.Start(progress.Within(ctx, all), t.name, progress.None, 0)
 		one.Weigh(itemWeight(t.size))
 		res, err := sess.Reindex(progress.Within(ctx, one), t.id, ingest.ReindexOptions{Source: ro.Source, FTS: ro.FTS, Enrich: ro.Enrich})
 		one.Done(err)
 		all.Add(1)
 		if res.Index != nil {
-			reportIngest(w, res, time.Since(start))
+			reportIngest(iw, res, time.Since(start))
 		}
 		logging.GetLogger().Info("Reindex EVIDENCE",
 			zap.String("evidence_id", id),
 			zap.Int64("duration_ms", time.Since(start).Milliseconds()),
 			zap.Error(err))
-		o := reindexOutcome{ID: id, Name: t.name, Outcome: "ok"}
+		return err
+	}
+	// report counts evidence i, in the order they were selected.
+	report := func(i int, err error) {
+		out.skipTo(i)
+		defer out.reported(i)
+		t := targets[i]
+		iw := out.of(i)
+		o := reindexOutcome{ID: base64.StdEncoding.EncodeToString(t.id), Name: t.name, Outcome: "ok"}
 		var incomplete *ingest.IndexIncompleteError
 		switch {
 		case err == nil:
 		case errors.As(err, &incomplete):
 			o.Outcome, o.Error = "incomplete", err.Error()
 			sum.Incomplete++
-			fmt.Fprintln(w, "Warning:", termsafe.Line(err.Error()))
+			fmt.Fprintln(iw, "Warning:", termsafe.Line(err.Error()))
+		case ctx.Err() != nil:
+			// Interrupted: the command reports that, not a failed evidence.
+			return
 		default:
-			if cerr := ctx.Err(); cerr != nil {
-				return sum, cerr
-			}
 			o.Outcome, o.Error = "failed", err.Error()
 			sum.Failed++
 			failures = append(failures, fmt.Sprintf("%s: %v", t.name, err))
@@ -141,9 +155,34 @@ func reindexEvidence(ctx context.Context, db *badger.DB, ro ReindexOptions, w io
 			if firstErr == nil {
 				firstErr = err
 			}
-			fmt.Fprintln(w, "Failed:", termsafe.Line(err.Error()))
+			fmt.Fprintln(iw, "Failed:", termsafe.Line(err.Error()))
 		}
 		sum.Evidence = append(sum.Evidence, o)
+	}
+	if jobs := folderJobs(ro.Jobs); jobs == 1 {
+		for i := range targets {
+			if err := ctx.Err(); err != nil {
+				return sum, err
+			}
+			report(i, reindex(ctx, i))
+		}
+	} else {
+		// Evidence share nothing a reindex deletes or writes: records,
+		// objects, full-text documents and graph nodes are keyed by their
+		// evidence's own ID. So none are chained; a large one runs alone.
+		items := make([]workpool.Item, len(targets))
+		for i, t := range targets {
+			items[i].Heavy = t.size >= heavyItem
+		}
+		if err := workpool.Run(ctx, jobs, items, reindex, report); err != nil {
+			if cerr := ctx.Err(); cerr != nil {
+				return sum, cerr
+			}
+			return sum, &lifecycle.InternalError{Err: err}
+		}
+	}
+	if err := ctx.Err(); err != nil {
+		return sum, err
 	}
 	if len(targets) > 1 {
 		fmt.Fprintf(w, "\nReindex: %d evidence, %d with an incomplete index, %d failed\n", len(targets), sum.Incomplete, sum.Failed)

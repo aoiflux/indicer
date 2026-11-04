@@ -592,7 +592,7 @@ func printRepairHelp() {
 
 func printReindexHelp() {
 	printHelpHeader(cmdReindex)
-	fmt.Fprintln(helpOut, "Usage: dues reindex ID|HASH... | --failed | --all [--source PATH] [--fts] [--enrich] [global options]")
+	fmt.Fprintln(helpOut, "Usage: dues reindex ID|HASH... | --failed | --all [--source PATH] [--fts] [--enrich] [--store-jobs N] [global options]")
 	fmt.Fprintln(helpOut, "Rebuilds the index of stored evidence from its stored chunks, each one checked")
 	fmt.Fprintln(helpOut, "against its hash. The previous index, with its full-text documents and graph")
 	fmt.Fprintln(helpOut, "nodes, is deleted first. Features the evidence was stored with are rebuilt too.")
@@ -602,11 +602,16 @@ func printReindexHelp() {
 	fmt.Fprintln(helpOut, "  --source     Read one evidence from this file instead; its content must match")
 	fmt.Fprintln(helpOut, "  --fts        Also build the full-text index")
 	fmt.Fprintln(helpOut, "  --enrich     Also write the graph nodes")
+	fmt.Fprintln(helpOut, "  --store-jobs N")
+	fmt.Fprintln(helpOut, "               Evidence reindexed at once (default 1; 0 picks a number for")
+	fmt.Fprintln(helpOut, "               this machine). A large one runs alone; the report reads as one")
+	fmt.Fprintln(helpOut, "               at a time.")
 	printExamples(
 		"dues reindex --failed",
 		"dues reindex <hash>",
 		"dues reindex <id> --source ./evidence.E01",
 		"dues reindex --all --fts --dbpath ./caseA",
+		"dues reindex --all --store-jobs 4",
 	)
 }
 

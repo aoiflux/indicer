@@ -148,3 +148,30 @@ func TestPassesOfARunCountSharedChunksInOrder(t *testing.T) {
 		t.Errorf("the written bytes moved %d to the earlier and %d to the later; want what one took from the other", w0, w1)
 	}
 }
+
+// TestObjectChunksAreHeldUntilTheirEvidencePassEnds: what the pass of an
+// object stores is held while its item's evidence pass may still need it,
+// and let go once that pass ended.
+func TestObjectChunksAreHeldUntilTheirEvidencePassEnds(t *testing.T) {
+	db := testdb.Open(t, testdb.Default)
+	if err := util.EnsureBlobPath(db.DB.Opts().Dir); err != nil {
+		t.Fatal(err)
+	}
+	cs := int(dbmeta.ChunkSize(db.DB))
+	l := NewChunkCredits()
+	pass := func(c Credit, id string, seed uint64) {
+		t.Helper()
+		data := testutil.RandomBytes(seed, 2*cs)
+		if _, err := IngestChunks(t.Context(), ChunkPass{DB: db.DB, ID: []byte(id), Source: byteReaderAt(data), Size: int64(len(data)), Quiet: true, Credit: c}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	pass(Credit{Ledger: l, Object: true}, "object", 21)
+	if got := l.held.Load(); got != 2 {
+		t.Fatalf("the object's pass left %d chunks held, want its 2: its evidence's pass may still need them", got)
+	}
+	pass(Credit{Ledger: l}, "evidence", 22)
+	if got := l.held.Load(); got != 0 {
+		t.Fatalf("%d chunks held after the evidence's pass ended, want none", got)
+	}
+}

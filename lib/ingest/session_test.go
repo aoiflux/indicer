@@ -3,10 +3,12 @@ package ingest
 import (
 	"errors"
 	"os"
+	"strings"
 	"testing"
 
 	"indicer/internal/testutil"
 	"indicer/lib/dbio"
+	duesgraph "indicer/lib/graph"
 	"indicer/lib/util"
 )
 
@@ -120,5 +122,39 @@ func TestSessionMakesNoIndexWithoutFiles(t *testing.T) {
 		if _, err := os.Stat(p); !errors.Is(err, os.ErrNotExist) {
 			t.Fatalf("%s exists (%v): the session created a store nothing needed", p, err)
 		}
+	}
+}
+
+// TestSessionCloseReportsAReleaseThatFailed: Close returns the error a
+// store's release gave, and still lets go of everything: the session is
+// closed, and a second Close has nothing left to release.
+func TestSessionCloseReportsAReleaseThatFailed(t *testing.T) {
+	db := openDB(t)
+	s := NewSession(db)
+	if _, err := s.textIndex(true); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.graphStore(true); err != nil {
+		t.Fatal(err)
+	}
+	// Another holder of the graph releases one reference more than it took,
+	// so the session's release of its own finds none left.
+	h, err := duesgraph.Open(dbio.KVDir(db))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for range 2 {
+		if err := h.Release(); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := s.Close(); err == nil || !strings.Contains(err.Error(), "unbalanced Release") {
+		t.Fatalf("close = %v, want the graph's release error", err)
+	}
+	if err := s.Close(); err != nil {
+		t.Fatalf("second close = %v, want nothing left to release", err)
+	}
+	if _, err := s.textIndex(true); !errors.Is(err, errSessionClosed) {
+		t.Fatalf("full-text index after a failed close = %v, want %v", err, errSessionClosed)
 	}
 }

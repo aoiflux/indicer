@@ -12,6 +12,8 @@ import (
 	"indicer/internal/testutil"
 	"indicer/internal/testutil/testdb"
 	"indicer/lib/cnst"
+	"indicer/lib/dbio"
+	duesgraph "indicer/lib/graph"
 	"indicer/lib/ingest"
 	"indicer/lib/util"
 )
@@ -130,5 +132,52 @@ func TestStoreFolderOpensStoresOnce(t *testing.T) {
 	}
 	if err := sess.Close(); err != nil {
 		t.Fatal(err)
+	}
+}
+
+// TestStoreFailsWhenItsSessionDoesNotClose: a store whose graph or full-text
+// index does not release cleanly fails, as one whose database does not close
+// does (CFG-8), and what it stored stays stored.
+func TestStoreFailsWhenItsSessionDoesNotClose(t *testing.T) {
+	testdb.Isolate(t)
+	testdb.EnsureCodecs(t)
+	dir := t.TempDir()
+	in := filepath.Join(dir, "in")
+	if err := os.MkdirAll(in, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	_, img := fixtureNamed(t, "fat/fat12")
+	raw, err := os.ReadFile(img)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(in, "a.img"), raw, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	// Once the evidence is stored, another holder of the graph releases one
+	// reference more than it took, so the session's release finds none left.
+	prev := storeOneFile
+	t.Cleanup(func() { storeOneFile = prev })
+	storeOneFile = func(ctx context.Context, w io.Writer, sess *ingest.Session, path string, sopts StoreOptions) (ingest.Bytes, error) {
+		counted, err := prev(ctx, w, sess, path, sopts)
+		h, herr := duesgraph.Open(dbio.KVDir(sess.DB()))
+		if herr != nil {
+			t.Error(herr)
+			return counted, err
+		}
+		for range 2 {
+			if herr := h.Release(); herr != nil {
+				t.Error(herr)
+			}
+		}
+		return counted, err
+	}
+	dbPath := filepath.Join(dir, "db")
+	err = StoreDataWithOptions(t.Context(), optsFor(dbPath, matrixChunkKB, nil), in, StoreOptions{Enrich: true, Decode: true, Quiet: true})
+	if err == nil || !strings.Contains(err.Error(), "closing the full-text index and graph") {
+		t.Fatalf("store = %v, want the session's close error", err)
+	}
+	if _, rec := onlyEvidence(t, dbPath); !rec.Completed {
+		t.Fatalf("the evidence is not stored complete: %+v", rec)
 	}
 }

@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"cmp"
 	"context"
 	"encoding/base64"
 	"errors"
@@ -53,6 +54,9 @@ type StoreOptions struct {
 	maxWorkers int
 	// credit is the evidence's place in its folder (store.ChunkCredits).
 	credit store.Credit
+	// heavy is the decoded size from which a folder's evidence is stored
+	// alone; 0 means heavyItem. Tests lower it.
+	heavy int64
 }
 
 // StoreData stores the file or folder at evipath. syncIndex is accepted for
@@ -157,7 +161,7 @@ func storeFolder(ctx context.Context, w io.Writer, sess *ingest.Session, dir str
 	var items []workpool.Item
 	if jobs > 1 {
 		var sizes []int64
-		items, sizes = folderItems(ctx, sess.DB(), plan.Items, sopts.Decode, jobs)
+		items, sizes = folderItems(ctx, sess.DB(), plan.Items, sopts.Decode, jobs, cmp.Or(sopts.heavy, heavyItem))
 		passes := 2
 		if sopts.NoIndex {
 			passes = 1
@@ -213,7 +217,9 @@ func storeFolder(ctx context.Context, w io.Writer, sess *ingest.Session, dir str
 			isopts.maxWorkers = innerWorkers(jobs)
 		}
 		isopts.credit = creditOf(i)
+		probe := startItemProbe(sess.DB(), credits)
 		counted, err := storeOneFile(progress.Within(ctx, one), out.of(i), sess, item.Path, isopts)
+		probe.done(i, item, jobs > 1 && items[i].Heavy, err)
 		one.Done(err)
 		all.Add(1)
 		counts[i] = counted

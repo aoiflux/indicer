@@ -74,9 +74,10 @@ func innerWorkers(jobs int) int {
 // stores one content twice at once, and the first in folder order is stored
 // while the others become its aliases, as in a store of one at a time. An
 // evidence that cannot be opened chains with nothing: its own store fails, or
-// decides alone. The opens run jobs at a time. sizes are the decoded sizes,
-// -1 for an evidence that could not be opened.
-func folderItems(ctx context.Context, db *badger.DB, items []evidence.PlanItem, decode bool, jobs int) (_ []workpool.Item, sizes []int64) {
+// decides alone. The opens run jobs at a time. An evidence of heavy bytes or
+// more decoded is heavy. sizes are the decoded sizes, -1 for an evidence
+// that could not be opened.
+func folderItems(ctx context.Context, db *badger.DB, items []evidence.PlanItem, decode bool, jobs int, heavy int64) (_ []workpool.Item, sizes []int64) {
 	out := make([]workpool.Item, len(items))
 	sizes = make([]int64, len(items))
 	open := func(i int) (*evidence.Source, error) {
@@ -93,7 +94,7 @@ func folderItems(ctx context.Context, db *badger.DB, items []evidence.PlanItem, 
 
 	bySize := map[int64][]int{}
 	for i, size := range sizes {
-		out[i].Heavy = size >= heavyItem
+		out[i].Heavy = size >= heavy
 		if size >= 0 {
 			bySize[size] = append(bySize[size], i)
 		}

@@ -42,6 +42,30 @@ func TestChunkCreditsGoToTheFirstInOrder(t *testing.T) {
 	adjusted(t, l, map[int][2]int64{0: {10, 4}, 1: {0, 0}, 2: {-10, -4}})
 }
 
+// TestChunkCreditsCountTheirLocks: Stats counts the passes that took the
+// ledger's lock: none for the first unsettled item while nothing is held,
+// one for each store ahead of it and each find while chunks are held.
+func TestChunkCreditsCountTheirLocks(t *testing.T) {
+	if (*ChunkCredits)(nil).Stats() != (CreditStats{}) {
+		t.Fatal("no ledger has stats")
+	}
+	l := NewChunkCredits()
+	l.stored([]byte("C|||:first"), Credit{Item: 0}, 10, 4)
+	l.found([]byte("C|||:first"), Credit{Item: 0})
+	if st := l.Stats(); st.Locked != 0 || st.Held != 0 {
+		t.Fatalf("first item alone: %+v, want no locks and nothing held", st)
+	}
+	l.stored([]byte("C|||:ahead"), Credit{Item: 2}, 10, 4)
+	l.found([]byte("C|||:ahead"), Credit{Item: 1})
+	if st := l.Stats(); st.Locked != 2 || st.Held != 1 {
+		t.Fatalf("after a store ahead and a find: %+v, want 2 locks and 1 held", st)
+	}
+	l.Settle(2)
+	if st := l.Stats(); st.Held != 0 {
+		t.Fatalf("after settling: %+v, want nothing held", st)
+	}
+}
+
 // TestChunkCreditsStoredAgainIsTheNewOwners: a chunk stored again was not
 // kept by the pass that stored it first, so it is the new pass's to give.
 func TestChunkCreditsStoredAgainIsTheNewOwners(t *testing.T) {

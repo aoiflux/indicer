@@ -526,8 +526,11 @@ time runs the plain loop, so a panic still reaches the crash handler.
   chunks held (a few MiB), no item starts but the first not yet finished
   (`workpool.RunHeld`) until some are let go.
 - **Large items run alone.** An item of 256 MiB or more (decoded) starts when
-  nothing else runs, with the full pipeline, and nothing starts beside it.
-  Items after it wait, so it is never starved.
+  nothing else runs and every item before it has been reported, with the
+  full pipeline, and nothing starts beside it. Items after it wait, so it is
+  never starved. Waiting for the reports means the ledger has settled every
+  item before it, so its pass stores and finds chunks without the ledger's
+  lock.
 - **Machine share.** Beside others, an item's chunk pass runs
   `max(2, workers/jobs)` workers (`ChunkPass.MaxWorkers`), unless
   `--store-workers` was given, and so does the pass of each object its index
@@ -571,6 +574,16 @@ time runs the plain loop, so a panic still reaches the crash handler.
   out of items, as when a large item last in the folder runs alone. No queue
   wait is logged: every item is queued at the start, so its wait is only
   its place in the folder.
+- **Each item, with `--debug`.** A `StoreFolder ITEM` record per item gives
+  `item`, `file_path`, `size`, `heavy`, `duration_ms`, and what happened
+  while it ran: `credit_locked` (times a pass took the ledger's lock) and
+  `credit_held`; badger's tree before and after (`lsm_before_*`,
+  `lsm_after_*`: level-0 tables and bytes, tree and value-log bytes, tables
+  compacting, bytes compacted and flushed to level 0, the last three for
+  the whole process); and the runtime's collections (`gc_cycles`,
+  `gc_cpu_ms`, `gc_pause_us`, heap and goroutines). Beside other items the
+  counts are the whole store's while it ran; a large item runs alone, so
+  its counts are its own.
 
 `dues reindex --store-jobs N` runs the same pool over the evidence it
 selected (flag only; the config key is the store command's). The reports

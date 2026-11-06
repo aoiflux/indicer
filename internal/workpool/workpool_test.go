@@ -124,6 +124,37 @@ func TestHeavyItemIsNotStarved(t *testing.T) {
 	}
 }
 
+// TestHeavyStartsAfterEarlierReported: a heavy item starts only once done
+// has returned for every item before it, so what done settles for them is
+// settled before the heavy one runs, however slow done is.
+func TestHeavyStartsAfterEarlierReported(t *testing.T) {
+	items := make([]Item, 6)
+	items[3].Heavy = true
+	var reported atomic.Int32
+	var early atomic.Int32
+	_, err := Run(t.Context(), 4, items, func(_ context.Context, i int) error {
+		if i == 3 {
+			if n := reported.Load(); n != 3 {
+				early.Store(n + 1)
+			}
+		}
+		return nil
+	}, func(i int, _ error) {
+		if i < 3 {
+			// Slow, so a heavy item woken by the last finish would start
+			// while done still runs.
+			time.Sleep(20 * time.Millisecond)
+		}
+		reported.Add(1)
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if n := early.Load(); n != 0 {
+		t.Fatalf("heavy item 3 started after done returned for %d items, want 3", n-1)
+	}
+}
+
 // TestErrorsDoNotStopOthers: an item's error goes to done and the rest run.
 func TestErrorsDoNotStopOthers(t *testing.T) {
 	items := make([]Item, 20)

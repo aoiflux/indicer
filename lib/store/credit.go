@@ -26,6 +26,8 @@ type ChunkCredits struct {
 	next atomic.Int64
 	// held is len(owners), for the checks made without the lock.
 	held atomic.Int64
+	// locked counts the stored and found calls that took the lock.
+	locked atomic.Int64
 
 	mu     sync.Mutex
 	owners map[string]chunkOwner
@@ -92,6 +94,7 @@ func (l *ChunkCredits) stored(key []byte, c Credit, n, written int64) {
 		// No pass before it runs, and no chunk is held.
 		return
 	}
+	l.locked.Add(1)
 	l.mu.Lock()
 	defer l.mu.Unlock()
 	if r := c.rank(); l.needed(r) {
@@ -108,6 +111,7 @@ func (l *ChunkCredits) found(key []byte, c Credit) {
 	if l == nil || l.held.Load() == 0 {
 		return
 	}
+	l.locked.Add(1)
 	l.mu.Lock()
 	defer l.mu.Unlock()
 	o, ok := l.owners[string(key)]
@@ -209,3 +213,21 @@ func (l *ChunkCredits) Settle(item int) {
 // then starts no item but the first not yet ended, until Settle lets go of
 // some.
 func (l *ChunkCredits) Full() bool { return l != nil && l.held.Load() >= creditsHeld }
+
+// CreditStats is what a ledger did so far.
+type CreditStats struct {
+	// Locked is how many times a pass storing or finding a chunk took the
+	// ledger's lock: chunks stored ahead of an item not yet settled, and
+	// chunks found while the ledger held any.
+	Locked int64
+	// Held is how many chunks the ledger holds now.
+	Held int64
+}
+
+// Stats is what l did so far; the zero CreditStats for no ledger.
+func (l *ChunkCredits) Stats() CreditStats {
+	if l == nil {
+		return CreditStats{}
+	}
+	return CreditStats{Locked: l.locked.Load(), Held: l.held.Load()}
+}

@@ -5,9 +5,9 @@
 //   - Items start in index order. An item waits for the earlier items of its
 //     chain (equal Key), so content that may be the same is never worked on
 //     twice at once.
-//   - A Heavy item runs alone: it starts when nothing else runs, and nothing
-//     starts while it runs. Until it starts, no later item does, so it is
-//     never starved.
+//   - A Heavy item runs alone: it starts when nothing else runs and done has
+//     seen every item before it, and nothing starts while it runs. Until it
+//     starts, no later item does, so it is never starved.
 //   - done is called in index order, one call at a time, as soon as every
 //     item before has been done: a caller printing there prints what a run
 //     of one goroutine would.
@@ -214,8 +214,11 @@ func (s *scheduler) ready() (int, bool) {
 			return 0, false
 		}
 		if s.items[i].Heavy {
-			// Alone, and nothing after it starts first.
-			return i, s.busy == 0 && s.chainFree(i)
+			// Alone, and nothing after it starts first. It waits too for done
+			// to have seen every item before it, so it runs with nothing of
+			// theirs left to settle (a heavy item's pass then never takes a
+			// shared ledger's lock).
+			return i, s.busy == 0 && s.chainFree(i) && s.reportedTo >= i
 		}
 		if s.chainFree(i) {
 			return i, true
@@ -272,9 +275,8 @@ func (s *scheduler) report(done func(int, error), all bool) {
 		s.mu.Lock()
 		s.reportedTo++
 		s.mu.Unlock()
-		if s.hold != nil {
-			// done may have let go of what held the others back.
-			s.cond.Broadcast()
-		}
+		// A heavy item may wait for this report, and done may have let go of
+		// what held the others back.
+		s.cond.Broadcast()
 	}
 }

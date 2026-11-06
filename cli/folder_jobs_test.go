@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"maps"
 	"os"
@@ -258,7 +259,13 @@ func TestStoreJobs(t *testing.T) {
 // a reader of its records with a message.
 func logRecordsOf(t *testing.T) func(msg string) []map[string]any {
 	t.Helper()
-	info := logging.Init(logging.Config{Dir: t.TempDir(), Stderr: io.Discard})
+	return logRecordsAt(t, false)
+}
+
+// logRecordsAt is logRecordsOf, with debug records too when debug is set.
+func logRecordsAt(t *testing.T, debug bool) func(msg string) []map[string]any {
+	t.Helper()
+	info := logging.Init(logging.Config{Dir: t.TempDir(), Stderr: io.Discard, Debug: debug})
 	t.Cleanup(func() { _ = logging.Close() })
 	return func(msg string) []map[string]any {
 		t.Helper()
@@ -315,4 +322,58 @@ func TestFolderRecordSaysHowThePoolRan(t *testing.T) {
 	}
 	checkPoolRecord(t, recs[0], 12, 1)
 	checkPoolRecord(t, recs[1], 12, 4)
+}
+
+// TestHeavyItemTakesNoCreditLock: a heavy evidence of a parallel folder
+// store starts once every evidence before it is reported and settled, so its
+// chunk pass never takes the credit ledger's lock; the StoreFolder ITEM
+// debug record says so, and says what badger's tree and the runtime did.
+func TestHeavyItemTakesNoCreditLock(t *testing.T) {
+	testdb.Isolate(t)
+	testdb.EnsureCodecs(t)
+	records := logRecordsAt(t, true)
+	in := filepath.Join(t.TempDir(), "in")
+	for i := range 4 {
+		testutil.WriteRandomFile(t, in, fmt.Sprintf("a-%02d.bin", i), uint64(300+i), 96_000+i*4099)
+	}
+	testutil.WriteRandomFile(t, in, "m-heavy.bin", 399, 3<<20)
+	for i := range 4 {
+		testutil.WriteRandomFile(t, in, fmt.Sprintf("z-%02d.bin", i), uint64(400+i), 96_000+i*4099)
+	}
+	d := testdb.Open(t, testdb.Default)
+	if err := util.EnsureBlobPath(d.Root); err != nil {
+		t.Fatal(err)
+	}
+	sess := ingest.NewSession(d.DB)
+	defer sess.Close()
+	opts := StoreOptions{Decode: true, Quiet: true, NoIndex: true, Jobs: 4, heavy: 1 << 20}
+	if err := storeFolder(t.Context(), io.Discard, sess, in, opts); err != nil {
+		t.Fatal(err)
+	}
+	recs := records("StoreFolder ITEM")
+	if len(recs) != 9 {
+		t.Fatalf("%d StoreFolder ITEM records, want 9", len(recs))
+	}
+	var heavy int
+	for _, r := range recs {
+		if _, ok := r["lsm_after_l0_tables"]; !ok {
+			t.Fatalf("ITEM record without LSM fields: %v", r)
+		}
+		if _, ok := r["gc_cycles"]; !ok {
+			t.Fatalf("ITEM record without runtime fields: %v", r)
+		}
+		if r["heavy"] != true {
+			continue
+		}
+		heavy++
+		if !strings.HasSuffix(r["file_path"].(string), "m-heavy.bin") {
+			t.Fatalf("heavy item is %v, want m-heavy.bin", r["file_path"])
+		}
+		if r["credit_locked"] != float64(0) {
+			t.Fatalf("heavy item took the credit ledger's lock %v times, want 0", r["credit_locked"])
+		}
+	}
+	if heavy != 1 {
+		t.Fatalf("%d heavy ITEM records, want 1", heavy)
+	}
 }

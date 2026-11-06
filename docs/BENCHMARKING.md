@@ -189,23 +189,33 @@ uniform in 1 to 64 KiB, every tenth file a copy of an earlier one.
 ### One at a time against `--store-jobs 0`
 
 `--store-jobs 0` stores `min(4, CPUs/4)` evidence at once, 4 here, and fewer
-when memory is short (it was not). Measured 2026-11-05 at `b9eddac` on the
-same machine (16 CPUs, 31.4 GiB of memory), with `--no-config --container`
-and a fresh database each run. Peak working set is the store process's,
-sampled every 250 ms.
+when memory is short (it was not). Measured 2026-11-05 at `b9eddac`, and the
+folder of 1 to 50 MiB files 2026-11-06 at `74cb803` (which changed only tests
+and docs), on the same machine (16 CPUs, 31.4 GiB of memory), with
+`--no-config --container` and a fresh database each run. Peak working set is
+the store process's, sampled every 250 ms.
 
 | Folder | One at a time | `--store-jobs 0` | Peak working set, one / auto |
 |---|---|---|---|
+| 200 random files of 1 to 50 MiB, 4.74 GiB read; median of 3 | 18.0 s | 15.0 s | 1.63 / 1.75 GiB |
 | 1,000 random files of 1 to 64 KiB and two VHDX images (10 and 20 GiB virtual), 30.0 GiB read; median of 3 | 35.5 s | 34.0 s | 1.84 / 1.84 GiB |
 | A case folder: 410 files, 406 evidence (memory dumps, EWF images, archives, documents), 100 GiB read; two runs, one in each order | 867 s, 967 s | 974 s, 1,053 s | 2.32 / 2.36 GiB |
 
-- Each pair stored the same bytes. The first folder read 30.0 GiB, found
-  1.42 GiB new and wrote 1.06 GiB, a 1,097 MiB database. The second read
-  100 GiB, found 70.3 GiB new and wrote 46.5 GiB, a 46.9 GiB database.
-- The first folder gains 4%. Its two images are heavy (256 MiB or more
+- Each pair stored the same bytes. The 1 to 50 MiB folder read 4.74 GiB, all
+  of it new and incompressible, a 4,856 MiB database. The images folder read
+  30.0 GiB, found 1.42 GiB new and wrote 1.06 GiB, a 1,097 MiB database. The
+  case folder read 100 GiB, found 70.3 GiB new and wrote 46.5 GiB, a
+  46.9 GiB database.
+- The 1 to 50 MiB folder gains 1.20x. Its files are all under 256 MiB, so
+  four run at once, each with a quarter of the workers. Each run took longer
+  than the one before it, in both settings (15.3 to 20.2 s one at a time,
+  12.0 to 18.0 s at `--store-jobs 0`). One at a time ran first in each pair,
+  so the drift favours it. The folder and the database were on one NVMe
+  disk.
+- The images folder gains 4%. Its two images are heavy (256 MiB or more
   decoded), so they run alone and take most of the time; the pool's
   `utilization` was 0.31.
-- The second folder is 9 to 12% slower. Its 377 small evidence gain: they
+- The case folder is 9 to 12% slower. Its 377 small evidence gain: they
   took 47 to 48 s of the wall time, against 74 to 78 s one at a time. Its 29
   heavy evidence run alone in both settings, yet took 926 and 1,006 s,
   against 791 and 887 s. The cause is not known. The folder and the
@@ -214,16 +224,33 @@ sampled every 250 ms.
 - The plan asked for no regression beyond 5% on these folders, so
   `--store-jobs` stays 1 by default. Measure again with the evidence and
   the database on different disks before changing that.
-- File mode (no `--container`) writes one file per chunk. The first folder
+- File mode (no `--container`) writes one file per chunk. The images folder
   took 52.3 s one at a time and 46.6 s at `--store-jobs 0` (median of 3).
-  On the USB SSD, the second folder had stored 71 GiB after 2 h 17 min,
+  On the USB SSD, the case folder had stored 71 GiB after 2 h 17 min,
   where container mode stores all of it in 15 to 18 minutes.
 - Keep the machine awake for long runs. Idle standby dropped the USB SSD
   under one run, and badger, which writes its memtable through a mapped
   file, ended the process with an in-page error (`0xc0000006`).
 
-The small files of the first folder were generated as the second corpus
-above.
+The small files of the images folder were generated as the second corpus
+above. The 1 to 50 MiB files are `random.seed(42)`, sizes uniform, random
+bytes.
+
+### What the size counts cost
+
+The read, new and written counts (the second line of `dues store`) cost
+about 85 ns per new chunk: six atomic adds, timed with 16 goroutines adding
+at once. One at a time, the run's ledger (`store.ChunkCredits`) only loads
+two counters. At `--store-jobs` above 1, a pass ahead of the first unsettled
+evidence also records each new chunk in the ledger, which took 310 to 670 ns
+under the same contention. The written size is the length of the encoded
+chunk, which the write already holds, so counting it costs nothing more.
+
+A chunk pass over 64 MiB of random bytes, every chunk new, took 0.90 to
+1.27 ms per chunk (256 KiB chunks, an encrypted database). Both counts
+together are under 0.1% of that; the plan's bound was 1%. Measured
+2026-11-06 at `74cb803`, with benchmarks written for the measurement and
+not kept in the tree.
 
 ## Gaps
 

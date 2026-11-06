@@ -85,8 +85,8 @@ reset in the TUI is refused while other jobs run.
 
 `dues store <folder> --store-jobs N` stores up to N evidence of the folder at
 once (default 1; 0 picks a number for the machine). It suits folders of many
-small files: a large image already keeps the machine busy, so it is stored
-alone. A folder of mostly large images gains little, and was slower when
+evidence under 256 MiB: a larger one already keeps the machine busy, so it is
+stored alone. A folder of mostly large images gains little, and was slower when
 the folder and the database shared one disk (BENCHMARKING, "One at a time
 against `--store-jobs 0`"). Copies of one content are stored one after another, and the report
 reads as a store of one at a time (STORE_LLD, Parallel folder stores).

@@ -15,6 +15,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"runtime/trace"
 	"sync"
 	"time"
 
@@ -173,7 +174,10 @@ func (s *Session) Run(ctx context.Context, req Request) (Result, error) {
 	if req.Quiet {
 		ctx = progress.Without(ctx)
 	}
+	// Under --trace, each step of an ingest is a region of the caller's task.
+	region := trace.StartRegion(ctx, "open")
 	src, err := evidence.Open(ctx, req.Path, evidence.Options{Decode: req.Decode})
+	region.End()
 	if err != nil {
 		return Result{}, err
 	}
@@ -184,7 +188,9 @@ func (s *Session) Run(ctx context.Context, req Request) (Result, error) {
 	if name == "" {
 		name = src.Name()
 	}
+	region = trace.StartRegion(ctx, "fingerprint")
 	fp, err := src.Fingerprint(dbmeta.FileHasher(db))
+	region.End()
 	if err != nil {
 		return res, fmt.Errorf("fingerprint %s: %w", req.Path, err)
 	}
@@ -213,7 +219,9 @@ func (s *Session) Run(ctx context.Context, req Request) (Result, error) {
 		return res, nil
 	}
 
+	region = trace.StartRegion(ctx, "begin")
 	eid, resumed, err := store.BeginAttempt(db, attemptPath(res.Source, src), rec)
+	region.End()
 	if err != nil {
 		return res, err
 	}
@@ -336,6 +344,7 @@ func hashNames(db *badger.DB) (chunk, file string) {
 // which identifies small content exactly and is confirmed for larger content
 // by computing its root.
 func findStored(ctx context.Context, db *badger.DB, src *evidence.Source, fp string) ([]byte, error) {
+	defer trace.StartRegion(ctx, "identify").End()
 	if cnst.StoreHashStrategy == cnst.SyncHashStrategy {
 		sums, err := identify(ctx, db, src)
 		if err != nil {
@@ -417,16 +426,19 @@ func (s *Session) run(ctx context.Context, src *evidence.Source, eid []byte, nam
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
+			defer trace.StartRegion(idxCtx, "index").End()
 			idx, idxErr = runIndex(idxCtx, index.Options{DB: db, EvidenceID: eid, EvidenceName: name, Image: src.Image(), Entropy: req.Enrich, RevRel: req.RevRel, Simhash: req.Simhash, MaxWorkers: req.MaxWorkers, Credit: req.Credit})
 		}()
 	}
 
+	region := trace.StartRegion(ctx, "chunks")
 	chunks, err := ingestChunks(ctx, store.ChunkPass{
 		DB: db, ID: eid, Source: src.Image(), Size: src.Size(),
 		Parallel: src.Parallel(), Ranges: ranges, EWF: src.EWF(), Quiet: req.Quiet,
 		RevRel: req.RevRel, Simhash: req.Simhash, MaxWorkers: req.MaxWorkers,
 		Credit: req.Credit,
 	})
+	region.End()
 	if err != nil {
 		stopIndex(fmt.Errorf("storage failed: %w", err))
 		wg.Wait()
@@ -449,19 +461,27 @@ func (s *Session) run(ctx context.Context, src *evidence.Source, eid []byte, nam
 		wg.Wait()
 		return res, fail(db, eid, err)
 	}
-	if err := flush(db, eid, chunks, check); err != nil {
+	region = trace.StartRegion(ctx, "flush")
+	err = flush(db, eid, chunks, check)
+	region.End()
+	if err != nil {
 		stopIndex(err)
 		wg.Wait()
 		return res, err
 	}
+	// What is left of the index pass, which ran beside the chunks.
+	region = trace.StartRegion(ctx, "index-wait")
 	wg.Wait()
+	region.End()
 
 	// A failure here leaves the attempt FLUSHED, as a crash would: recovery
 	// commits it.
 	if err := faultinject.Hit(faultinject.IngestBeforeCommit); err != nil {
 		return res, err
 	}
+	region = trace.StartRegion(ctx, "commit")
 	commit, err := store.CommitEvidence(db, eid)
+	region.End()
 	if err != nil {
 		return res, err
 	}
@@ -595,6 +615,7 @@ func setIndexInfo(db *badger.DB, eid []byte, info *structs.IndexInfo) error {
 // pass's range digests, the evidence's own hash for a filesystem spanning
 // the whole device, and otherwise by reading the partition's range.
 func setPartitionHashes(ctx context.Context, db *badger.DB, src *evidence.Source, chunks store.ChunkResult, parts []index.Partition) (err error) {
+	defer trace.StartRegion(ctx, "partition-hashes").End()
 	digests := map[store.ByteRange][]byte{{Offset: 0, Length: src.Size()}: chunks.PlainHash}
 	for _, r := range chunks.Ranges {
 		digests[r.ByteRange] = r.Hash

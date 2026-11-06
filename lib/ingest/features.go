@@ -5,6 +5,7 @@ import (
 	"encoding/base64"
 	"errors"
 	"fmt"
+	"runtime/trace"
 
 	"indicer/internal/progress"
 	"indicer/lib/enrichment"
@@ -21,6 +22,7 @@ import (
 func (s *Session) features(ctx context.Context, eid []byte, req Request) error {
 	var errs []error
 	if req.FTS {
+		region := trace.StartRegion(ctx, "fts")
 		ph := progress.Start(ctx, "full-text", progress.Files, progress.Unknown)
 		var jobs []fts.IndexedFileJob
 		err := index.ForEachIndexed(ctx, s.db, eid, func(key []byte, rec structs.IndexedFile) error {
@@ -43,6 +45,7 @@ func (s *Session) features(ctx context.Context, eid []byte, req Request) error {
 		} else {
 			ph.Done(err)
 		}
+		region.End()
 		if err != nil {
 			errs = append(errs, fmt.Errorf("full-text index: %w", err))
 		}
@@ -58,6 +61,7 @@ func (s *Session) features(ctx context.Context, eid []byte, req Request) error {
 // enrich writes the evidence's hierarchy to the graph. The evidence node is
 // named from the record, which carries the path it was stored from.
 func (s *Session) enrich(ctx context.Context, eid []byte) error {
+	defer trace.StartRegion(ctx, "enrich").End()
 	repo, err := s.graphStore(true)
 	if err != nil {
 		return err

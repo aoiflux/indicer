@@ -22,6 +22,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"runtime/trace"
 	"time"
 
 	"go.uber.org/zap"
@@ -301,6 +302,10 @@ func storeFolder(ctx context.Context, w io.Writer, sess *ingest.Session, dir str
 // storeFile stores one evidence and says how it ended, to w. It returns the
 // bytes its chunk pass read, found new and wrote.
 func storeFile(ctx context.Context, w io.Writer, sess *ingest.Session, path string, sopts StoreOptions) (ingest.Bytes, error) {
+	// Under --trace, one task per evidence; ingest marks its steps as regions.
+	ctx, task := trace.NewTask(ctx, "store evidence")
+	defer task.End()
+	trace.Log(ctx, "path", path)
 	start := time.Now()
 	if sopts.credit.Ledger == nil {
 		// A run of its own: the evidence's pass still comes before those of

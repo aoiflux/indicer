@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"indicer/internal/progress"
 	"io"
+	"runtime/trace"
 	"time"
 
 	"indicer/lib/dbio"
@@ -111,10 +112,12 @@ func (s *Session) Reindex(ctx context.Context, eid []byte, opts ReindexOptions) 
 	if err := setIndexInfo(db, eid, info); err != nil {
 		return res, err
 	}
+	region := trace.StartRegion(ctx, "index")
 	idx, idxErr := runIndex(ctx, index.Options{
 		DB: db, EvidenceID: eid, EvidenceName: e.Name, Image: img, Entropy: req.Enrich,
 		RevRel: req.RevRel, Simhash: req.Simhash, MaxWorkers: opts.MaxWorkers,
 	})
+	region.End()
 	res.Partitions = idx.Partitions
 	info.Coverage, info.Finished = idx.Coverage, time.Now().UnixNano()
 	switch {
@@ -224,6 +227,7 @@ func (s *Session) deletePrevious(ctx context.Context, eid []byte) (err error) {
 // reindexPartitionHashes hashes each partition's range of the image, except a
 // filesystem spanning the whole device, which is the evidence's own hash.
 func reindexPartitionHashes(ctx context.Context, db *badger.DB, e structs.EvidenceFile, img core.Image, parts []index.Partition) (err error) {
+	defer trace.StartRegion(ctx, "partition-hashes").End()
 	plain, _ := base64.StdEncoding.DecodeString(e.PlainHash)
 	usable := func(p index.Partition) bool { return p.Size > 0 && p.Offset >= 0 && p.Size <= img.Size()-p.Offset }
 	whole := func(p index.Partition) bool { return p.Offset == 0 && p.Size == img.Size() && len(plain) > 0 }

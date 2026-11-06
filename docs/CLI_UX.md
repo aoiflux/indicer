@@ -58,6 +58,11 @@ Each switch is also a key of the config file, `~/.config/dues/dues.json`
 included. A flag on the command line wins: `--color never`, `--no-plain`,
 `--no-ci`, `--no-taskbar` and `--no-no-fun` undo what the file sets.
 
+The diagnostic flags change the log and the trace file, never the output:
+`--debug` adds debug entries to the log, and `--trace FILE` writes an
+execution trace of the run ([OPERATIONS.md](OPERATIONS.md#execution-traces)).
+`--trace` has no config key.
+
 ## Colour
 
 Colour carries meaning, and never alone: every state also has a mark and a

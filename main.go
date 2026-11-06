@@ -11,6 +11,7 @@ import (
 	"indicer/internal/duesarc"
 	"indicer/internal/lifecycle"
 	"indicer/internal/osdirs"
+	"indicer/internal/tracefile"
 	"indicer/internal/ui"
 	"indicer/lib/cnst"
 	"indicer/lib/dbmeta"
@@ -239,6 +240,11 @@ func run(args []string, conf runConfig, cliDef cliDefinition) error {
 	if err := cliDef.faults.apply(); err != nil {
 		return err
 	}
+	stopTrace, err := startTrace(*cliDef.flags.trace)
+	if err != nil {
+		return err
+	}
+	defer stopTrace()
 
 	tempDir := *cliDef.flags.tempDir
 	if err := checkTempDir(tempDir, src.originOf(flagTempDir)); err != nil {
@@ -278,6 +284,30 @@ func run(args []string, conf runConfig, cliDef cliDefinition) error {
 	ctx, stop := lifecycle.Context(context.Background())
 	defer stop()
 	return executeCommand(ctx, parsed, cliDef, dbOpts, tuning, src, conf)
+}
+
+// startTrace traces the run into path, when --trace gives one, until stop is
+// called: when run returns, or when a second signal ends the process at
+// once, so the file still reads.
+func startTrace(path string) (stop func(), err error) {
+	if path == "" {
+		return func() {}, nil
+	}
+	end, err := tracefile.Start(path)
+	if err != nil {
+		return nil, lifecycle.Usagef("--%s: %v", flagTrace, err)
+	}
+	logging.GetLogger().Info("trace START", zap.String("trace_path", path))
+	unhook := lifecycle.OnForceExit(func() { _ = end() })
+	return func() {
+		unhook()
+		if err := end(); err != nil {
+			logging.GetLogger().Warn("trace STOP_ERROR", zap.String("trace_path", path), zap.Error(err))
+			ui.Warnf("--%s: %v", flagTrace, err)
+			return
+		}
+		logging.GetLogger().Info("trace COMPLETE", zap.String("trace_path", path))
+	}, nil
 }
 
 func closeCompressionCodecs() error {

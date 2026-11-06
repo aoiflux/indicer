@@ -17,6 +17,9 @@ const (
 	flagDebug   = "debug"
 )
 
+// flagTrace names the flag that traces a run.
+const flagTrace = "trace"
+
 // cmdReindex names the reindex command.
 const cmdReindex = "reindex"
 
@@ -42,6 +45,7 @@ type cliFlags struct {
 	logDir            *string
 	tempDir           *string
 	debug             *bool
+	trace             *string
 	dbpath            *string
 	pwd               *string
 	pwdFile           *string
@@ -211,6 +215,8 @@ func newCLIDefinition() cliDefinition {
 	flags.logDir = app.Flag(flagLogDir, "Directory for log and crash files (default: the per-user cache directory)").String()
 	flags.tempDir = app.Flag(flagTempDir, "Directory for temporary files, such as decoded containers and read-only database copies (default: /tmp, or AppData\\Local\\Temp on Windows)").String()
 	flags.debug = app.Flag(flagDebug, "Write debug entries to the log").Bool()
+	// A diagnostic for one run: no config key, and not in the settings record.
+	flags.trace = app.Flag(flagTrace, "Write a Go execution trace of the run to this new file, for go tool trace").PlaceHolder("FILE").String()
 	flags.dbpath = app.Flag(cnst.FlagDBPath, "Custom path for DUES database").Short(cnst.FlagDBPathShort).String()
 	// --password and --token were removed: a secret on the command line is
 	// visible to other users. They stay, hidden, so a script that still

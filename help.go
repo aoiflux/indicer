@@ -331,6 +331,7 @@ func printRootHelp() {
 	fmt.Fprintf(helpOut, "  %s       Directory for log and crash files\n", cmd("--log-dir"))
 	fmt.Fprintf(helpOut, "  %s      Directory for temporary files (default: /tmp, or AppData\\Local\\Temp on Windows)\n", cmd("--temp-dir"))
 	fmt.Fprintf(helpOut, "  %s         Write debug entries to the log\n", cmd("--debug"))
+	fmt.Fprintf(helpOut, "  %s FILE    Write a Go execution trace of the run to this new file\n", cmd("--trace"))
 	fmt.Fprintf(helpOut, "  %s  Read the database password from the first line of a file\n", cmd("--password-file"))
 	fmt.Fprintf(helpOut, "  %s Read the database password from standard input\n", cmd("--password-stdin"))
 	fmt.Fprintf(helpOut, "  %s, %s   Chunk size (KB) of a new database, default 256\n", cmd("--chonksize"), cmd("-c"))

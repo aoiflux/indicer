@@ -343,6 +343,40 @@ The compression library logs fully only when its host passes a `log_dir` to
 Otherwise it writes warnings and errors to the cache directory, in a file
 created at the first such entry.
 
+### Execution traces
+
+`--trace FILE` writes a Go execution trace of the run to FILE, for
+`go tool trace FILE`. FILE must not exist yet: DUES never writes a trace over
+a file, and refuses the run with exit 2. The trace is closed when the command
+ends, and also when a second Ctrl-C ends it at once, so the file still reads.
+
+Each evidence a store or a reindex works on is a task in the trace, named
+`store evidence` or `reindex evidence`, with its path or evidence ID logged
+in it. The steps of each are regions of its task:
+
+| Region | Step |
+|---|---|
+| `open` | Open the evidence, and decode its container |
+| `fingerprint` | The quick fingerprint |
+| `identify` | Look for the content among the stored evidence, hashing it when that is needed |
+| `begin` | Record the attempt |
+| `chunks` | The chunk pass |
+| `index` | The index pass; in a store, it runs beside the chunk pass on a goroutine of its own |
+| `flush` | Write what the chunk pass found |
+| `index-wait` | Wait for what is left of the index pass |
+| `commit` | Commit the evidence |
+| `partition-hashes` | Record each partition's hash |
+| `fts`, `enrich` | The full-text index and the graph |
+
+In a folder store or a reindex with `--store-jobs` above 1, a worker that
+waits until an item may start shows a `held` region
+([STORE_LLD.md](STORE_LLD.md), "Parallel folder stores").
+
+The log records `trace START` and `trace COMPLETE` with the file's path. The
+flag is for one run: it has no config key, and the `settings` record does not
+list it. A trace grows with what the run's goroutines do: a store of 256 MiB
+in eight files wrote 0.7 MB.
+
 ## Read-only media
 
 Read commands open the database read-only and never write to it. They work on

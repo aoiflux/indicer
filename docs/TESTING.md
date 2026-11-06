@@ -62,6 +62,9 @@ Practical notes:
   they have exhausted the Windows paging file (error 1455).
 - WSL drops its mounts when the VM goes idle, and loses them when it restarts.
   `suite.sh` mounts what it needs in the same session as the tests.
+- A process has one execution trace. The `internal/tracefile` tests trace the
+  test process, so they never run in parallel, and they skip under
+  `go test -trace`. `internal/e2e` `TestTraceFlag` traces the binary.
 
 ## Known defects in tests
 

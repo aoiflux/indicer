@@ -24,6 +24,7 @@ package workpool
 
 import (
 	"context"
+	"runtime/trace"
 	"sync"
 	"time"
 
@@ -191,7 +192,9 @@ func (s *scheduler) next(ctx context.Context, g int) (int, bool) {
 		}
 		holding()
 		waited := time.Now()
+		region := trace.StartRegion(ctx, "held")
 		s.cond.Wait()
+		region.End()
 		s.held[g] += time.Since(waited)
 	}
 }

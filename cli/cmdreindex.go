@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"indicer/internal/progress"
 	"io"
+	"runtime/trace"
 	"time"
 
 	"indicer/internal/console"
@@ -129,10 +130,13 @@ func reindexEvidence(ctx context.Context, db *badger.DB, ro ReindexOptions, w io
 	defer func() { all.Done(err) }()
 	out := newOrderedOutput(w)
 	reindex := func(ctx context.Context, i int) error {
+		ctx, task := trace.NewTask(ctx, "reindex evidence")
+		defer task.End()
 		t := targets[i]
 		iw := out.of(i)
 		start := time.Now()
 		id := base64.StdEncoding.EncodeToString(t.id)
+		trace.Log(ctx, "evidence_id", id)
 		fmt.Fprintf(iw, "\nReindexing %s (%s)\n", termsafe.Line(t.name), id)
 		one := progress.Start(progress.Within(ctx, all), t.name, progress.None, 0)
 		one.Weigh(itemWeight(t.size))

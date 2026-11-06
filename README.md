@@ -423,6 +423,8 @@ Tip: run `dues help <command>` for command-specific short flags and examples.
 - --temp-dir: directory for temporary files (default `/tmp`, or
   `AppData\Local\Temp` under the user's profile on Windows)
 - --debug: write debug entries to the log
+- --trace FILE: write a Go execution trace of the run to FILE, which must not
+  exist yet, for `go tool trace`
 - --password-file: read the password from the first line of a file
 - --password-stdin: read the password from standard input
 - --chonksize, -c: chunk size in KB of a new database (default 256)

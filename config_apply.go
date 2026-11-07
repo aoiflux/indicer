@@ -13,7 +13,6 @@ import (
 	"indicer/lib/cnst"
 	"indicer/lib/dbmeta"
 	"indicer/lib/dbopen"
-	"indicer/lib/zstdx"
 	"io"
 	"os"
 	"strconv"
@@ -31,6 +30,9 @@ type pipelineTuning struct {
 	issues         []appconfig.Issue
 	// layout is the database layout the command line asks for.
 	layout dbopen.Requested
+	// engine is how the storage engine runs on the databases the command
+	// opens.
+	engine cnst.Tuning
 }
 
 // The password comes from --password-file or --password-stdin, never from
@@ -120,11 +122,12 @@ func firstLine(s string) string {
 var databaseChunkKiB = dbopen.ChunkKiBOf
 
 // applyRuntimeConfig validates the settings, from the command line and the
-// config file, and sets the runtime globals from them. Every rejected flag
-// is reported together, as a usage error (exit code 2). Adjustments that
-// are not errors come back in tuning.issues.
+// config file, and returns the layout and engine tuning they ask for. It
+// sets nothing process-wide. Every rejected flag is reported together, as a
+// usage error (exit code 2). Adjustments that are not errors come back in
+// tuning.issues.
 func applyRuntimeConfig(parsed string, cliDef cliDefinition, src sources) (pipelineTuning, error) {
-	tuning := pipelineTuning{}
+	tuning := pipelineTuning{engine: cnst.DefaultTuning()}
 	f := cliDef.flags
 	set := src.set
 
@@ -169,10 +172,8 @@ func applyRuntimeConfig(parsed string, cliDef cliDefinition, src sources) (pipel
 	tuning.issues = issues
 	tuning.activePreset = eff.Preset
 
-	cnst.MEMOPT = eff.Low
-	cnst.QUICKOPT = eff.Quick
-	cnst.CONTAINERMODE = eff.Container
-	cnst.CompressLevel = eff.CompressLevel
+	tuning.engine.LowResource = eff.Low
+	tuning.engine.CompressLevel = eff.CompressLevel
 
 	selectedHashAlgo := cnst.BLAKE3
 	switch parsed {
@@ -181,7 +182,8 @@ func applyRuntimeConfig(parsed string, cliDef cliDefinition, src sources) (pipel
 	case cliDef.commands.server.FullCommand():
 		selectedHashAlgo = *f.serverHashAlgo
 	}
-	if err := cnst.SetHashAlgo(selectedHashAlgo); err != nil {
+	hashAlgo, err := cnst.ParseHashAlgo(selectedHashAlgo)
+	if err != nil {
 		return tuning, lifecycle.Usagef("--%s: %v", cnst.FlagHashAlgo, err)
 	}
 	tuning.layout = dbopen.Requested{
@@ -191,25 +193,27 @@ func applyRuntimeConfig(parsed string, cliDef cliDefinition, src sources) (pipel
 		Set:       set,
 	}
 	if set[cnst.FlagHashAlgo] {
-		tuning.layout.ChunkHash = cnst.HASHALGO
+		tuning.layout.ChunkHash = hashAlgo
 	}
 
 	// The TUI's store takes these from the config file, as it has no flags
-	// for them: unset, they are empty, which each setter reads as its
+	// for them: unset, they are empty, which each parser reads as its
 	// default.
 	if parsed == cliDef.commands.store.FullCommand() || parsed == cliDef.commands.tui.FullCommand() {
-		if err := cnst.SetStoreHashStrategy(*f.storeHashStrategy); err != nil {
+		e := &tuning.engine
+		if e.HashStrategy, err = cnst.ParseHashStrategy(*f.storeHashStrategy); err != nil {
 			return tuning, lifecycle.Usagef("--%s%s: %v", cnst.FlagHashStrategy, src.originOf(cnst.FlagHashStrategy), err)
 		}
-		if err := cnst.SetStorePipeline(*f.storePipeline); err != nil {
+		if e.Pipeline, err = cnst.ParseStorePipeline(*f.storePipeline); err != nil {
 			return tuning, lifecycle.Usagef("--%s%s: %v", cnst.FlagStorePipeline, src.originOf(cnst.FlagStorePipeline), err)
 		}
-		if err := cnst.SetStoreIOEngine(*f.storeIOEngine); err != nil {
+		if e.IOEngine, err = cnst.ParseStoreIOEngine(*f.storeIOEngine); err != nil {
 			return tuning, lifecycle.Usagef("--%s%s: %v", cnst.FlagStoreIOEngine, src.originOf(cnst.FlagStoreIOEngine), err)
 		}
-		if err := cnst.SetStoreIOUringQueueDepth(*f.storeIOUringQueue); err != nil {
+		if err := cnst.CheckIOUringQueueDepth(*f.storeIOUringQueue); err != nil {
 			return tuning, lifecycle.Usagef("--%s%s: %v", cnst.FlagStoreIOUringQueueDepth, src.originOf(cnst.FlagStoreIOUringQueueDepth), err)
 		}
+		e.IOUringDepth = *f.storeIOUringQueue
 	}
 	if parsed == cliDef.commands.store.FullCommand() {
 		// Retired with W6: the index pass runs beside storage, and partition
@@ -239,11 +243,11 @@ func applyRuntimeConfig(parsed string, cliDef cliDefinition, src sources) (pipel
 	}
 
 	// Resolve has already fitted these to the machine's memory; the pipelines
-	// read them through cnst.GetStorePipelineTuning/GetRestorePipelineTuning.
+	// read them through the database's engine (cnst.Tuning.StorePipeline and
+	// RestorePipeline).
 	if eff.StoreWorkers > 0 {
-		cnst.StoreWorkerCount = eff.StoreWorkers
-		cnst.StoreTaskQueueDepth = eff.StoreQueue
-		tuning.storeWorkers, tuning.storeQueue = cnst.GetStorePipelineTuning(cnst.CONTAINERMODE)
+		tuning.engine.StoreWorkers, tuning.engine.StoreQueue = eff.StoreWorkers, eff.StoreQueue
+		tuning.storeWorkers, tuning.storeQueue = tuning.engine.StorePipeline(eff.Container)
 	}
 	if parsed == cliDef.commands.restore.FullCommand() && set[cnst.FlagRestoreProgressMs] {
 		// Retired with the progress display, which samples on its own.
@@ -253,10 +257,9 @@ func applyRuntimeConfig(parsed string, cliDef cliDefinition, src sources) (pipel
 		})
 	}
 	if eff.RestoreWorkers > 0 {
-		cnst.RestoreWorkerCount = eff.RestoreWorkers
-		cnst.RestoreTaskQueueDepth = eff.RestoreQueue
-		cnst.RestoreWriteBufferMB = eff.RestoreBufferMB
-		tuning.restoreWorkers, tuning.restoreQueue = cnst.GetRestorePipelineTuning()
+		tuning.engine.RestoreWorkers, tuning.engine.RestoreQueue = eff.RestoreWorkers, eff.RestoreQueue
+		tuning.engine.RestoreBufferMB = eff.RestoreBufferMB
+		tuning.restoreWorkers, tuning.restoreQueue = tuning.engine.RestorePipeline()
 	}
 
 	return tuning, nil
@@ -277,20 +280,6 @@ func flagsSetByUser(app *kingpin.Application, args []string) (map[string]bool, e
 		}
 	}
 	return set, nil
-}
-
-// reconfigureEncoderForCompressionLevel replaces the process encoder with one
-// at --compress-level, sized for the store workers that encode at once. The
-// new one is acquired first, so an encoder of the same level and width is
-// kept rather than built again.
-func reconfigureEncoderForCompressionLevel(workers int) error {
-	enc, err := zstdx.Acquire(cnst.CompressLevel, workers)
-	if err != nil {
-		return err
-	}
-	releaseEncoder()
-	cnst.ENCODER = enc
-	return nil
 }
 
 // printRunHeader opens a long operation on stderr: what runs, on what,
@@ -356,19 +345,20 @@ func runSettings(parsed string, cliDef cliDefinition, tuning pipelineTuning) []u
 	if tuning.activePreset != "" {
 		s = append(s, ui.Setting{Key: "preset", Value: tuning.activePreset, Phrase: "preset " + tuning.activePreset})
 	}
-	if cnst.MEMOPT {
+	e := tuning.engine
+	if e.LowResource {
 		s = append(s, ui.Setting{Key: "mode", Value: "low-resource", Phrase: "low-resource"})
 	} else {
 		s = append(s, ui.Setting{Key: "mode", Value: "performance", Phrase: "performance"})
 	}
-	if cnst.QUICKOPT {
+	if tuning.layout.Quick {
 		s = append(s, on("quick", "quick"))
 	}
-	if cnst.CONTAINERMODE {
+	if tuning.layout.Container {
 		s = append(s, on("container", "container"))
 	}
-	if cnst.CompressLevel != "default" {
-		s = append(s, ui.Setting{Key: "compress", Value: cnst.CompressLevel, Phrase: "zstd " + cnst.CompressLevel})
+	if e.CompressLevel != "default" {
+		s = append(s, ui.Setting{Key: "compress", Value: e.CompressLevel, Phrase: "zstd " + e.CompressLevel})
 	}
 	if parsed == cliDef.commands.store.FullCommand() {
 		if *cliDef.flags.enableSimhash {
@@ -386,13 +376,13 @@ func runSettings(parsed string, cliDef cliDefinition, tuning pipelineTuning) []u
 		s = append(s,
 			n("workers", tuning.storeWorkers, "%d workers"),
 			n("queue", tuning.storeQueue, "queue %d"),
-			ui.Setting{Key: "pipeline", Value: cnst.StorePipelineMode, Phrase: "pipeline " + cnst.StorePipelineMode},
-			ui.Setting{Key: "io", Value: cnst.StoreIOEngine, Phrase: cnst.StoreIOEngine + " io"})
+			ui.Setting{Key: "pipeline", Value: e.Pipeline, Phrase: "pipeline " + e.Pipeline},
+			ui.Setting{Key: "io", Value: e.IOEngine, Phrase: e.IOEngine + " io"})
 	case cliDef.commands.restore.FullCommand():
 		s = append(s,
 			n("workers", tuning.restoreWorkers, "%d workers"),
 			n("queue", tuning.restoreQueue, "queue %d"),
-			n("buffer_mib", cnst.GetRestoreWriteBufferSize()/(1024*1024), "%d MiB buffer"))
+			n("buffer_mib", e.RestoreWriteBuffer()/(1024*1024), "%d MiB buffer"))
 	}
 	return s
 }

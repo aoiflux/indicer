@@ -124,19 +124,23 @@ Code given only a `*badger.DB` reads the layout through registries that
   `engine.For(db).EncodeValue`: as they are in a database of raw values
   (legacy quick mode), compressed otherwise. Writers that take a transaction
   or a write batch (`SetBatchNode`, `PutRecordTxn`, `SetEvidenceTxn`,
-  `EncodeRecord`) also take the database, for its engine. The tuning (`cnst.Tuning`: low-resource mode, compression level,
-  hash strategy, pipeline, worker and queue counts) is `Request.Tuning`, or
-  the process-wide settings as they are at the open (`cnst.Globals`).
-  `SetStorage` replaces the layout in place, so code that holds the engine
+  `EncodeRecord`) also take the database, for its engine. The tuning
+  (`cnst.Tuning`: low-resource mode, compression level, hash strategy,
+  pipeline, worker and queue counts) is `Request.Tuning`. The dues command
+  passes the one its flags and config file give: `applyRuntimeConfig`
+  returns it and sets nothing process-wide. A caller that gives none (the
+  compression product, some tests) gets the process-wide settings as they
+  are at the open (`cnst.Globals`). `SetStorage` replaces the layout in place, so code that holds the engine
   sees `repair --upgrade`'s change. A database opened without `dbopen` gets
   an engine that answers from the process-wide settings at each call,
   `cnst.QUICKOPT` and the process encoder `cnst.ENCODER` among them.
 
-`dbopen.ApplyToGlobals` also sets the process-wide layout globals that older
-code still reads: `cnst.ChonkSize`, `cnst.HASHALGO`, `cnst.QUICKOPT` (raw
-values), `cnst.CONTAINERMODE` and `cnst.LegacyBlockIndex`. The guard test
-`TestRewrittenFilesAvoidLayoutGlobals` fails when a listed file reads a
-layout or tuning global, the process encoder, `cnst.Globals` or one of the
+Opening a database sets no process-wide global, and neither does the dues
+command's setup. The store io engine is the one process setting left: the
+write backend is chosen once, so the command sets it before any database
+writes (`fio.SetWriteEngine`). The guard test
+`TestRewrittenFilesAvoidLayoutGlobals` fails when a listed file reads or sets
+a layout or tuning global, the process encoder, `cnst.Globals` or one of the
 getters built on it.
 
 ## Opening a database (`lib/dbopen`)

@@ -37,6 +37,7 @@ func PackageExport(ctx context.Context, opts DBOptions, po PackageExportOptions)
 		Path:           opts.Path,
 		Creds:          opts.Creds,
 		TempDir:        opts.TempDir,
+		Tuning:         opts.Tuning,
 		Output:         po.Output,
 		PartSize:       int64(po.SplitSizeMB) << 20,
 		Force:          po.Force,
@@ -143,7 +144,7 @@ func PackageVerify(ctx context.Context, opts DBOptions, path string, deep bool) 
 	defer p.Close()
 	var res dbpackage.VerifyResult
 	if deep {
-		res, err = p.VerifyDeep(ctx, dbpackage.DeepOptions{Creds: opts.Creds, TempDir: opts.TempDir})
+		res, err = p.VerifyDeep(ctx, dbpackage.DeepOptions{Creds: opts.Creds, TempDir: opts.TempDir, Tuning: opts.Tuning})
 	} else {
 		res, err = p.Verify(ctx)
 	}
@@ -199,7 +200,7 @@ func problems(n int) string {
 // package.
 func PackageImport(ctx context.Context, opts DBOptions, path string) error {
 	start := time.Now()
-	res, err := dbpackage.Import(ctx, dbpackage.ImportOptions{Package: path, Path: opts.Path, Creds: opts.Creds, TempDir: opts.TempDir})
+	res, err := dbpackage.Import(ctx, dbpackage.ImportOptions{Package: path, Path: opts.Path, Creds: opts.Creds, TempDir: opts.TempDir, Tuning: opts.Tuning})
 	for _, n := range res.Notices {
 		ui.Notef("%s", n)
 	}

@@ -254,7 +254,9 @@ const (
 
 const IgnoreVar int64 = -1
 
-// ENCODER encodes record values and chunks until each database has its own.
+// ENCODER compresses record values and chunks of a database dbopen did not
+// open, as some tests do. Each open database has its own (engine.For), and
+// no command sets this one.
 var ENCODER *zstdx.Encoder
 
 func NormalizeHashAlgo(algo string) string {
@@ -268,10 +270,20 @@ func NormalizeHashAlgo(algo string) string {
 	}
 }
 
-func SetHashAlgo(algo string) error {
+// ParseHashAlgo returns the chunk hash algorithm algo names (SHA3 or
+// BLAKE3, the default).
+func ParseHashAlgo(algo string) (string, error) {
 	normalized := NormalizeHashAlgo(algo)
 	if normalized == "" {
-		return errors.New("invalid hash algorithm: must be sha3 or blake3")
+		return "", errors.New("invalid hash algorithm: must be sha3 or blake3")
+	}
+	return normalized, nil
+}
+
+func SetHashAlgo(algo string) error {
+	normalized, err := ParseHashAlgo(algo)
+	if err != nil {
+		return err
 	}
 	HASHALGO = normalized
 	return nil
@@ -290,10 +302,20 @@ func NormalizeHashStrategy(strategy string) string {
 	}
 }
 
-func SetStoreHashStrategy(strategy string) error {
+// ParseHashStrategy returns the hash strategy strategy names (sync, the
+// default, async or hocho).
+func ParseHashStrategy(strategy string) (string, error) {
 	normalized := NormalizeHashStrategy(strategy)
 	if normalized == "" {
-		return errors.New("invalid hash strategy: must be sync, async, or hocho")
+		return "", errors.New("invalid hash strategy: must be sync, async, or hocho")
+	}
+	return normalized, nil
+}
+
+func SetStoreHashStrategy(strategy string) error {
+	normalized, err := ParseHashStrategy(strategy)
+	if err != nil {
+		return err
 	}
 	StoreHashStrategy = normalized
 	return nil
@@ -310,10 +332,20 @@ func NormalizeStorePipeline(mode string) string {
 	}
 }
 
-func SetStorePipeline(mode string) error {
+// ParseStorePipeline returns the store pipeline mode names (batch-owner,
+// the default, or staged).
+func ParseStorePipeline(mode string) (string, error) {
 	normalized := NormalizeStorePipeline(mode)
 	if normalized == "" {
-		return errors.New("invalid store pipeline: must be batch-owner or staged")
+		return "", errors.New("invalid store pipeline: must be batch-owner or staged")
+	}
+	return normalized, nil
+}
+
+func SetStorePipeline(mode string) error {
+	normalized, err := ParseStorePipeline(mode)
+	if err != nil {
+		return err
 	}
 	StorePipelineMode = normalized
 	return nil
@@ -332,18 +364,36 @@ func NormalizeStoreIOEngine(engine string) string {
 	}
 }
 
-func SetStoreIOEngine(engine string) error {
+// ParseStoreIOEngine returns the store io engine engine names (auto, the
+// default, stdlib or io-uring).
+func ParseStoreIOEngine(engine string) (string, error) {
 	normalized := NormalizeStoreIOEngine(engine)
 	if normalized == "" {
-		return errors.New("invalid store io engine: must be auto, stdlib, or io-uring")
+		return "", errors.New("invalid store io engine: must be auto, stdlib, or io-uring")
+	}
+	return normalized, nil
+}
+
+func SetStoreIOEngine(engine string) error {
+	normalized, err := ParseStoreIOEngine(engine)
+	if err != nil {
+		return err
 	}
 	StoreIOEngine = normalized
 	return nil
 }
 
-func SetStoreIOUringQueueDepth(depth int) error {
+// CheckIOUringQueueDepth refuses a negative io-uring queue depth; 0 is auto.
+func CheckIOUringQueueDepth(depth int) error {
 	if depth < 0 {
 		return errors.New("invalid io-uring queue depth: must be >= 0")
+	}
+	return nil
+}
+
+func SetStoreIOUringQueueDepth(depth int) error {
+	if err := CheckIOUringQueueDepth(depth); err != nil {
+		return err
 	}
 	StoreIOUringQueueDepth = depth
 	return nil

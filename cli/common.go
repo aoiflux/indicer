@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"indicer/internal/progress"
 	"indicer/internal/ui"
+	"indicer/lib/cnst"
 	"indicer/lib/dbio"
 	"indicer/lib/dbmeta"
 	"indicer/lib/dbopen"
@@ -23,6 +24,9 @@ type DBOptions struct {
 	Layout dbopen.Requested
 	// TempDir is --temp-dir; empty means osdirs.Temp.
 	TempDir string
+	// Tuning is how the storage engine runs on the databases the command
+	// opens; nil takes the process-wide settings.
+	Tuning *cnst.Tuning
 }
 
 // LegacyKeyOptions builds DBOptions from the old (chunk size, path, key)
@@ -40,7 +44,7 @@ func LegacyKeyOptions(chonkSize int, dbpath string, key []byte) DBOptions {
 // Request is the open opts describe. The caller sets its mode, and whether a
 // writable open recovers the ingests a crash left incomplete.
 func (o DBOptions) Request() dbopen.Request {
-	return dbopen.Request{Path: o.Path, Creds: o.Creds, Layout: o.Layout, WrittenBy: "dues", TempDir: o.TempDir}
+	return dbopen.Request{Path: o.Path, Creds: o.Creds, Layout: o.Layout, WrittenBy: "dues", TempDir: o.TempDir, Tuning: o.Tuning}
 }
 
 // Common opens the database for a command and prints the open's notices. A

@@ -310,7 +310,7 @@ marked with the workstream that found it, for example "(W12)".
 | FFI-1 | HIGH | No recover in `DuesDispatchJSON` or the async tasks: a panic killed the host process. | trust | W10: every entry point and task runs under `internal/safe`. | `TestDispatchContainsPanics`, `TestAsyncTaskPanicIsContained`, `TestDispatchAlwaysAnswers` | Fixed |
 | FFI-2 | HIGH | Concurrent tasks mutated the process's layout globals. | config | W10: storage-engine operations run one at a time (`withStoreRuntime`). | `TestConcurrentArchiveOperations` | Fixed (interim gate, residual) |
 | FFI-3 | MED | ctx was ignored, library code wrote to stdout, and jsonbridge dropped Marshal errors. | silent | W2: `internal/console`; W10: ctx plumbed, an envelope always returned. | `TestDispatchResultThatCannotBeEncoded`, `TestDispatchHonoursCancellation`, `TestNoTerminalWritesOutsideMain` | Fixed |
-| FFI-4 | HIGH | Two process-wide zstd encoders kept about 1.6 GB for the life of the process on a 16-CPU machine. | unbounded | W10: badger level 3; encoders sized by workers; per-operation encoders in the product. | `TestAcquireIsBounded`, `TestArchiveOperationsReleaseEncoders` | Fixed |
+| FFI-4 | HIGH | Two process-wide zstd encoders kept about 1.6 GB for the life of the process on a 16-CPU machine. | unbounded | W10: badger level 3; encoders sized by workers; each open database's encoder, released when it closes. | `TestAcquireIsBounded`, `TestArchiveOperationsReleaseEncoders` | Fixed |
 | CMP-1 | HIGH | Decompression bombs: zstd `DecodeAll` had no limit, nor did `decompress_file` or zip/tar extraction. | trust | W10: bounded decoder, limited readers, extraction limits on bytes written, dedup-bomb check. | `TestDecodeAllIsBounded`, `TestDecompressBytesIsBounded`, `TestDecompressFileIsBounded`, `TestExtractLimits`, `TestExtractCompressionRatio`, `TestDuesarcDeduplicationBomb` | Fixed |
 | CMP-2 | HIGH | Archive writer Close errors were ignored, so a corrupt archive was reported as success; a failure left a partial archive. | silent | W10: writers closed in order, errors returned, temporary file renamed into place. | `TestArchiveWriteFailureLeavesNoOutput` | Fixed |
 | CMP-3 | MED | Outputs were overwritten silently; split parts overwrote each other and stale parts were concatenated; the `.bak` logic deleted a user's file; `image.001` was taken for an archive part. | destructive | W10: atomic outputs, split sidecar, `on_conflict`. | `TestSplitArchiveSidecar`, `TestSplitReplacesEarlierOutput`, `TestNumberedFileIsNotASplitPart`, `TestExtractConflictPolicy` | Fixed |
@@ -398,11 +398,14 @@ a flag that changed several of these at once, encryption among them.
 - `TestLayoutConflicts` covers contradicting flags, and `FuzzResolve` the
   configuration.
 
-**What is left.** The globals still exist: `ApplyToGlobals` sets them at open,
-and the command-line setup writes them. The storage code reads each
-database's layout, tuning and encoder through `engine.For`, and the record
-and chunk encoders write each database's own value encoding. The FFI
-serialises storage-engine operations because of this (residual).
+**What is left.** The globals still exist, for databases opened without
+`dbopen` and for opens that pass no tuning, but nothing sets them any more:
+opening a database writes none, and the command-line setup returns a
+`cnst.Tuning` instead of writing them. The storage code reads each database's
+layout, tuning and encoder through `engine.For`, and the record and chunk
+encoders write each database's own value encoding. The FFI still serialises
+storage-engine operations until its concurrency tests run two at once
+(residual).
 
 ### concurrency: goroutines, channels and timeouts instead of structured concurrency
 

@@ -11,6 +11,7 @@ import (
 	"indicer/internal/osdirs"
 	"indicer/lib/cnst"
 	"indicer/lib/dbmeta"
+	"indicer/lib/dbopen"
 	"indicer/lib/fsx"
 	"indicer/lib/store"
 )
@@ -30,6 +31,9 @@ type DeepOptions struct {
 	// TempDir is --temp-dir: where the database is copied, and what the
 	// read-only open uses. Empty means osdirs.Temp.
 	TempDir string
+	// Tuning is how the storage engine runs on the database it opens; nil
+	// takes the process-wide settings.
+	Tuning *cnst.Tuning
 }
 
 // VerifyDeep checks a package as Verify does, then checks the database it
@@ -86,7 +90,7 @@ func (p *Package) VerifyDeep(ctx context.Context, opts DeepOptions) (res VerifyR
 	res.Files, res.Bytes = len(m.Files), m.Bytes()
 
 	report := &store.VerifyReport{}
-	if err := openStaged(ctx, dir, m, opts.Creds, opts.TempDir, &res.Notices, report); err != nil {
+	if err := openStaged(ctx, dir, m, dbopen.Request{Creds: opts.Creds, TempDir: opts.TempDir, Tuning: opts.Tuning}, &res.Notices, report); err != nil {
 		return res, err
 	}
 	res.Evidence = report

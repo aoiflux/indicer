@@ -43,6 +43,12 @@ func (*ioUringWriteBackend) Name() string {
 }
 
 var (
+	// writeEngine and uringDepth are the process's store io engine and
+	// io-uring queue depth (SetWriteEngine); the backend is chosen from them
+	// on the first container write.
+	writeEngine = cnst.StoreIOEngineAuto
+	uringDepth  int
+
 	backendOnce        sync.Once
 	selectedBackend    writeBackend = stdlibWriteBackend{}
 	backendWarningOnce sync.Once
@@ -67,17 +73,35 @@ type WriteBackendStats struct {
 	IOUringCompletions  uint64
 }
 
+// SetWriteEngine sets the store io engine (cnst.StoreIOEngine*) and the
+// io-uring queue depth (0 = auto) container files are written with. The
+// backend is chosen once for the process, on the first container write, so
+// it is set before any database writes; later calls change nothing written.
+func SetWriteEngine(engine string, depth int) {
+	writeEngine, uringDepth = engine, depth
+}
+
+// requestedEngine is the store io engine SetWriteEngine asked for.
+func requestedEngine() string {
+	if e := cnst.NormalizeStoreIOEngine(writeEngine); e != "" {
+		return e
+	}
+	return cnst.StoreIOEngineAuto
+}
+
+// ioUringQueueDepth is the io-uring queue depth SetWriteEngine asked for, or
+// for 0 the machine's (cnst.Tuning.IOUringQueueDepth).
+func ioUringQueueDepth() int {
+	return cnst.Tuning{IOUringDepth: uringDepth}.IOUringQueueDepth()
+}
+
 func getWriteBackend() writeBackend {
 	backendOnce.Do(initWriteBackend)
 	return selectedBackend
 }
 
 func initWriteBackend() {
-	engine := cnst.NormalizeStoreIOEngine(cnst.StoreIOEngine)
-	if engine == "" {
-		engine = cnst.StoreIOEngineAuto
-	}
-
+	engine := requestedEngine()
 	switch engine {
 	case cnst.StoreIOEngineUring:
 		if err := probeIoUringSupport(); err != nil {
@@ -101,11 +125,7 @@ func warnBackendFallback(requested, reason string) {
 }
 
 func GetWriteBackendStats() WriteBackendStats {
-	requested := cnst.NormalizeStoreIOEngine(cnst.StoreIOEngine)
-	if requested == "" {
-		requested = cnst.StoreIOEngineAuto
-	}
-
+	requested := requestedEngine()
 	selected := cnst.StoreIOEngineStdlib
 	if selectedBackend != nil {
 		selected = selectedBackend.Name()
@@ -113,7 +133,7 @@ func GetWriteBackendStats() WriteBackendStats {
 
 	depth := 0
 	if requested == cnst.StoreIOEngineUring || selected == cnst.StoreIOEngineUring {
-		depth = cnst.GetStoreIOUringQueueDepth()
+		depth = ioUringQueueDepth()
 	}
 
 	return WriteBackendStats{

@@ -55,6 +55,9 @@ type ExportOptions struct {
 	Creds dbmeta.Credentials
 	// TempDir is --temp-dir, for a read-only open of write-protected media.
 	TempDir string
+	// Tuning is how the storage engine runs on the database it opens; nil
+	// takes the process-wide settings.
+	Tuning *cnst.Tuning
 	// Output is the package's path. Empty means DefaultName in the current
 	// directory.
 	Output string
@@ -236,7 +239,7 @@ func checkDatabase(ctx context.Context, s *dbopen.Snapshot, opts ExportOptions) 
 	if s.Manifest.Encrypted() && !opts.Creds.IsSet() {
 		return nil, []string{fmt.Sprintf("database %s is encrypted and no password was given: the package copies its encrypted files, and the password was not checked", s.Root)}, nil
 	}
-	h, err := dbopen.Open(ctx, dbopen.Request{Path: s.Root, Mode: dbopen.ReadOnly, Creds: opts.Creds, TempDir: opts.TempDir})
+	h, err := dbopen.Open(ctx, dbopen.Request{Path: s.Root, Mode: dbopen.ReadOnly, Creds: opts.Creds, TempDir: opts.TempDir, Tuning: opts.Tuning})
 	if err != nil {
 		return nil, nil, err
 	}

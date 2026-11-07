@@ -13,8 +13,21 @@ import (
 // engine.For or the evidence record, and its tuning and encoder from
 // engine.For, never from the process-wide globals, which a second database
 // open in the same process (the server, the FFI) would change underneath
-// them (I3). Add each rewritten file here.
+// them (I3). The code that turns flags into settings and opens databases
+// is listed too: it passes a cnst.Tuning and sets nothing process-wide.
+// Add each rewritten file here.
 var layoutGuarded = []string{
+	"config_apply.go",
+	"main.go",
+	"cli/cmdpackage.go",
+	"cli/common.go",
+	"internal/products/compression_product/engine.go",
+	"lib/dbopen/storage.go",
+	"lib/dbpackage/deep.go",
+	"lib/dbpackage/export.go",
+	"lib/dbpackage/import.go",
+	"lib/fio/write_backend.go",
+	"lib/fio/write_backend_iouring_linux.go",
 	"lib/dbio/blobpath.go",
 	"lib/dbio/chunk_stored.go",
 	"lib/dbio/dbio.go",
@@ -76,11 +89,12 @@ var layoutGlobal = regexp.MustCompile(`\bcnst\.(` +
 	`ChonkSize|QUICKOPT|ENCODER|HASHALGO|CONTAINERMODE|LegacyBlockIndex|GetHashAlgo|` +
 	`MEMOPT|CompressLevel|StoreHashStrategy|StorePipelineMode|StoreIOEngine|StoreIOUringQueueDepth|` +
 	`StoreWorkerCount|StoreTaskQueueDepth|RestoreWorkerCount|RestoreTaskQueueDepth|RestoreWriteBufferMB|` +
-	`Globals|GetMaxThreadCount|GetStorePipelineTuning|GetRestorePipelineTuning|GetRestoreWriteBufferSize|GetStoreIOUringQueueDepth` +
+	`Globals|GetMaxThreadCount|GetStorePipelineTuning|GetRestorePipelineTuning|GetRestoreWriteBufferSize|GetStoreIOUringQueueDepth|` +
+	`SetHashAlgo|SetStoreHashStrategy|SetStorePipeline|SetStoreIOEngine|SetStoreIOUringQueueDepth|SetHochoMode` +
 	`)\b`)
 
-// TestRewrittenFilesAvoidLayoutGlobals fails when a guarded file reads a
-// layout, tuning or encoder global.
+// TestRewrittenFilesAvoidLayoutGlobals fails when a guarded file reads or
+// sets a layout, tuning or encoder global.
 func TestRewrittenFilesAvoidLayoutGlobals(t *testing.T) {
 	root := filepath.Join("..", "..")
 	for _, rel := range layoutGuarded {
@@ -91,7 +105,7 @@ func TestRewrittenFilesAvoidLayoutGlobals(t *testing.T) {
 		for i, line := range strings.Split(string(src), "\n") {
 			code, _, _ := strings.Cut(line, "//")
 			if m := layoutGlobal.FindString(code); m != "" {
-				t.Errorf("%s:%d reads %s; take the layout, tuning and encoder from the database (dbmeta, engine.For)", rel, i+1, m)
+				t.Errorf("%s:%d uses %s; take the layout, tuning and encoder from the database (dbmeta, engine.For), or pass a cnst.Tuning", rel, i+1, m)
 			}
 		}
 	}

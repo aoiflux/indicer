@@ -45,7 +45,7 @@ func TestStagedPipelineRoundTrip(t *testing.T) {
 				}
 
 				out := filepath.Join(dir, "restored.bin")
-				if err := RestoreData(t.Context(), opts, plainHashB64(t, src), out, RestoreOptions{}); err != nil {
+				if err := RestoreData(t.Context(), opts, fileHashB64(t, src, algo), out, RestoreOptions{}); err != nil {
 					t.Fatalf("restore: %v", err)
 				}
 				got, err := os.ReadFile(out)
@@ -61,7 +61,7 @@ func TestStagedPipelineRoundTrip(t *testing.T) {
 					t.Fatal(err)
 				}
 				defer h.Close()
-				eid, err := dbio.GuessFileType(plainHashB64(t, src), h.DB)
+				eid, err := dbio.GuessFileType(fileHashB64(t, src, algo), h.DB)
 				if err != nil {
 					t.Fatal(err)
 				}

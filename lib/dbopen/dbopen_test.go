@@ -223,11 +223,15 @@ func TestLayoutConflicts(t *testing.T) {
 	root := setup(t)
 	open(t, Request{Path: root, Mode: ReadWrite, Layout: Requested{ChunkKiB: 64}}).Close()
 
-	// Defaults adopt the database's layout.
+	// Defaults adopt the database's layout, and the process-wide chunk size
+	// stays as it was.
 	cnst.ChonkSize = 256 * cnst.KB
 	h := open(t, Request{Path: root, Mode: ReadOnly, Layout: Requested{ChunkKiB: 256}})
-	if cnst.ChonkSize != 64*cnst.KB {
-		t.Fatalf("ChonkSize %d after open; want the database's 64 KiB", cnst.ChonkSize)
+	if got := dbmeta.ChunkSize(h.DB); got != 64*cnst.KB {
+		t.Fatalf("chunk size %d after open; want the database's 64 KiB", got)
+	}
+	if cnst.ChonkSize != 256*cnst.KB {
+		t.Fatalf("the open set the global chunk size to %d", cnst.ChonkSize)
 	}
 	h.Close()
 
@@ -360,8 +364,8 @@ func TestLegacyFixtures(t *testing.T) {
 			if slices.Contains(f.Flags, "64") {
 				wantKiB = 64
 			}
-			if cnst.ChonkSize != wantKiB*cnst.KB {
-				t.Fatalf("ChonkSize %d, want %d KiB", cnst.ChonkSize, wantKiB)
+			if got := dbmeta.ChunkSize(ro.DB); got != wantKiB*cnst.KB {
+				t.Fatalf("chunk size %d, want %d KiB", got, wantKiB)
 			}
 			container := slices.Contains(f.Flags, "--container")
 			if n := readSomeChunks(t, ro.DB, root, container); n == 0 && f.Mode != "e01" {

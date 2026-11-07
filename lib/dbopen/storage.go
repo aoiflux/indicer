@@ -5,7 +5,6 @@ import (
 	"errors"
 	"fmt"
 
-	"indicer/lib/cnst"
 	"indicer/lib/dbmeta"
 	"indicer/lib/engine"
 	"indicer/lib/fio"
@@ -45,7 +44,6 @@ func (h *Handle) SetStorage(storage string) error {
 	h.Manifest = m
 	dbmeta.RegisterManifest(h.DB, m)
 	engine.For(h.DB).SetLayout(m.Layout)
-	ApplyToGlobals(m)
 	h.keepBlockIndexLookup()
 	return nil
 }
@@ -61,5 +59,4 @@ func (h *Handle) keepBlockIndexLookup() {
 		on = len(files) > 0
 	}
 	engine.For(h.DB).SetBlockIndex(on)
-	cnst.LegacyBlockIndex = on
 }

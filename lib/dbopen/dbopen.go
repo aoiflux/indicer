@@ -269,7 +269,6 @@ func (h *Handle) open(ctx context.Context, req Request) error {
 	}
 	blobcodec.Register(h.DB, codec)
 	dbmeta.RegisterManifest(h.DB, m)
-	ApplyToGlobals(m)
 	h.keepBlockIndexLookup()
 	if l := m.Layout; h.Created && l.ChunkKiB < containerAdviceKiB && l.Storage == dbmeta.StorageFile {
 		h.notice("the chunk size is %d KiB (under %d KiB); --container packs small chunks into container files of up to 1 GB, which suits filesystems better", l.ChunkKiB, containerAdviceKiB)
@@ -798,18 +797,6 @@ func codecFor(l dbmeta.Layout, keys dbmeta.Keys, enc *zstdx.Encoder) (blobcodec.
 		return blobcodec.NewV2(keys.Blob, enc)
 	}
 	return nil, fmt.Errorf("unknown blob encoding %q", l.BlobEncoding)
-}
-
-// ApplyToGlobals sets the process-wide layout globals the storage code still
-// reads, from the manifest, so every command reads data the way it was
-// written whatever flags it was given.
-func ApplyToGlobals(m dbmeta.Manifest) {
-	l := m.Layout
-	cnst.ChonkSize = int64(l.ChunkKiB) * cnst.KB
-	cnst.HASHALGO = l.ChunkHash
-	cnst.QUICKOPT = l.ValueEncoding == dbmeta.EncodingRaw
-	cnst.CONTAINERMODE = l.Storage != dbmeta.StorageFile
-	cnst.LegacyBlockIndex = l.Storage == dbmeta.StorageContainerBIDX
 }
 
 func (h *Handle) release() {

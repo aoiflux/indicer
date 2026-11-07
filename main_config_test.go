@@ -65,9 +65,10 @@ func TestConfigPresets(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			if tuning.activePreset != c.preset || cnst.MEMOPT != c.low || cnst.QUICKOPT != c.quick || cnst.CompressLevel != c.compressFlag {
+			e, quick := tuning.engine, tuning.layout.Quick
+			if tuning.activePreset != c.preset || e.LowResource != c.low || quick != c.quick || e.CompressLevel != c.compressFlag {
 				t.Fatalf("preset %q low %v quick %v level %q; want %q %v %v %q",
-					tuning.activePreset, cnst.MEMOPT, cnst.QUICKOPT, cnst.CompressLevel,
+					tuning.activePreset, e.LowResource, quick, e.CompressLevel,
 					c.preset, c.low, c.quick, c.compressFlag)
 			}
 		})
@@ -112,7 +113,7 @@ func TestConfigHierarchicalRetired(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if cnst.CONTAINERMODE {
+	if tuning.layout.Container {
 		t.Fatal("-i enabled container mode")
 	}
 	for _, issue := range tuning.issues {
@@ -187,8 +188,40 @@ func TestConfigStoreTuningOverrides(t *testing.T) {
 	if tuning.storeWorkers != 3 || tuning.storeQueue != 9 {
 		t.Fatalf("tuning %d/%d, want 3/9", tuning.storeWorkers, tuning.storeQueue)
 	}
-	if w, q := cnst.GetStorePipelineTuning(cnst.CONTAINERMODE); w != 3 || q != 9 {
+	if w, q := tuning.engine.StorePipeline(tuning.layout.Container); w != 3 || q != 9 {
 		t.Fatalf("pipeline sees %d/%d, want 3/9", w, q)
+	}
+}
+
+// TestConfigSetsNoGlobals: the settings come back in the tuning and the
+// requested layout, and nothing process-wide changes, so two databases in
+// one process keep their own (I3).
+func TestConfigSetsNoGlobals(t *testing.T) {
+	type layoutGlobals struct {
+		chunk                      int64
+		hash                       string
+		low, quick, container, bix bool
+	}
+	read := func() (cnst.Tuning, layoutGlobals) {
+		return cnst.Globals(), layoutGlobals{cnst.ChonkSize, cnst.HASHALGO, cnst.MEMOPT, cnst.QUICKOPT, cnst.CONTAINERMODE, cnst.LegacyBlockIndex}
+	}
+	wantTuning, wantLayout := read()
+	tuning, err := configure(t, "--preset", "low-resource", "--quick", "-z", "fast", "--container", "store",
+		"--hash-algo", "sha3", "--hash-strategy", "async", "--pipeline", "staged", "--io-engine", "stdlib",
+		"--io-uring-queue-depth", "64", "-w", "3", "-W", "9", "x")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if gotTuning, gotLayout := read(); gotTuning != wantTuning || gotLayout != wantLayout {
+		t.Fatalf("the globals changed: tuning %+v, layout %+v; were %+v, %+v", gotTuning, gotLayout, wantTuning, wantLayout)
+	}
+	e := tuning.engine
+	if !e.LowResource || e.CompressLevel != "fast" || e.HashStrategy != cnst.AsyncHashStrategy || e.Pipeline != cnst.StorePipelineStaged ||
+		e.IOEngine != cnst.StoreIOEngineStdlib || e.IOUringDepth != 64 || e.StoreWorkers != 3 || e.StoreQueue != 9 {
+		t.Errorf("tuning %+v", e)
+	}
+	if l := tuning.layout; !l.Quick || !l.Container || l.ChunkHash != cnst.SHA3 {
+		t.Errorf("requested layout %+v", l)
 	}
 }
 

@@ -1,7 +1,9 @@
 package cli
 
 import (
+	"crypto/sha3"
 	"encoding/base64"
+	"hash"
 	"os"
 	"path/filepath"
 	"testing"
@@ -10,6 +12,8 @@ import (
 	"indicer/internal/testutil/testdb"
 	"indicer/lib/cnst"
 	"indicer/lib/util"
+
+	"github.com/zeebo/blake3"
 )
 
 // matrixChunkKB is small so the boundary sizes stay small.
@@ -60,12 +64,24 @@ func TestMatrixStoreRestoreRoundTrip(t *testing.T) {
 
 func plainHashB64(t *testing.T, path string) string {
 	t.Helper()
+	return fileHashB64(t, path, cnst.BLAKE3)
+}
+
+// fileHashB64 is the evidence hash of the file at path in a database whose
+// chunk hash is algo (cnst.BLAKE3 or cnst.SHA3), as dbmeta.FileHasher
+// computes it.
+func fileHashB64(t *testing.T, path, algo string) string {
+	t.Helper()
 	f, err := os.Open(path)
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer f.Close()
-	h, err := testutil.HashFile(f, cnst.GetHashAlgo(true))
+	var hasher hash.Hash = blake3.New()
+	if algo == cnst.SHA3 {
+		hasher = sha3.New256()
+	}
+	h, err := testutil.HashFile(f, hasher)
 	if err != nil {
 		t.Fatal(err)
 	}

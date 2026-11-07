@@ -47,6 +47,9 @@ type ImportOptions struct {
 	Creds dbmeta.Credentials
 	// TempDir is --temp-dir, for the read-only open that checks it.
 	TempDir string
+	// Tuning is how the storage engine runs on the database it opens; nil
+	// takes the process-wide settings.
+	Tuning *cnst.Tuning
 }
 
 // ImportResult is what an import made.
@@ -324,7 +327,7 @@ func checkImported(ctx context.Context, stage string, m duesarc.DatabaseManifest
 		*notices = append(*notices, "the database is encrypted and no password was given: its files were checked against the package, but the database was not opened")
 		return false, nil
 	}
-	if err := openStaged(ctx, stage, m, opts.Creds, opts.TempDir, notices, nil); err != nil {
+	if err := openStaged(ctx, stage, m, dbopen.Request{Creds: opts.Creds, TempDir: opts.TempDir, Tuning: opts.Tuning}, notices, nil); err != nil {
 		return false, err
 	}
 	// The open made the root lock file; the target gets its own.
@@ -335,11 +338,12 @@ func checkImported(ctx context.Context, stage string, m duesarc.DatabaseManifest
 }
 
 // openStaged opens the database written into dir read-only, as a reader
-// would, and compares the evidence it counts with the manifest's. With
+// would, with req's credentials, temporary directory and tuning, and compares the evidence it counts with the manifest's. With
 // report set, it also reads back every chunk of every evidence against its
 // hash (store.VerifyEvidence) into report.
-func openStaged(ctx context.Context, dir string, m duesarc.DatabaseManifest, creds dbmeta.Credentials, tempDir string, notices *[]string, report *store.VerifyReport) (err error) {
-	h, err := dbopen.Open(ctx, dbopen.Request{Path: dir, Mode: dbopen.ReadOnly, Creds: creds, TempDir: tempDir})
+func openStaged(ctx context.Context, dir string, m duesarc.DatabaseManifest, req dbopen.Request, notices *[]string, report *store.VerifyReport) (err error) {
+	req.Path, req.Mode = dir, dbopen.ReadOnly
+	h, err := dbopen.Open(ctx, req)
 	if err != nil {
 		return fmt.Errorf("the package's database does not open: %w", err)
 	}

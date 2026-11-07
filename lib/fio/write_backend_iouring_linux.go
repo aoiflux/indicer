@@ -82,7 +82,7 @@ func recordIoUringCompletion() {
 }
 
 func openIoUringHandle() (ioUringHandle, error) {
-	depth := cnst.GetStoreIOUringQueueDepth()
+	depth := ioUringQueueDepth()
 	if depth <= 0 {
 		depth = 256
 	}

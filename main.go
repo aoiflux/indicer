@@ -13,12 +13,10 @@ import (
 	"indicer/internal/osdirs"
 	"indicer/internal/tracefile"
 	"indicer/internal/ui"
-	"indicer/lib/cnst"
 	"indicer/lib/dbmeta"
 	"indicer/lib/fio"
 	"indicer/lib/logging"
 	"indicer/lib/store"
-	"indicer/lib/zstdx"
 	"os"
 	"path/filepath"
 	"runtime/debug"
@@ -40,12 +38,6 @@ var buildCommit string
 
 func buildInfo() ui.Build {
 	return ui.Build{Version: duesVersion, Codename: duesCodename, Commit: buildCommit}
-}
-
-func init() {
-	var err error
-	cnst.ENCODER, err = zstdx.Acquire(cnst.CompressLevel, cnst.GetMaxThreadCount())
-	handle(err)
 }
 
 func main() {
@@ -129,7 +121,6 @@ func realMain(args []string) (code int) {
 		zap.Strings("args", logging.RedactArgs(args)))
 
 	err := run(args, conf, cliDef)
-	releaseEncoder()
 	if err != nil {
 		logging.GetLogger().Error("command failed", zap.Error(err))
 		level := ui.LevelError
@@ -258,9 +249,8 @@ func run(args []string, conf runConfig, cliDef cliDefinition) error {
 		ui.Warnf("%s", issue)
 	}
 
-	if err := reconfigureEncoderForCompressionLevel(tuning.storeWorkers); err != nil {
-		return err
-	}
+	// Container files are written through one backend for the process.
+	fio.SetWriteEngine(tuning.engine.IOEngine, tuning.engine.IOUringDepth)
 
 	// dues config says where the password comes from; it does not read it.
 	creds := dbmeta.NoPassword()
@@ -269,7 +259,7 @@ func run(args []string, conf runConfig, cliDef cliDefinition) error {
 			return err
 		}
 	}
-	dbOpts := cli.DBOptions{Path: *cliDef.flags.dbpath, Creds: creds, Layout: tuning.layout, TempDir: tempDir}
+	dbOpts := cli.DBOptions{Path: *cliDef.flags.dbpath, Creds: creds, Layout: tuning.layout, Tuning: &tuning.engine, TempDir: tempDir}
 	logSettings(cliDef.flags, src, conf)
 
 	printRunHeader(parsed, cliDef, tuning)
@@ -303,14 +293,6 @@ func startTrace(path string) (stop func(), err error) {
 		}
 		logging.GetLogger().Info("trace COMPLETE", zap.String("trace_path", path))
 	}, nil
-}
-
-// releaseEncoder lets go of the process encoder.
-func releaseEncoder() {
-	if cnst.ENCODER != nil {
-		cnst.ENCODER.Release()
-		cnst.ENCODER = nil
-	}
 }
 
 func executeCommand(ctx context.Context, parsed string, cliDef cliDefinition, dbOpts cli.DBOptions, tuning pipelineTuning, src sources, conf runConfig) error {
@@ -374,9 +356,9 @@ func buildCommandHandlers(cliDef cliDefinition, dbOpts cli.DBOptions, tuning pip
 				zap.String("file", *cliDef.flags.evipath),
 				zap.String("dbpath", *cliDef.flags.dbpath),
 				zap.Int("chonksize_kb", *cliDef.flags.chonkSize),
-				zap.String("store_pipeline_mode", cnst.StorePipelineMode),
-				zap.String("store_io_engine", cnst.StoreIOEngine),
-				zap.String("hash_strategy", cnst.StoreHashStrategy),
+				zap.String("store_pipeline_mode", tuning.engine.Pipeline),
+				zap.String("store_io_engine", tuning.engine.IOEngine),
+				zap.String("hash_strategy", tuning.engine.HashStrategy),
 				zap.Bool("sync_index", *cliDef.flags.syncIndex),
 				zap.Bool("no_index", *cliDef.flags.noIndex),
 				zap.Bool("fts_enabled", *cliDef.flags.enableFTS),
@@ -388,7 +370,7 @@ func buildCommandHandlers(cliDef cliDefinition, dbOpts cli.DBOptions, tuning pip
 				zap.Int("store_jobs", *cliDef.flags.storeJobs),
 				zap.Int("store_workers_effective", tuning.storeWorkers),
 				zap.Int("store_queue_effective", tuning.storeQueue))
-			jobs, err := cli.StoreJobs(*cliDef.flags.storeJobs, cnst.MEMOPT)
+			jobs, err := cli.StoreJobs(*cliDef.flags.storeJobs, tuning.engine.LowResource)
 			if err != nil {
 				return err
 			}
@@ -455,7 +437,7 @@ func buildCommandHandlers(cliDef cliDefinition, dbOpts cli.DBOptions, tuning pip
 				zap.Bool("failed", *cliDef.flags.reindexFailed),
 				zap.Bool("all", *cliDef.flags.reindexAll),
 				zap.Int("store_jobs", *cliDef.flags.reindexJobs))
-			jobs, err := cli.StoreJobs(*cliDef.flags.reindexJobs, cnst.MEMOPT)
+			jobs, err := cli.StoreJobs(*cliDef.flags.reindexJobs, tuning.engine.LowResource)
 			if err != nil {
 				return err
 			}
@@ -580,14 +562,5 @@ func buildCommandHandlers(cliDef cliDefinition, dbOpts cli.DBOptions, tuning pip
 			}
 			return err
 		},
-	}
-}
-
-// handle stops start-up when the encoder cannot be created. It runs from init,
-// before realMain can report errors, so it exits directly.
-func handle(err error) {
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "dues: internal error during start-up: %v\n", err)
-		os.Exit(lifecycle.ExitInternal)
 	}
 }

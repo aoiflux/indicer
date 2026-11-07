@@ -30,8 +30,8 @@ func TestSetStorage(t *testing.T) {
 	h.Close()
 
 	h = open(t, Request{Path: root, Mode: ReadWrite})
-	if h.Manifest.Layout.Storage != dbmeta.StorageContainerBIDX || !cnst.LegacyBlockIndex || !engine.For(h.DB).BlockIndex() {
-		t.Fatalf("after reopen: storage %s, legacy block index %v, engine %v", h.Manifest.Layout.Storage, cnst.LegacyBlockIndex, engine.For(h.DB).BlockIndex())
+	if h.Manifest.Layout.Storage != dbmeta.StorageContainerBIDX || !engine.For(h.DB).BlockIndex() {
+		t.Fatalf("after reopen: storage %s, block index %v", h.Manifest.Layout.Storage, engine.For(h.DB).BlockIndex())
 	}
 	if err := h.SetStorage(dbmeta.StorageContainer); err != nil {
 		t.Fatal(err)
@@ -42,8 +42,8 @@ func TestSetStorage(t *testing.T) {
 	h.Close()
 
 	h = open(t, Request{Path: root, Mode: ReadOnly})
-	if h.Manifest.Layout.Storage != dbmeta.StorageContainer || cnst.LegacyBlockIndex || engine.For(h.DB).BlockIndex() {
-		t.Fatalf("after upgrade: storage %s, legacy block index %v, engine %v", h.Manifest.Layout.Storage, cnst.LegacyBlockIndex, engine.For(h.DB).BlockIndex())
+	if h.Manifest.Layout.Storage != dbmeta.StorageContainer || engine.For(h.DB).BlockIndex() {
+		t.Fatalf("after upgrade: storage %s, block index %v", h.Manifest.Layout.Storage, engine.For(h.DB).BlockIndex())
 	}
 	if err := h.SetStorage(dbmeta.StorageContainerBIDX); err == nil {
 		t.Fatal("SetStorage on a read-only open succeeded")
@@ -85,8 +85,14 @@ func TestBlockFilesKeepLegacyLookup(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	prev := cnst.LegacyBlockIndex
+	t.Cleanup(func() { cnst.LegacyBlockIndex = prev })
+	cnst.LegacyBlockIndex = false
 	h := open(t, Request{Path: root, Mode: ReadOnly})
-	if !cnst.LegacyBlockIndex || !engine.For(h.DB).BlockIndex() {
-		t.Fatalf("block index files present but the lookup is off (global %v, engine %v)", cnst.LegacyBlockIndex, engine.For(h.DB).BlockIndex())
+	if !engine.For(h.DB).BlockIndex() {
+		t.Fatal("block index files present but the lookup is off")
+	}
+	if cnst.LegacyBlockIndex {
+		t.Fatal("the open turned the global block index lookup on")
 	}
 }

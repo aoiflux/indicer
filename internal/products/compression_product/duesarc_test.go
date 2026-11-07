@@ -136,7 +136,7 @@ func makeV1Archive(t *testing.T, src, archive string, namesOnly bool) {
 	work := t.TempDir()
 	dbPath := filepath.Join(work, manifestDbRelativePath)
 	ctx := context.Background()
-	err := withStoreRuntime(ctx, func() error {
+	err := func() error {
 		h, err := openArchiveDB(ctx, dbPath, "", 256, dbopen.ReadWrite)
 		if err != nil {
 			return err
@@ -162,7 +162,7 @@ func makeV1Archive(t *testing.T, src, archive string, namesOnly bool) {
 			}
 			return nil
 		})
-	})
+	}()
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -8,34 +8,15 @@ import (
 	"indicer/lib/dbopen"
 )
 
-// engineSlot admits one operation at a time to the DUES storage engine.
-//
-// Each open database now keeps its own layout, tuning and encoder (package
-// engine), and opening one sets nothing process-wide, but operations still
-// take turns until the concurrency tests show two archives at once are
-// safe (FFI-2).
-var engineSlot = make(chan struct{}, 1)
-
-// withStoreRuntime runs fn alone among the operations that use the storage
-// engine. A context that ends while waiting leaves the queue.
-func withStoreRuntime(ctx context.Context, fn func() error) error {
-	select {
-	case engineSlot <- struct{}{}:
-	case <-ctx.Done():
-		return ctx.Err()
-	}
-	defer func() { <-engineSlot }()
-	if err := ctx.Err(); err != nil {
-		return err
-	}
-	return fn()
-}
-
 // openArchiveDB opens an archive's embedded DUES database and prints the
 // open's notices, as the dues commands do. An empty password means none:
 // the database is unencrypted, or a legacy one keyed with the empty
 // password. It recovers nothing: one operation writes an archive's
 // database, and the others only read it.
+//
+// Operations on different archives run at once (FFI-2): each open database
+// keeps its own layout, tuning and encoder (package engine), and opening one
+// sets nothing process-wide.
 func openArchiveDB(ctx context.Context, dbPath, password string, chunkSizeKB int, mode dbopen.Mode) (*dbopen.Handle, error) {
 	creds := dbmeta.NoPassword()
 	if password != "" {

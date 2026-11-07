@@ -308,9 +308,9 @@ marked with the workstream that found it, for example "(W12)".
 | ID | Sev | Defect and where | Class | Fix | Regression test | Status |
 |---|---|---|---|---|---|---|
 | FFI-1 | HIGH | No recover in `DuesDispatchJSON` or the async tasks: a panic killed the host process. | trust | W10: every entry point and task runs under `internal/safe`. | `TestDispatchContainsPanics`, `TestAsyncTaskPanicIsContained`, `TestDispatchAlwaysAnswers` | Fixed |
-| FFI-2 | HIGH | Concurrent tasks mutated the process's layout globals. | config | W10: storage-engine operations run one at a time (`withStoreRuntime`). | `TestConcurrentArchiveOperations` | Fixed (interim gate, residual) |
+| FFI-2 | HIGH | Concurrent tasks mutated the process's layout globals. | config | W10: storage-engine operations ran one at a time. Pass 7: each open database keeps its own layout, tuning and encoder, and nothing sets the globals, so operations run at once. | `TestConcurrentArchiveOperations`, `TestArchiveOperationsRunAtOnce` | Fixed |
 | FFI-3 | MED | ctx was ignored, library code wrote to stdout, and jsonbridge dropped Marshal errors. | silent | W2: `internal/console`; W10: ctx plumbed, an envelope always returned. | `TestDispatchResultThatCannotBeEncoded`, `TestDispatchHonoursCancellation`, `TestNoTerminalWritesOutsideMain` | Fixed |
-| FFI-4 | HIGH | Two process-wide zstd encoders kept about 1.6 GB for the life of the process on a 16-CPU machine. | unbounded | W10: badger level 3; encoders sized by workers; each open database's encoder, released when it closes. | `TestAcquireIsBounded`, `TestArchiveOperationsReleaseEncoders` | Fixed |
+| FFI-4 | HIGH | Two process-wide zstd encoders kept about 1.6 GB for the life of the process on a 16-CPU machine. | unbounded | W10: badger level 3; encoders sized by workers; each open database's encoder, released when it closes. Pass 7: operations that run at once at one level share an encoder. | `TestAcquireIsBounded`, `TestArchiveOperationsReleaseEncoders` | Fixed |
 | CMP-1 | HIGH | Decompression bombs: zstd `DecodeAll` had no limit, nor did `decompress_file` or zip/tar extraction. | trust | W10: bounded decoder, limited readers, extraction limits on bytes written, dedup-bomb check. | `TestDecodeAllIsBounded`, `TestDecompressBytesIsBounded`, `TestDecompressFileIsBounded`, `TestExtractLimits`, `TestExtractCompressionRatio`, `TestDuesarcDeduplicationBomb` | Fixed |
 | CMP-2 | HIGH | Archive writer Close errors were ignored, so a corrupt archive was reported as success; a failure left a partial archive. | silent | W10: writers closed in order, errors returned, temporary file renamed into place. | `TestArchiveWriteFailureLeavesNoOutput` | Fixed |
 | CMP-3 | MED | Outputs were overwritten silently; split parts overwrote each other and stale parts were concatenated; the `.bak` logic deleted a user's file; `image.001` was taken for an archive part. | destructive | W10: atomic outputs, split sidecar, `on_conflict`. | `TestSplitArchiveSidecar`, `TestSplitReplacesEarlierOutput`, `TestNumberedFileIsNotASplitPart`, `TestExtractConflictPolicy` | Fixed |
@@ -403,9 +403,8 @@ a flag that changed several of these at once, encryption among them.
 opening a database writes none, and the command-line setup returns a
 `cnst.Tuning` instead of writing them. The storage code reads each database's
 layout, tuning and encoder through `engine.For`, and the record and chunk
-encoders write each database's own value encoding. The FFI still serialises
-storage-engine operations until its concurrency tests run two at once
-(residual).
+encoders write each database's own value encoding. The FFI runs
+storage-engine operations at once (FFI-2).
 
 ### concurrency: goroutines, channels and timeouts instead of structured concurrency
 
@@ -759,26 +758,23 @@ Each risk below is known and bounded, with the reason it is accepted.
 12. **The server serves plain HTTP.** TLS is not served: use a proxy or a
     tunnel for remote clients. Upload v1 is still accepted for one release,
     with a deprecation header.
-13. **The FFI runs storage-engine operations one at a time**
-    (`withStoreRuntime`), because some code still reads process globals. The
-    work is disk-bound, so throughput suffers little.
 
 **Coverage gaps**
-14. **Some fixtures could not be built here.** A populated HFS+ volume needs
+13. **Some fixtures could not be built here.** A populated HFS+ volume needs
     macOS. Windows-written NTFS and differencing VHDX fixtures need Windows
     administrator rights. Those paths rely on the real corpus and on unit
     fakes. A deleted ext4 file can be recovered only from the journal, which
     DUES does not read (PAR-6).
-15. **Three snapshot leaves were not round-tripped.** Their chains (76 to
+14. **Three snapshot leaves were not round-tripped.** Their chains (76 to
     127 GiB) did not fit the scratch volume. Their decoded streams were checked
     by digest instead.
-16. **The full-text mode reports its limits rather than removing them.** It
+15. **The full-text mode reports its limits rather than removing them.** It
     holds the first 128 KiB of text per file and offers up to 5,000 candidates.
-17. **No general goroutine-leak check runs** (invariant I6).
-18. **darwin is built, not tested.**
+16. **No general goroutine-leak check runs** (invariant I6).
+17. **darwin is built, not tested.**
 
 **Small known gaps**
-19. These do not affect stored data:
+18. These do not affect stored data:
     - `dues restore <hash>` does not look up an evidence's content root (the
       hocho root), only its plain hash, record ID and lookups, so restoring a
       sync or async evidence by its content root reports not found.
@@ -840,5 +836,5 @@ Gate results:
    release (residual 3).
 4. Keep `scripts\verify.ps1 -Long` green for every change, and add a test that
    fails first for every new finding, citing its ID.
-5. The maintainers accept residuals 1 to 19, and decide whether to file the
+5. The maintainers accept residuals 1 to 18, and decide whether to file the
    upstream defects (`docs/DEPENDENCY_UPGRADE_REPORT.md`).

@@ -197,7 +197,7 @@ func createDuesarc(ctx context.Context, tmp *tempRoot, req createArchiveReq, in 
 		InputBytes:  in.bytes,
 	}
 	dbPath := filepath.Join(wd.path, manifestDbRelativePath)
-	err = withStoreRuntime(ctx, func() (err error) {
+	err = func() (err error) {
 		h, err := openArchiveDB(ctx, dbPath, req.Password, chunkKiB, dbopen.ReadWrite)
 		if err != nil {
 			return err
@@ -251,7 +251,7 @@ func createDuesarc(ctx context.Context, tmp *tempRoot, req createArchiveReq, in 
 		}
 		_, _ = dbio.CompactValueLog(h.DB)
 		return nil
-	})
+	}()
 	if err != nil {
 		return nil, workPath, err
 	}
@@ -376,7 +376,7 @@ func stageDuesarc(ctx context.Context, tmp *tempRoot, archivePath string, limits
 	return s, nil
 }
 
-// openDB opens the staged database read-only. The caller holds the engine.
+// openDB opens the staged database read-only.
 func (s *stagedArchive) openDB(ctx context.Context, password string) (*dbopen.Handle, error) {
 	local, _ := duesarc.LocalName(s.manifest.DbPath)
 	dbPath := filepath.Join(s.dir, local)
@@ -693,7 +693,7 @@ func extractDuesarc(ctx context.Context, tmp *tempRoot, inputPath, out, password
 	defer staged.release()
 
 	var res commitResult
-	err = withStoreRuntime(ctx, func() (err error) {
+	err = func() (err error) {
 		h, err := staged.openDB(ctx, password)
 		if err != nil {
 			return err
@@ -725,7 +725,7 @@ func extractDuesarc(ctx context.Context, tmp *tempRoot, inputPath, out, password
 		}
 		res, err = x.commit()
 		return err
-	})
+	}()
 	return res, err
 }
 
@@ -739,7 +739,7 @@ func listDuesarc(ctx context.Context, tmp *tempRoot, inputPath, password string,
 	}
 	defer staged.release()
 	var files []archiveLogicalFile
-	err = withStoreRuntime(ctx, func() (err error) {
+	err = func() (err error) {
 		h, err := staged.openDB(ctx, password)
 		if err != nil {
 			return err
@@ -751,7 +751,7 @@ func listDuesarc(ctx context.Context, tmp *tempRoot, inputPath, password string,
 		}()
 		files, err = logicalFiles(ctx, h.DB, staged.manifest)
 		return err
-	})
+	}()
 	return staged.manifest, files, err
 }
 
@@ -834,7 +834,7 @@ func verifyDuesarcContent(ctx context.Context, tmp *tempRoot, inputPath, passwor
 	}
 	defer staged.release()
 	verified := 0
-	err = withStoreRuntime(ctx, func() (err error) {
+	err = func() (err error) {
 		h, err := staged.openDB(ctx, password)
 		if err != nil {
 			return err
@@ -887,7 +887,7 @@ func verifyDuesarcContent(ctx context.Context, tmp *tempRoot, inputPath, passwor
 			return &ArchiveError{Msg: "archive content is damaged", Problems: problems, Count: nprob}
 		}
 		return nil
-	})
+	}()
 	return staged.manifest, verified, err
 }
 

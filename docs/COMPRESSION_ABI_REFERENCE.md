@@ -117,10 +117,10 @@ cancellation. Do not unload the library while `running_tasks` is above zero.
 
 ### Process memory
 
-Operations that use an archive's database run one at a time. While one
-runs, it can hold one compression state per CPU, about 50 MB each when it
-creates an archive at the default (best) level, and it releases them when it
-ends. Apart from that, the library keeps a few MB per CPU of decoder and
+Operations on different archives run at once. One that creates an archive
+holds one compression state per CPU, about 50 MB each at the default (best)
+level. Creations at the same level share those states, and the last to end
+releases them. Apart from that, the library keeps a few MB per CPU of decoder and
 table-encoder state for as long as it is loaded.
 
 ### Logging and output

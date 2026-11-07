@@ -10,6 +10,7 @@ import (
 	"path/filepath"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/klauspost/compress/zstd"
 
@@ -101,9 +102,10 @@ func TestOutputGuardRatio(t *testing.T) {
 	}
 }
 
-// TestConcurrentArchiveOperations: archives of different layouts created and
-// extracted at once in one process each come back intact (FFI-2). Under
-// -race, it also catches two databases' layouts being set at once.
+// TestConcurrentArchiveOperations: archives of different layouts, some of
+// them encrypted, created and extracted at once in one process each come
+// back intact (FFI-2). Under -race, it also catches two databases sharing
+// state that one of them writes.
 func TestConcurrentArchiveOperations(t *testing.T) {
 	root := t.TempDir()
 	var wg sync.WaitGroup
@@ -123,14 +125,15 @@ func TestConcurrentArchiveOperations(t *testing.T) {
 				}
 			}
 			chunk := []int{64, 1024}[i%2]
+			password := []string{"", "", "correct horse"}[i%3]
 			archive := filepath.Join(root, fmt.Sprintf("a%d.duesarc", i))
 			svc := New()
-			if _, rerr := handle(svc, opCreateArchive, map[string]any{"input_path": src, "output_path": archive, "chunk_size_kb": chunk}); rerr != nil {
+			if _, rerr := handle(svc, opCreateArchive, map[string]any{"input_path": src, "output_path": archive, "chunk_size_kb": chunk, "password": password}); rerr != nil {
 				errs <- fmt.Errorf("create %d: %v %v", i, rerr, rerr.Details)
 				return
 			}
 			dst := filepath.Join(root, fmt.Sprintf("out%d", i))
-			if _, rerr := handle(svc, opExtractArchive, map[string]any{"input_path": archive, "output_path": dst}); rerr != nil {
+			if _, rerr := handle(svc, opExtractArchive, map[string]any{"input_path": archive, "output_path": dst, "password": password}); rerr != nil {
 				errs <- fmt.Errorf("extract %d: %v %v", i, rerr, rerr.Details)
 				return
 			}
@@ -144,5 +147,104 @@ func TestConcurrentArchiveOperations(t *testing.T) {
 	close(errs)
 	for err := range errs {
 		t.Error(err)
+	}
+}
+
+// TestArchiveOperationsRunAtOnce: operations on different archives hold
+// their databases open at the same time (FFI-2). Each operation's progress
+// reporter, called while its database is open, waits there until all four
+// operations have reached that point. Operations that took turns would
+// leave the rest waiting until the minute ran out.
+func TestArchiveOperationsRunAtOnce(t *testing.T) {
+	const password = "correct horse"
+	root := t.TempDir()
+	ctx := t.Context()
+	svc := New()
+	write := func(name, content string) {
+		dir := filepath.Join(root, name)
+		if err := os.MkdirAll(dir, 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(filepath.Join(dir, "a.txt"), []byte(content), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	contents := map[string]string{}
+	for i, name := range []string{"plain", "sealed", "new-plain", "new-sealed"} {
+		contents[name] = name + " " + string(bytes.Repeat([]byte{byte(i + 1)}, 200_000))
+		write(name, contents[name])
+	}
+	archive := func(name string) string { return filepath.Join(root, name+".duesarc") }
+	call(t, svc, opCreateArchive, map[string]any{"input_path": filepath.Join(root, "plain"), "output_path": archive("plain")})
+	call(t, svc, opCreateArchive, map[string]any{"input_path": filepath.Join(root, "sealed"), "output_path": archive("sealed"), "password": password})
+
+	const parties = 4
+	var arrived sync.WaitGroup
+	arrived.Add(parties)
+	all, expired := make(chan struct{}), make(chan struct{})
+	go func() { arrived.Wait(); close(all) }()
+	timer := time.AfterFunc(time.Minute, func() { close(expired) })
+	defer timer.Stop()
+	// at waits, the first time stage is reported, for every operation.
+	at := func(op, stage string) progressReporter {
+		var once sync.Once
+		return func(got string, _ int, _ string) {
+			if got != stage {
+				return
+			}
+			once.Do(func() {
+				arrived.Done()
+				select {
+				case <-all:
+				case <-expired:
+					t.Errorf("%s waited a minute at %q with its database open: the operations took turns", op, stage)
+				}
+			})
+		}
+	}
+
+	var wg sync.WaitGroup
+	run := func(op string, fn func() *coreerr.Error) {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			if rerr := fn(); rerr != nil {
+				t.Errorf("%s: %v %v", op, rerr, rerr.Details)
+			}
+		}()
+	}
+	run("create", func() *coreerr.Error {
+		_, rerr := svc.createArchive(ctx, createArchiveReq{InputPath: filepath.Join(root, "new-plain"), OutputPath: archive("new-plain"), ChunkSizeKB: 64}, at("create", "writing_manifest"))
+		return rerr
+	})
+	run("encrypted create", func() *coreerr.Error {
+		_, rerr := svc.createArchive(ctx, createArchiveReq{InputPath: filepath.Join(root, "new-sealed"), OutputPath: archive("new-sealed"), ChunkSizeKB: 1024, Password: password}, at("encrypted create", "writing_manifest"))
+		return rerr
+	})
+	run("encrypted extract", func() *coreerr.Error {
+		_, rerr := svc.extractArchive(ctx, extractArchiveReq{InputPath: archive("sealed"), OutputPath: filepath.Join(root, "out-sealed"), Password: password}, at("encrypted extract", "restoring"))
+		return rerr
+	})
+	run("verify", func() *coreerr.Error {
+		_, rerr := svc.verifyArchive(ctx, archiveReadReq{InputPath: archive("plain")}, at("verify", "verifying_content"))
+		return rerr
+	})
+	wg.Wait()
+	if t.Failed() {
+		return
+	}
+
+	for _, name := range []string{"new-plain", "new-sealed"} {
+		pw := ""
+		if name == "new-sealed" {
+			pw = password
+		}
+		call(t, svc, opExtractArchive, map[string]any{"input_path": archive(name), "output_path": filepath.Join(root, "out-"+name), "password": pw})
+	}
+	for _, name := range []string{"sealed", "new-plain", "new-sealed"} {
+		got, err := os.ReadFile(filepath.Join(root, "out-"+name, "a.txt"))
+		if err != nil || string(got) != contents[name] {
+			t.Errorf("%s: a.txt came back wrong (%d bytes, %v)", name, len(got), err)
+		}
 	}
 }

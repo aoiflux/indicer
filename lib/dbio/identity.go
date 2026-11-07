@@ -10,6 +10,7 @@ import (
 	"indicer/lib/cnst"
 	"indicer/lib/structs"
 	"indicer/lib/util"
+	"indicer/lib/zstdx"
 
 	"github.com/dgraph-io/badger/v4"
 	"github.com/vmihailenco/msgpack/v5"
@@ -114,7 +115,7 @@ func GetRecordTxn(txn *badger.Txn, key []byte, v any) error {
 
 // DecodeRecord decodes a record value, compressed or not.
 func DecodeRecord(data []byte, v any) error {
-	if decoded, err := cnst.DECODER.DecodeAll(data, nil); err == nil {
+	if decoded, err := zstdx.DecodeAll(data, nil); err == nil {
 		data = decoded
 	}
 	return msgpackx.Unmarshal(data, v)

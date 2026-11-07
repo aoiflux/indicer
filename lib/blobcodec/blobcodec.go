@@ -30,6 +30,7 @@ import (
 
 	"indicer/lib/cnst"
 	"indicer/lib/util"
+	"indicer/lib/zstdx"
 
 	"github.com/dgraph-io/badger/v4"
 	"github.com/zeebo/blake3"
@@ -69,7 +70,7 @@ func (c legacySealed) Decode(_, stored []byte) ([]byte, error) {
 	if err != nil {
 		return nil, fmt.Errorf("%w: %v", ErrCorrupt, err)
 	}
-	plain, err := cnst.DECODER.DecodeAll(compressed, nil)
+	plain, err := zstdx.DecodeAll(compressed, nil)
 	if err != nil {
 		return nil, fmt.Errorf("%w: %v", ErrCorrupt, err)
 	}
@@ -167,7 +168,7 @@ func (c v2) Decode(ckey, stored []byte) ([]byte, error) {
 	plain := payload
 	if flags&flagZstd != 0 {
 		var err error
-		if plain, err = cnst.DECODER.DecodeAll(payload, nil); err != nil {
+		if plain, err = zstdx.DecodeAll(payload, nil); err != nil {
 			return nil, fmt.Errorf("%w: %v", ErrCorrupt, err)
 		}
 	}

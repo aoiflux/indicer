@@ -18,6 +18,7 @@ import (
 	"indicer/lib/dbmeta"
 	"indicer/lib/store"
 	"indicer/lib/util"
+	"indicer/lib/zstdx"
 
 	"github.com/dgraph-io/badger/v4"
 )
@@ -266,7 +267,7 @@ func (r *run) deepPass(ctx context.Context, q *query) (err error) {
 			if err != nil {
 				return err
 			}
-			if decoded, err := cnst.DECODER.DecodeAll(data, nil); err == nil {
+			if decoded, err := zstdx.DecodeAll(data, nil); err == nil {
 				data = decoded
 			}
 			if len(data) != 8 {

@@ -13,6 +13,7 @@ import (
 	"indicer/lib/entropy"
 	"indicer/lib/structs"
 	"indicer/lib/util"
+	"indicer/lib/zstdx"
 	"path"
 	"strings"
 
@@ -568,7 +569,7 @@ func parseHashValue(value string) ([]byte, string) {
 }
 
 func decodeStoredValue(value []byte) []byte {
-	decoded, err := cnst.DECODER.DecodeAll(value, nil)
+	decoded, err := zstdx.DecodeAll(value, nil)
 	if err == nil {
 		return decoded
 	}

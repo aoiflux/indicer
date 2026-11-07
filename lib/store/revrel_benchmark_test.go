@@ -3,14 +3,15 @@ package store
 import (
 	"fmt"
 	"os"
+	"runtime"
 	"testing"
 
 	"indicer/lib/cnst"
 	"indicer/lib/dbio"
 	"indicer/lib/util"
+	"indicer/lib/zstdx"
 
 	"github.com/dgraph-io/badger/v4"
-	"github.com/klauspost/compress/zstd"
 )
 
 const revRelSyntheticAppendShards = 16
@@ -168,15 +169,8 @@ func BenchmarkProcessRevRel(b *testing.B) {
 }
 
 func ensureBenchmarkCodecs(b *testing.B) {
-	if cnst.DECODER == nil {
-		decoder, err := cnst.NewDecoder()
-		if err != nil {
-			b.Fatalf("init zstd decoder: %v", err)
-		}
-		cnst.DECODER = decoder
-	}
 	if cnst.ENCODER == nil {
-		encoder, err := zstd.NewWriter(nil, zstd.WithEncoderLevel(zstd.EncoderLevel(zstd.SpeedBestCompression)))
+		encoder, err := zstdx.Acquire("best", runtime.GOMAXPROCS(0))
 		if err != nil {
 			b.Fatalf("init zstd encoder: %v", err)
 		}

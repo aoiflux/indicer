@@ -16,6 +16,7 @@ import (
 	"indicer/lib/blobcodec"
 	"indicer/lib/cnst"
 	"indicer/lib/structs"
+	"indicer/lib/zstdx"
 
 	"github.com/dgraph-io/badger/v4"
 )
@@ -111,7 +112,7 @@ func InferLayout(db *badger.DB, root string, base Layout) (Layout, Inference) {
 		if l.ValueEncoding == EncodingRaw {
 			return v, nil
 		}
-		return cnst.DECODER.DecodeAll(v, nil)
+		return zstdx.DecodeAll(v, nil)
 	}
 
 	sizes, hashes := scanRelations(db, decode)

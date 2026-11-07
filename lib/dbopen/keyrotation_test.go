@@ -9,18 +9,19 @@ import (
 	"hash/crc32"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 	"time"
 
 	"github.com/dgraph-io/badger/v4"
 	"github.com/dgraph-io/badger/v4/pb"
-	"github.com/klauspost/compress/zstd"
 	"google.golang.org/protobuf/proto"
 
 	"indicer/internal/testutil"
 	"indicer/lib/cnst"
 	"indicer/lib/dbmeta"
+	"indicer/lib/zstdx"
 )
 
 func TestMain(m *testing.M) {
@@ -35,11 +36,7 @@ const rotationPassword = "pw"
 // and reads every value, as a read command does.
 func childOpenReadOnly(args []string) int {
 	var err error
-	if cnst.DECODER, err = cnst.NewDecoder(); err != nil {
-		fmt.Fprintln(os.Stderr, err)
-		return 1
-	}
-	if cnst.ENCODER, err = zstd.NewWriter(nil); err != nil {
+	if cnst.ENCODER, err = zstdx.Acquire("default", runtime.GOMAXPROCS(0)); err != nil {
 		fmt.Fprintln(os.Stderr, err)
 		return 1
 	}

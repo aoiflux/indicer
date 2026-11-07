@@ -14,6 +14,7 @@ import (
 	"indicer/lib/fio"
 	"indicer/lib/structs"
 	"indicer/lib/util"
+	"indicer/lib/zstdx"
 
 	"github.com/dgraph-io/badger/v4"
 )
@@ -115,7 +116,7 @@ func ValidateEvidence(ctx context.Context, db *badger.DB, fileID []byte, evidenc
 					return fmt.Errorf("relation at offset %d: %w", offset, err)
 				}
 				// Relation values are zstd-compressed outside quick mode.
-				if decoded, err := cnst.DECODER.DecodeAll(chash, nil); err == nil {
+				if decoded, err := zstdx.DecodeAll(chash, nil); err == nil {
 					chash = decoded
 				}
 				refs = append(refs, ref{offset, util.AppendToBytesSlice(cnst.ChonkNamespace, chash)})

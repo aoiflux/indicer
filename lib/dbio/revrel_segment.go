@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"indicer/lib/cnst"
+	"indicer/lib/zstdx"
 
 	"github.com/dgraph-io/badger/v4"
 )
@@ -40,7 +41,7 @@ func getReverseRelationSegmentMembersAtIndex(chash []byte, index int64, db *badg
 			if err != nil {
 				return err
 			}
-			decoded, err := cnst.DECODER.DecodeAll(value, nil)
+			decoded, err := zstdx.DecodeAll(value, nil)
 			if err == nil {
 				value = decoded
 			}

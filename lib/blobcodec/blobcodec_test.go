@@ -4,12 +4,13 @@ import (
 	"bytes"
 	"crypto/sha3"
 	"errors"
+	"runtime"
 	"testing"
 
 	"indicer/lib/cnst"
+	"indicer/lib/zstdx"
 
 	"github.com/dgraph-io/badger/v4"
-	"github.com/klauspost/compress/zstd"
 	"github.com/zeebo/blake3"
 )
 
@@ -19,15 +20,8 @@ import (
 // memory limit one input can take gigabytes.
 func ensureCodecs(t testing.TB) {
 	t.Helper()
-	if cnst.DECODER == nil {
-		d, err := cnst.NewDecoder()
-		if err != nil {
-			t.Fatal(err)
-		}
-		cnst.DECODER = d
-	}
 	if cnst.ENCODER == nil {
-		e, err := zstd.NewWriter(nil)
+		e, err := zstdx.Acquire("default", runtime.GOMAXPROCS(0))
 		if err != nil {
 			t.Fatal(err)
 		}

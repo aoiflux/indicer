@@ -7,6 +7,7 @@ import (
 	"indicer/lib/cnst"
 	"indicer/lib/fio"
 	"indicer/lib/structs"
+	"indicer/lib/zstdx"
 
 	"github.com/dgraph-io/badger/v4"
 )
@@ -46,7 +47,7 @@ func locateChunkTxn(txn *badger.Txn, ckey []byte, dir string) (structs.ChonkMeta
 		if err != nil {
 			return structs.ChonkMetadata{}, err
 		}
-		if decoded, err := cnst.DECODER.DecodeAll(raw, nil); err == nil {
+		if decoded, err := zstdx.DecodeAll(raw, nil); err == nil {
 			raw = decoded
 		}
 		return parseChonkMetadata(raw)

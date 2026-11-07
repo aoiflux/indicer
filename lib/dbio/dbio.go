@@ -14,6 +14,7 @@ import (
 	"indicer/lib/logging"
 	"indicer/lib/structs"
 	"indicer/lib/util"
+	"indicer/lib/zstdx"
 	"os"
 	"strconv"
 	"time"
@@ -300,7 +301,7 @@ func getReverseRelationAppendMembers(key []byte, db *badger.DB) (map[string]stru
 					return err
 				}
 
-				decoded, err := cnst.DECODER.DecodeAll(value, nil)
+				decoded, err := zstdx.DecodeAll(value, nil)
 				if err == nil {
 					value = decoded
 				}
@@ -620,7 +621,7 @@ func GetNode(key []byte, db *badger.DB) ([]byte, error) {
 		return nil, err
 	}
 
-	decoded, err := cnst.DECODER.DecodeAll(data, nil)
+	decoded, err := zstdx.DecodeAll(data, nil)
 	if err == nil {
 		data = decoded
 	}

@@ -11,6 +11,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"runtime"
 	"testing"
 
 	"indicer/lib/cnst"
@@ -18,22 +19,15 @@ import (
 	"indicer/lib/store"
 	"indicer/lib/structs"
 	"indicer/lib/util"
+	"indicer/lib/zstdx"
 
 	"github.com/dgraph-io/badger/v4"
-	"github.com/klauspost/compress/zstd"
 )
 
 func ensureZstdReadyForTests(t *testing.T) {
 	t.Helper()
-	if cnst.DECODER == nil {
-		decoder, err := cnst.NewDecoder()
-		if err != nil {
-			t.Fatalf("init zstd decoder: %v", err)
-		}
-		cnst.DECODER = decoder
-	}
 	if cnst.ENCODER == nil {
-		encoder, err := zstd.NewWriter(nil, zstd.WithEncoderLevel(zstd.EncoderLevel(zstd.SpeedDefault)))
+		encoder, err := zstdx.Acquire("default", runtime.GOMAXPROCS(0))
 		if err != nil {
 			t.Fatalf("init zstd encoder: %v", err)
 		}

@@ -21,6 +21,7 @@ import (
 	"indicer/lib/dbio"
 	"indicer/lib/dbmeta"
 	"indicer/lib/fsx"
+	"indicer/lib/zstdx"
 
 	"github.com/dgraph-io/badger/v4"
 	"github.com/zeebo/blake3"
@@ -312,7 +313,7 @@ func readSomeChunks(t *testing.T, db *badger.DB, root string, container bool) in
 		for it.Rewind(); it.Valid(); it.Next() {
 			v, _ := it.Item().ValueCopy(nil)
 			if !cnst.QUICKOPT {
-				v, _ = cnst.DECODER.DecodeAll(v, nil)
+				v, _ = zstdx.DecodeAll(v, nil)
 			}
 			chashes = append(chashes, v)
 		}

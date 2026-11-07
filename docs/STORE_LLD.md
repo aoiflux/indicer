@@ -799,8 +799,11 @@ reverse.
 key: 32 bytes is BLAKE3 or SHA3-256, 64 bytes is SHA3-512.
 
 Encoding uses `cnst.ENCODER`, whose level `--compress-level` sets (`fast`,
-`default`, `best`; default `best`). Decoding uses `cnst.DECODER`, which
-returns at most `cnst.MaxDecodedBlock` (256 MiB) from one call.
+`default`, `best`; default `best`). It comes from `zstdx.Acquire`: users of
+one level and width share an encoder, and the last `Release` drops it with
+its states. Decoding uses `zstdx.DecodeAll`, whose one process decoder is
+built at its first use and returns at most `zstdx.MaxDecodedBlock` (256 MiB)
+from one call.
 
 ## Durable blobs and the barrier
 

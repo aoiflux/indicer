@@ -5,6 +5,7 @@ import (
 	"errors"
 	"indicer/internal/progress"
 	"path/filepath"
+	"runtime"
 	"testing"
 
 	"github.com/dgraph-io/badger/v4"
@@ -14,8 +15,7 @@ import (
 	duesgraph "indicer/lib/graph"
 	"indicer/lib/structs"
 	"indicer/lib/util"
-
-	"github.com/klauspost/compress/zstd"
+	"indicer/lib/zstdx"
 )
 
 func TestEnrichAllCreatesFileNodesAtAllLevels(t *testing.T) {
@@ -164,18 +164,10 @@ func TestEnrichAllCreatesFileNodesAtAllLevels(t *testing.T) {
 func ensureCompressionCodecs(t *testing.T) {
 	t.Helper()
 
-	if cnst.DECODER == nil {
-		decoder, err := cnst.NewDecoder()
-		if err != nil {
-			t.Fatalf("cnst.NewDecoder: %v", err)
-		}
-		cnst.DECODER = decoder
-	}
-
 	if cnst.ENCODER == nil {
-		encoder, err := zstd.NewWriter(nil, zstd.WithEncoderLevel(zstd.EncoderLevel(zstd.SpeedBestCompression)))
+		encoder, err := zstdx.Acquire("best", runtime.GOMAXPROCS(0))
 		if err != nil {
-			t.Fatalf("zstd.NewWriter: %v", err)
+			t.Fatalf("zstdx.Acquire: %v", err)
 		}
 		cnst.ENCODER = encoder
 	}

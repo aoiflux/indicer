@@ -2,12 +2,12 @@ package compression_product
 
 import (
 	"context"
-	"sync"
 
 	"indicer/internal/ui"
 	"indicer/lib/cnst"
 	"indicer/lib/dbmeta"
 	"indicer/lib/dbopen"
+	"indicer/lib/zstdx"
 )
 
 // engineSlot admits one operation at a time to the DUES storage engine.
@@ -20,7 +20,7 @@ import (
 var engineSlot = make(chan struct{}, 1)
 
 // withStoreRuntime runs fn alone among the operations that use the storage
-// engine, with the codecs initialised, and puts the layout globals back as
+// engine, with an encoder of its own, and puts the layout globals back as
 // they were afterwards. A context that ends while waiting leaves the queue.
 func withStoreRuntime(ctx context.Context, fn func() error) error {
 	select {
@@ -30,9 +30,6 @@ func withStoreRuntime(ctx context.Context, fn func() error) error {
 	}
 	defer func() { <-engineSlot }()
 	if err := ctx.Err(); err != nil {
-		return err
-	}
-	if err := ensureDecoder(); err != nil {
 		return err
 	}
 	dropEncoder, err := useOperationEncoder()
@@ -72,32 +69,15 @@ func (g layoutGlobals) restore() {
 	cnst.LegacyBlockIndex = g.legacyBlockIndex
 }
 
-var decoderMu sync.Mutex
-
-// ensureDecoder creates the process decoder if nothing has yet.
-func ensureDecoder() error {
-	decoderMu.Lock()
-	defer decoderMu.Unlock()
-	if cnst.DECODER != nil {
-		return nil
-	}
-	decoder, err := cnst.NewDecoder()
-	if err != nil {
-		return err
-	}
-	cnst.DECODER = decoder
-	return nil
-}
-
-// useOperationEncoder gives the running operation an encoder of its own as
+// useOperationEncoder acquires an encoder for the running operation as
 // cnst.ENCODER and returns the function that puts the previous one back and
-// drops it. A library host keeps the process for as long as it runs, and an
-// encoder keeps its states (about 50 MB each at the best level) until it is
-// dropped, so a shared one held them for good after the first archive
-// (FFI-4). The engine slot makes the swap safe: no other operation reads the
-// encoder meanwhile.
+// releases it. A library host keeps the process for as long as it runs, and
+// an encoder keeps its states (about 50 MB each at the best level) until it
+// is dropped, so one kept for the process held them for good after the first
+// archive (FFI-4); the last release drops it. The engine slot makes the swap
+// safe: no other operation reads the encoder meanwhile.
 func useOperationEncoder() (func(), error) {
-	enc, err := cnst.NewEncoder(cnst.CompressLevel, cnst.GetMaxThreadCount())
+	enc, err := zstdx.Acquire(cnst.CompressLevel, cnst.GetMaxThreadCount())
 	if err != nil {
 		return nil, err
 	}
@@ -105,7 +85,7 @@ func useOperationEncoder() (func(), error) {
 	cnst.ENCODER = enc
 	return func() {
 		cnst.ENCODER = prev
-		_ = enc.Close()
+		enc.Release()
 	}, nil
 }
 

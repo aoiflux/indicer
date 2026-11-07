@@ -12,14 +12,15 @@ import (
 	"bytes"
 	"os"
 	"path/filepath"
+	"runtime"
 	"testing"
 
 	"github.com/dgraph-io/badger/v4"
-	"github.com/klauspost/compress/zstd"
 
 	"indicer/lib/cnst"
 	"indicer/lib/dbio"
 	"indicer/lib/util"
+	"indicer/lib/zstdx"
 )
 
 // Mode is one storage configuration a database can be written in.
@@ -120,17 +121,10 @@ func Isolate(tb testing.TB) {
 // storage code expects, if nothing has yet.
 func EnsureCodecs(tb testing.TB) {
 	tb.Helper()
-	if cnst.DECODER == nil {
-		d, err := cnst.NewDecoder()
-		if err != nil {
-			tb.Fatalf("zstd.NewReader: %v", err)
-		}
-		cnst.DECODER = d
-	}
 	if cnst.ENCODER == nil {
-		e, err := zstd.NewWriter(nil, zstd.WithEncoderLevel(zstd.SpeedDefault))
+		e, err := zstdx.Acquire("default", runtime.GOMAXPROCS(0))
 		if err != nil {
-			tb.Fatalf("zstd.NewWriter: %v", err)
+			tb.Fatalf("zstdx.Acquire: %v", err)
 		}
 		cnst.ENCODER = e
 	}

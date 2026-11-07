@@ -9,9 +9,9 @@ import (
 	"slices"
 	"strconv"
 
-	"indicer/lib/cnst"
 	"indicer/lib/dbio"
 	"indicer/lib/structs"
+	"indicer/lib/zstdx"
 
 	"github.com/dgraph-io/badger/v4"
 )
@@ -129,7 +129,7 @@ func addOwnerReverseRelations(ctx context.Context, db *badger.DB, owner []byte) 
 			if err != nil {
 				return err
 			}
-			if decoded, err := cnst.DECODER.DecodeAll(chash, nil); err == nil {
+			if decoded, err := zstdx.DecodeAll(chash, nil); err == nil {
 				chash = decoded
 			}
 			if err := dbio.SetBatchNode(dbio.ReverseRelationAppendMemberKey(chash, off, owner), owner, batch); err != nil {

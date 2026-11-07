@@ -9,7 +9,7 @@ import (
 	"encoding/binary"
 	"errors"
 	"fmt"
-	"indicer/lib/cnst"
+	"indicer/lib/zstdx"
 	"sort"
 
 	"github.com/dgraph-io/badger/v4"
@@ -84,7 +84,7 @@ func loadReverseRelationSegmentState(txn *badger.Txn, key []byte) (reverseRelati
 		return nil, err
 	}
 
-	decoded, derr := cnst.DECODER.DecodeAll(raw, nil)
+	decoded, derr := zstdx.DecodeAll(raw, nil)
 	if derr == nil {
 		raw = decoded
 	}

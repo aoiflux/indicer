@@ -3,16 +3,17 @@ package store
 import (
 	"bytes"
 	"errors"
+	"runtime"
 	"testing"
 
 	"indicer/lib/cnst"
 	"indicer/lib/dbio"
 	"indicer/lib/structs"
 	"indicer/lib/util"
+	"indicer/lib/zstdx"
 
 	"github.com/dgraph-io/badger/v4"
 	"github.com/google/uuid"
-	"github.com/klauspost/compress/zstd"
 )
 
 func TestProcessRevRelSkippedWhenDisabled(t *testing.T) {
@@ -68,17 +69,10 @@ func openTestDB(t testing.TB) *badger.DB {
 	t.Helper()
 	prevQuick := cnst.QUICKOPT
 	cnst.QUICKOPT = true
-	if cnst.DECODER == nil {
-		decoder, err := cnst.NewDecoder()
-		if err != nil {
-			t.Fatalf("cnst.NewDecoder: %v", err)
-		}
-		cnst.DECODER = decoder
-	}
 	if cnst.ENCODER == nil {
-		encoder, err := zstd.NewWriter(nil, zstd.WithEncoderLevel(zstd.EncoderLevel(zstd.SpeedBestCompression)))
+		encoder, err := zstdx.Acquire("best", runtime.GOMAXPROCS(0))
 		if err != nil {
-			t.Fatalf("zstd.NewWriter: %v", err)
+			t.Fatalf("zstdx.Acquire: %v", err)
 		}
 		cnst.ENCODER = encoder
 	}

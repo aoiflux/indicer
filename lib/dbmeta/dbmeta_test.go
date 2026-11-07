@@ -133,17 +133,6 @@ func TestKeys(t *testing.T) {
 	}
 }
 
-func ensureCodecs(t *testing.T) {
-	t.Helper()
-	if cnst.DECODER == nil {
-		d, err := cnst.NewDecoder()
-		if err != nil {
-			t.Fatal(err)
-		}
-		cnst.DECODER = d
-	}
-}
-
 func openLegacy(t *testing.T, root string, key []byte, raw bool) *badger.DB {
 	t.Helper()
 	opts := badger.DefaultOptions(filepath.Join(root, cnst.KVDBDIR)).WithLogger(nil).
@@ -164,7 +153,6 @@ func openLegacy(t *testing.T, root string, key []byte, raw bool) *badger.DB {
 // TestLegacyFixtures infers the manifest of every legacy database fixture and
 // checks it against the flags the fixture was written with.
 func TestLegacyFixtures(t *testing.T) {
-	ensureCodecs(t)
 	for _, f := range legacyfixture.Load(t) {
 		t.Run(f.Mode, func(t *testing.T) {
 			root := legacyfixture.Extract(t, f)

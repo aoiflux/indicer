@@ -9,12 +9,13 @@ import (
 	"indicer/lib/fio"
 	"indicer/lib/structs"
 	"indicer/lib/util"
+	"indicer/lib/zstdx"
 	"os"
+	"runtime"
 	"sync"
 	"testing"
 
 	"github.com/dgraph-io/badger/v4"
-	"github.com/klauspost/compress/zstd"
 	"github.com/vmihailenco/msgpack/v5"
 )
 
@@ -24,11 +25,7 @@ func ensureBenchCodec(tb testing.TB) {
 	tb.Helper()
 	benchCodecInit.Do(func() {
 		var err error
-		cnst.DECODER, err = cnst.NewDecoder()
-		if err != nil {
-			tb.Fatalf("decoder init failed: %v", err)
-		}
-		cnst.ENCODER, err = zstd.NewWriter(nil, zstd.WithEncoderLevel(zstd.EncoderLevel(zstd.SpeedBestCompression)))
+		cnst.ENCODER, err = zstdx.Acquire("best", runtime.GOMAXPROCS(0))
 		if err != nil {
 			tb.Fatalf("encoder init failed: %v", err)
 		}

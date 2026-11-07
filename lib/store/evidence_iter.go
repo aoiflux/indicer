@@ -5,6 +5,7 @@ import (
 	"indicer/lib/cnst"
 	"indicer/lib/dbio"
 	"indicer/lib/structs"
+	"indicer/lib/zstdx"
 
 	"github.com/dgraph-io/badger/v4"
 )
@@ -42,7 +43,7 @@ func forEachEvidenceRecord(txn *badger.Txn, fn func(key []byte, evidenceFile str
 func decodeEvidenceRecord(value []byte) (structs.EvidenceFile, bool, error) {
 	var evidenceFile structs.EvidenceFile
 
-	decoded, decodeErr := cnst.DECODER.DecodeAll(value, nil)
+	decoded, decodeErr := zstdx.DecodeAll(value, nil)
 	if decodeErr == nil {
 		value = decoded
 	}

@@ -8,6 +8,7 @@ import (
 	"indicer/internal/msgpackx"
 	"indicer/lib/cnst"
 	"indicer/lib/structs"
+	"indicer/lib/zstdx"
 
 	"github.com/dgraph-io/badger/v4"
 	"github.com/vmihailenco/msgpack/v5"
@@ -91,7 +92,7 @@ func getEvidenceTxn(txn *badger.Txn, key []byte) (structs.EvidenceFile, error) {
 	if err != nil {
 		return e, err
 	}
-	if decoded, err := cnst.DECODER.DecodeAll(data, nil); err == nil {
+	if decoded, err := zstdx.DecodeAll(data, nil); err == nil {
 		data = decoded
 	}
 	return e, msgpackx.Unmarshal(data, &e)

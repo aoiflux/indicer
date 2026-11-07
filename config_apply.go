@@ -13,6 +13,7 @@ import (
 	"indicer/lib/cnst"
 	"indicer/lib/dbmeta"
 	"indicer/lib/dbopen"
+	"indicer/lib/zstdx"
 	"io"
 	"os"
 	"strconv"
@@ -279,14 +280,17 @@ func flagsSetByUser(app *kingpin.Application, args []string) (map[string]bool, e
 }
 
 // reconfigureEncoderForCompressionLevel replaces the process encoder with one
-// at --compress-level, sized for the store workers that encode at once.
+// at --compress-level, sized for the store workers that encode at once. The
+// new one is acquired first, so an encoder of the same level and width is
+// kept rather than built again.
 func reconfigureEncoderForCompressionLevel(workers int) error {
-	if err := cnst.ENCODER.Close(); err != nil {
+	enc, err := zstdx.Acquire(cnst.CompressLevel, workers)
+	if err != nil {
 		return err
 	}
-	var err error
-	cnst.ENCODER, err = cnst.NewEncoder(cnst.CompressLevel, workers)
-	return err
+	releaseEncoder()
+	cnst.ENCODER = enc
+	return nil
 }
 
 // printRunHeader opens a long operation on stderr: what runs, on what,

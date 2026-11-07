@@ -17,6 +17,7 @@ import (
 	"indicer/lib/fio"
 	"indicer/lib/structs"
 	"indicer/lib/util"
+	"indicer/lib/zstdx"
 
 	"github.com/dgraph-io/badger/v4"
 )
@@ -220,7 +221,7 @@ func (e *EvidenceChunks) relationTxn(txn *badger.Txn, off int64) ([]byte, error)
 		return nil, fmt.Errorf("relation at offset %d of evidence %x: %w", off, e.id, err)
 	}
 	// Relation values are zstd-compressed outside quick mode.
-	if decoded, err := cnst.DECODER.DecodeAll(chash, nil); err == nil {
+	if decoded, err := zstdx.DecodeAll(chash, nil); err == nil {
 		chash = decoded
 	}
 	return chash, nil

@@ -12,6 +12,7 @@ import (
 	"indicer/lib/dbio"
 	"indicer/lib/structs"
 	"indicer/lib/util"
+	"indicer/lib/zstdx"
 
 	"github.com/dgraph-io/badger/v4"
 )
@@ -233,7 +234,7 @@ func deleteObjectRelations(ctx context.Context, db *badger.DB, rid []byte) error
 				if err != nil {
 					return err
 				}
-				if decoded, err := cnst.DECODER.DecodeAll(chash, nil); err == nil {
+				if decoded, err := zstdx.DecodeAll(chash, nil); err == nil {
 					chash = decoded
 				}
 				keys = append(keys, dbio.ReverseRelationAppendMemberKey(chash, off, rid))

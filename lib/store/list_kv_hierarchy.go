@@ -13,6 +13,7 @@ import (
 	"indicer/lib/dbio"
 	"indicer/lib/structs"
 	"indicer/lib/util"
+	"indicer/lib/zstdx"
 
 	"github.com/dgraph-io/badger/v4"
 )
@@ -104,7 +105,7 @@ func getPartitionByHash(txn *badger.Txn, partitionHash string) (structs.Partitio
 			return pdata, copyErr
 		}
 
-		decoded, decodeErr := cnst.DECODER.DecodeAll(v, nil)
+		decoded, decodeErr := zstdx.DecodeAll(v, nil)
 		if decodeErr == nil {
 			v = decoded
 		}
@@ -146,7 +147,7 @@ func buildIndexedFileData(ihash string, txn *badger.Txn) ([]map[string]interface
 			return nil, copyErr
 		}
 
-		decoded, decodeErr := cnst.DECODER.DecodeAll(v, nil)
+		decoded, decodeErr := zstdx.DecodeAll(v, nil)
 		if decodeErr == nil {
 			v = decoded
 		}
@@ -263,7 +264,7 @@ func (l *partitionLookup) scan() error {
 func decodePartitionRecord(value []byte) (structs.PartitionFile, bool, error) {
 	var pdata structs.PartitionFile
 
-	decoded, decodeErr := cnst.DECODER.DecodeAll(value, nil)
+	decoded, decodeErr := zstdx.DecodeAll(value, nil)
 	if decodeErr == nil {
 		value = decoded
 	}

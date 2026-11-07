@@ -10,6 +10,7 @@ import (
 	"indicer/internal/msgpackx"
 	"indicer/lib/cnst"
 	"indicer/lib/util"
+	"indicer/lib/zstdx"
 
 	"github.com/dgraph-io/badger/v4"
 )
@@ -113,7 +114,7 @@ func decodedValue(item *badger.Item) ([]byte, error) {
 	if err != nil {
 		return nil, err
 	}
-	if decoded, err := cnst.DECODER.DecodeAll(data, nil); err == nil {
+	if decoded, err := zstdx.DecodeAll(data, nil); err == nil {
 		data = decoded
 	}
 	return data, nil

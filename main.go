@@ -18,6 +18,7 @@ import (
 	"indicer/lib/fio"
 	"indicer/lib/logging"
 	"indicer/lib/store"
+	"indicer/lib/zstdx"
 	"os"
 	"path/filepath"
 	"runtime/debug"
@@ -43,11 +44,7 @@ func buildInfo() ui.Build {
 
 func init() {
 	var err error
-
-	cnst.DECODER, err = cnst.NewDecoder()
-	handle(err)
-
-	cnst.ENCODER, err = cnst.NewEncoder(cnst.CompressLevel, cnst.GetMaxThreadCount())
+	cnst.ENCODER, err = zstdx.Acquire(cnst.CompressLevel, cnst.GetMaxThreadCount())
 	handle(err)
 }
 
@@ -132,9 +129,7 @@ func realMain(args []string) (code int) {
 		zap.Strings("args", logging.RedactArgs(args)))
 
 	err := run(args, conf, cliDef)
-	if cerr := closeCompressionCodecs(); err == nil {
-		err = cerr
-	}
+	releaseEncoder()
 	if err != nil {
 		logging.GetLogger().Error("command failed", zap.Error(err))
 		level := ui.LevelError
@@ -310,12 +305,12 @@ func startTrace(path string) (stop func(), err error) {
 	}, nil
 }
 
-func closeCompressionCodecs() error {
-	if err := cnst.ENCODER.Close(); err != nil {
-		return err
+// releaseEncoder lets go of the process encoder.
+func releaseEncoder() {
+	if cnst.ENCODER != nil {
+		cnst.ENCODER.Release()
+		cnst.ENCODER = nil
 	}
-	cnst.DECODER.Close()
-	return nil
 }
 
 func executeCommand(ctx context.Context, parsed string, cliDef cliDefinition, dbOpts cli.DBOptions, tuning pipelineTuning, src sources, conf runConfig) error {
@@ -588,7 +583,7 @@ func buildCommandHandlers(cliDef cliDefinition, dbOpts cli.DBOptions, tuning pip
 	}
 }
 
-// handle stops start-up when a codec cannot be created. It runs from init,
+// handle stops start-up when the encoder cannot be created. It runs from init,
 // before realMain can report errors, so it exits directly.
 func handle(err error) {
 	if err != nil {

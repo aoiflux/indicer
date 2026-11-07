@@ -90,7 +90,7 @@ func UpgradeBlockIndex(ctx context.Context, db *badger.DB) (report BlockIndexUpg
 				}
 				return nil
 			}
-			if err := dbio.SetBatchNode(ckey, meta, batch); err != nil {
+			if err := dbio.SetBatchNode(db, ckey, meta, batch); err != nil {
 				return err
 			}
 			report.Migrated++

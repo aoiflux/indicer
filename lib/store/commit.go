@@ -72,11 +72,11 @@ func CommitEvidence(db *badger.DB, eid []byte) (CommitResult, error) {
 		}
 		if winner != nil {
 			e.IngestState, e.DuplicateOf, e.Failed = structs.IngestStateDuplicate, winner, false
-			if err := putAliasTxn(txn, winner, aliasOf(e, eid)); err != nil {
+			if err := putAliasTxn(db, txn, winner, aliasOf(e, eid)); err != nil {
 				return err
 			}
 			res = CommitResult{Outcome: CommitAliased, Winner: winner}
-			return dbio.SetEvidenceTxn(txn, eid, e)
+			return dbio.SetEvidenceTxn(db, txn, eid, e)
 		}
 
 		e.Completed, e.Failed, e.IngestState = true, false, structs.IngestStateCompleted
@@ -100,7 +100,7 @@ func CommitEvidence(db *badger.DB, eid []byte) (CommitResult, error) {
 			return err
 		}
 		res = CommitResult{Outcome: CommitStored, Winner: eid}
-		return dbio.SetEvidenceTxn(txn, eid, e)
+		return dbio.SetEvidenceTxn(db, txn, eid, e)
 	})
 	return res, err
 }
@@ -188,8 +188,8 @@ func aliasOf(e structs.EvidenceFile, attempt []byte) structs.AliasRecord {
 	return a
 }
 
-func putAliasTxn(txn *badger.Txn, winner []byte, a structs.AliasRecord) error {
-	return dbio.PutRecordTxn(txn, dbio.AliasKey(winner, a.Path), a)
+func putAliasTxn(db *badger.DB, txn *badger.Txn, winner []byte, a structs.AliasRecord) error {
+	return dbio.PutRecordTxn(db, txn, dbio.AliasKey(winner, a.Path), a)
 }
 
 // WriteAlias records a, an ingest whose content winner already holds, found
@@ -199,7 +199,7 @@ func WriteAlias(db *badger.DB, winner []byte, a structs.AliasRecord) error {
 		a.At = time.Now().UnixNano()
 	}
 	return dbio.UpdateTxn(db, func(txn *badger.Txn) error {
-		return putAliasTxn(txn, winner, a)
+		return putAliasTxn(db, txn, winner, a)
 	})
 }
 
@@ -278,7 +278,7 @@ func BeginAttempt(db *badger.DB, path string, rec structs.EvidenceFile) ([]byte,
 				e.IngestState = structs.IngestStatePending
 				e.Name, e.Source, e.Features, e.Index = rec.Name, rec.Source, rec.Features, rec.Index
 				eid, resumed = prev, true
-				return dbio.SetEvidenceTxn(txn, eid, e)
+				return dbio.SetEvidenceTxn(db, txn, eid, e)
 			}
 		case !errors.Is(err, badger.ErrKeyNotFound):
 			return err
@@ -289,7 +289,7 @@ func BeginAttempt(db *badger.DB, path string, rec structs.EvidenceFile) ([]byte,
 		}
 		eid = id[:]
 		rec.Attempt = 1
-		if err := dbio.SetEvidenceTxn(txn, eid, rec); err != nil {
+		if err := dbio.SetEvidenceTxn(db, txn, eid, rec); err != nil {
 			return err
 		}
 		return txn.Set(key, append([]byte(nil), eid...))

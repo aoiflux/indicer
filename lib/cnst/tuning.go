@@ -91,6 +91,13 @@ func (t Tuning) StorePipeline(containerMode bool) (workers, queueDepth int) {
 	return workers, max(queueDepth, workers)
 }
 
+// EncodeWorkers is how many store workers may compress at once on a database
+// of the given storage, and so the width of its encoder.
+func (t Tuning) EncodeWorkers(containerMode bool) int {
+	workers, _ := t.StorePipeline(containerMode)
+	return workers
+}
+
 // RestorePipeline returns restore's worker count and queue depth: this
 // machine's (DefaultRestoreTuning), replaced by RestoreWorkers and
 // RestoreQueue when those are set.

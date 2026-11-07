@@ -172,7 +172,7 @@ func Open(tb testing.TB, m Mode) *DB {
 func OpenAt(tb testing.TB, m Mode, root string) *DB {
 	tb.Helper()
 	key := m.Key(tb)
-	db, err := dbio.ConnectDB(root, key)
+	db, err := dbio.ConnectDB(root, key, m.Quick)
 	if err != nil {
 		tb.Fatalf("ConnectDB(%s, mode %s): %v", root, m.Name, err)
 	}

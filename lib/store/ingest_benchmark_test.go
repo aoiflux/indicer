@@ -269,7 +269,7 @@ func ingestMetadataWorkloadWithOffset(db *badger.DB, fileCount int, chunkHashes 
 				batch.Cancel()
 				return err
 			}
-			if err := processRevRel(false, index, fhash, chash, batch); err != nil {
+			if err := processRevRel(false, index, fhash, chash, db, batch); err != nil {
 				batch.Cancel()
 				return err
 			}
@@ -314,7 +314,7 @@ func ingestProcessRevRelWorkloadMode(db *badger.DB, fileCount int, chunkHashes [
 		batch := db.NewWriteBatch()
 		for chunkIdx, chash := range chunkHashes {
 			index := int64(chunkIdx) * cnst.ChonkSize
-			if err := processRevRel(true, index, fhash, chash, batch); err != nil {
+			if err := processRevRel(true, index, fhash, chash, db, batch); err != nil {
 				batch.Cancel()
 				return err
 			}
@@ -339,7 +339,7 @@ func ingestAppendMemberOnlyWorkload(db *badger.DB, fileCount int, chunkHashes []
 			members = append(members, dbio.ReverseRelationAppendMember{Chash: chash, Index: index})
 		}
 
-		if err := dbio.SetReverseRelationAppendMembers(fhash, members, batch); err != nil {
+		if err := dbio.SetReverseRelationAppendMembers(db, fhash, members, batch); err != nil {
 			batch.Cancel()
 			return err
 		}
@@ -602,7 +602,7 @@ func batchOwnerWriteLoopBenchmarkDirect(fhash []byte, db *badger.DB, tasks []chu
 			batch.Cancel()
 			return err
 		}
-		if err := processRevRel(false, task.index, fhash, task.chash, batch); err != nil {
+		if err := processRevRel(false, task.index, fhash, task.chash, db, batch); err != nil {
 			batch.Cancel()
 			return err
 		}

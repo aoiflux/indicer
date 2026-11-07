@@ -43,7 +43,7 @@ func setupBenchmarkChunkMapDataset(tb testing.TB, chunks int) (structs.FileMeta,
 		key[i] = byte(i + 1)
 	}
 
-	db, err := dbio.ConnectDB(dir, key)
+	db, err := dbio.ConnectDB(dir, key, false)
 	if err != nil {
 		tb.Fatalf("connect db failed: %v", err)
 	}

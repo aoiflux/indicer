@@ -62,7 +62,7 @@ func putLegacyIndex(t *testing.T, db *badger.DB, eid []byte, size int64, files m
 			iid := append([]byte("indexed-"+path+"-"), eid[:6]...)
 			name := string(eid) + cnst.DataSeperator + base64.StdEncoding.EncodeToString(pid) + cnst.DataSeperator + path
 			rec := structs.NewIndexedFile(name, r[0], r[1]-r[0], cnst.UnknownEvidenceType, false, "")
-			if err := dbio.PutRecordTxn(txn, dbio.CanonicalIndexedKey(iid), rec); err != nil {
+			if err := dbio.PutRecordTxn(db, txn, dbio.CanonicalIndexedKey(iid), rec); err != nil {
 				return err
 			}
 			members[base64.StdEncoding.EncodeToString(iid)] = structs.InternalOffset{Start: r[0], End: r[1] - 1}

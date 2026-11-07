@@ -6,12 +6,10 @@ import (
 	"time"
 
 	"indicer/internal/msgpackx"
-	"indicer/lib/cnst"
 	"indicer/lib/structs"
 	"indicer/lib/zstdx"
 
 	"github.com/dgraph-io/badger/v4"
-	"github.com/vmihailenco/msgpack/v5"
 )
 
 // ErrNoChange, returned by an UpdateEvidence callback, leaves the record as
@@ -46,7 +44,7 @@ func UpdateEvidence(db *badger.DB, eid []byte, fn func(txn *badger.Txn, e *struc
 			if err := fn(txn, &e); err != nil {
 				return err
 			}
-			return setEvidenceTxn(txn, key, e)
+			return setEvidenceTxn(db, txn, key, e)
 		})
 		if errors.Is(err, ErrNoChange) {
 			return nil
@@ -70,7 +68,7 @@ func CreateEvidence(db *badger.DB, eid []byte, e structs.EvidenceFile) error {
 		if !errors.Is(err, badger.ErrKeyNotFound) {
 			return err
 		}
-		return setEvidenceTxn(txn, key, e)
+		return setEvidenceTxn(db, txn, key, e)
 	})
 }
 
@@ -98,14 +96,12 @@ func getEvidenceTxn(txn *badger.Txn, key []byte) (structs.EvidenceFile, error) {
 	return e, msgpackx.Unmarshal(data, &e)
 }
 
-// setEvidenceTxn encodes the record the way SetFile does.
-func setEvidenceTxn(txn *badger.Txn, key []byte, e structs.EvidenceFile) error {
-	data, err := msgpack.Marshal(e)
+// setEvidenceTxn writes the record inside txn, a transaction on db, encoded
+// the way SetFile does.
+func setEvidenceTxn(db *badger.DB, txn *badger.Txn, key []byte, e structs.EvidenceFile) error {
+	data, err := EncodeRecord(db, e)
 	if err != nil {
 		return err
-	}
-	if !cnst.QUICKOPT {
-		data = cnst.ENCODER.EncodeAll(data, make([]byte, 0, len(data)))
 	}
 	return txn.Set(key, data)
 }

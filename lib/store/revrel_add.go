@@ -132,7 +132,7 @@ func addOwnerReverseRelations(ctx context.Context, db *badger.DB, owner []byte) 
 			if decoded, err := zstdx.DecodeAll(chash, nil); err == nil {
 				chash = decoded
 			}
-			if err := dbio.SetBatchNode(dbio.ReverseRelationAppendMemberKey(chash, off, owner), owner, batch); err != nil {
+			if err := dbio.SetBatchNode(db, dbio.ReverseRelationAppendMemberKey(chash, off, owner), owner, batch); err != nil {
 				return err
 			}
 			n++

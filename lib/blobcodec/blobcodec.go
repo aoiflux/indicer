@@ -13,9 +13,10 @@
 //     Decode checks the plaintext against the chunk hash, so a payload read at
 //     the wrong offset or a damaged blob is an error, never wrong content.
 //
-// The codec for a database is registered when dbopen opens it. A database
-// opened another way (tests, older call paths) gets the legacy codec its
-// globals imply, which is what every caller did before codecs existed.
+// The codec for a database is registered when dbopen opens it, with the
+// database's own encoder. A database opened another way (tests, older call
+// paths) gets the legacy codec its globals imply, which is what every caller
+// did before codecs existed.
 package blobcodec
 
 import (
@@ -43,6 +44,9 @@ const (
 	V2           = "v2"
 )
 
+// errNoEncoder reports an Encode on a codec built only to decode.
+var errNoEncoder = errors.New("blobcodec: the codec has no encoder")
+
 // ErrCorrupt reports a stored chunk that does not decode to the chunk its key
 // names: damaged, truncated, read from the wrong offset, or encrypted under a
 // different key.
@@ -57,12 +61,18 @@ type Codec interface {
 }
 
 // legacySealed is zstd + AES-GCM, as written before manifests existed.
-type legacySealed struct{ key []byte }
+type legacySealed struct {
+	key []byte
+	enc *zstdx.Encoder
+}
 
 func (legacySealed) Name() string { return LegacySealed }
 
 func (c legacySealed) Encode(_, plain []byte) ([]byte, error) {
-	return util.SealAES(c.key, cnst.ENCODER.EncodeAll(plain, make([]byte, 0, len(plain))))
+	if c.enc == nil {
+		return nil, errNoEncoder
+	}
+	return util.SealAES(c.key, c.enc.EncodeAll(plain, make([]byte, 0, len(plain))))
 }
 
 func (c legacySealed) Decode(_, stored []byte) ([]byte, error) {
@@ -94,13 +104,17 @@ const (
 )
 
 // v2 is the current encoding. aead is nil for unencrypted databases.
-type v2 struct{ aead cipher.AEAD }
+type v2 struct {
+	aead cipher.AEAD
+	enc  *zstdx.Encoder
+}
 
 // NewV2 returns the v2 codec. key is the blob key (32 bytes) of an encrypted
-// database, or nil for an unencrypted one.
-func NewV2(key []byte) (Codec, error) {
+// database, or nil for an unencrypted one. enc compresses what Encode
+// stores; a codec that only decodes may have none.
+func NewV2(key []byte, enc *zstdx.Encoder) (Codec, error) {
 	if key == nil {
-		return v2{}, nil
+		return v2{enc: enc}, nil
 	}
 	block, err := aes.NewCipher(key)
 	if err != nil {
@@ -110,11 +124,14 @@ func NewV2(key []byte) (Codec, error) {
 	if err != nil {
 		return nil, err
 	}
-	return v2{aead: aead}, nil
+	return v2{aead: aead, enc: enc}, nil
 }
 
-// NewLegacySealed returns the legacy sealed codec for key.
-func NewLegacySealed(key []byte) Codec { return legacySealed{key: append([]byte(nil), key...)} }
+// NewLegacySealed returns the legacy sealed codec for key, compressing with
+// enc; a codec that only decodes may have none.
+func NewLegacySealed(key []byte, enc *zstdx.Encoder) Codec {
+	return legacySealed{key: append([]byte(nil), key...), enc: enc}
+}
 
 // NewLegacyRaw returns the legacy raw codec.
 func NewLegacyRaw() Codec { return legacyRaw{} }
@@ -126,12 +143,15 @@ func aad(header, ckey []byte) []byte {
 }
 
 func (c v2) Encode(ckey, plain []byte) ([]byte, error) {
+	if c.enc == nil {
+		return nil, errNoEncoder
+	}
 	flags := byte(flagZstd)
 	if c.aead != nil {
 		flags |= flagSealed
 	}
 	header := []byte{v2Version, flags}
-	payload := cnst.ENCODER.EncodeAll(plain, make([]byte, 0, len(plain)))
+	payload := c.enc.EncodeAll(plain, make([]byte, 0, len(plain)))
 	if c.aead == nil {
 		return append(header, payload...), nil
 	}
@@ -224,7 +244,8 @@ func Sealed(db *badger.DB) bool {
 }
 
 // For returns db's codec. A database dbopen did not open gets the legacy codec
-// the globals imply: raw in quick mode, otherwise sealed with badger's key.
+// the globals imply: raw in quick mode, otherwise sealed with badger's key
+// and compressed by the process encoder.
 func For(db *badger.DB) Codec {
 	if c, ok := registry.Load(db); ok {
 		return c.(Codec)
@@ -232,5 +253,5 @@ func For(db *badger.DB) Codec {
 	if cnst.QUICKOPT {
 		return legacyRaw{}
 	}
-	return legacySealed{key: db.Opts().EncryptionKey}
+	return legacySealed{key: db.Opts().EncryptionKey, enc: cnst.ENCODER}
 }

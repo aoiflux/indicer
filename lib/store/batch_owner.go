@@ -28,7 +28,6 @@ import (
 	"fmt"
 	"hash"
 	"indicer/lib/cnst"
-	"indicer/lib/dbio"
 	"indicer/lib/engine"
 	"indicer/lib/fio"
 	"indicer/lib/util"
@@ -267,7 +266,7 @@ func batchOwnerWriteLoop(
 ) ([]byte, error) {
 	batch := util.InitBatch(db, engine.For(db).MaxBatchCount())
 
-	barrier := newChunkMetaBarrier(dbio.KVDir(db), containerMgr, batch)
+	barrier := newChunkMetaBarrier(db, containerMgr, batch)
 	hocho := newHochoAccumulator(shape.fileHash, shape.chunk, 0)
 
 	// On failure the writer returns at once; its caller cancels the pass,
@@ -287,7 +286,7 @@ func batchOwnerWriteLoop(
 		if err := processRel(task.index, fhash, task.chash, db, batch); err != nil {
 			return fail(err)
 		}
-		if err := processRevRel(shape.revrel, task.index, fhash, task.chash, batch); err != nil {
+		if err := processRevRel(shape.revrel, task.index, fhash, task.chash, db, batch); err != nil {
 			return fail(err)
 		}
 	}

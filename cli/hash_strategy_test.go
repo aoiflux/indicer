@@ -438,7 +438,7 @@ func attachSyntheticPartitionAndIndexed(t *testing.T, dbPath string, key []byte,
 
 	indexed := structs.NewIndexedFile("evidence://"+tag+"/inode.bin", indexedStart, indexedSize, cnst.UnknownEvidenceType, false, indexedHash)
 	indexedBatch := util.InitBatch(db, engine.For(db).MaxBatchCount())
-	if err := dbio.SetIndexedFile(indexedRaw, indexed, indexedBatch); err != nil {
+	if err := dbio.SetIndexedFile(db, indexedRaw, indexed, indexedBatch); err != nil {
 		t.Fatalf("SetFile indexed: %v", err)
 	}
 	if err := indexedBatch.Flush(); err != nil {

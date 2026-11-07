@@ -49,11 +49,11 @@ func TestGetReverseRelationNodeReadsAppendPrimary(t *testing.T) {
 	revKey := util.AppendToBytesSlice(cnst.ReverseRelationNamespace, []byte("chunk-a"), cnst.DataSeperator, int64(2))
 
 	batch := db.NewWriteBatch()
-	if err := SetReverseRelationAppendMember([]byte("chunk-a"), int64(2), []byte("append-a"), batch); err != nil {
+	if err := SetReverseRelationAppendMember(db, []byte("chunk-a"), int64(2), []byte("append-a"), batch); err != nil {
 		batch.Cancel()
 		t.Fatalf("SetReverseRelationAppendMember append-a: %v", err)
 	}
-	if err := SetReverseRelationAppendMember([]byte("chunk-a"), int64(2), []byte("append-b"), batch); err != nil {
+	if err := SetReverseRelationAppendMember(db, []byte("chunk-a"), int64(2), []byte("append-b"), batch); err != nil {
 		batch.Cancel()
 		t.Fatalf("SetReverseRelationAppendMember append-b: %v", err)
 	}
@@ -80,11 +80,11 @@ func TestGetReverseRelationNodeAppendPrimaryDedupesDuplicateMembers(t *testing.T
 	revKey := util.AppendToBytesSlice(cnst.ReverseRelationNamespace, []byte("chunk-b"), cnst.DataSeperator, int64(3))
 
 	batch := db.NewWriteBatch()
-	if err := SetReverseRelationAppendMember([]byte("chunk-b"), int64(3), []byte("shared"), batch); err != nil {
+	if err := SetReverseRelationAppendMember(db, []byte("chunk-b"), int64(3), []byte("shared"), batch); err != nil {
 		batch.Cancel()
 		t.Fatalf("SetReverseRelationAppendMember shared first: %v", err)
 	}
-	if err := SetReverseRelationAppendMember([]byte("chunk-b"), int64(3), []byte("shared"), batch); err != nil {
+	if err := SetReverseRelationAppendMember(db, []byte("chunk-b"), int64(3), []byte("shared"), batch); err != nil {
 		batch.Cancel()
 		t.Fatalf("SetReverseRelationAppendMember shared second: %v", err)
 	}
@@ -135,7 +135,7 @@ func TestGetReverseRelationNodeReadsLegacyAppendPrimaryKeys(t *testing.T) {
 	)
 
 	batch := db.NewWriteBatch()
-	if err := SetBatchNode(legacyKey, fhash, batch); err != nil {
+	if err := SetBatchNode(db, legacyKey, fhash, batch); err != nil {
 		batch.Cancel()
 		t.Fatalf("SetBatchNode legacy append key: %v", err)
 	}
@@ -245,14 +245,14 @@ func TestForEachChunkOccurrenceReadsEveryForm(t *testing.T) {
 		owner string
 		index int64
 	}{{"evidence-a", 0}, {"evidence-a", 8192}, {"evidence-b", 4096}} {
-		if err := SetBatchNode(ReverseRelationAppendMemberKey(chash, m.index, []byte(m.owner)), []byte(m.owner), batch); err != nil {
+		if err := SetBatchNode(db, ReverseRelationAppendMemberKey(chash, m.index, []byte(m.owner)), []byte(m.owner), batch); err != nil {
 			t.Fatal(err)
 		}
 	}
 	// The text form of the same key.
 	legacyKey := util.AppendToBytesSlice(cnst.ReverseRelationAppendNamespace, chash, cnst.DataSeperator, int64(12288),
 		cnst.DataSeperator, reverseRelationAppendShard([]byte("evidence-c")), cnst.DataSeperator, "encoded")
-	if err := SetBatchNode(legacyKey, []byte("evidence-c"), batch); err != nil {
+	if err := SetBatchNode(db, legacyKey, []byte("evidence-c"), batch); err != nil {
 		t.Fatal(err)
 	}
 	// A legacy per-offset map, repeating one occurrence.
@@ -260,7 +260,7 @@ func TestForEachChunkOccurrenceReadsEveryForm(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := SetBatchNode(util.AppendToBytesSlice(cnst.ReverseRelationNamespace, chash, cnst.DataSeperator, int64(0)), legacyMap, batch); err != nil {
+	if err := SetBatchNode(db, util.AppendToBytesSlice(cnst.ReverseRelationNamespace, chash, cnst.DataSeperator, int64(0)), legacyMap, batch); err != nil {
 		t.Fatal(err)
 	}
 	// Segments.

@@ -127,7 +127,7 @@ Restore, search, NeAR, full-text indexing, enrichment, `micro`, `reindex`, the `
 - In an older database, the size is read from the evidence's own relation keys. See [Older databases](#older-databases).
 - A materialised object uses the `ChunkSize` in its `ObjectRecord`.
 
-`lib/store/layout_guard_test.go` fails if a listed storage or read-path file reads `cnst.ChonkSize`, `cnst.QUICKOPT` or `cnst.HASHALGO`.
+`lib/store/layout_guard_test.go` fails if a listed storage or read-path file reads a layout, tuning or encoder global such as `cnst.ChonkSize`, `cnst.QUICKOPT`, `cnst.ENCODER` or `cnst.HASHALGO`.
 
 ## Restore
 

@@ -31,7 +31,7 @@ func TestCountSharedChunksReadsEveryForm(t *testing.T) {
 	batch := db.NewWriteBatch()
 	set := func(key, value []byte) {
 		t.Helper()
-		if err := SetBatchNode(key, value, batch); err != nil {
+		if err := SetBatchNode(db, key, value, batch); err != nil {
 			t.Fatal(err)
 		}
 	}

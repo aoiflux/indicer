@@ -14,19 +14,18 @@ import (
 	"github.com/zeebo/blake3"
 )
 
-// ensureCodecs sets up the process-wide zstd codecs. testdb cannot be used:
-// it imports dbio, which imports this package. The decoder is the
-// production one: FuzzDecode feeds it crafted frames, and without its
+// encoder acquires a zstd encoder for the test, released at its end. testdb
+// cannot be used: it imports dbio, which imports this package. The decoder
+// is the production one: FuzzDecode feeds it crafted frames, and without its
 // memory limit one input can take gigabytes.
-func ensureCodecs(t testing.TB) {
+func encoder(t testing.TB) *zstdx.Encoder {
 	t.Helper()
-	if cnst.ENCODER == nil {
-		e, err := zstdx.Acquire("default", runtime.GOMAXPROCS(0))
-		if err != nil {
-			t.Fatal(err)
-		}
-		cnst.ENCODER = e
+	e, err := zstdx.Acquire("default", runtime.GOMAXPROCS(0))
+	if err != nil {
+		t.Fatal(err)
 	}
+	t.Cleanup(e.Release)
+	return e
 }
 
 func ckeyFor(hash []byte) []byte { return append([]byte(cnst.ChonkNamespace), hash...) }
@@ -45,17 +44,17 @@ var blobKey = bytes.Repeat([]byte{7}, 32)
 
 func codecs(t testing.TB) map[string]Codec {
 	t.Helper()
-	ensureCodecs(t)
-	plain, err := NewV2(nil)
+	enc := encoder(t)
+	plain, err := NewV2(nil, enc)
 	if err != nil {
 		t.Fatal(err)
 	}
-	sealed, err := NewV2(blobKey)
+	sealed, err := NewV2(blobKey, enc)
 	if err != nil {
 		t.Fatal(err)
 	}
 	return map[string]Codec{
-		"legacy-sealed": NewLegacySealed(blobKey),
+		"legacy-sealed": NewLegacySealed(blobKey, enc),
 		"legacy-raw":    NewLegacyRaw(),
 		"v2":            plain,
 		"v2-sealed":     sealed,
@@ -134,7 +133,7 @@ func TestV2SealingMustMatch(t *testing.T) {
 	if _, err := cs["v2"].Decode(ckey, sealedStored); !errors.Is(err, ErrCorrupt) {
 		t.Errorf("unsealed codec accepted a sealed chunk: %v", err)
 	}
-	other, _ := NewV2(bytes.Repeat([]byte{8}, 32))
+	other, _ := NewV2(bytes.Repeat([]byte{8}, 32), nil)
 	if _, err := other.Decode(ckey, sealedStored); !errors.Is(err, ErrCorrupt) {
 		t.Errorf("chunk decrypted under another key: %v", err)
 	}
@@ -177,7 +176,7 @@ func TestForFallsBackToGlobals(t *testing.T) {
 	if got := For(db).Name(); got != LegacySealed {
 		t.Fatalf("unregistered default DB uses %s, want %s", got, LegacySealed)
 	}
-	c, _ := NewV2(nil)
+	c, _ := NewV2(nil, nil)
 	Register(db, c)
 	if For(db).Name() != V2 {
 		t.Fatal("registered codec not returned")
@@ -210,5 +209,28 @@ func TestSealed(t *testing.T) {
 	Unregister(db)
 	if Sealed(db) {
 		t.Error("an unregistered database without a key is sealed")
+	}
+}
+
+// TestEncodeWithoutEncoder: a codec built only to decode refuses to encode
+// rather than reach for another database's encoder, and still decodes.
+func TestEncodeWithoutEncoder(t *testing.T) {
+	data := bytes.Repeat([]byte("evidence "), 100)
+	ckey := blakeKey(data)
+	stored, err := codecs(t)["v2-sealed"].Encode(ckey, data)
+	if err != nil {
+		t.Fatal(err)
+	}
+	decodeOnly, err := NewV2(blobKey, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for name, c := range map[string]Codec{"v2": decodeOnly, "legacy-sealed": NewLegacySealed(blobKey, nil)} {
+		if _, err := c.Encode(ckey, data); !errors.Is(err, errNoEncoder) {
+			t.Errorf("%s without an encoder: Encode error %v, want errNoEncoder", name, err)
+		}
+	}
+	if got, err := decodeOnly.Decode(ckey, stored); err != nil || !bytes.Equal(got, data) {
+		t.Fatalf("decode-only codec: %v", err)
 	}
 }

@@ -11,12 +11,12 @@ import (
 	"indicer/lib/blobcodec"
 	"indicer/lib/cnst"
 	"indicer/lib/dbmeta"
+	"indicer/lib/engine"
 	"indicer/lib/fio"
 	"indicer/lib/logging"
 	"indicer/lib/structs"
 	"indicer/lib/util"
 	"indicer/lib/zstdx"
-	"os"
 	"strconv"
 	"time"
 
@@ -25,18 +25,6 @@ import (
 	"github.com/vmihailenco/msgpack/v5"
 	"go.uber.org/zap"
 )
-
-func ConnectDB(datadir string, key []byte) (*badger.DB, error) {
-	datadir = util.KVDBPath(datadir)
-	if err := os.MkdirAll(datadir, cnst.DirPerm); err != nil {
-		return nil, err
-	}
-	// Legacy quick mode used badger's default (Snappy) tables and no key.
-	if cnst.QUICKOPT {
-		return badger.Open(BadgerOptions(datadir, nil, options.Snappy, cnst.Globals()))
-	}
-	return badger.Open(BadgerOptions(datadir, key, options.ZSTD, cnst.Globals()))
-}
 
 // badgerLogger sends badger's own messages to the DUES log. Its default logger
 // writes to stderr, which corrupts the TUI and pollutes FFI hosts' output.
@@ -118,9 +106,7 @@ func SetFile[T structs.FileTypes](id []byte, filenode T, db *badger.DB) error {
 		logging.GetLogger().Error("SetFile MARSHAL_ERROR", zap.Error(err))
 		return err
 	}
-	if !cnst.QUICKOPT {
-		data = cnst.ENCODER.EncodeAll(data, make([]byte, 0, len(data)))
-	}
+	data = engine.For(db).EncodeValue(data)
 
 	err = db.Update(func(txn *badger.Txn) error {
 		return txn.Set(id, data)
@@ -132,13 +118,13 @@ func SetFile[T structs.FileTypes](id []byte, filenode T, db *badger.DB) error {
 	logging.GetLogger().Debug("SetFile COMPLETE", zap.Int("id_length", len(id)))
 	return nil
 }
-func SetIndexedFile(id []byte, filenode structs.IndexedFile, batch *badger.WriteBatch) error {
+func SetIndexedFile(db *badger.DB, id []byte, filenode structs.IndexedFile, batch *badger.WriteBatch) error {
 	id = CanonicalIndexedKey(id)
 	data, err := msgpack.Marshal(filenode)
 	if err != nil {
 		return err
 	}
-	return SetBatchNode(id, data, batch)
+	return SetBatchNode(db, id, data, batch)
 }
 
 func GetEvidenceFile(key []byte, db *badger.DB) (structs.EvidenceFile, error) {
@@ -241,7 +227,7 @@ func buildReverseRelationAppendMemberKey(chash []byte, index int64, shard int, f
 	return key
 }
 
-func SetReverseRelationAppendMembers(fhash []byte, members []ReverseRelationAppendMember, batch *badger.WriteBatch) error {
+func SetReverseRelationAppendMembers(db *badger.DB, fhash []byte, members []ReverseRelationAppendMember, batch *badger.WriteBatch) error {
 	if len(members) == 0 {
 		return nil
 	}
@@ -250,7 +236,7 @@ func SetReverseRelationAppendMembers(fhash []byte, members []ReverseRelationAppe
 
 	for _, member := range members {
 		memberKey := buildReverseRelationAppendMemberKey(member.Chash, member.Index, shard, fhash)
-		if err := SetBatchNode(memberKey, fhash, batch); err != nil {
+		if err := SetBatchNode(db, memberKey, fhash, batch); err != nil {
 			return err
 		}
 	}
@@ -258,9 +244,9 @@ func SetReverseRelationAppendMembers(fhash []byte, members []ReverseRelationAppe
 	return nil
 }
 
-func SetReverseRelationAppendMember(chash []byte, index int64, fhash []byte, batch *badger.WriteBatch) error {
+func SetReverseRelationAppendMember(db *badger.DB, chash []byte, index int64, fhash []byte, batch *badger.WriteBatch) error {
 	member := ReverseRelationAppendMember{Chash: chash, Index: index}
-	return SetReverseRelationAppendMembers(fhash, []ReverseRelationAppendMember{member}, batch)
+	return SetReverseRelationAppendMembers(db, fhash, []ReverseRelationAppendMember{member}, batch)
 }
 
 func GetReverseRelationNode(key []byte, db *badger.DB) (map[string]struct{}, error) {
@@ -405,13 +391,6 @@ func reverseRelationAppendMemberIndex(chash, memberKey []byte) (int64, bool) {
 	return idx, true
 }
 
-func SetBatchChonkSignature(chash []byte, signature uint64, batch *badger.WriteBatch) error {
-	key := util.AppendToBytesSlice(cnst.ChonkSimhashNamespace, chash)
-	data := make([]byte, 8)
-	binary.BigEndian.PutUint64(data, signature)
-	return SetBatchNode(key, data, batch)
-}
-
 func SetChonkSignature(chash []byte, signature uint64, db *badger.DB) error {
 	key := util.AppendToBytesSlice(cnst.ChonkSimhashNamespace, chash)
 	data := make([]byte, 8)
@@ -519,14 +498,14 @@ func materializeFileChonkNode(key, data []byte, originalSize int64, db *badger.D
 	return encodedMetadata, dataLen, nil
 }
 
-func SetBatchNode(key, data []byte, batch *badger.WriteBatch) error {
+// SetBatchNode adds key to batch, a write batch on db, with data encoded the
+// way db stores values.
+func SetBatchNode(db *badger.DB, key, data []byte, batch *badger.WriteBatch) error {
 	logging.GetLogger().Debug("SetBatchNode START",
 		zap.Int("key_length", len(key)),
 		zap.Int("data_length", len(data)),
 	)
-	if !cnst.QUICKOPT {
-		data = cnst.ENCODER.EncodeAll(data, make([]byte, 0, len(data)))
-	}
+	data = engine.For(db).EncodeValue(data)
 	err := batch.Set(key, data)
 	if err != nil {
 		logging.GetLogger().Error("SetBatchNode WRITE_ERROR", zap.Error(err), zap.Int("key_length", len(key)))
@@ -535,9 +514,7 @@ func SetBatchNode(key, data []byte, batch *badger.WriteBatch) error {
 	return nil
 }
 func SetNode(key, data []byte, db *badger.DB) error {
-	if !cnst.QUICKOPT {
-		data = cnst.ENCODER.EncodeAll(data, make([]byte, 0, len(data)))
-	}
+	data = engine.For(db).EncodeValue(data)
 	return db.Update(func(txn *badger.Txn) error {
 		return txn.Set(key, data)
 	})

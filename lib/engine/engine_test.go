@@ -1,11 +1,13 @@
 package engine
 
 import (
+	"bytes"
 	"sync"
 	"testing"
 
 	"indicer/lib/cnst"
 	"indicer/lib/dbmeta"
+	"indicer/lib/zstdx"
 
 	"github.com/dgraph-io/badger/v4"
 )
@@ -14,11 +16,22 @@ import (
 func keepGlobals(t *testing.T) {
 	t.Helper()
 	container, blockIndex, chunk, low := cnst.CONTAINERMODE, cnst.LegacyBlockIndex, cnst.ChonkSize, cnst.MEMOPT
-	strategy := cnst.StoreHashStrategy
+	strategy, quick := cnst.StoreHashStrategy, cnst.QUICKOPT
 	t.Cleanup(func() {
 		cnst.CONTAINERMODE, cnst.LegacyBlockIndex, cnst.ChonkSize, cnst.MEMOPT = container, blockIndex, chunk, low
-		cnst.StoreHashStrategy = strategy
+		cnst.StoreHashStrategy, cnst.QUICKOPT = strategy, quick
 	})
+}
+
+// register registers db for the test and unregisters it at the end.
+func register(t *testing.T, db *badger.DB, l dbmeta.Layout, tun cnst.Tuning) *Engine {
+	t.Helper()
+	e, err := Register(db, l, tun)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { Unregister(db) })
+	return e
 }
 
 // TestUnregisteredFollowsGlobals: a database dbopen did not open answers
@@ -55,8 +68,7 @@ func TestRegisteredKeepsItsOwn(t *testing.T) {
 	l := dbmeta.Layout{ChunkKiB: 64, ChunkHash: dbmeta.HashBLAKE3, Storage: dbmeta.StorageContainerBIDX}
 	tun := cnst.DefaultTuning()
 	tun.LowResource, tun.HashStrategy = true, cnst.AsyncHashStrategy
-	e := Register(db, l, tun)
-	t.Cleanup(func() { Unregister(db) })
+	e := register(t, db, l, tun)
 
 	cnst.CONTAINERMODE, cnst.LegacyBlockIndex, cnst.MEMOPT = false, false, false
 	if For(db) != e {
@@ -80,8 +92,7 @@ func TestRegisteredKeepsItsOwn(t *testing.T) {
 func TestSetLayoutInPlace(t *testing.T) {
 	db := new(badger.DB)
 	l := dbmeta.Layout{ChunkKiB: 256, Storage: dbmeta.StorageContainerBIDX}
-	held := Register(db, l, cnst.DefaultTuning())
-	t.Cleanup(func() { Unregister(db) })
+	held := register(t, db, l, cnst.DefaultTuning())
 
 	l.Storage = dbmeta.StorageContainer
 	For(db).SetLayout(l)
@@ -98,8 +109,7 @@ func TestSetLayoutInPlace(t *testing.T) {
 // block index may run at once (run under -race).
 func TestConcurrentUse(t *testing.T) {
 	db := new(badger.DB)
-	e := Register(db, dbmeta.Layout{ChunkKiB: 256, Storage: dbmeta.StorageContainerBIDX}, cnst.DefaultTuning())
-	t.Cleanup(func() { Unregister(db) })
+	e := register(t, db, dbmeta.Layout{ChunkKiB: 256, Storage: dbmeta.StorageContainerBIDX}, cnst.DefaultTuning())
 	var wg sync.WaitGroup
 	for i := range 4 {
 		wg.Add(1)
@@ -128,8 +138,7 @@ func TestMaxBatchCountTakesTheChunkSize(t *testing.T) {
 	db := new(badger.DB)
 	// Chunks of a TiB: no machine has four available, so one transaction.
 	huge := dbmeta.Layout{ChunkKiB: 1 << 30, Storage: dbmeta.StorageFile}
-	Register(db, huge, cnst.DefaultTuning())
-	t.Cleanup(func() { Unregister(db) })
+	register(t, db, huge, cnst.DefaultTuning())
 	if n := For(db).MaxBatchCount(); n != 1 {
 		t.Fatalf("1 TiB chunks: %d pending transactions, want 1", n)
 	}
@@ -142,5 +151,57 @@ func TestMaxBatchCountTakesTheChunkSize(t *testing.T) {
 	cnst.MEMOPT = true
 	if n := For(other).MaxBatchCount(); n != 16 {
 		t.Fatalf("unregistered, low resource: %d pending transactions, want 16", n)
+	}
+}
+
+// TestEncodeValueFollowsTheLayout: a database of raw values stores them as
+// they are and any other compresses them with its own encoder, whatever
+// quick mode the process says and whether it has an encoder at all.
+func TestEncodeValueFollowsTheLayout(t *testing.T) {
+	keepGlobals(t)
+	data := bytes.Repeat([]byte("record "), 200)
+	raw := register(t, new(badger.DB), dbmeta.Layout{ChunkKiB: 256, Storage: dbmeta.StorageFile, ValueEncoding: dbmeta.EncodingRaw}, cnst.DefaultTuning())
+	zst := register(t, new(badger.DB), dbmeta.Layout{ChunkKiB: 256, Storage: dbmeta.StorageFile, ValueEncoding: dbmeta.EncodingZstd}, cnst.DefaultTuning())
+	prevEnc := cnst.ENCODER
+	t.Cleanup(func() { cnst.ENCODER = prevEnc })
+	cnst.ENCODER = nil
+	for _, quick := range []bool{true, false} {
+		cnst.QUICKOPT = quick
+		if !raw.RawValues() || !bytes.Equal(raw.EncodeValue(data), data) {
+			t.Fatalf("quick %v: a raw-values database changed its value", quick)
+		}
+		if zst.RawValues() || zst.Encoder() == nil {
+			t.Fatalf("quick %v: a zstd database has raw values or no encoder", quick)
+		}
+		got, err := zstdx.DecodeAll(zst.EncodeValue(data), nil)
+		if err != nil || !bytes.Equal(got, data) {
+			t.Fatalf("quick %v: zstd value does not decode back: %v", quick, err)
+		}
+	}
+}
+
+// TestUnregisteredEncodesByGlobals: a database dbopen did not open encodes
+// as quick mode and the process encoder say at each call.
+func TestUnregisteredEncodesByGlobals(t *testing.T) {
+	keepGlobals(t)
+	enc, err := zstdx.Acquire("fast", 1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(enc.Release)
+	prevEnc := cnst.ENCODER
+	t.Cleanup(func() { cnst.ENCODER = prevEnc })
+	cnst.ENCODER = enc
+	e, data := For(new(badger.DB)), []byte("record record record record")
+	cnst.QUICKOPT = true
+	if !e.RawValues() || !bytes.Equal(e.EncodeValue(data), data) {
+		t.Fatal("quick mode compressed a value")
+	}
+	cnst.QUICKOPT = false
+	if e.RawValues() || e.Encoder() != enc {
+		t.Fatal("unregistered database ignores the process encoder")
+	}
+	if got, err := zstdx.DecodeAll(e.EncodeValue(data), nil); err != nil || !bytes.Equal(got, data) {
+		t.Fatalf("value does not decode back: %v", err)
 	}
 }

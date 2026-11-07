@@ -63,7 +63,7 @@ func TestChunkMetaVisibleOnlyAfterSync(t *testing.T) {
 					synced.Store(covered)
 					return nil
 				}
-				setChunkMeta = func(key, val []byte, batch *badger.WriteBatch) error {
+				setChunkMeta = func(db *badger.DB, key, val []byte, batch *badger.WriteBatch) error {
 					sets.Add(1)
 					mu.Lock()
 					n, ok := produced[string(key)]
@@ -73,7 +73,7 @@ func TestChunkMetaVisibleOnlyAfterSync(t *testing.T) {
 					} else if n > synced.Load() {
 						t.Errorf("metadata for chunk %d reached the batch before a sync covered it (synced through %d)", n, synced.Load())
 					}
-					return prevSet(key, val, batch)
+					return prevSet(db, key, val, batch)
 				}
 
 				runChunkPass(t, pass, db.DB, "evidence", content)

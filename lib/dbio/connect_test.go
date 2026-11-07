@@ -15,7 +15,7 @@ func TestConnectDBLowResourceMode(t *testing.T) {
 	testdb.EnsureCodecs(t)
 	for _, low := range []bool{true, false} {
 		cnst.MEMOPT = low
-		db, err := dbio.ConnectDB(t.TempDir(), testdb.ZeroKey())
+		db, err := dbio.ConnectDB(t.TempDir(), testdb.ZeroKey(), false)
 		if err != nil {
 			t.Fatalf("ConnectDB with MEMOPT=%v: %v", low, err)
 		}

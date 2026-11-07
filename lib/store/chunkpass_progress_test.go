@@ -11,6 +11,7 @@ import (
 	"indicer/internal/testutil"
 	"indicer/internal/testutil/testdb"
 	"indicer/lib/blobcodec"
+	"indicer/lib/engine"
 	"indicer/lib/util"
 )
 
@@ -114,7 +115,7 @@ func TestChunkPassNotesEncryption(t *testing.T) {
 			if err := util.EnsureBlobPath(db.DB.Opts().Dir); err != nil {
 				t.Fatal(err)
 			}
-			codec, err := blobcodec.NewV2(key)
+			codec, err := blobcodec.NewV2(key, engine.For(db.DB).Encoder())
 			if err != nil {
 				t.Fatal(err)
 			}

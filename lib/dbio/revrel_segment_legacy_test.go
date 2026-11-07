@@ -58,7 +58,7 @@ func seedLegacySegmentMembers(fhash []byte, members []ReverseRelationAppendMembe
 		if err != nil {
 			return err
 		}
-		if err := SetBatchNode(keysByChash[chashKey], encoded, batch); err != nil {
+		if err := SetBatchNode(db, keysByChash[chashKey], encoded, batch); err != nil {
 			return err
 		}
 	}

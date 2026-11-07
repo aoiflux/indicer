@@ -115,7 +115,7 @@ func (ix *indexer) endPartition(p core.PartitionInfo, rep *core.IndexReport) err
 	report := op.rep
 	fillReport(&report, rep)
 	err := ix.opts.DB.Update(func(txn *badger.Txn) error {
-		return dbio.PutRecordTxn(txn, dbio.PartitionReportKey(op.id), report)
+		return dbio.PutRecordTxn(ix.opts.DB, txn, dbio.PartitionReportKey(op.id), report)
 	})
 	if err != nil {
 		return fmt.Errorf("index: partition %s report: %w", op.name, err)
@@ -152,7 +152,7 @@ func (ix *indexer) putPartition(op *openPartition, members int) error {
 		case !errors.Is(err, badger.ErrKeyNotFound):
 			return err
 		}
-		return dbio.PutRecordTxn(txn, op.key, rec)
+		return dbio.PutRecordTxn(ix.opts.DB, txn, op.key, rec)
 	})
 }
 
@@ -220,7 +220,7 @@ func SetPartitionHash(db *badger.DB, pid, hash []byte) error {
 			}
 		}
 		rec.FileHash = enc
-		if err := dbio.PutRecordTxn(txn, key, rec); err != nil {
+		if err := dbio.PutRecordTxn(db, txn, key, rec); err != nil {
 			return err
 		}
 		lookup := util.AppendToBytesSlice(cnst.PartiFileHashLookupNamespace, enc)

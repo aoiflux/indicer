@@ -312,7 +312,7 @@ func stagedDiskWriterLoop(
 ) ([]byte, error) {
 	batch := util.InitBatch(db, engine.For(db).MaxBatchCount())
 
-	barrier := newChunkMetaBarrier(dbio.KVDir(db), writes.containers(), batch)
+	barrier := newChunkMetaBarrier(db, writes.containers(), batch)
 	hocho := newHochoAccumulator(shape.fileHash, shape.chunk, 0)
 	pending := make([]stagedWriteChunk, 0, batchSize)
 
@@ -352,7 +352,7 @@ func stagedDiskWriterLoop(
 			if err := processRel(item.offset, fhash, chash, db, batch); err != nil {
 				return err
 			}
-			if err := processRevRel(shape.revrel, item.offset, fhash, chash, batch); err != nil {
+			if err := processRevRel(shape.revrel, item.offset, fhash, chash, db, batch); err != nil {
 				return err
 			}
 		}

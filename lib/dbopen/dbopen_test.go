@@ -20,6 +20,7 @@ import (
 	"indicer/lib/cnst"
 	"indicer/lib/dbio"
 	"indicer/lib/dbmeta"
+	"indicer/lib/engine"
 	"indicer/lib/fsx"
 	"indicer/lib/zstdx"
 
@@ -312,7 +313,7 @@ func readSomeChunks(t *testing.T, db *badger.DB, root string, container bool) in
 		defer it.Close()
 		for it.Rewind(); it.Valid(); it.Next() {
 			v, _ := it.Item().ValueCopy(nil)
-			if !cnst.QUICKOPT {
+			if !engine.For(db).RawValues() {
 				v, _ = zstdx.DecodeAll(v, nil)
 			}
 			chashes = append(chashes, v)

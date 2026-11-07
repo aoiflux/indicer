@@ -226,7 +226,7 @@ func TestCleanupDuplicateRemovesIndex(t *testing.T) {
 	obj := []byte("object-0001-----")
 	irec.Content = &structs.ContentRef{Kind: structs.ContentMaterialized, Located: 10, ObjectID: obj}
 	batch := db.NewWriteBatch()
-	if err := dbio.SetIndexedFile(ikey, irec, batch); err != nil {
+	if err := dbio.SetIndexedFile(db.DB, ikey, irec, batch); err != nil {
 		t.Fatal(err)
 	}
 	if err := batch.Flush(); err != nil {

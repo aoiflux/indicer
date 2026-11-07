@@ -226,7 +226,7 @@ func (ix *indexer) write(op *openPartition, iid []byte, f *structs.IndexedFile, 
 		pages := (len(ext) + structs.MaxRecordExtents - 1) / structs.MaxRecordExtents
 		for p := range pages {
 			page := ext[p*structs.MaxRecordExtents : min((p+1)*structs.MaxRecordExtents, len(ext))]
-			data, err := dbio.EncodeRecord(page)
+			data, err := dbio.EncodeRecord(ix.opts.DB, page)
 			if err != nil {
 				return err
 			}
@@ -238,7 +238,7 @@ func (ix *indexer) write(op *openPartition, iid []byte, f *structs.IndexedFile, 
 		f.Content.ExtentPages = pages
 	}
 	ikey := dbio.CanonicalIndexedKey(iid)
-	data, err := dbio.EncodeRecord(f)
+	data, err := dbio.EncodeRecord(ix.opts.DB, f)
 	if err != nil {
 		return err
 	}

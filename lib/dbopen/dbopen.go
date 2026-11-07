@@ -35,6 +35,7 @@ import (
 	"indicer/lib/fsx"
 	"indicer/lib/logging"
 	"indicer/lib/store"
+	"indicer/lib/zstdx"
 
 	"github.com/dgraph-io/badger/v4"
 	"github.com/dgraph-io/badger/v4/options"
@@ -257,13 +258,17 @@ func (h *Handle) open(ctx context.Context, req Request) error {
 		return err
 	}
 
-	codec, err := codecFor(m.Layout, keys)
+	// A failed open releases the handle, which unregisters the engine.
+	eng, err := engine.Register(h.DB, m.Layout, h.tuning)
+	if err != nil {
+		return err
+	}
+	codec, err := codecFor(m.Layout, keys, eng.Encoder())
 	if err != nil {
 		return err
 	}
 	blobcodec.Register(h.DB, codec)
 	dbmeta.RegisterManifest(h.DB, m)
-	engine.Register(h.DB, m.Layout, h.tuning)
 	ApplyToGlobals(m)
 	h.keepBlockIndexLookup()
 	if l := m.Layout; h.Created && l.ChunkKiB < containerAdviceKiB && l.Storage == dbmeta.StorageFile {
@@ -781,14 +786,16 @@ func (h *Handle) checkMarker() error {
 	})
 }
 
-func codecFor(l dbmeta.Layout, keys dbmeta.Keys) (blobcodec.Codec, error) {
+// codecFor returns the blob codec of a database of layout l, compressing
+// with enc, the database's encoder.
+func codecFor(l dbmeta.Layout, keys dbmeta.Keys, enc *zstdx.Encoder) (blobcodec.Codec, error) {
 	switch l.BlobEncoding {
 	case blobcodec.LegacySealed:
-		return blobcodec.NewLegacySealed(keys.Blob), nil
+		return blobcodec.NewLegacySealed(keys.Blob, enc), nil
 	case blobcodec.LegacyRaw:
 		return blobcodec.NewLegacyRaw(), nil
 	case blobcodec.V2:
-		return blobcodec.NewV2(keys.Blob)
+		return blobcodec.NewV2(keys.Blob, enc)
 	}
 	return nil, fmt.Errorf("unknown blob encoding %q", l.BlobEncoding)
 }

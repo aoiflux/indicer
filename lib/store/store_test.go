@@ -24,7 +24,7 @@ func TestProcessRevRelSkippedWhenDisabled(t *testing.T) {
 	chash := []byte("chunk-disabled")
 
 	batch := db.NewWriteBatch()
-	if err := processRevRel(false, index, fhash, chash, batch); err != nil {
+	if err := processRevRel(false, index, fhash, chash, db, batch); err != nil {
 		batch.Cancel()
 		t.Fatalf("processRevRel disabled: %v", err)
 	}
@@ -47,7 +47,7 @@ func TestProcessRevRelWritesWhenEnabled(t *testing.T) {
 	chash := []byte("chunk-enabled")
 
 	batch := db.NewWriteBatch()
-	if err := processRevRel(true, index, fhash, chash, batch); err != nil {
+	if err := processRevRel(true, index, fhash, chash, db, batch); err != nil {
 		batch.Cancel()
 		t.Fatalf("processRevRel enabled: %v", err)
 	}
@@ -80,7 +80,7 @@ func openTestDB(t testing.TB) *badger.DB {
 		cnst.QUICKOPT = prevQuick
 	})
 
-	db, err := dbio.ConnectDB(t.TempDir(), bytes.Repeat([]byte{0}, 32))
+	db, err := dbio.ConnectDB(t.TempDir(), bytes.Repeat([]byte{0}, 32), cnst.QUICKOPT)
 	if err != nil {
 		t.Fatalf("ConnectDB: %v", err)
 	}

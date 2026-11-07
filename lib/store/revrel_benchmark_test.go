@@ -34,7 +34,7 @@ func BenchmarkProcessRevRel(b *testing.B) {
 		fhash := []byte("bench-file-fixed")
 
 		seedBatch := db.NewWriteBatch()
-		if err := dbio.SetReverseRelationAppendMember(chash, index, fhash, seedBatch); err != nil {
+		if err := dbio.SetReverseRelationAppendMember(db, chash, index, fhash, seedBatch); err != nil {
 			b.Fatalf("seed reverse relation: %v", err)
 		}
 		if err := seedBatch.Flush(); err != nil {
@@ -44,7 +44,7 @@ func BenchmarkProcessRevRel(b *testing.B) {
 		b.ResetTimer()
 		for i := 0; i < b.N; i++ {
 			batch := db.NewWriteBatch()
-			err := processRevRel(true, index, fhash, chash, batch)
+			err := processRevRel(true, index, fhash, chash, db, batch)
 			if err != nil {
 				batch.Cancel()
 				b.Fatalf("processRevRel noop path failed: %v", err)
@@ -63,7 +63,7 @@ func BenchmarkProcessRevRel(b *testing.B) {
 		chash := []byte("bench-chash-fixed")
 
 		seedBatch := db.NewWriteBatch()
-		if err := dbio.SetReverseRelationAppendMember(chash, index, []byte("seed-file"), seedBatch); err != nil {
+		if err := dbio.SetReverseRelationAppendMember(db, chash, index, []byte("seed-file"), seedBatch); err != nil {
 			b.Fatalf("seed reverse relation: %v", err)
 		}
 		if err := seedBatch.Flush(); err != nil {
@@ -74,7 +74,7 @@ func BenchmarkProcessRevRel(b *testing.B) {
 		for i := 0; i < b.N; i++ {
 			batch := db.NewWriteBatch()
 			fhash := []byte(fmt.Sprintf("bench-file-%d", i))
-			err := processRevRel(true, index, fhash, chash, batch)
+			err := processRevRel(true, index, fhash, chash, db, batch)
 			if err != nil {
 				batch.Cancel()
 				b.Fatalf("processRevRel write path failed: %v", err)
@@ -117,7 +117,7 @@ func BenchmarkProcessRevRel(b *testing.B) {
 		seedBatch := db.NewWriteBatch()
 		for i := 0; i < 32; i++ {
 			fhash := []byte(fmt.Sprintf("seed-file-%02d", i))
-			if err := dbio.SetReverseRelationAppendMember(chash, index, fhash, seedBatch); err != nil {
+			if err := dbio.SetReverseRelationAppendMember(db, chash, index, fhash, seedBatch); err != nil {
 				b.Fatalf("seed reverse relation append: %v", err)
 			}
 		}
@@ -185,7 +185,7 @@ func openRevRelBenchDB(b *testing.B) *badger.DB {
 		encryptionKey[i] = byte(i + 1)
 	}
 
-	db, err := dbio.ConnectDB(tempDir, encryptionKey)
+	db, err := dbio.ConnectDB(tempDir, encryptionKey, cnst.QUICKOPT)
 	if err != nil {
 		b.Fatalf("open badger: %v", err)
 	}

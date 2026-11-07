@@ -104,7 +104,7 @@ func (ix *indexer) materialize(op *openPartition, iid []byte, f *structs.Indexed
 	}
 
 	hash := base64.StdEncoding.EncodeToString(res.PlainHash)
-	obj, err := dbio.EncodeRecord(structs.ObjectRecord{
+	obj, err := dbio.EncodeRecord(ix.opts.DB, structs.ObjectRecord{
 		Size:        size,
 		ChunkSize:   dbmeta.ChunkSize(ix.opts.DB),
 		FileHash:    hash,

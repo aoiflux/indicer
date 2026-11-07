@@ -113,24 +113,31 @@ Code given only a `*badger.DB` reads the layout through registries that
 - `dbmeta.RegisterManifest`: `dbmeta.ChunkSize`, `HashAlgo`, `ChunkHasher`,
   `FileHasher` and `UniformChunkSize` read it. A database opened without
   `dbopen` (some tests) falls back to the process-wide settings.
-- `blobcodec.Register`: `blobcodec.For` returns the database's codec.
+- `blobcodec.Register`: `blobcodec.For` returns the database's codec, which
+  compresses with the database's encoder.
 - `dbio.RegisterKVDir`: `dbio.KVDir` returns the real `kvdb` directory when
   badger was opened elsewhere (read-only media). Every path derived from the
   badger directory goes through `KVDir`, not `db.Opts().Dir`.
 - `engine.Register` (`lib/engine`): `engine.For` returns the database's
-  layout, the tuning it was opened with, and whether its legacy block index
-  is read. The tuning (`cnst.Tuning`: low-resource mode, compression level,
+  layout, the tuning it was opened with, whether its legacy block index is
+  read, and its zstd encoder. Record values go through
+  `engine.For(db).EncodeValue`: as they are in a database of raw values
+  (legacy quick mode), compressed otherwise. Writers that take a transaction
+  or a write batch (`SetBatchNode`, `PutRecordTxn`, `SetEvidenceTxn`,
+  `EncodeRecord`) also take the database, for its engine. The tuning (`cnst.Tuning`: low-resource mode, compression level,
   hash strategy, pipeline, worker and queue counts) is `Request.Tuning`, or
   the process-wide settings as they are at the open (`cnst.Globals`).
   `SetStorage` replaces the layout in place, so code that holds the engine
   sees `repair --upgrade`'s change. A database opened without `dbopen` gets
-  an engine that answers from the process-wide settings at each call.
+  an engine that answers from the process-wide settings at each call,
+  `cnst.QUICKOPT` and the process encoder `cnst.ENCODER` among them.
 
 `dbopen.ApplyToGlobals` also sets the process-wide layout globals that older
 code still reads: `cnst.ChonkSize`, `cnst.HASHALGO`, `cnst.QUICKOPT` (raw
 values), `cnst.CONTAINERMODE` and `cnst.LegacyBlockIndex`. The guard test
 `TestRewrittenFilesAvoidLayoutGlobals` fails when a listed file reads a
-layout or tuning global, `cnst.Globals` or one of the getters built on it.
+layout or tuning global, the process encoder, `cnst.Globals` or one of the
+getters built on it.
 
 ## Opening a database (`lib/dbopen`)
 
@@ -805,10 +812,12 @@ reverse.
 `blobcodec.Verify(ckey, plain)` checks content against the hash in a chunk
 key: 32 bytes is BLAKE3 or SHA3-256, 64 bytes is SHA3-512.
 
-Encoding uses `cnst.ENCODER`, whose level `--compress-level` sets (`fast`,
-`default`, `best`; default `best`). It comes from `zstdx.Acquire`: users of
-one level and width share an encoder, and the last `Release` drops it with
-its states. Decoding uses `zstdx.DecodeAll`, whose one process decoder is
+Encoding uses the database's encoder (`engine.For(db).Encoder()`), which
+`engine.Register` acquires at the tuning's level and `Unregister` releases.
+`--compress-level` sets the level (`fast`, `default`, `best`; default
+`best`), and the store worker count its width (`cnst.Tuning.EncodeWorkers`).
+It comes from `zstdx.Acquire`: users of one level and width share an
+encoder, and the last `Release` drops it with its states. Decoding uses `zstdx.DecodeAll`, whose one process decoder is
 built at its first use and returns at most `zstdx.MaxDecodedBlock` (256 MiB)
 from one call.
 

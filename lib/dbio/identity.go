@@ -8,6 +8,7 @@ import (
 
 	"indicer/internal/msgpackx"
 	"indicer/lib/cnst"
+	"indicer/lib/engine"
 	"indicer/lib/structs"
 	"indicer/lib/util"
 	"indicer/lib/zstdx"
@@ -78,25 +79,24 @@ func RelationPrefix(rid []byte) []byte {
 	return util.AppendToBytesSlice(cnst.RelationNamespace, rid, cnst.DataSeperator)
 }
 
-// PutRecordTxn writes v, msgpack-encoded the way every record is.
-func PutRecordTxn(txn *badger.Txn, key []byte, v any) error {
-	data, err := EncodeRecord(v)
+// PutRecordTxn writes v inside txn, a transaction on db, encoded the way
+// every record of db is.
+func PutRecordTxn(db *badger.DB, txn *badger.Txn, key []byte, v any) error {
+	data, err := EncodeRecord(db, v)
 	if err != nil {
 		return err
 	}
 	return txn.Set(key, data)
 }
 
-// EncodeRecord encodes v the way SetFile encodes records.
-func EncodeRecord(v any) ([]byte, error) {
+// EncodeRecord encodes v the way SetFile encodes the records of db: msgpack,
+// then db's value encoding.
+func EncodeRecord(db *badger.DB, v any) ([]byte, error) {
 	data, err := msgpack.Marshal(v)
 	if err != nil {
 		return nil, err
 	}
-	if !cnst.QUICKOPT {
-		data = cnst.ENCODER.EncodeAll(data, make([]byte, 0, len(data)))
-	}
-	return data, nil
+	return engine.For(db).EncodeValue(data), nil
 }
 
 // GetRecordTxn reads the record at key into v. A missing key is
@@ -126,9 +126,10 @@ func GetEvidenceTxn(txn *badger.Txn, eid []byte) (structs.EvidenceFile, error) {
 	return getEvidenceTxn(txn, CanonicalEvidenceKey(eid))
 }
 
-// SetEvidenceTxn writes the evidence record eid inside txn.
-func SetEvidenceTxn(txn *badger.Txn, eid []byte, e structs.EvidenceFile) error {
-	return setEvidenceTxn(txn, CanonicalEvidenceKey(eid), e)
+// SetEvidenceTxn writes the evidence record eid inside txn, a transaction on
+// db.
+func SetEvidenceTxn(db *badger.DB, txn *badger.Txn, eid []byte, e structs.EvidenceFile) error {
+	return setEvidenceTxn(db, txn, CanonicalEvidenceKey(eid), e)
 }
 
 // Aliases returns every alias of the evidence winner, in key order.

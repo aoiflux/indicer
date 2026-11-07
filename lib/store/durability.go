@@ -59,13 +59,14 @@ type pendingChunkMeta struct {
 	key, val []byte
 }
 
-// newChunkMetaBarrier returns a barrier that releases metadata into batch
-// once the chunk material of the database at dbDir is synced.
-func newChunkMetaBarrier(dbDir string, containerMgr *fio.ContainerManager, batch *badger.WriteBatch) *chunkMetaBarrier {
+// newChunkMetaBarrier returns a barrier that releases metadata into batch, a
+// write batch on db, once the database's chunk material is synced.
+func newChunkMetaBarrier(db *badger.DB, containerMgr *fio.ContainerManager, batch *badger.WriteBatch) *chunkMetaBarrier {
+	dbDir := dbio.KVDir(db)
 	return &chunkMetaBarrier{
 		now:  time.Now,
 		sync: func() error { return syncChunkMaterial(dbDir, containerMgr) },
-		set:  func(key, val []byte) error { return setChunkMeta(key, val, batch) },
+		set:  func(key, val []byte) error { return setChunkMeta(db, key, val, batch) },
 	}
 }
 

@@ -399,8 +399,9 @@ a flag that changed several of these at once, encryption among them.
   configuration.
 
 **What is left.** The globals still exist: `ApplyToGlobals` sets them at open,
-and the record encoders and the command-line setup read them. The storage
-code reads each database's layout and tuning through `engine.For`. The FFI
+and the command-line setup writes them. The storage code reads each
+database's layout, tuning and encoder through `engine.For`, and the record
+and chunk encoders write each database's own value encoding. The FFI
 serialises storage-engine operations because of this (residual).
 
 ### concurrency: goroutines, channels and timeouts instead of structured concurrency

@@ -233,7 +233,7 @@ func recordAlias(db *badger.DB, id []byte, e structs.EvidenceFile, path string) 
 			return err
 		}
 		added = true
-		return dbio.PutRecordTxn(txn, key, structs.AliasRecord{
+		return dbio.PutRecordTxn(db, txn, key, structs.AliasRecord{
 			Name:   clientBase(path),
 			Path:   path,
 			Size:   e.Size,

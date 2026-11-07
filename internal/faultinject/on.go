@@ -5,6 +5,7 @@ package faultinject
 import (
 	"fmt"
 	"os"
+	"strings"
 	"sync"
 	"time"
 )
@@ -26,6 +27,9 @@ func newConfig(spec, notify string) (*config, error) {
 	}
 	c := &config{rules: map[string][]Rule{}, notify: notify}
 	for _, r := range parsed {
+		if r.Action == "hold" && notify == "" {
+			return nil, fmt.Errorf("faultinject: %s=hold: nothing can release it without a notification file", r.Point)
+		}
 		c.rules[r.Point] = append(c.rules[r.Point], r)
 	}
 	return c, nil
@@ -115,6 +119,9 @@ func Hit(point string) error {
 		case "block":
 			c.report(point + "#blocked")
 			select {}
+		case "hold":
+			c.report(point + "#held")
+			c.awaitRelease(point)
 		case "signal":
 			if err := signalSelf(r.Signal); err != nil {
 				return fmt.Errorf("%s: signal %s: %w", point, r.Signal, err)
@@ -139,6 +146,22 @@ func (c *config) report(line string) {
 	_, _ = f.WriteString(line + "\n")
 	_ = f.Sync()
 	_ = f.Close()
+}
+
+// awaitRelease waits until the notification file holds the line
+// "<point>#release", which the parent writes when it is done with the hold.
+func (c *config) awaitRelease(point string) {
+	want := point + "#release"
+	for {
+		if b, err := os.ReadFile(c.notify); err == nil {
+			for line := range strings.SplitSeq(string(b), "\n") {
+				if line == want {
+					return
+				}
+			}
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
 }
 
 // Hits reports how many times point has been hit since the last Configure

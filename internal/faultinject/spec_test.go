@@ -42,6 +42,7 @@ func TestParseSpecRejects(t *testing.T) {
 		"ingest.before_commit=exit:300",
 		"ingest.before_commit=sleep:soon",
 		"ingest.before_commit=signal:HUP",
+		"ingest.before_commit=hold:1s",
 		"ingest.before_commit=error@0",
 		"ingest.before_commit=error@x+",
 	} {

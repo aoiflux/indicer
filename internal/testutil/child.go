@@ -173,6 +173,22 @@ func (c *Child) WaitForPoint(tb testing.TB, point string, timeout time.Duration)
 	}
 }
 
+// Release lets a child held at point by the faultinject action hold go on.
+func (c *Child) Release(tb testing.TB, point string) {
+	tb.Helper()
+	f, err := os.OpenFile(c.Notify, os.O_APPEND|os.O_WRONLY, 0)
+	if err != nil {
+		tb.Fatal(err)
+	}
+	_, err = f.WriteString(point + "#release\n")
+	if cerr := f.Close(); err == nil {
+		err = cerr
+	}
+	if err != nil {
+		tb.Fatal(err)
+	}
+}
+
 // Kill terminates the child immediately, as a crash or power loss would.
 func (c *Child) Kill(tb testing.TB) {
 	tb.Helper()

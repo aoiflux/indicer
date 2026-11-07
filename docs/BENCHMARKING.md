@@ -223,9 +223,10 @@ the store process's, sampled every 250 ms.
 - The case folder is 9 to 12% slower. Its 377 small evidence gain: they
   took 47 to 48 s of the wall time, against 74 to 78 s one at a time. Its 29
   heavy evidence run alone in both settings, yet took 926 and 1,006 s,
-  against 791 and 887 s. The cause is not known. The folder and the
-  database shared one USB SSD (no other disk had room), and two runs of
-  one setting differed by up to 12%.
+  against 791 and 887 s. The folder and the database shared one USB SSD
+  (no other disk had room), and two runs of one setting differed by up to
+  12%. "Heavy evidence beside small ones", below, puts the difference down
+  to the device.
 - The plan asked for no regression beyond 5% on these folders, so
   `--store-jobs` stays 1 by default. Measure again with the evidence and
   the database on different disks before changing that.
@@ -240,6 +241,73 @@ the store process's, sampled every 250 ms.
 The small files of the images folder were generated as the second corpus
 above. The 1 to 50 MiB files are `random.seed(42)`, sizes uniform, random
 bytes.
+
+### Heavy evidence beside small ones
+
+The case folder's heavy evidence took about 15% longer at `--store-jobs 0`
+than one at a time, though they run alone in both settings. Measured
+2026-11-07 at `1250a90`, on the same machine, with two tools in the tree:
+
+- `go run ./internal/tools/mkcorpus -out DIR` writes the corpus. By default
+  (seed 42) that is 300 small files of 64 KiB to 64 MiB, sizes log-uniform, a
+  tenth of them copies of earlier ones, and 4 heavy files of 1 to 2 GiB, all
+  random bytes: 304 files, 8.47 GiB, an 8,350 MiB database. `spread/` holds
+  the heavy files at a quarter, half, three quarters and the end of folder
+  order; `heavy-first/` holds the same files as hard links, the heavy ones
+  first.
+- `scripts/storejobs.ps1 -Corpus DIR -Work NEWDIR` stores the folder
+  in the order 1, 0, 0, 1, 1, 0 (one at a time, `--store-jobs 0`), each time
+  into a new container-mode database with `--no-config --debug`. It sums the
+  `StoreFolder ITEM` durations of the evidence of 256 MiB or more: H is their
+  mean at `--store-jobs 0` over their mean one at a time. Every second it
+  samples the disk queue and the CPU of dues and of Defender's engine, and
+  with `-Settle` (default 120 s) it idles the disk before each run.
+
+The folder and the database were on one virtual disk, a VHDX on the NVMe
+disk that also holds the system. The settled passes idled 120 s before each
+run; the others ran back to back.
+
+| Pass | Heavy, one at a time | Heavy, `--store-jobs 0` | H | Store, one / auto | Small evidence gain |
+|---|---|---|---|---|---|
+| spread | 22.2, 32.5, 34.9 s | 25.0, 34.8, 36.3 s | 1.07 | 49.5 / 44.7 s | 1.55x |
+| heavy-first | 27.3, 32.6, 37.0 s | 38.5, 33.0, 34.4 s | 1.09 | 56.4 / 52.6 s | 1.39x |
+| spread, settled | 32.8, 38.7, 37.0 s | 39.7, 38.4, 43.4 s | 1.12 | 62.1 / 56.7 s | 1.61x |
+| heavy-first, settled | 41.7, 26.5, 21.7 s | 23.8, 28.4, 29.8 s | 0.91 | 52.2 / 40.3 s | 1.71x |
+
+- Store time is the `StoreFolder COMPLETE` duration, mean of 3. The small
+  evidence gain is the rest of it, one at a time over `--store-jobs 0`.
+  `--store-jobs 0` was the faster store in every pass, by 7 to 23%.
+- The heavy-first folder is the control. Its heavy evidence run first,
+  before anything runs beside anything, so they do the same work in both
+  settings. Its H still ranged from 0.91 to 1.09, and the heavy evidence's
+  time from one run to the next by up to 1.9x. Six runs cannot resolve 5%
+  on this disk.
+- Pooled over all 26 runs (the four passes and a diagnostic pair), H is
+  1.04: 1.06 for the spread folder (7 pairs, pair ratios 0.87 to 1.21,
+  paired t 1.5) and 1.01 for heavy-first.
+- The suspects in the counters do not show. A heavy evidence waits for the
+  report of every evidence before it, so it never takes the credit ledger's
+  lock: `credit_locked` was 0 for each. badger's level 0 held no tables
+  before or after any of them (container mode keeps chunks out of the
+  tree). The collector's cycles, CPU time and live heap (about 960 MiB) were
+  the same in both settings.
+- A heavy evidence waits on the disk. In the diagnostic pair, dues kept 2.6
+  to 4.4 of 16 CPUs busy while one was stored, and its read rate (270 to
+  470 MiB/s) moved with its time: a slow one was slow because the disk moved
+  fewer bytes.
+- Defender's engine worked about three times as hard one at a time: 1.2
+  cores on average, against 0.43 at `--store-jobs 0`. One at a time, each
+  evidence writes its own container file (278 for this folder); evidence
+  stored beside others share one, and wrote 45.
+- Idling before each run did not steady the runs; the settled passes varied
+  as much as the others. `PhysicalDisk(_Total)` counts the VHDX and the disk
+  under it both, so the queue is a relative measure only.
+
+So the heavy evidence is not slower beside small ones by a margin this disk
+can show, and the case folder's 15%, from two runs on a USB SSD whose runs
+of one setting differed by 12%, is put down to the device. `--store-jobs`
+stays 1 by default. A disk that holds neither the system nor anything
+Defender scans would tell 5% apart.
 
 ### What the size counts cost
 

@@ -24,13 +24,18 @@
 //	exit:CODE    exit the process with CODE, without deferred cleanup
 //	sleep:DUR    sleep for a time.ParseDuration value, then continue
 //	block        report the point, then block until the process is killed
+//	hold         report the point, then wait for the parent to release it
 //	signal:INT   send the process an interrupt (Ctrl-Break on Windows)
 //	signal:TERM  send the process SIGTERM (Unix only)
 //
 // @N fires only on the Nth hit of the point, @N+ on the Nth and every later
 // hit; with neither, every hit fires. When --faults-notify names a file, the
 // first hit of each point appends "<point>\n" to it, so a parent test can
-// wait for the child to get there.
+// wait for the child to get there. block appends "<point>#blocked" and hold
+// "<point>#held"; a held child goes on once the parent appends
+// "<point>#release" (testutil's Child.Release), and so does every later hit
+// of that point. hold needs the file, so a spec with it and no file is an
+// error.
 package faultinject
 
 import "errors"

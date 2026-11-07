@@ -9,6 +9,7 @@ import (
 	"os/signal"
 	"path/filepath"
 	"runtime"
+	"strings"
 	"testing"
 	"time"
 
@@ -18,7 +19,8 @@ import (
 func TestMain(m *testing.M) {
 	os.Exit(testutil.RunChildScenarios(m, map[string]func(args []string) int{
 		// hit configures the spec it is given, if any, reaches the self-test
-		// point once and exits 0 if nothing fired.
+		// point once, reports "passed" once past it and exits 0 if nothing
+		// fired.
 		"hit": func(args []string) int {
 			if len(args) > 0 {
 				if err := Configure(args[0], testutil.ChildNotifyFile()); err != nil {
@@ -30,6 +32,10 @@ func TestMain(m *testing.M) {
 			signal.Notify(sig, os.Interrupt)
 			if err := Hit(SelfTest); err != nil {
 				return 1
+			}
+			if err := testutil.NotifyPoint("passed"); err != nil {
+				fmt.Fprintln(os.Stderr, err)
+				return 3
 			}
 			select {
 			case <-sig:
@@ -52,7 +58,8 @@ func withSpec(t *testing.T, spec string) {
 
 func TestConfigureRejectsBadSpecAndKeepsRules(t *testing.T) {
 	withSpec(t, SelfTest+"=error")
-	for _, spec := range []string{"nope", "no.such.point=error", SelfTest + "=exit", SelfTest + "=error@0"} {
+	// hold without a notification file could never be released.
+	for _, spec := range []string{"nope", "no.such.point=error", SelfTest + "=exit", SelfTest + "=error@0", SelfTest + "=hold"} {
 		if err := Configure(spec, ""); err == nil {
 			t.Errorf("Configure(%q) accepted a bad spec", spec)
 		}
@@ -180,6 +187,26 @@ func TestHitBlockNotifiesAndKill(t *testing.T) {
 	c := testutil.StartChild(t, "hit", SelfTest+"=block")
 	c.WaitForPoint(t, SelfTest+"#blocked", 30*time.Second)
 	c.Kill(t)
+}
+
+// TestHitHoldReleases: a held child stays at the point, past the time it
+// would otherwise take to exit, and goes on once released.
+func TestHitHoldReleases(t *testing.T) {
+	c := testutil.StartChild(t, "hit", SelfTest+"=hold")
+	c.WaitForPoint(t, SelfTest+"#held", 30*time.Second)
+	time.Sleep(300 * time.Millisecond)
+	b, err := os.ReadFile(c.Notify)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(b), "passed") {
+		t.Fatalf("the child went past a hold nobody released:\n%s", b)
+	}
+	c.Release(t, SelfTest)
+	c.WaitForPoint(t, "passed", 30*time.Second)
+	if code := c.Wait(t, 30*time.Second); code != 0 {
+		t.Fatalf("exit code %d, want 0\n%s", code, c.Output())
+	}
 }
 
 func TestHitSignalInChild(t *testing.T) {

@@ -10,7 +10,7 @@ import (
 // Rule is one parsed entry of a fault spec.
 type Rule struct {
 	Point  string
-	Action string        // error, enospc, eio, eacces, panic, exit, sleep, block, signal
+	Action string        // error, enospc, eio, eacces, panic, exit, sleep, block, hold, signal
 	Code   int           // exit code for "exit"
 	Delay  time.Duration // for "sleep"
 	Signal string        // INT or TERM for "signal"
@@ -62,7 +62,7 @@ func ParseSpec(spec string) ([]Rule, error) {
 		name, arg, hasArg := strings.Cut(action, ":")
 		r.Action = name
 		switch name {
-		case "error", "enospc", "eio", "eacces", "panic", "block":
+		case "error", "enospc", "eio", "eacces", "panic", "block", "hold":
 			if hasArg {
 				return nil, fmt.Errorf("faultinject: %q: action %s takes no argument", entry, name)
 			}

@@ -331,12 +331,15 @@ func TestConcurrentProcesses(t *testing.T) {
 
 	big := testutil.WriteRandomFile(t, l.work, "big.bin", 5, 4<<20)
 	l.sums[testutil.FileSHA256(t, big)] = true
-	w := testutil.StartDues(t, l.bin, l.work, spec(faultinject.IngestAfterPending, "sleep:4s"),
+	// The writer waits at the point until every other command has been
+	// refused: a fixed pause once ran out before the last of them started.
+	w := testutil.StartDues(t, l.bin, l.work, spec(faultinject.IngestAfterPending, "hold"),
 		"store", big, "--dbpath", l.root, "-c", "64")
-	w.WaitForPoint(t, faultinject.IngestAfterPending, time.Minute)
+	w.WaitForPoint(t, faultinject.IngestAfterPending+"#held", time.Minute)
 	for _, args := range [][]string{{"store", l.files[0]}, {"list"}, {"repair", "--fix"}, {"reset", "--yes"}} {
 		failsCleanly(t, l.dues("", args...), "in use by another DUES process", args...)
 	}
+	w.Release(t, faultinject.IngestAfterPending)
 	if code := w.Wait(t, 2*time.Minute); code != 0 {
 		t.Fatalf("the writer: exit %d\n%s", code, w.Output())
 	}

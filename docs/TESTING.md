@@ -334,13 +334,17 @@ The actions are:
 - `panic`;
 - `exit:CODE`, which exits without deferred cleanup, as a crash would;
 - `sleep:DURATION`;
-- `block`;
+- `block`, which waits until the process is killed;
+- `hold`, which waits until the parent test releases it with
+  `Child.Release`;
 - `signal:INT` (Ctrl-Break on Windows) and `signal:TERM` (Unix only).
 
 `@N` fires on the Nth hit only, and `@N+` from the Nth hit on. When
 `--faults-notify` names a file, the first hit of each point is written to
-it, so a parent test can wait for the child to get there. A release build has
-neither flag, so passing one is a usage error.
+it, so a parent test can wait for the child to get there. `block` writes
+`<point>#blocked` there and `hold` `<point>#held`. `hold` needs the file, so
+a spec with it and no file is an error. A release build has neither flag, so
+passing one is a usage error.
 
 The points are listed in `internal/faultinject/points.go`, so a misspelt point
 is an error, not a silent no-op. There are 20 of them:
@@ -368,6 +372,8 @@ The suites that use them, in `internal/e2e` (tag `faultinject`):
   143, a recoverable database and a released lock.
 - `TestConcurrentProcesses` runs read commands in parallel processes, and
   checks that a second writer is refused while a store holds the database.
+  The store waits at a `hold` until every other command has been refused. A
+  fixed pause once ran out first.
 
 A kill-point test written by hand runs the binary in a child process and
 waits for it to reach the point:

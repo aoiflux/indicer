@@ -7,6 +7,7 @@ import (
 	"indicer/internal/diskspace"
 	"indicer/lib/cnst"
 	"indicer/lib/dbio"
+	"indicer/lib/engine"
 	"indicer/lib/util"
 	"sync"
 
@@ -73,7 +74,7 @@ func ingestChunksStaged(parentCtx context.Context, p ChunkPass) (res ChunkResult
 
 	var simhashWriter *simhashAsyncWriter
 	if p.Simhash {
-		simhashWriter = newSimhashAsyncWriter(p.DB, cnst.GetMaxThreadCount())
+		simhashWriter = newSimhashAsyncWriter(p.DB, shape.tuning.MaxThreads())
 		defer func() {
 			simhashErr := simhashWriter.wait()
 			if err == nil && simhashErr != nil {
@@ -309,10 +310,7 @@ func stagedDiskWriterLoop(
 	writeCh <-chan stagedWriteChunk,
 	meter *passMeter,
 ) ([]byte, error) {
-	batch, err := util.InitBatch(db)
-	if err != nil {
-		return nil, err
-	}
+	batch := util.InitBatch(db, engine.For(db).MaxBatchCount())
 
 	barrier := newChunkMetaBarrier(dbio.KVDir(db), writes.containers(), batch)
 	hocho := newHochoAccumulator(shape.fileHash, shape.chunk, 0)

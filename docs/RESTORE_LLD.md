@@ -319,7 +319,7 @@ A truncated file or an EWF mismatch then prints a `Warning:` line.
 - Workers default to the CPU count, halved in low-resource mode and clamped to 2–16. The queue defaults to 4 × workers (`cnst.DefaultRestoreTuning`).
 - `internal/appconfig` range-checks explicit values (workers up to max(64, 8 × CPUs), queue up to 65536) and checks them against an in-flight memory budget, in the database's own chunk size (read from its manifest). A rejected value is a usage error.
 - The reorder window bounds the decoded data in flight, whatever the queue depth.
-- The container read cache gets `cnst.GetCacheLimit()`, at most 4 GiB.
+- The container read cache gets the database tuning's `CacheLimit()`, at most 4 GiB.
 - The TUI restores with the config file's `restore` settings, or the defaults: it has no tuning flags.
 
 ## Older databases
@@ -334,7 +334,7 @@ These paths read data that earlier releases wrote:
 - **Single-range records.** Partition records, and indexed records with no `Content` field, are the range `[Start, Start+Size)` of their evidence. Older records name their evidence only in `Name`. `RecordEvidenceID` parses it.
 - **Edge-form hashes.** Older releases could hash partitions and indexed files from their relations. Those records hold the hocho-with-edges form, which `full` verification accepts.
 - **Older codecs.** `legacy-sealed` and `legacy-raw` payloads carry nothing that ties them to their chunk. The reader's own hash check is what catches a substituted blob, so `--verify off` checks no chunk hash on these databases.
-- **Block index.** In a database from the retired hierarchical mode (`cnst.LegacyBlockIndex`), `LocateChunk` looks up a chunk with no `C|||` entry in the block index.
+- **Block index.** In a database from the retired hierarchical mode (`engine.For(db).BlockIndex()`), `LocateChunk` looks up a chunk with no `C|||` entry in the block index.
 - **Absolute blob paths.** `ResolveBlobPath` maps an absolute recorded path to the file of that name in this database's blob directory. It never uses the recorded location.
 - **Compressed containers.** Quick mode once compressed whole containers into `<name>.blob.zst`, which cannot be read at an offset. While a restore runs, the container read cache decodes each one once: into memory within its budget, otherwise into a temporary file that is deleted on close.
 

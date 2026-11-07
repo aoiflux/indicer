@@ -3,6 +3,7 @@ package fio
 import (
 	"encoding/base64"
 	"errors"
+	"hash"
 	"indicer/lib/cnst"
 	"indicer/lib/fsx"
 	"indicer/lib/util"
@@ -14,7 +15,8 @@ import (
 
 // WriteChonk stores data, a chunk's encoded bytes, as the blob for the chunk
 // key ckey in the blob directory beside the database at dbpath, and returns
-// the blob's path.
+// the blob's path. The blob is named by ckey's hash under newHash, the
+// database's chunk hash.
 //
 // The blob is synced before WriteChonk returns (STO-4). Ingest writes the
 // chunk's C||| metadata only after that, and nothing trusts a blob without
@@ -25,8 +27,8 @@ import (
 // ingest calls this only for a chunk whose blob is missing or not the size
 // its metadata records, so an existing file is a torn or truncated blob, and
 // the metadata that may still point at it must never see a short file.
-func WriteChonk(dbpath string, data, ckey, key []byte) ([]byte, error) {
-	ckhash, err := util.GetChonkHash(ckey, cnst.GetHashAlgo())
+func WriteChonk(dbpath string, data, ckey []byte, newHash func() hash.Hash) ([]byte, error) {
+	ckhash, err := util.GetChonkHash(ckey, newHash())
 	if err != nil {
 		return nil, err
 	}

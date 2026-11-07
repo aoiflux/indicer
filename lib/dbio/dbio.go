@@ -10,6 +10,7 @@ import (
 	"indicer/internal/msgpackx"
 	"indicer/lib/blobcodec"
 	"indicer/lib/cnst"
+	"indicer/lib/dbmeta"
 	"indicer/lib/fio"
 	"indicer/lib/logging"
 	"indicer/lib/structs"
@@ -32,9 +33,9 @@ func ConnectDB(datadir string, key []byte) (*badger.DB, error) {
 	}
 	// Legacy quick mode used badger's default (Snappy) tables and no key.
 	if cnst.QUICKOPT {
-		return badger.Open(BadgerOptions(datadir, nil, options.Snappy))
+		return badger.Open(BadgerOptions(datadir, nil, options.Snappy, cnst.Globals()))
 	}
-	return badger.Open(BadgerOptions(datadir, key, options.ZSTD))
+	return badger.Open(BadgerOptions(datadir, key, options.ZSTD, cnst.Globals()))
 }
 
 // badgerLogger sends badger's own messages to the DUES log. Its default logger
@@ -59,15 +60,12 @@ func (badgerLogger) Debugf(f string, a ...any)   { logging.GetSugar().Debugf("ba
 // the level, so existing databases are unaffected.
 const BadgerZSTDLevel = 3
 
-// BadgerOptions builds the options a badger directory is opened with. key is
-// the encryption key (nil for none). Both key and table compression are fixed
-// when the database is created: badger decodes every table with the
-// compression it is opened with.
-func BadgerOptions(datadir string, key []byte, compression options.CompressionType) badger.Options {
-	cacheLimit, err := cnst.GetCacheLimit()
-	if err != nil {
-		cacheLimit = 256 * cnst.MB
-	}
+// BadgerOptions builds the options a badger directory is opened with, for
+// tuning t. key is the encryption key (nil for none). Both key and table
+// compression are fixed when the database is created: badger decodes every
+// table with the compression it is opened with.
+func BadgerOptions(datadir string, key []byte, compression options.CompressionType, t cnst.Tuning) badger.Options {
+	cacheLimit := t.CacheLimit()
 
 	// Treat cacheLimit as the total cache budget and split it between
 	// block/index caches so larger-memory machines still get large caches
@@ -87,7 +85,7 @@ func BadgerOptions(datadir string, key []byte, compression options.CompressionTy
 	opts = opts.WithLogger(badgerLogger{})
 	opts.IndexCacheSize = indexCache
 	opts.SyncWrites = true
-	opts.NumGoroutines = cnst.GetMaxThreadCount()
+	opts.NumGoroutines = t.MaxThreads()
 	opts.Compression = compression
 	if compression == options.ZSTD {
 		opts.ZSTDCompressionLevel = BadgerZSTDLevel
@@ -500,7 +498,7 @@ func materializeFileChonkNode(key, data []byte, originalSize int64, db *badger.D
 		return nil, 0, err
 	}
 
-	cfpath, err := fio.WriteChonk(KVDir(db), data, key, db.Opts().EncryptionKey)
+	cfpath, err := fio.WriteChonk(KVDir(db), data, key, dbmeta.ChunkHasher(db))
 	if err != nil {
 		return nil, 0, err
 	}

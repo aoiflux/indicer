@@ -16,6 +16,7 @@ import (
 
 	"indicer/lib/cnst"
 	"indicer/lib/dbio"
+	"indicer/lib/engine"
 	"indicer/lib/store"
 	"indicer/lib/structs"
 	"indicer/lib/util"
@@ -436,10 +437,7 @@ func attachSyntheticPartitionAndIndexed(t *testing.T, dbPath string, key []byte,
 	indexedHash := base64.StdEncoding.EncodeToString(indexedRaw)
 
 	indexed := structs.NewIndexedFile("evidence://"+tag+"/inode.bin", indexedStart, indexedSize, cnst.UnknownEvidenceType, false, indexedHash)
-	indexedBatch, err := util.InitBatch(db)
-	if err != nil {
-		t.Fatalf("InitBatch indexed: %v", err)
-	}
+	indexedBatch := util.InitBatch(db, engine.For(db).MaxBatchCount())
 	if err := dbio.SetIndexedFile(indexedRaw, indexed, indexedBatch); err != nil {
 		t.Fatalf("SetFile indexed: %v", err)
 	}

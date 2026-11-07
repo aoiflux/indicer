@@ -3,6 +3,7 @@ package fio
 import (
 	"bytes"
 	"errors"
+	"hash"
 	"os"
 	"path/filepath"
 	"sync"
@@ -11,6 +12,8 @@ import (
 
 	"indicer/lib/cnst"
 	"indicer/lib/fsx"
+
+	"github.com/zeebo/blake3"
 )
 
 // TestWriteChonkConcurrentSameChunk: ingests running at once (two ingests of
@@ -38,7 +41,7 @@ func TestWriteChonkConcurrentSameChunk(t *testing.T) {
 		go func() {
 			defer wg.Done()
 			for c := range chunks {
-				if _, err := WriteChonk(dir, data, key(c), nil); err != nil {
+				if _, err := WriteChonk(dir, data, key(c), blobHash); err != nil {
 					errs[w] = err
 					return
 				}
@@ -52,7 +55,7 @@ func TestWriteChonkConcurrentSameChunk(t *testing.T) {
 		}
 	}
 	for c := range chunks {
-		path, err := WriteChonk(dir, data, key(c), nil)
+		path, err := WriteChonk(dir, data, key(c), blobHash)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -114,13 +117,13 @@ func TestWriteChonkWaitsForAnOpenWriter(t *testing.T) {
 	data := []byte("one chunk, two writers")
 	firstErr := make(chan error, 1)
 	go func() {
-		_, err := WriteChonk(dir, data, ckey, nil)
+		_, err := WriteChonk(dir, data, ckey, blobHash)
 		firstErr <- err
 	}()
 	<-created
 	secondErr := make(chan error, 1)
 	go func() {
-		_, err := WriteChonk(dir, data, ckey, nil)
+		_, err := WriteChonk(dir, data, ckey, blobHash)
 		secondErr <- err
 	}()
 	// The second writer must not get anywhere until the first is done.
@@ -152,7 +155,7 @@ func TestWriteChonkCreatesAndReplaces(t *testing.T) {
 	ckey := append(append([]byte{}, cnst.ChonkNamespace...), bytes.Repeat([]byte{7}, 32)...)
 	data := bytes.Repeat([]byte("chunk"), 1000)
 
-	path, err := WriteChonk(dir, data, ckey, nil)
+	path, err := WriteChonk(dir, data, ckey, blobHash)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -171,7 +174,7 @@ func TestWriteChonkCreatesAndReplaces(t *testing.T) {
 	if err := os.Truncate(string(path), int64(len(data)/2)); err != nil {
 		t.Fatal(err)
 	}
-	again, err := WriteChonk(dir, data, ckey, nil)
+	again, err := WriteChonk(dir, data, ckey, blobHash)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -190,3 +193,6 @@ func TestWriteChonkCreatesAndReplaces(t *testing.T) {
 		}
 	}
 }
+
+// blobHash is the chunk hash the tests name blobs with.
+func blobHash() hash.Hash { return blake3.New() }

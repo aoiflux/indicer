@@ -72,19 +72,15 @@ func computeAlignmentDeviation(start, size, stride int64) (edgeChunks int, devia
 }
 
 // computeDynamicTopKWithReason selects K for Phase 2 verification from the memory
-// and threads available, as proxies for the I/O load the host tolerates, and returns
-// the freeGB and threadCount values that drove the selection, so callers can print
-// a human-readable explanation of the auto-selection basis.
-func computeDynamicTopKWithReason(matchCount int) (k int, freeGB float64, threads int) {
+// and threads tuning t allows, as proxies for the I/O load the host tolerates, and
+// returns the freeGB and threadCount values that drove the selection, so callers can
+// print a human-readable explanation of the auto-selection basis.
+func computeDynamicTopKWithReason(t cnst.Tuning, matchCount int) (k int, freeGB float64, threads int) {
 	const minK = 5
 	const maxK = 100
 
-	cacheBytes, err := cnst.GetCacheLimit()
-	freeGB = 2.0
-	if err == nil {
-		freeGB = float64(cacheBytes) / float64(cnst.GB)
-	}
-	threads = cnst.GetMaxThreadCount()
+	freeGB = float64(t.CacheLimit()) / float64(cnst.GB)
+	threads = t.MaxThreads()
 
 	k = int(freeGB * float64(threads))
 	if k < minK {

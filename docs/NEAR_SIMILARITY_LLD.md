@@ -94,8 +94,8 @@ All of a search's state is in one `run`, made by `newRun`:
 - `stale`: the stale occurrences.
 
 Nothing is kept in package variables. Concurrent calls do not share state
-(SRC-6). `Options.Workers` bounds the chunks looked up at once; zero means
-`cnst.GetMaxThreadCount()`.
+(SRC-6). `Options.Workers` bounds the chunks looked up at once; zero means the
+database tuning's `MaxThreads()`.
 
 ## Capability check
 
@@ -310,11 +310,11 @@ exact match.
 **K.** K is `--top-k`. When it is 0, `computeDynamicTopKWithReason` chooses:
 
 ```
-memoryGiB = cnst.GetCacheLimit() / 1 GiB
-K = int(memoryGiB × cnst.GetMaxThreadCount()), at least 5, at most 100
+memoryGiB = tuning.CacheLimit() / 1 GiB
+K = int(memoryGiB × tuning.MaxThreads()), at least 5, at most 100
 ```
 
-- `cnst.GetCacheLimit` is a quarter of the available memory, between 64 MiB
+- `CacheLimit` is a quarter of the available memory, between 64 MiB
   and 8 GiB. It is 64 MiB in low-resource mode.
 - An automatic K is printed with the values that chose it.
 - K is never more than the number of matches.

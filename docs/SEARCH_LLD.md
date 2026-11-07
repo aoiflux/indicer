@@ -137,7 +137,7 @@ neighbouring small files share decoded chunks.
 
 | Field | Meaning |
 | --- | --- |
-| `Workers` | Objects read at once in a phase, and chunk reads in flight across the whole search. Zero means `cnst.GetMaxThreadCount()`. |
+| `Workers` | Objects read at once in a phase, and chunk reads in flight across the whole search. Zero means the database tuning's `MaxThreads()`. |
 | `Candidates` | When not nil, only these indexed files (record keys) are read. Evidence and partitions are not read. Full-text mode sets it. |
 | `Progress` | Called after each object with the objects done and the objects planned. |
 

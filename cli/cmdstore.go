@@ -13,6 +13,7 @@ import (
 	"indicer/internal/ui"
 	"indicer/internal/workpool"
 	"indicer/lib/dbopen"
+	"indicer/lib/engine"
 	"indicer/lib/evidence"
 	"indicer/lib/ingest"
 	"indicer/lib/logging"
@@ -148,7 +149,8 @@ func storeFolder(ctx context.Context, w io.Writer, sess *ingest.Session, dir str
 	if sopts.Quiet {
 		ctx = progress.Without(ctx)
 	}
-	jobs := folderJobs(sopts.Jobs)
+	eng := engine.For(sess.DB())
+	jobs := folderJobs(eng.Tuning(), sopts.Jobs)
 	start := time.Now()
 	scan := progress.Start(ctx, "scan folder", progress.Files, progress.Unknown)
 	plan, err := evidence.Plan(progress.Within(ctx, scan), dir, sopts.Decode)
@@ -215,7 +217,7 @@ func storeFolder(ctx context.Context, w io.Writer, sess *ingest.Session, dir str
 		if jobs > 1 && !items[i].Heavy {
 			// Beside others: a share of the machine. A heavy one runs
 			// alone, with all of it.
-			isopts.maxWorkers = innerWorkers(jobs)
+			isopts.maxWorkers = innerWorkers(eng, jobs)
 		}
 		isopts.credit = creditOf(i)
 		probe := startItemProbe(sess.DB(), credits)

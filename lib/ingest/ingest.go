@@ -24,6 +24,7 @@ import (
 	"indicer/lib/cnst"
 	"indicer/lib/dbio"
 	"indicer/lib/dbmeta"
+	"indicer/lib/engine"
 	"indicer/lib/evidence"
 	"indicer/lib/index"
 	"indicer/lib/parser/image"
@@ -171,6 +172,8 @@ func (s *Session) Run(ctx context.Context, req Request) (Result, error) {
 		return Result{}, err
 	}
 	db := s.db
+	// One strategy for the whole ingest: its plan, record and lookup agree.
+	strategy := engine.For(db).Tuning().HashStrategy
 	if req.Quiet {
 		ctx = progress.Without(ctx)
 	}
@@ -194,14 +197,14 @@ func (s *Session) Run(ctx context.Context, req Request) (Result, error) {
 	if err != nil {
 		return res, fmt.Errorf("fingerprint %s: %w", req.Path, err)
 	}
-	rec, err := newRecord(db, src, res.Source, name, fp, req)
+	rec, err := newRecord(db, src, res.Source, name, fp, strategy, req)
 	if err != nil {
 		return res, err
 	}
 
-	planned := planIngest(ctx, src, req)
+	planned := planIngest(ctx, src, strategy, req)
 	// D1: content already stored is an alias, and nothing is stored again.
-	winner, err := findStored(ctx, db, src, fp)
+	winner, err := findStored(ctx, db, src, fp, strategy)
 	if err != nil {
 		return res, err
 	}
@@ -232,13 +235,13 @@ func (s *Session) Run(ctx context.Context, req Request) (Result, error) {
 	return s.run(ctx, src, eid, name, req, res)
 }
 
-// planIngest lists the steps an ingest of src will run, with the work each
-// expects, before the first starts, so the overall measure weighs them from
-// the beginning. It returns their names.
-func planIngest(ctx context.Context, src *evidence.Source, req Request) []string {
+// planIngest lists the steps an ingest of src with the hash strategy
+// strategy will run, with the work each expects, before the first starts, so
+// the overall measure weighs them from the beginning. It returns their names.
+func planIngest(ctx context.Context, src *evidence.Source, strategy string, req Request) []string {
 	size := src.Size()
 	var steps []progress.Step
-	if cnst.StoreHashStrategy == cnst.SyncHashStrategy {
+	if strategy == cnst.SyncHashStrategy {
 		steps = append(steps, progress.Step{Name: "identify", Unit: progress.Bytes, Total: size})
 	}
 	steps = append(steps,
@@ -297,12 +300,13 @@ func recordedSource(src *evidence.Source, req Request) structs.EvidenceSource {
 	return info
 }
 
-// newRecord builds the evidence record an ingest starts from.
-func newRecord(db *badger.DB, src *evidence.Source, info structs.EvidenceSource, name, fp string, req Request) (structs.EvidenceFile, error) {
-	switch cnst.StoreHashStrategy {
+// newRecord builds the evidence record an ingest with the hash strategy
+// strategy starts from.
+func newRecord(db *badger.DB, src *evidence.Source, info structs.EvidenceSource, name, fp, strategy string, req Request) (structs.EvidenceFile, error) {
+	switch strategy {
 	case cnst.SyncHashStrategy, cnst.AsyncHashStrategy, cnst.HochoHashStrategy:
 	default:
-		return structs.EvidenceFile{}, fmt.Errorf("unsupported store hash strategy: %s", cnst.StoreHashStrategy)
+		return structs.EvidenceFile{}, fmt.Errorf("unsupported store hash strategy: %s", strategy)
 	}
 	head := make([]byte, 4096)
 	n, err := src.ReadAt(head, 0)
@@ -313,7 +317,7 @@ func newRecord(db *badger.DB, src *evidence.Source, info structs.EvidenceSource,
 	rec.ContentModel = structs.ContentModelV2
 	rec.ChunkSize = dbmeta.ChunkSize(db)
 	rec.ChunkHashAlgo, rec.FileHashAlgo = hashNames(db)
-	rec.HashStrategy = cnst.StoreHashStrategy
+	rec.HashStrategy = strategy
 	rec.Fingerprint = fp
 	rec.Source = &info
 	if req.RevRel {
@@ -343,9 +347,9 @@ func hashNames(db *badger.DB) (chunk, file string) {
 // hashes up. The others look up evidence of the same size and fingerprint,
 // which identifies small content exactly and is confirmed for larger content
 // by computing its root.
-func findStored(ctx context.Context, db *badger.DB, src *evidence.Source, fp string) ([]byte, error) {
+func findStored(ctx context.Context, db *badger.DB, src *evidence.Source, fp, strategy string) ([]byte, error) {
 	defer trace.StartRegion(ctx, "identify").End()
-	if cnst.StoreHashStrategy == cnst.SyncHashStrategy {
+	if strategy == cnst.SyncHashStrategy {
 		sums, err := identify(ctx, db, src)
 		if err != nil {
 			return nil, err

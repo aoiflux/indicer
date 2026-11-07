@@ -29,6 +29,7 @@ import (
 	"hash"
 	"indicer/lib/cnst"
 	"indicer/lib/dbio"
+	"indicer/lib/engine"
 	"indicer/lib/fio"
 	"indicer/lib/util"
 	"sync"
@@ -112,7 +113,7 @@ func ingestChunksBatchOwner(parentCtx context.Context, p ChunkPass) (res ChunkRe
 
 	var simhashWriter *simhashAsyncWriter
 	if p.Simhash {
-		simhashWriter = newSimhashAsyncWriter(p.DB, cnst.GetMaxThreadCount())
+		simhashWriter = newSimhashAsyncWriter(p.DB, shape.tuning.MaxThreads())
 		defer func() {
 			simhashErr := simhashWriter.wait()
 			if err == nil && simhashErr != nil {
@@ -264,10 +265,7 @@ func batchOwnerWriteLoop(
 	containerMgr *fio.ContainerManager,
 	taskCh <-chan chunkTask,
 ) ([]byte, error) {
-	batch, err := util.InitBatch(db)
-	if err != nil {
-		return nil, err
-	}
+	batch := util.InitBatch(db, engine.For(db).MaxBatchCount())
 
 	barrier := newChunkMetaBarrier(dbio.KVDir(db), containerMgr, batch)
 	hocho := newHochoAccumulator(shape.fileHash, shape.chunk, 0)

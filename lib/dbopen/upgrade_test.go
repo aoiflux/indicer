@@ -7,6 +7,7 @@ import (
 	"indicer/internal/testutil"
 	"indicer/lib/cnst"
 	"indicer/lib/dbmeta"
+	"indicer/lib/engine"
 )
 
 func containerRequest(path string) Request {
@@ -22,20 +23,27 @@ func TestSetStorage(t *testing.T) {
 	if err := h.SetStorage(dbmeta.StorageContainerBIDX); err != nil {
 		t.Fatal(err)
 	}
+	// The open database reads the new storage at once.
+	if l, _ := engine.For(h.DB).Layout(); l.Storage != dbmeta.StorageContainerBIDX || !engine.For(h.DB).BlockIndex() {
+		t.Fatalf("after SetStorage: engine storage %s, block index %v", l.Storage, engine.For(h.DB).BlockIndex())
+	}
 	h.Close()
 
 	h = open(t, Request{Path: root, Mode: ReadWrite})
-	if h.Manifest.Layout.Storage != dbmeta.StorageContainerBIDX || !cnst.LegacyBlockIndex {
-		t.Fatalf("after reopen: storage %s, legacy block index %v", h.Manifest.Layout.Storage, cnst.LegacyBlockIndex)
+	if h.Manifest.Layout.Storage != dbmeta.StorageContainerBIDX || !cnst.LegacyBlockIndex || !engine.For(h.DB).BlockIndex() {
+		t.Fatalf("after reopen: storage %s, legacy block index %v, engine %v", h.Manifest.Layout.Storage, cnst.LegacyBlockIndex, engine.For(h.DB).BlockIndex())
 	}
 	if err := h.SetStorage(dbmeta.StorageContainer); err != nil {
 		t.Fatal(err)
 	}
+	if l, _ := engine.For(h.DB).Layout(); l.Storage != dbmeta.StorageContainer || engine.For(h.DB).BlockIndex() {
+		t.Fatalf("after the upgrade: engine storage %s, block index %v", l.Storage, engine.For(h.DB).BlockIndex())
+	}
 	h.Close()
 
 	h = open(t, Request{Path: root, Mode: ReadOnly})
-	if h.Manifest.Layout.Storage != dbmeta.StorageContainer || cnst.LegacyBlockIndex {
-		t.Fatalf("after upgrade: storage %s, legacy block index %v", h.Manifest.Layout.Storage, cnst.LegacyBlockIndex)
+	if h.Manifest.Layout.Storage != dbmeta.StorageContainer || cnst.LegacyBlockIndex || engine.For(h.DB).BlockIndex() {
+		t.Fatalf("after upgrade: storage %s, legacy block index %v, engine %v", h.Manifest.Layout.Storage, cnst.LegacyBlockIndex, engine.For(h.DB).BlockIndex())
 	}
 	if err := h.SetStorage(dbmeta.StorageContainerBIDX); err == nil {
 		t.Fatal("SetStorage on a read-only open succeeded")
@@ -77,8 +85,8 @@ func TestBlockFilesKeepLegacyLookup(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	open(t, Request{Path: root, Mode: ReadOnly})
-	if !cnst.LegacyBlockIndex {
-		t.Fatal("block index files present but the lookup is off")
+	h := open(t, Request{Path: root, Mode: ReadOnly})
+	if !cnst.LegacyBlockIndex || !engine.For(h.DB).BlockIndex() {
+		t.Fatalf("block index files present but the lookup is off (global %v, engine %v)", cnst.LegacyBlockIndex, engine.For(h.DB).BlockIndex())
 	}
 }

@@ -4,12 +4,10 @@ import (
 	"crypto/sha3"
 	"errors"
 	"hash"
-	"runtime"
 	"strings"
 
 	"indicer/lib/zstdx"
 
-	"github.com/shirou/gopsutil/v3/mem"
 	"github.com/zeebo/blake3"
 )
 
@@ -69,7 +67,8 @@ var CONTAINERMODE bool
 
 // LegacyBlockIndex is set for a database written in the retired hierarchical
 // mode (D9): chunk locations not in C||| are looked up in its block index.
-// Only the manifest sets it.
+// A database dbopen opened reads its own flag (engine.Engine.BlockIndex); this
+// one mirrors the last open, and answers for databases opened without dbopen.
 var LegacyBlockIndex bool
 var CompressLevel = "best" // per-chunk zstd ingest level: fast | default | best
 var StoreHashStrategy = SyncHashStrategy
@@ -350,22 +349,8 @@ func SetStoreIOUringQueueDepth(depth int) error {
 	return nil
 }
 
-// GetStoreIOUringQueueDepth returns queue depth for io-uring.
-// A value of 0 auto-tunes based on CPU count and bounds the result.
-func GetStoreIOUringQueueDepth() int {
-	if StoreIOUringQueueDepth > 0 {
-		return StoreIOUringQueueDepth
-	}
-
-	depth := runtime.NumCPU() * 16
-	if depth < 256 {
-		depth = 256
-	}
-	if depth > 4096 {
-		depth = 4096
-	}
-	return depth
-}
+// GetStoreIOUringQueueDepth is Globals().IOUringQueueDepth().
+func GetStoreIOUringQueueDepth() int { return Globals().IOUringQueueDepth() }
 
 func NormalizeHochoMode(mode string) string {
 	switch strings.ToLower(strings.TrimSpace(mode)) {
@@ -408,15 +393,8 @@ func GetHashAlgo(bigFile ...bool) hash.Hash {
 	return blake3.New()
 }
 
-func GetMaxThreadCount() int {
-	if MEMOPT {
-		return 1
-	}
-	// High performance mode (default): Use CPU * 2 workers
-	// This maximizes throughput since workers are I/O-bound
-	// (waiting on file writes, DB operations, compression, etc.)
-	return runtime.NumCPU() * 2
-}
+// GetMaxThreadCount is Globals().MaxThreads().
+func GetMaxThreadCount() int { return Globals().MaxThreads() }
 
 // DefaultStoreTuning returns the batch-owner ingest pipeline's worker count
 // and task queue depth for a machine with cpus CPUs, before any override.
@@ -440,27 +418,9 @@ func DefaultStoreTuning(cpus int, memOpt, containerMode bool) (int, int) {
 	return workers, queueDepth
 }
 
-// GetStorePipelineTuning returns worker count and task queue depth for the
-// batch-owner ingest pipeline: the defaults for this machine, replaced by
-// StoreWorkerCount and StoreTaskQueueDepth when those are set.
+// GetStorePipelineTuning is Globals().StorePipeline(containerMode).
 func GetStorePipelineTuning(containerMode bool) (int, int) {
-	workers, queueDepth := DefaultStoreTuning(runtime.NumCPU(), MEMOPT, containerMode)
-
-	if StoreWorkerCount > 0 {
-		workers = StoreWorkerCount
-	}
-	if StoreTaskQueueDepth > 0 {
-		queueDepth = StoreTaskQueueDepth
-	}
-
-	if workers < 1 {
-		workers = 1
-	}
-	if queueDepth < workers {
-		queueDepth = workers
-	}
-
-	return workers, queueDepth
+	return Globals().StorePipeline(containerMode)
 }
 
 // DefaultRestoreTuning returns restore's worker count and queue depth for a
@@ -480,93 +440,15 @@ func DefaultRestoreTuning(cpus int, memOpt bool) (int, int) {
 	return workers, workers * 4
 }
 
-// GetRestorePipelineTuning returns worker count and queue depth for restore:
-// the defaults for this machine, replaced by RestoreWorkerCount and
-// RestoreTaskQueueDepth when those are set.
-func GetRestorePipelineTuning() (int, int) {
-	workers, queueDepth := DefaultRestoreTuning(runtime.NumCPU(), MEMOPT)
+// GetRestorePipelineTuning is Globals().RestorePipeline().
+func GetRestorePipelineTuning() (int, int) { return Globals().RestorePipeline() }
 
-	if RestoreWorkerCount > 0 {
-		workers = RestoreWorkerCount
-	}
-	if RestoreTaskQueueDepth > 0 {
-		queueDepth = RestoreTaskQueueDepth
-	}
-
-	if workers < 1 {
-		workers = 1
-	}
-	if queueDepth < workers {
-		queueDepth = workers
-	}
-
-	return workers, queueDepth
-}
-
-func GetRestoreWriteBufferSize() int {
-	if RestoreWriteBufferMB <= 0 {
-		if MEMOPT {
-			return 32 * 1024 * 1024
-		}
-		return 256 * 1024 * 1024
-	}
-	if RestoreWriteBufferMB < 1 {
-		return 1 * 1024 * 1024
-	}
-	if RestoreWriteBufferMB > 256 {
-		return 256 * 1024 * 1024
-	}
-	return RestoreWriteBufferMB * 1024 * 1024
-}
-
-func GetCacheLimit() (int64, error) {
-	if MEMOPT {
-		return 64 * MB, nil
-	}
-
-	const (
-		cacheFallback = 256 * MB
-		cacheMin      = 64 * MB
-		cacheMax      = 8 * GB
-	)
-
-	vmemstat, err := mem.VirtualMemory()
-	if err != nil {
-		// Reliability first: use a sane fallback when memory probing fails.
-		return cacheFallback, nil
-	}
-
-	cacheLimit := int64(vmemstat.Available / 4)
-	if cacheLimit < cacheMin {
-		cacheLimit = cacheMin
-	}
-	if cacheLimit > cacheMax {
-		cacheLimit = cacheMax
-	}
-
-	return cacheLimit, nil
-}
+// GetRestoreWriteBufferSize is Globals().RestoreWriteBuffer().
+func GetRestoreWriteBufferSize() int { return Globals().RestoreWriteBuffer() }
 
 // MaxPendingBatchTxns bounds a write batch's pending transactions: each one
 // holds a transaction's worth of memory until it commits.
 const MaxPendingBatchTxns = 64
-
-// GetMaxBatchCount returns how many transactions a write batch may have
-// pending: a quarter of available memory in chunks, between 1 (0 deadlocks
-// badger) and MaxPendingBatchTxns.
-func GetMaxBatchCount() (int, error) {
-	if MEMOPT {
-		return 16, nil
-	}
-	vmemstat, err := mem.VirtualMemory()
-	if err != nil || ChonkSize <= 0 {
-		// Reliability first: a modest limit when memory or the chunk size
-		// is unknown.
-		return 16, nil
-	}
-	n := vmemstat.Available / 4 / uint64(ChonkSize)
-	return int(max(1, min(n, MaxPendingBatchTxns))), nil
-}
 
 const GRAPH_START = `<!DOCTYPE html>
 <html lang="en">

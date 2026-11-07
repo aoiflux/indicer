@@ -6,6 +6,7 @@ import (
 	"indicer/lib/blobcodec"
 	"indicer/lib/cnst"
 	"indicer/lib/dbio"
+	"indicer/lib/dbmeta"
 	"indicer/lib/fio"
 	"indicer/lib/structs"
 	"indicer/lib/util"
@@ -87,7 +88,7 @@ func setupBenchmarkChunkMapDataset(tb testing.TB, chunks int) (structs.FileMeta,
 		if err != nil {
 			tb.Fatalf("encode chunk failed: %v", err)
 		}
-		path, err := fio.WriteChonk(db.Opts().Dir, stored, ckey, db.Opts().EncryptionKey)
+		path, err := fio.WriteChonk(db.Opts().Dir, stored, ckey, dbmeta.ChunkHasher(db))
 		if err != nil {
 			tb.Fatalf("write chunk failed: %v", err)
 		}

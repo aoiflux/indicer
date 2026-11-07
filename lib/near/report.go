@@ -17,6 +17,7 @@ import (
 	"indicer/internal/console"
 	"indicer/lib/cnst"
 	"indicer/lib/dbio"
+	"indicer/lib/engine"
 	"indicer/lib/fsx"
 
 	"github.com/dgraph-io/badger/v4"
@@ -164,7 +165,7 @@ func (r *run) finish(ctx context.Context, out Outcome, input nearReportInput, vc
 		if k <= 0 {
 			var freeGB float64
 			var threads int
-			k, freeGB, threads = computeDynamicTopKWithReason(len(report.Matches))
+			k, freeGB, threads = computeDynamicTopKWithReason(engine.For(r.db).Tuning(), len(report.Matches))
 			console.Printf("[advanced-deep] auto-selected top-K = %d "+
 				"(%.1f GB available memory × %d CPU threads, bounded [5, 100], capped at %d total matches)\n",
 				k, freeGB, threads, len(report.Matches))

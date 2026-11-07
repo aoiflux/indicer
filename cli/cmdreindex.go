@@ -18,6 +18,7 @@ import (
 	"indicer/lib/cnst"
 	"indicer/lib/dbio"
 	"indicer/lib/dbopen"
+	"indicer/lib/engine"
 	"indicer/lib/ingest"
 	"indicer/lib/logging"
 	"indicer/lib/structs"
@@ -105,7 +106,8 @@ func reindexEvidence(ctx context.Context, db *badger.DB, ro ReindexOptions, w io
 	// ID. So none are chained; a large one runs alone, and the others share
 	// the machine and its memory: each holds the chunk pass of an object its
 	// index pass stores.
-	jobs := folderJobs(ro.Jobs)
+	eng := engine.For(db)
+	jobs := folderJobs(eng.Tuning(), ro.Jobs)
 	items := make([]workpool.Item, len(targets))
 	sizes := make([]int64, len(targets))
 	for i, t := range targets {
@@ -142,7 +144,7 @@ func reindexEvidence(ctx context.Context, db *badger.DB, ro ReindexOptions, w io
 		one.Weigh(itemWeight(t.size))
 		opts := ingest.ReindexOptions{Source: ro.Source, FTS: ro.FTS, Enrich: ro.Enrich}
 		if jobs > 1 && !items[i].Heavy {
-			opts.MaxWorkers = innerWorkers(jobs)
+			opts.MaxWorkers = innerWorkers(eng, jobs)
 		}
 		res, err := sess.Reindex(progress.Within(ctx, one), t.id, opts)
 		one.Done(err)

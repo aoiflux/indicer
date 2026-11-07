@@ -31,7 +31,7 @@ func TestStoredFilesArePrivate(t *testing.T) {
 	dir := newContainerDB(t)
 	ckey := append(append([]byte{}, cnst.ChonkNamespace...), bytes.Repeat([]byte{9}, 32)...)
 	data := bytes.Repeat([]byte("chunk"), 100)
-	path, err := WriteChonk(dir, data, ckey, nil)
+	path, err := WriteChonk(dir, data, ckey, blobHash)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -40,7 +40,7 @@ func TestStoredFilesArePrivate(t *testing.T) {
 	if err := os.Truncate(string(path), 10); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := WriteChonk(dir, data, ckey, nil); err != nil {
+	if _, err := WriteChonk(dir, data, ckey, blobHash); err != nil {
 		t.Fatal(err)
 	}
 	assertMode("replaced blob", string(path))

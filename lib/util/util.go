@@ -225,15 +225,10 @@ func UnsealAES(key, ciphertext []byte) ([]byte, error) {
 	return plaintext, nil
 }
 
-// InitBatch returns a write batch whose pending transactions are bounded by
-// cnst.GetMaxBatchCount. The batch is created only once that succeeds, so an
-// error leaks nothing (CFG-10).
-func InitBatch(db *badger.DB) (*badger.WriteBatch, error) {
-	count, err := cnst.GetMaxBatchCount()
-	if err != nil {
-		return nil, err
-	}
+// InitBatch returns a write batch with at most pending transactions pending
+// (engine.Engine.MaxBatchCount).
+func InitBatch(db *badger.DB, pending int) *badger.WriteBatch {
 	batch := db.NewWriteBatch()
-	batch.SetMaxPendingTxns(count)
-	return batch, nil
+	batch.SetMaxPendingTxns(max(pending, 1))
+	return batch
 }

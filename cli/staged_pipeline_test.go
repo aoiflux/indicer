@@ -10,6 +10,7 @@ import (
 	"indicer/internal/testutil/testdb"
 	"indicer/lib/cnst"
 	"indicer/lib/dbio"
+	"indicer/lib/dbmeta"
 	"indicer/lib/util"
 )
 
@@ -70,7 +71,7 @@ func TestStagedPipelineRoundTrip(t *testing.T) {
 					if err != nil {
 						t.Fatalf("relation for chunk %d: %v", i, err)
 					}
-					want, err := util.GetChonkHash(chunk, cnst.GetHashAlgo())
+					want, err := util.GetChonkHash(chunk, dbmeta.ChunkHasher(h.DB)())
 					if err != nil {
 						t.Fatal(err)
 					}

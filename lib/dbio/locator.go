@@ -5,6 +5,7 @@ import (
 	"fmt"
 
 	"indicer/lib/cnst"
+	"indicer/lib/engine"
 	"indicer/lib/fio"
 	"indicer/lib/structs"
 	"indicer/lib/zstdx"
@@ -32,15 +33,16 @@ func LocateChunk(ckey []byte, db *badger.DB) (structs.ChonkMetadata, error) {
 	var loc structs.ChonkMetadata
 	err := db.View(func(txn *badger.Txn) error {
 		var err error
-		loc, err = locateChunkTxn(txn, ckey, KVDir(db))
+		loc, err = locateChunkTxn(txn, ckey, KVDir(db), engine.For(db).BlockIndex())
 		return err
 	})
 	return loc, err
 }
 
 // locateChunkTxn is LocateChunk inside txn, for the database whose
-// directory is dir.
-func locateChunkTxn(txn *badger.Txn, ckey []byte, dir string) (structs.ChonkMetadata, error) {
+// directory is dir. A chunk not in C||| is looked up in the block index when
+// blockIndex is set (engine.Engine.BlockIndex).
+func locateChunkTxn(txn *badger.Txn, ckey []byte, dir string, blockIndex bool) (structs.ChonkMetadata, error) {
 	item, err := txn.Get(ckey)
 	if err == nil {
 		raw, err := item.ValueCopy(nil)
@@ -56,7 +58,7 @@ func locateChunkTxn(txn *badger.Txn, ckey []byte, dir string) (structs.ChonkMeta
 		return structs.ChonkMetadata{}, err
 	}
 	notFound := fmt.Errorf("%w: %x (%w)", ErrChunkNotFound, ckey[min(len(ckey), len(cnst.ChonkNamespace)):], err)
-	if !cnst.LegacyBlockIndex {
+	if !blockIndex {
 		return structs.ChonkMetadata{}, notFound
 	}
 	path, offset, size, err := fio.LookupBlockIndex(dir, ckey)

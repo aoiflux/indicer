@@ -15,6 +15,7 @@ import (
 	"indicer/internal/testutil/fsfixture"
 	"indicer/internal/testutil/leakcheck"
 	"indicer/internal/testutil/testdb"
+	"indicer/lib/cnst"
 	"indicer/lib/dbio"
 	"indicer/lib/fts"
 	"indicer/lib/index"
@@ -196,7 +197,7 @@ func reopenReadOnly(t *testing.T, d *testdb.DB) *badger.DB {
 	if err := d.Close(); err != nil {
 		t.Fatal(err)
 	}
-	opts := dbio.BadgerOptions(util.KVDBPath(d.Root), d.Key, options.ZSTD).WithReadOnly(true).WithBypassLockGuard(runtime.GOOS == "windows")
+	opts := dbio.BadgerOptions(util.KVDBPath(d.Root), d.Key, options.ZSTD, cnst.DefaultTuning()).WithReadOnly(true).WithBypassLockGuard(runtime.GOOS == "windows")
 	db, err := badger.Open(opts)
 	if err != nil {
 		t.Fatal(err)

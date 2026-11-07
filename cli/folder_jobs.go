@@ -17,6 +17,7 @@ import (
 	"indicer/internal/workpool"
 	"indicer/lib/cnst"
 	"indicer/lib/dbmeta"
+	"indicer/lib/engine"
 	"indicer/lib/evidence"
 	"indicer/lib/logging"
 	"indicer/lib/store"
@@ -34,12 +35,12 @@ const maxStoreJobs = 64
 const heavyItem = 256 << 20
 
 // StoreJobs turns --store-jobs into StoreOptions.Jobs: n, or for 0 a number
-// for this machine. Low-resource mode stores one at a time.
-func StoreJobs(n int) (int, error) {
+// for this machine. Low-resource mode (low) stores one at a time.
+func StoreJobs(n int, low bool) (int, error) {
 	switch {
 	case n < 0 || n > maxStoreJobs:
 		return 0, lifecycle.Usagef("--%s must be from 0 to %d, got %d", cnst.FlagStoreJobs, maxStoreJobs, n)
-	case cnst.MEMOPT:
+	case low:
 		return 1, nil
 	case n == 0:
 		return min(4, max(1, runtime.NumCPU()/4)), nil
@@ -48,22 +49,24 @@ func StoreJobs(n int) (int, error) {
 }
 
 // folderJobs is how many evidence of a folder a store with Jobs n runs at
-// once: one for 0, at most maxStoreJobs, one in low-resource mode.
-func folderJobs(n int) int {
-	if cnst.MEMOPT {
+// once with tuning t: one for 0, at most maxStoreJobs, one in low-resource
+// mode.
+func folderJobs(t cnst.Tuning, n int) int {
+	if t.LowResource {
 		return 1
 	}
 	return min(max(n, 1), maxStoreJobs)
 }
 
 // innerWorkers is the chunk-pass width of one evidence among jobs stored at
-// once: the machine's pipeline width shared out, or 0 (the configured width)
-// when one runs at a time or --store-workers set it.
-func innerWorkers(jobs int) int {
-	if jobs <= 1 || cnst.StoreWorkerCount > 0 {
+// once in the database of e: its pipeline width shared out, or 0 (the
+// configured width) when one runs at a time or --store-workers set it.
+func innerWorkers(e *engine.Engine, jobs int) int {
+	t := e.Tuning()
+	if jobs <= 1 || t.StoreWorkers > 0 {
 		return 0
 	}
-	workers, _ := cnst.GetStorePipelineTuning(cnst.CONTAINERMODE)
+	workers, _ := t.StorePipeline(e.Container())
 	return max(2, workers/jobs)
 }
 
@@ -139,7 +142,9 @@ func jobsInMemory(db *badger.DB, jobs int, auto bool, items []workpool.Item, siz
 		return jobs, nil
 	}
 	budget := jobsBudget()
-	lane := func(i, jobs int) int64 { return int64(passes) * store.PassMemory(db, sizes[i], innerWorkers(jobs)) }
+	lane := func(i, jobs int) int64 {
+		return int64(passes) * store.PassMemory(db, sizes[i], innerWorkers(engine.For(db), jobs))
+	}
 	fit, need := fitJobs(jobs, items, lane, budget)
 	if fit == jobs {
 		return jobs, nil

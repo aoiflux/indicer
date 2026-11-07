@@ -6,6 +6,7 @@ import (
 	"indicer/internal/testutil/testdb"
 	"indicer/lib/cnst"
 	"indicer/lib/dbmeta"
+	"indicer/lib/engine"
 	"indicer/lib/util"
 )
 
@@ -15,7 +16,8 @@ import (
 func TestPassMemory(t *testing.T) {
 	db := testdb.Open(t, testdb.Default)
 	cs := dbmeta.ChunkSize(db.DB)
-	workers, queue := cnst.GetStorePipelineTuning(cnst.CONTAINERMODE)
+	e := engine.For(db.DB)
+	workers, queue := e.Tuning().StorePipeline(e.Container())
 	w := int64(min(workers, 2))
 	ring := int64(feedSlots(int(w), cs))
 	if ring <= 3 {

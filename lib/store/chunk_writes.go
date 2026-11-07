@@ -3,8 +3,8 @@ package store
 import (
 	"sync"
 
-	"indicer/lib/cnst"
 	"indicer/lib/dbio"
+	"indicer/lib/engine"
 	"indicer/lib/fio"
 
 	"github.com/dgraph-io/badger/v4"
@@ -62,7 +62,7 @@ func joinChunkWriter(db *badger.DB) *passChunks {
 	w := chunkWriters[db]
 	if w == nil {
 		w = &chunkWriter{db: db, claims: map[string]*chunkClaim{}}
-		if cnst.CONTAINERMODE {
+		if engine.For(db).Container() {
 			w.cm = fio.NewContainerManager(dbio.KVDir(db))
 		}
 		chunkWriters[db] = w

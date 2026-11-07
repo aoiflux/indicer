@@ -9,10 +9,11 @@ import (
 )
 
 // layoutGuarded lists the storage files written or rewritten from W3 on.
-// They must take the database layout from the database, through dbmeta or
-// the evidence record, never from the process-wide layout globals, which a
-// second database open in the same process (the server, the FFI) would
-// change underneath them (I3). Add each rewritten file here.
+// They must take the database layout from the database, through dbmeta,
+// engine.For or the evidence record, and its tuning from engine.For, never
+// from the process-wide globals, which a second database open in the same
+// process (the server, the FFI) would change underneath them (I3). Add each
+// rewritten file here.
 var layoutGuarded = []string{
 	"lib/dbio/blobpath.go",
 	"lib/dbio/chunk_stored.go",
@@ -48,7 +49,17 @@ var layoutGuarded = []string{
 	"lib/server/rpc.go",
 	"lib/server/rpc_files.go",
 	"lib/server/upload.go",
+	"cli/cmdreindex.go",
+	"cli/cmdrepair.go",
+	"cli/cmdstore.go",
 	"cli/cmdtui.go",
+	"cli/folder_jobs.go",
+	"lib/ingest/ingest.go",
+	"lib/near/near.go",
+	"lib/near/report.go",
+	"lib/near/verify.go",
+	"lib/search/engine.go",
+	"lib/store/chunk_writes.go",
 	"lib/store/ingest_validation.go",
 	"lib/store/restore.go",
 	"lib/store/stats.go",
@@ -56,10 +67,15 @@ var layoutGuarded = []string{
 	"lib/store/verify.go",
 }
 
-var layoutGlobal = regexp.MustCompile(`\bcnst\.(ChonkSize|QUICKOPT|HASHALGO)\b`)
+var layoutGlobal = regexp.MustCompile(`\bcnst\.(` +
+	`ChonkSize|QUICKOPT|HASHALGO|CONTAINERMODE|LegacyBlockIndex|GetHashAlgo|` +
+	`MEMOPT|CompressLevel|StoreHashStrategy|StorePipelineMode|StoreIOEngine|StoreIOUringQueueDepth|` +
+	`StoreWorkerCount|StoreTaskQueueDepth|RestoreWorkerCount|RestoreTaskQueueDepth|RestoreWriteBufferMB|` +
+	`Globals|GetMaxThreadCount|GetStorePipelineTuning|GetRestorePipelineTuning|GetRestoreWriteBufferSize|GetStoreIOUringQueueDepth` +
+	`)\b`)
 
 // TestRewrittenFilesAvoidLayoutGlobals fails when a guarded file reads a
-// layout global.
+// layout or tuning global.
 func TestRewrittenFilesAvoidLayoutGlobals(t *testing.T) {
 	root := filepath.Join("..", "..")
 	for _, rel := range layoutGuarded {
@@ -70,7 +86,7 @@ func TestRewrittenFilesAvoidLayoutGlobals(t *testing.T) {
 		for i, line := range strings.Split(string(src), "\n") {
 			code, _, _ := strings.Cut(line, "//")
 			if m := layoutGlobal.FindString(code); m != "" {
-				t.Errorf("%s:%d reads %s; take the layout from the database (dbmeta.LayoutFor)", rel, i+1, m)
+				t.Errorf("%s:%d reads %s; take the layout and tuning from the database (dbmeta, engine.For)", rel, i+1, m)
 			}
 		}
 	}

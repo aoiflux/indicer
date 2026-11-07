@@ -6,6 +6,7 @@ import (
 
 	"indicer/lib/cnst"
 	"indicer/lib/dbio"
+	"indicer/lib/dbmeta"
 	"indicer/lib/fio"
 	"indicer/lib/structs"
 	"indicer/lib/util"
@@ -36,7 +37,7 @@ func seedFlushedEvidenceWithChunk(t testing.TB, db *badger.DB, name string, hash
 	if err := util.EnsureBlobPath(db.Opts().Dir); err != nil {
 		t.Fatalf("ensure blob path: %v", err)
 	}
-	chunkPath, err := fio.WriteChonk(db.Opts().Dir, payload, chunkKey, db.Opts().EncryptionKey)
+	chunkPath, err := fio.WriteChonk(db.Opts().Dir, payload, chunkKey, dbmeta.ChunkHasher(db))
 	if err != nil {
 		t.Fatalf("seed chunk file: %v", err)
 	}

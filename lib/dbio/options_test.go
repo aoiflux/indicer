@@ -10,17 +10,19 @@ import (
 )
 
 func TestBadgerOptions(t *testing.T) {
-	prev := cnst.MEMOPT
-	t.Cleanup(func() { cnst.MEMOPT = prev })
 	def := badger.DefaultOptions("")
 	for _, low := range []bool{true, false} {
-		cnst.MEMOPT = low
-		opts := BadgerOptions(t.TempDir(), make([]byte, 32), options.ZSTD)
+		tun := cnst.DefaultTuning()
+		tun.LowResource = low
+		opts := BadgerOptions(t.TempDir(), make([]byte, 32), options.ZSTD, tun)
 		if opts.NumCompactors < 2 || opts.NumCompactors > 8 {
-			t.Errorf("MEMOPT=%v: NumCompactors %d, want 2..8", low, opts.NumCompactors)
+			t.Errorf("low=%v: NumCompactors %d, want 2..8", low, opts.NumCompactors)
 		}
 		if opts.ValueLogMaxEntries != def.ValueLogMaxEntries {
-			t.Errorf("MEMOPT=%v: ValueLogMaxEntries %d, want badger's default %d", low, opts.ValueLogMaxEntries, def.ValueLogMaxEntries)
+			t.Errorf("low=%v: ValueLogMaxEntries %d, want badger's default %d", low, opts.ValueLogMaxEntries, def.ValueLogMaxEntries)
+		}
+		if opts.NumGoroutines != tun.MaxThreads() {
+			t.Errorf("low=%v: %d goroutines, want the tuning's %d", low, opts.NumGoroutines, tun.MaxThreads())
 		}
 		if _, ok := opts.Logger.(badgerLogger); !ok {
 			t.Errorf("badger logs through %T, want the DUES log", opts.Logger)
@@ -29,7 +31,7 @@ func TestBadgerOptions(t *testing.T) {
 }
 
 func TestCompactValueLog(t *testing.T) {
-	opts := BadgerOptions(t.TempDir(), nil, options.None)
+	opts := BadgerOptions(t.TempDir(), nil, options.None, cnst.DefaultTuning())
 	opts.ValueThreshold = 16
 	db, err := badger.Open(opts)
 	if err != nil {

@@ -388,7 +388,7 @@ func buildCommandHandlers(cliDef cliDefinition, dbOpts cli.DBOptions, tuning pip
 				zap.Int("store_jobs", *cliDef.flags.storeJobs),
 				zap.Int("store_workers_effective", tuning.storeWorkers),
 				zap.Int("store_queue_effective", tuning.storeQueue))
-			jobs, err := cli.StoreJobs(*cliDef.flags.storeJobs)
+			jobs, err := cli.StoreJobs(*cliDef.flags.storeJobs, cnst.MEMOPT)
 			if err != nil {
 				return err
 			}
@@ -455,7 +455,7 @@ func buildCommandHandlers(cliDef cliDefinition, dbOpts cli.DBOptions, tuning pip
 				zap.Bool("failed", *cliDef.flags.reindexFailed),
 				zap.Bool("all", *cliDef.flags.reindexAll),
 				zap.Int("store_jobs", *cliDef.flags.reindexJobs))
-			jobs, err := cli.StoreJobs(*cliDef.flags.reindexJobs)
+			jobs, err := cli.StoreJobs(*cliDef.flags.reindexJobs, cnst.MEMOPT)
 			if err != nil {
 				return err
 			}

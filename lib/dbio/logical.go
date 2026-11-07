@@ -14,6 +14,7 @@ import (
 	"indicer/lib/blobcodec"
 	"indicer/lib/cnst"
 	"indicer/lib/dbmeta"
+	"indicer/lib/engine"
 	"indicer/lib/fio"
 	"indicer/lib/structs"
 	"indicer/lib/util"
@@ -173,7 +174,7 @@ func (e *EvidenceChunks) Spans(ctx context.Context, start, end int64, batch int,
 		return fmt.Errorf("%w: [%d, %d) is outside evidence %x [%d, %d)", ErrChunkRange, start, end, e.id, e.start, e.end)
 	}
 	batch = max(batch, 1)
-	root := KVDir(e.db)
+	root, blockIndex := KVDir(e.db), engine.For(e.db).BlockIndex()
 	off := start / e.stride * e.stride
 	for off < end {
 		if err := ctx.Err(); err != nil {
@@ -186,7 +187,7 @@ func (e *EvidenceChunks) Spans(ctx context.Context, start, end int64, batch int,
 				if err != nil {
 					return err
 				}
-				loc, err := locateChunkTxn(txn, util.AppendToBytesSlice(cnst.ChonkNamespace, chash), root)
+				loc, err := locateChunkTxn(txn, util.AppendToBytesSlice(cnst.ChonkNamespace, chash), root, blockIndex)
 				if err != nil {
 					return fmt.Errorf("chunk %x at offset %d of evidence %x: %w", chash, off, e.id, err)
 				}

@@ -16,6 +16,7 @@ import (
 	"indicer/internal/progress"
 	"indicer/lib/cnst"
 	"indicer/lib/dbio"
+	"indicer/lib/engine"
 	"indicer/lib/fio"
 	"indicer/lib/structs"
 	"io"
@@ -150,20 +151,20 @@ func Restore(ctx context.Context, db *badger.DB, rhash string, dst io.Writer, op
 			ewf = rec.Source.EWF
 		}
 	}
-	return restoreLogical(ctx, l, dst, opts, ewf)
+	return restoreLogical(ctx, l, dst, opts, ewf, engine.For(db).Tuning())
 }
 
-// restoreLogical writes the content of l to dst. Chunks are read and checked
-// in parallel and written in order; at most the window is between being read
-// and being written (RST-5).
-func restoreLogical(ctx context.Context, l *dbio.Logical, dst io.Writer, opts RestoreOptions, ewf *structs.EWFCheck) (report RestoreReport, err error) {
+// restoreLogical writes the content of l to dst, with the tuning of l's
+// database. Chunks are read and checked in parallel and written in order; at
+// most the window is between being read and being written (RST-5).
+func restoreLogical(ctx context.Context, l *dbio.Logical, dst io.Writer, opts RestoreOptions, ewf *structs.EWFCheck, tun cnst.Tuning) (report RestoreReport, err error) {
 	report = RestoreReport{Key: l.Key(), Size: l.Size(), RecordedSize: l.RecordedSize(), Truncated: l.Truncated(), Digest: DigestSkipped}
-	configureRestoreCache()
+	configureRestoreCache(tun)
 
 	fio.EnableContainerReadCache()
 	defer fio.DisableContainerReadCache()
 
-	writer := bufio.NewWriterSize(dst, cnst.GetRestoreWriteBufferSize())
+	writer := bufio.NewWriterSize(dst, tun.RestoreWriteBuffer())
 	var digest *digester
 	if opts.Verify == VerifyFull {
 		digest = newDigester(l)
@@ -177,7 +178,7 @@ func restoreLogical(ctx context.Context, l *dbio.Logical, dst io.Writer, opts Re
 	written := progress.Tally(ctx, "restored", progress.Bytes)
 	defer func() { ph.Done(err) }()
 
-	workerCount, jobQueueDepth := cnst.GetRestorePipelineTuning()
+	workerCount, jobQueueDepth := tun.RestorePipeline()
 	fetchBatchSize, window := restoreWindow(l.ChunkSize())
 	slots := make(chan struct{}, window)
 	jobs := make(chan restoreChunkJob, jobQueueDepth)
@@ -381,17 +382,10 @@ func restoreWindow(chunkSize int64) (batch, window int) {
 	return batch, 2 * batch
 }
 
-func configureRestoreCache() {
-	cacheSize, err := cnst.GetCacheLimit()
-	if err != nil {
-		cacheSize = 256 * cnst.MB
-	}
-
-	maxCache := int64(4 * cnst.GB)
-	if cacheSize > maxCache {
-		cacheSize = maxCache
-	}
-	fio.SetContainerReadCacheSize(cacheSize)
+// configureRestoreCache sizes the process's container read cache for a
+// restore with tuning tun: its cache limit, at most 4 GiB.
+func configureRestoreCache(tun cnst.Tuning) {
+	fio.SetContainerReadCacheSize(min(tun.CacheLimit(), 4*cnst.GB))
 }
 
 // containerLocalityOrder returns the order to read a batch's spans in:

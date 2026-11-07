@@ -9,6 +9,8 @@ import (
 	"indicer/lib/blobcodec"
 	"indicer/lib/cnst"
 	"indicer/lib/dbio"
+	"indicer/lib/dbmeta"
+	"indicer/lib/engine"
 	"indicer/lib/fio"
 	"indicer/lib/structs"
 	"indicer/lib/util"
@@ -55,13 +57,10 @@ func UpgradeBlockIndex(ctx context.Context, db *badger.DB) (report BlockIndexUpg
 		return report, nil
 	}
 
-	batch, err := util.InitBatch(db)
-	if err != nil {
-		return report, err
-	}
+	batch := util.InitBatch(db, engine.For(db).MaxBatchCount())
 	defer batch.Cancel()
 	codec := blobcodec.For(db)
-	hashLen := cnst.GetHashAlgo().Size()
+	hashLen := dbmeta.ChunkHasher(db)().Size()
 	ph := progress.Start(ctx, "upgrade", progress.Files, int64(len(files)))
 	records := ph.Meter("records", progress.Records)
 	defer func() { ph.Done(err) }()

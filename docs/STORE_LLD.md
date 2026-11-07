@@ -117,12 +117,20 @@ Code given only a `*badger.DB` reads the layout through registries that
 - `dbio.RegisterKVDir`: `dbio.KVDir` returns the real `kvdb` directory when
   badger was opened elsewhere (read-only media). Every path derived from the
   badger directory goes through `KVDir`, not `db.Opts().Dir`.
+- `engine.Register` (`lib/engine`): `engine.For` returns the database's
+  layout, the tuning it was opened with, and whether its legacy block index
+  is read. The tuning (`cnst.Tuning`: low-resource mode, compression level,
+  hash strategy, pipeline, worker and queue counts) is `Request.Tuning`, or
+  the process-wide settings as they are at the open (`cnst.Globals`).
+  `SetStorage` replaces the layout in place, so code that holds the engine
+  sees `repair --upgrade`'s change. A database opened without `dbopen` gets
+  an engine that answers from the process-wide settings at each call.
 
-`dbopen.ApplyToGlobals` also sets the process-wide globals the storage code
-still reads: `cnst.ChonkSize`, `cnst.HASHALGO`, `cnst.QUICKOPT` (raw
+`dbopen.ApplyToGlobals` also sets the process-wide layout globals that older
+code still reads: `cnst.ChonkSize`, `cnst.HASHALGO`, `cnst.QUICKOPT` (raw
 values), `cnst.CONTAINERMODE` and `cnst.LegacyBlockIndex`. The guard test
-`TestRewrittenFilesAvoidLayoutGlobals` fails when a listed storage file reads
-`cnst.ChonkSize`, `cnst.QUICKOPT` or `cnst.HASHALGO`.
+`TestRewrittenFilesAvoidLayoutGlobals` fails when a listed file reads a
+layout or tuning global, `cnst.Globals` or one of the getters built on it.
 
 ## Opening a database (`lib/dbopen`)
 
@@ -680,7 +688,7 @@ matches `store.ErrSourceRead`. The pass then fails.
 Both pipelines take their shape from the database (`shapeFor`):
 
 - Chunk size and hashes from the registered layout.
-- Workers and queue depth from `cnst.GetStorePipelineTuning`: twice the CPU
+- Workers and queue depth from the database's tuning (`StorePipeline`): twice the CPU
   count (1 with `--low`), queue twice the workers. Container mode halves the
   workers (at least 2) and makes the queue four times the workers.
   `--store-workers` and `--store-queue` override them. On the command line,
@@ -694,8 +702,7 @@ Both pipelines take their shape from the database (`shapeFor`):
 - Buffer slots (`feedSlots`): four per worker, at most about 256 MiB of
   buffers, never fewer than 2.
 
-Storage mode comes from `cnst.CONTAINERMODE`, which `ApplyToGlobals` sets
-from the manifest. The chunk passes of one database that run at once in a
+Storage mode comes from the manifest (`engine.For(db).Container()`). The chunk passes of one database that run at once in a
 process (evidence stored side by side, an evidence and the objects its index
 stores) share a `chunkWriter` (`chunk_writes.go`), which the first opens and
 the last closes. In container mode it holds the one `fio.ContainerManager`
@@ -771,7 +778,7 @@ are stored once, but every occurrence gets its relation.
   other's reverse relations.
 - With `--simhash` (`cnst.ENABLESIMHASH`), a SimHash signature per chunk,
   `S|||:<chunk hash>` (8 bytes). It is computed beside the pipeline by
-  `simhashAsyncWriter`, which holds at most `cnst.GetMaxThreadCount()` chunk
+  `simhashAsyncWriter`, which holds at most the tuning's `MaxThreads()` chunk
   copies at once and skips a chunk that already has one. Its errors fail the
   pass when the pass ends.
 
@@ -1223,8 +1230,9 @@ manifest:
   wrong, and those chunks fail to decode.
 - **Block index.** In a `container-bidx` database, chunks without `C|||`
   are found in `blob/blocks/block_*.bidx` files (`fio.LookupBlockIndex`).
-  `dbio.LocateChunk` falls back to them when `cnst.LegacyBlockIndex` is set:
-  by the manifest, or because block files exist. Nothing writes block-index
+  `dbio.LocateChunk` falls back to them when the database's engine reads
+  the block index (`engine.For(db).BlockIndex()`): by the manifest, or
+  because block files exist. Nothing writes block-index
   files any more.
 - **Lookups and members.** Hash lookups kept as one msgpack list, partition
   members kept in the record's `InternalObjects` map, and reverse relations

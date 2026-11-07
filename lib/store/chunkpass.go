@@ -11,6 +11,7 @@ import (
 	"indicer/lib/blobcodec"
 	"indicer/lib/cnst"
 	"indicer/lib/dbmeta"
+	"indicer/lib/engine"
 	"indicer/lib/parser/image"
 
 	"github.com/dgraph-io/badger/v4"
@@ -82,15 +83,16 @@ func IngestChunks(ctx context.Context, p ChunkPass) (ChunkResult, error) {
 	if c := p.Credit; !c.Object {
 		defer c.Ledger.evidenceEnded(c.Item)
 	}
-	if cnst.StorePipelineMode == cnst.StorePipelineStaged {
+	if engine.For(p.DB).Tuning().Pipeline == cnst.StorePipelineStaged {
 		return ingestChunksStaged(ctx, p)
 	}
 	return ingestChunksBatchOwner(ctx, p)
 }
 
 // passShape is what both pipelines derive from the database: its chunk size
-// and hashes (I3), and how wide to run.
+// and hashes (I3), its tuning, and how wide to run.
 type passShape struct {
+	tuning     cnst.Tuning
 	chunk      int64
 	chunkHash  func() hash.Hash
 	fileHash   func() hash.Hash
@@ -102,13 +104,15 @@ type passShape struct {
 }
 
 func shapeFor(p ChunkPass) passShape {
+	e := engine.For(p.DB)
 	s := passShape{
+		tuning:    e.Tuning(),
 		chunk:     dbmeta.ChunkSize(p.DB),
 		chunkHash: dbmeta.ChunkHasher(p.DB),
 		fileHash:  dbmeta.FileHasher(p.DB),
 		revrel:    p.RevRel,
 	}
-	s.workers, s.queueDepth = cnst.GetStorePipelineTuning(cnst.CONTAINERMODE)
+	s.workers, s.queueDepth = s.tuning.StorePipeline(e.Container())
 	if p.MaxWorkers > 0 {
 		s.workers = min(s.workers, p.MaxWorkers)
 	}
@@ -135,7 +139,7 @@ func PassMemory(db *badger.DB, size int64, maxWorkers int) int64 {
 	s := shapeFor(ChunkPass{DB: db, Size: max(size, 0), MaxWorkers: maxWorkers})
 	chunks := max((max(size, 0)+s.chunk-1)/max(s.chunk, 1), 1)
 	held := int64(s.slots) + min(int64(s.workers), int64(s.slots), chunks)
-	if cnst.StorePipelineMode == cnst.StorePipelineStaged {
+	if s.tuning.Pipeline == cnst.StorePipelineStaged {
 		held += min(int64(s.queueDepth), chunks)
 	}
 	return held * s.chunk

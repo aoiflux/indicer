@@ -243,15 +243,18 @@ func TestFolderJobsReportFailuresInFolderOrder(t *testing.T) {
 // low-resource mode stores one at a time.
 func TestStoreJobs(t *testing.T) {
 	for _, n := range []int{-1, 65} {
-		if _, err := StoreJobs(n); err == nil {
+		if _, err := StoreJobs(n, false); err == nil {
 			t.Errorf("StoreJobs(%d) accepted", n)
 		}
 	}
-	if n, err := StoreJobs(0); err != nil || n < 1 || n > 4 {
+	if n, err := StoreJobs(0, false); err != nil || n < 1 || n > 4 {
 		t.Errorf("StoreJobs(0) = %d, %v; want 1 to 4", n, err)
 	}
-	if n, _ := StoreJobs(8); n != 8 {
+	if n, _ := StoreJobs(8, false); n != 8 {
 		t.Errorf("StoreJobs(8) = %d", n)
+	}
+	if n, _ := StoreJobs(8, true); n != 1 {
+		t.Errorf("StoreJobs(8) in low-resource mode = %d, want 1", n)
 	}
 }
 

@@ -10,9 +10,9 @@ import (
 	"indicer/internal/lifecycle"
 	"indicer/internal/termsafe"
 	"indicer/internal/ui"
-	"indicer/lib/cnst"
 	"indicer/lib/dbmeta"
 	"indicer/lib/dbopen"
+	"indicer/lib/engine"
 	"indicer/lib/fio"
 	"indicer/lib/fsx"
 	"indicer/lib/ingest"
@@ -316,7 +316,7 @@ func upgradeBlockIndex(ctx context.Context, h *dbopen.Handle, yes bool, in io.Re
 		}
 	}
 	_ = os.Remove(filepath.Dir(files[0])) // the blocks directory, once empty
-	cnst.LegacyBlockIndex = false
+	engine.For(h.DB).SetBlockIndex(false)
 	s.BlockFiles = "deleted"
 	console.Errorf("Deleted %d block index files.\n", len(files))
 	return s, nil

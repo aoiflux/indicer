@@ -18,7 +18,7 @@ Hierarchical mode is retired. In that mode, a container database kept its chunk 
 
 - The manifest records its storage as `container-bidx`.
 - A database written before manifests existed is inferred as `container-bidx` when `blob/blocks/*.bidx` files exist (`inferStorage`, `lib/dbmeta/legacy.go`).
-- `dbopen.ApplyToGlobals` sets `cnst.LegacyBlockIndex` for `container-bidx`. This turns the block index lookup on.
+- `dbopen` turns the block index lookup on for `container-bidx` (`engine.For(db).BlockIndex()`).
 - Block files beside a database turn the lookup on whatever the manifest says (`Handle.keepBlockIndexLookup`). An upgrade may have kept them, or been cut short before the manifest changed.
 - `--container` on a `container-bidx` database is not a layout conflict.
 

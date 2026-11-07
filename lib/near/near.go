@@ -23,6 +23,7 @@ import (
 	"indicer/internal/safe"
 	"indicer/lib/cnst"
 	"indicer/lib/dbio"
+	"indicer/lib/engine"
 	"indicer/lib/store"
 	"indicer/lib/structs"
 
@@ -138,7 +139,7 @@ type run struct {
 func newRun(db *badger.DB, opts Options, started time.Time) *run {
 	workers := opts.Workers
 	if workers <= 0 {
-		workers = max(cnst.GetMaxThreadCount(), 1)
+		workers = max(engine.For(db).Tuning().MaxThreads(), 1)
 	}
 	return &run{db: db, opts: opts, workers: workers, started: started, matches: map[string]*match{}, exact: map[string]struct{}{}, owners: map[string]*ownerInfo{}}
 }

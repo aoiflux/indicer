@@ -7,6 +7,7 @@ import (
 
 	"indicer/lib/cnst"
 	"indicer/lib/dbmeta"
+	"indicer/lib/engine"
 	"indicer/lib/fio"
 
 	"github.com/dgraph-io/badger/v4"
@@ -43,19 +44,22 @@ func (h *Handle) SetStorage(storage string) error {
 	}
 	h.Manifest = m
 	dbmeta.RegisterManifest(h.DB, m)
+	engine.For(h.DB).SetLayout(m.Layout)
 	ApplyToGlobals(m)
 	h.keepBlockIndexLookup()
 	return nil
 }
 
-// keepBlockIndexLookup turns the legacy block index lookup on when block
-// index files exist, whatever the manifest says: an upgrade may have kept
-// them, or been cut short before the manifest changed.
+// keepBlockIndexLookup sets the legacy block index lookup from the manifest,
+// and turns it on when block index files exist, whatever the manifest says:
+// an upgrade may have kept them, or been cut short before the manifest
+// changed.
 func (h *Handle) keepBlockIndexLookup() {
-	if cnst.LegacyBlockIndex {
-		return
+	on := h.Manifest.Layout.Storage == dbmeta.StorageContainerBIDX
+	if !on {
+		files, _ := fio.BlockIndexFiles(h.Root)
+		on = len(files) > 0
 	}
-	if files, _ := fio.BlockIndexFiles(h.Root); len(files) > 0 {
-		cnst.LegacyBlockIndex = true
-	}
+	engine.For(h.DB).SetBlockIndex(on)
+	cnst.LegacyBlockIndex = on
 }

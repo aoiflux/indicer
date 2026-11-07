@@ -31,6 +31,7 @@ import (
 	"indicer/lib/cnst"
 	"indicer/lib/dbio"
 	"indicer/lib/dbmeta"
+	"indicer/lib/engine"
 	"indicer/lib/fsx"
 	"indicer/lib/logging"
 	"indicer/lib/store"
@@ -90,6 +91,9 @@ type Request struct {
 	// Repair, which inspects them first, and the compression product leave
 	// it off. A read-only open never recovers (CFG-11).
 	Recover bool
+	// Tuning is how the engine runs on the database (engine.For). Nil takes
+	// the process-wide settings as they are at the open (cnst.Globals).
+	Tuning *cnst.Tuning
 }
 
 // Handle is an open database.
@@ -110,6 +114,8 @@ type Handle struct {
 	shadow string
 	// tempDir is Request.TempDir, where a shadow goes.
 	tempDir string
+	// tuning is Request.Tuning, or the globals at the open.
+	tuning cnst.Tuning
 }
 
 // Errors.
@@ -176,7 +182,10 @@ func Open(ctx context.Context, req Request) (*Handle, error) {
 	if err != nil {
 		return nil, err
 	}
-	h := &Handle{Root: root, ReadOnly: req.Mode == ReadOnly, tempDir: req.TempDir}
+	h := &Handle{Root: root, ReadOnly: req.Mode == ReadOnly, tempDir: req.TempDir, tuning: cnst.Globals()}
+	if req.Tuning != nil {
+		h.tuning = *req.Tuning
+	}
 	if err := h.open(ctx, req); err != nil {
 		h.release()
 		return nil, err
@@ -254,6 +263,7 @@ func (h *Handle) open(ctx context.Context, req Request) error {
 	}
 	blobcodec.Register(h.DB, codec)
 	dbmeta.RegisterManifest(h.DB, m)
+	engine.Register(h.DB, m.Layout, h.tuning)
 	ApplyToGlobals(m)
 	h.keepBlockIndexLookup()
 	if l := m.Layout; h.Created && l.ChunkKiB < containerAdviceKiB && l.Storage == dbmeta.StorageFile {
@@ -532,7 +542,7 @@ func compressionOf(l dbmeta.Layout) options.CompressionType {
 }
 
 func (h *Handle) badgerOptions(l dbmeta.Layout, keys dbmeta.Keys, readOnly bool) badger.Options {
-	opts := dbio.BadgerOptions(filepath.Join(h.Root, cnst.KVDBDIR), keys.Badger, compressionOf(l))
+	opts := dbio.BadgerOptions(filepath.Join(h.Root, cnst.KVDBDIR), keys.Badger, compressionOf(l), h.tuning)
 	if readOnly {
 		opts.ReadOnly = true
 		// badger has no read-only directory lock on Windows; the shared root
@@ -797,9 +807,7 @@ func ApplyToGlobals(m dbmeta.Manifest) {
 
 func (h *Handle) release() {
 	if h.DB != nil {
-		blobcodec.Unregister(h.DB)
-		dbmeta.UnregisterLayout(h.DB)
-		dbio.UnregisterKVDir(h.DB)
+		unregister(h.DB)
 		h.DB.Close()
 		h.DB = nil
 	}
@@ -808,6 +816,14 @@ func (h *Handle) release() {
 		h.lock.Unlock()
 		h.lock = nil
 	}
+}
+
+// unregister forgets what the open registered for db, as it closes.
+func unregister(db *badger.DB) {
+	blobcodec.Unregister(db)
+	dbmeta.UnregisterLayout(db)
+	engine.Unregister(db)
+	dbio.UnregisterKVDir(db)
 }
 
 func (h *Handle) removeShadow() {
@@ -824,9 +840,7 @@ func (h *Handle) Close() error {
 	}
 	db := h.DB
 	h.DB = nil
-	blobcodec.Unregister(db)
-	dbio.UnregisterKVDir(db)
-	dbmeta.UnregisterLayout(db)
+	unregister(db)
 	err := db.Close()
 	h.removeShadow()
 	if h.lock != nil {

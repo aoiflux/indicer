@@ -19,7 +19,7 @@ The manifest (`dues-manifest.json`) records the storage in `layout.storage`:
 | `container-bidx` | Legacy. A container database written in the retired hierarchical mode. Some chunk locations are in block index files. |
 
 - A new database gets `container` when it is created with `--container` (`-x`), and `file` otherwise (`storageOf`, `lib/dbopen/dbopen.go`). No new database gets `container-bidx`.
-- An existing database keeps the storage it was created with. `dbopen.ApplyToGlobals` sets `cnst.CONTAINERMODE` from the manifest, so every command reads and writes the way the database was written.
+- An existing database keeps the storage it was created with. The storage code takes it from the manifest (`engine.For(db).Container()`), so every command reads and writes the way the database was written.
 - An explicit `--container` that contradicts the manifest is a usage error, which names the database's storage (`checkRequested`). On a `container-bidx` database, `--container` is accepted.
 - When `dues` creates a file-storage database with chunks smaller than 128 KiB, it recommends `--container`, in a notice from `dbopen.Open` (`lib/dbopen/dbopen.go`).
 
@@ -195,7 +195,7 @@ Ingest materialises a chunk through `materializeChunkMeta` (`lib/store/staged_pi
 `LocateChunk(ckey, db)` returns a chunk's `structs.ChonkMetadata` in one read transaction (`locateChunkTxn` inside an existing one):
 
 1. It reads `C|||`. A value that decodes as zstd is decompressed first. The msgpack record is then parsed and checked (`parseChonkMetadata`).
-2. If there is no `C|||` key and the database has a legacy block index (`cnst.LegacyBlockIndex`), it calls `fio.LookupBlockIndex`. A block index record becomes a container location, with `stored_size` and `encoded_size` both set to the record's size.
+2. If there is no `C|||` key and the database has a legacy block index (`engine.For(db).BlockIndex()`), it calls `fio.LookupBlockIndex`. A block index record becomes a container location, with `stored_size` and `encoded_size` both set to the record's size.
 
 | Outcome | Error |
 |---|---|
@@ -262,7 +262,7 @@ Without the cache, `streamReadCompressedChunk` decodes from the start, discards 
 During a restore the cache is on:
 
 - `restoreLogical` (`lib/store/restore.go`) calls `EnableContainerReadCache`, and `DisableContainerReadCache` when it ends. Calls nest, so concurrent restores share the cache. The last `DisableContainerReadCache` releases every entry.
-- `configureRestoreCache` sets the memory budget (`SetContainerReadCacheSize`) to `cnst.GetCacheLimit()`, at most 4 GiB. `GetCacheLimit` is a quarter of available memory, between 64 MiB and 8 GiB. It is 64 MiB in low-resource mode, and 256 MiB when memory cannot be probed. Until a restore sets it, the budget is 2 GiB (`defaultMaxCacheSize`).
+- `configureRestoreCache` sets the memory budget (`SetContainerReadCacheSize`) to the database tuning's `CacheLimit()`, at most 4 GiB. `CacheLimit` is a quarter of available memory, between 64 MiB and 8 GiB. It is 64 MiB in low-resource mode, and 256 MiB when memory cannot be probed. Until a restore sets it, the budget is 2 GiB (`defaultMaxCacheSize`).
 - Each container is decoded once, by the first read that needs it. Other reads of that container wait on its entry, not on a global lock. Only one decode runs at a time.
 - A decoded container stays in memory if it fits in what is left of the budget. Otherwise it is spilled to a temporary file:
   - The file comes from `fsx.CreateTempDeleteOnClose`, with the pattern `dues-container-*.tmp`, in the system temporary directory.

@@ -14,6 +14,7 @@ import (
 	"indicer/internal/safe"
 	"indicer/lib/cnst"
 	"indicer/lib/dbio"
+	"indicer/lib/engine"
 	"indicer/lib/structs"
 
 	"github.com/dgraph-io/badger/v4"
@@ -43,7 +44,7 @@ var ErrQueryTooLong = fmt.Errorf("query too long: at most %d terms of at most %d
 // Options control a search.
 type Options struct {
 	// Workers bounds the objects read at once, and the chunks read at once
-	// across them. Zero means cnst.GetMaxThreadCount().
+	// across them. Zero means the database's tuning's MaxThreads.
 	Workers int
 	// Candidates, when not nil, restricts the search to these indexed files
 	// (record keys), as full-text mode does; evidence and partitions are not
@@ -223,7 +224,7 @@ const readBudget = 256 * cnst.MB
 func newScanner(db *badger.DB, terms []string, opts Options) *scanner {
 	workers := opts.Workers
 	if workers <= 0 {
-		workers = max(cnst.GetMaxThreadCount(), 1)
+		workers = max(engine.For(db).Tuning().MaxThreads(), 1)
 	}
 	s := &scanner{
 		db:         db,

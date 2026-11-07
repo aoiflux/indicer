@@ -12,6 +12,7 @@ import (
 	"indicer/internal/console"
 	"indicer/lib/cnst"
 	"indicer/lib/dbio"
+	"indicer/lib/engine"
 	"indicer/lib/util"
 
 	"github.com/dgraph-io/badger/v4"
@@ -261,10 +262,7 @@ func ingestMetadataWorkload(db *badger.DB, fileCount int, chunkHashes [][]byte) 
 func ingestMetadataWorkloadWithOffset(db *badger.DB, fileCount int, chunkHashes [][]byte, fileOffset int) error {
 	for fileIdx := 0; fileIdx < fileCount; fileIdx++ {
 		fhash := []byte(fmt.Sprintf("ingest-file-%06d", fileOffset+fileIdx))
-		batch, err := util.InitBatch(db)
-		if err != nil {
-			return err
-		}
+		batch := util.InitBatch(db, engine.For(db).MaxBatchCount())
 		for chunkIdx, chash := range chunkHashes {
 			index := int64(chunkIdx) * cnst.ChonkSize
 			if err := processRel(index, fhash, chash, db, batch); err != nil {
@@ -597,10 +595,7 @@ func ingestBatchOwnerMetadataWorkloadWithOffset(db *badger.DB, fileCount int, ch
 // metadata-only tasks without channel/plumbing overhead, so the benchmark
 // focuses on relation/reverse-relation write behavior.
 func batchOwnerWriteLoopBenchmarkDirect(fhash []byte, db *badger.DB, tasks []chunkTask) error {
-	batch, err := util.InitBatch(db)
-	if err != nil {
-		return err
-	}
+	batch := util.InitBatch(db, engine.For(db).MaxBatchCount())
 
 	for _, task := range tasks {
 		if err := processRel(task.index, fhash, task.chash, db, batch); err != nil {

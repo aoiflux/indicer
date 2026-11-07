@@ -6,6 +6,7 @@ import (
 	"testing"
 
 	"indicer/internal/testutil/testdb"
+	"indicer/lib/cnst"
 	"indicer/lib/dbio"
 	"indicer/lib/util"
 
@@ -30,7 +31,7 @@ func TestGetNodeOwnsItsValue(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	opts := dbio.BadgerOptions(util.KVDBPath(db.Root), nil, options.Snappy).
+	opts := dbio.BadgerOptions(util.KVDBPath(db.Root), nil, options.Snappy, cnst.DefaultTuning()).
 		WithReadOnly(true).WithBypassLockGuard(runtime.GOOS == "windows")
 	ro, err := badger.Open(opts)
 	if err != nil {

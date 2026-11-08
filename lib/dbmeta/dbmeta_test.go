@@ -31,6 +31,7 @@ func validManifest() Manifest {
 }
 
 func TestValidate(t *testing.T) {
+	t.Parallel()
 	if err := validManifest().Validate(); err != nil {
 		t.Fatal(err)
 	}
@@ -66,6 +67,7 @@ func TestValidate(t *testing.T) {
 }
 
 func TestSaveLoadAndMirror(t *testing.T) {
+	t.Parallel()
 	root := t.TempDir()
 	if err := os.MkdirAll(filepath.Join(root, cnst.KVDBDIR), 0o755); err != nil {
 		t.Fatal(err)
@@ -97,6 +99,7 @@ func TestSaveLoadAndMirror(t *testing.T) {
 }
 
 func TestKeys(t *testing.T) {
+	t.Parallel()
 	enc, keys, err := NewEncryption(Password("correct horse"), fastKDF)
 	if err != nil {
 		t.Fatal(err)
@@ -153,6 +156,7 @@ func openLegacy(t *testing.T, root string, key []byte, raw bool) *badger.DB {
 // TestLegacyFixtures infers the manifest of every legacy database fixture and
 // checks it against the flags the fixture was written with.
 func TestLegacyFixtures(t *testing.T) {
+	t.Parallel()
 	for _, f := range legacyfixture.Load(t) {
 		t.Run(f.Mode, func(t *testing.T) {
 			root := legacyfixture.Extract(t, f)

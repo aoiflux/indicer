@@ -49,6 +49,7 @@ func recordStores(t *testing.T) map[string]int {
 // TestFitJobs: the worst case is the items that hold the most, heavy ones
 // aside, running together; jobs come down until it fits, never below one.
 func TestFitJobs(t *testing.T) {
+	t.Parallel()
 	items := []workpool.Item{{}, {Heavy: true}, {}, {}}
 	lanes := []int64{10, 1000, 30, 20}
 	lane := func(i, _ int) int64 { return lanes[i] }

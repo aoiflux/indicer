@@ -26,6 +26,7 @@ func phases(r *progress.Reporter) map[string]progress.View {
 // and full-text, and each ends done; the index counts the files it
 // indexed and full-text counts the documents it wrote.
 func TestIngestReportsItsPhases(t *testing.T) {
+	t.Parallel()
 	db := openDB(t)
 	r := progress.New(t.Context(), nil)
 	ctx := progress.With(t.Context(), r)
@@ -51,6 +52,7 @@ func TestIngestReportsItsPhases(t *testing.T) {
 }
 
 func TestIngestSkippedIndexAndIdentify(t *testing.T) {
+	t.Parallel()
 	db := openDBStrategy(t, cnst.SyncHashStrategy)
 
 	r := progress.New(t.Context(), nil)
@@ -76,6 +78,7 @@ func TestIngestSkippedIndexAndIdentify(t *testing.T) {
 }
 
 func TestIngestQuietReportsNothing(t *testing.T) {
+	t.Parallel()
 	db := openDB(t)
 	r := progress.New(t.Context(), nil)
 	path := testutil.WriteRandomFile(t, t.TempDir(), "q.bin", 4, 64<<10)
@@ -102,6 +105,7 @@ func planned(r *progress.Reporter) string {
 // starts, identify only under the sync strategy, and the index and
 // full-text say which file they are on.
 func TestIngestPlansItsSteps(t *testing.T) {
+	t.Parallel()
 	for strategy, want := range map[string]string{
 		cnst.SyncHashStrategy:  "[identify store index full-text]",
 		cnst.AsyncHashStrategy: "[store index full-text]",
@@ -129,6 +133,7 @@ func TestIngestPlansItsSteps(t *testing.T) {
 // TestIngestAliasDropsItsPlan: content already stored ends after identify,
 // leaving none of the planned steps behind as "not run".
 func TestIngestAliasDropsItsPlan(t *testing.T) {
+	t.Parallel()
 	db := openDBStrategy(t, cnst.SyncHashStrategy)
 	path := testutil.WriteRandomFile(t, t.TempDir(), "a.bin", 5, 256<<10)
 	if _, err := Run(t.Context(), db, Request{Path: path, Decode: true, Quiet: true}); err != nil {
@@ -148,14 +153,15 @@ func TestIngestAliasDropsItsPlan(t *testing.T) {
 // TestIngestFailedIndexSkipsFeatures: the features read the index, so when
 // it fails they show as not run, and why.
 func TestIngestFailedIndexSkipsFeatures(t *testing.T) {
+	t.Parallel()
 	db := openDB(t)
-	prev := runIndex
-	t.Cleanup(func() { runIndex = prev })
-	runIndex = func(context.Context, index.Options) (index.Result, error) {
-		return index.Result{}, errors.New("simulated index failure")
+	failing := func(p *passes) {
+		p.index = func(context.Context, index.Options) (index.Result, error) {
+			return index.Result{}, errors.New("simulated index failure")
+		}
 	}
 	r := progress.New(t.Context(), nil)
-	if _, err := Run(progress.With(t.Context(), r), db, Request{Path: fixture(t, "fat/fat12"), Decode: true, FTS: true, Enrich: true}); err == nil {
+	if _, err := runWith(progress.With(t.Context(), r), db, Request{Path: fixture(t, "fat/fat12"), Decode: true, FTS: true, Enrich: true}, failing); err == nil {
 		t.Fatal("ingest succeeded; want an incomplete index")
 	}
 	ps := phases(r)
@@ -167,6 +173,7 @@ func TestIngestFailedIndexSkipsFeatures(t *testing.T) {
 }
 
 func TestReindexPlansItsSteps(t *testing.T) {
+	t.Parallel()
 	db := openDB(t)
 	res, err := Run(t.Context(), db, Request{Path: fixture(t, "fat/fat16"), Decode: true, Quiet: true})
 	if err != nil {

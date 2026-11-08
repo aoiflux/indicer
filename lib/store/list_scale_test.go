@@ -17,6 +17,7 @@ import (
 // took 40 s and 9,000 more than five minutes. Records written since W6 link
 // every partition and are not scanned for; older ones share one scan.
 func TestListScansForLegacyPartitionsOnce(t *testing.T) {
+	t.Parallel()
 	db := testdb.Open(t, testdb.Default)
 	put := func(i int, v2 bool) []byte {
 		id := []byte(fmt.Sprintf("evidence-%07d", i))

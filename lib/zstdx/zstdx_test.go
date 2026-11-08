@@ -43,6 +43,7 @@ func zeroFrame(t *testing.T, n int) []byte {
 // values, none larger than a 64 MiB chunk, so a few hundred bytes of stored
 // data must not decode to gigabytes (CMP-1).
 func TestDecodeAllIsBounded(t *testing.T) {
+	t.Parallel()
 	ok := zeroFrame(t, 64<<20)
 	if out, err := DecodeAll(ok, nil); err != nil || len(out) != 64<<20 {
 		t.Fatalf("a 64 MiB chunk: %d bytes, %v", len(out), err)
@@ -90,6 +91,7 @@ func TestAcquireIsBounded(t *testing.T) {
 }
 
 func TestLevel(t *testing.T) {
+	t.Parallel()
 	for name, want := range map[string]zstd.EncoderLevel{
 		"fast": zstd.SpeedFastest, "default": zstd.SpeedDefault, "best": zstd.SpeedBestCompression,
 		"BEST": zstd.SpeedBestCompression, "": zstd.SpeedBestCompression, "other": zstd.SpeedBestCompression,
@@ -157,6 +159,7 @@ func TestAcquireSharesAndDrops(t *testing.T) {
 // TestAcquireConcurrent: users that come and go at once each get a working
 // encoder, and none is left when they are all done.
 func TestAcquireConcurrent(t *testing.T) {
+	t.Parallel()
 	var wg sync.WaitGroup
 	errs := make(chan error, 32)
 	for i := range 32 {

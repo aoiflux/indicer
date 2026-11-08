@@ -27,6 +27,7 @@ func streamed(t *testing.T, parts ...[]byte) []byte {
 }
 
 func TestDecompressLimited(t *testing.T) {
+	t.Parallel()
 	data := bytes.Repeat([]byte("abcdefgh"), 4096)
 	one, err := Compress(data, "fast")
 	if err != nil {

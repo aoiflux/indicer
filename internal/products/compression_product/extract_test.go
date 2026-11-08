@@ -140,6 +140,7 @@ func listDir(t *testing.T, dir string) []string {
 // silently change, are refused with a report naming each, and nothing is
 // written.
 func TestExtractRefusesUnsafeNames(t *testing.T) {
+	t.Parallel()
 	type bad struct {
 		name    string
 		windows bool // refused only on Windows
@@ -186,6 +187,7 @@ func TestExtractRefusesUnsafeNames(t *testing.T) {
 // TestExtractRollsBackOnFailure: an archive that fails partway leaves the
 // output exactly as it was.
 func TestExtractRollsBackOnFailure(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
 	archive := filepath.Join(dir, "x.zip")
 	makeZip(t, archive, []entry{{name: "a.txt", content: "a"}, {name: "sub/b.txt", content: "b"}, {name: "c.txt", content: strings.Repeat("c", 4096)}})
@@ -216,6 +218,7 @@ func TestExtractRollsBackOnFailure(t *testing.T) {
 }
 
 func TestExtractConflictPolicy(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
 	archive := filepath.Join(dir, "x.zip")
 	makeZip(t, archive, []entry{{name: "a.txt", content: "new"}, {name: "b.txt", content: "b"}})
@@ -267,6 +270,7 @@ func TestExtractConflictPolicy(t *testing.T) {
 }
 
 func TestExtractLimits(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
 	archive := filepath.Join(dir, "x.zip")
 	makeZip(t, archive, []entry{{name: "a.txt", content: strings.Repeat("a", 1000)}, {name: "deep/er/b.txt", content: "b"}, {name: "c.txt", content: "c"}})
@@ -314,6 +318,7 @@ func TestExtractCompressionRatio(t *testing.T) {
 // names fold case, the same name in another case) is refused, not written
 // over the first.
 func TestExtractDuplicateEntries(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
 	names := []string{"a.txt", "a.txt"}
 	if runtime.GOOS == "windows" {
@@ -331,6 +336,7 @@ func TestExtractDuplicateEntries(t *testing.T) {
 // TestExtractTarSpecialEntries: links and devices are not created; they are
 // counted and named in the result.
 func TestExtractTarSpecialEntries(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
 	archive := filepath.Join(dir, "x.tar.gz")
 	makeTarGz(t, archive, []tarEntry{
@@ -356,6 +362,7 @@ func TestExtractTarSpecialEntries(t *testing.T) {
 
 // TestExtractDiskFullRefusedUpFront runs against a small tmpfs (scripts/wsl/mounts.sh).
 func TestExtractDiskFullRefusedUpFront(t *testing.T) {
+	t.Parallel()
 	small := testutil.ENOSPCDir.Require(t)
 	dir := t.TempDir()
 	archive := filepath.Join(dir, "big.zip")
@@ -377,6 +384,7 @@ func TestExtractDiskFullRefusedUpFront(t *testing.T) {
 // TestExtractDoesNotFollowLinksOut: a symbolic link already in the output
 // that points elsewhere does not carry an entry outside the output.
 func TestExtractDoesNotFollowLinksOut(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
 	outside := filepath.Join(dir, "outside")
 	out := filepath.Join(dir, "out")

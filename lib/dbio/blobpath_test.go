@@ -6,6 +6,7 @@ import (
 )
 
 func TestStoredBlobPathRoundTrip(t *testing.T) {
+	t.Parallel()
 	root := t.TempDir()
 	dbDir := filepath.Join(root, "kvdb")
 	for _, name := range []string{"Zm9v.blob", "ctr-0192.blob"} {
@@ -33,6 +34,7 @@ func TestStoredBlobPathRoundTrip(t *testing.T) {
 // them. Each resolves to the file of that name in this database's blob
 // directory, never to the recorded location, which may be another case.
 func TestResolveLegacyBlobPaths(t *testing.T) {
+	t.Parallel()
 	root := t.TempDir()
 	for _, legacy := range []string{
 		`C:\Users\analyst\.dues\blob\Zm9v.blob`,

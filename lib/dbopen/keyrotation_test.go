@@ -68,6 +68,7 @@ func childOpenReadOnly(args []string) int {
 // invalid argument"), so every read command on an encrypted database not
 // written for a week died, and a .duesarc extraction killed its FFI host.
 func TestReadOnlyOpenOfAnOldEncryptedDatabase(t *testing.T) {
+	t.Parallel()
 	root := setup(t)
 	h := open(t, Request{Path: root, Mode: ReadWrite, Creds: dbmeta.Password(rotationPassword)})
 	for i := range 8 {

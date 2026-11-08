@@ -57,6 +57,7 @@ func inodeOffset(t *testing.T, img []byte, ino uint32) int64 {
 // memory. libext v0.4.2 refuses the claim; every adapter path that reaches
 // inline data must pass that refusal on.
 func TestForgedInlineSizeIsRefused(t *testing.T) {
+	t.Parallel()
 	var m fixture.Manifest
 	for _, f := range fixture.All(t) {
 		if f.Name == "ext/ext4" {

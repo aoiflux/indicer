@@ -22,6 +22,7 @@ func validManifest() DatabaseManifest {
 // database's, a newer DUES wrote it, or a path it lists could reach outside
 // the package's database or appears twice.
 func TestParseDatabaseManifest(t *testing.T) {
+	t.Parallel()
 	encode := func(m DatabaseManifest) []byte {
 		b, err := json.Marshal(m)
 		if err != nil {
@@ -74,6 +75,7 @@ func TestParseDatabaseManifest(t *testing.T) {
 // TestContentHashIgnoresTime: the content hash depends on the files alone,
 // in order.
 func TestContentHashIgnoresTime(t *testing.T) {
+	t.Parallel()
 	a, b := validManifest(), validManifest()
 	b.CreatedAtUTC, b.Host = "2030-01-01T00:00:00Z", &Host{OS: "plan9"}
 	if ContentHash(a.Files) != ContentHash(b.Files) {

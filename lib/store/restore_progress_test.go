@@ -17,6 +17,7 @@ import (
 // phase and a "restored" tally; one stopped by a signal ends interrupted,
 // short of its total.
 func TestRestoreProgress(t *testing.T) {
+	t.Parallel()
 	db := testdb.Open(t, testdb.Default, testdb.Options{ChunkKiB: 4})
 	content := testutil.RandomBytes(21, 9*4096+11)
 	rid := seedCompletedEvidence(t, db.DB, "restore-progress", content, plainHash(db.DB, content))

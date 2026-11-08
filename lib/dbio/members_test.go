@@ -22,6 +22,7 @@ import (
 // hash (an empty file, a common DLL) cost O(n) per append and concurrent
 // appends conflicted. Each member is now its own key.
 func TestHashLookupAppendsConcurrently(t *testing.T) {
+	t.Parallel()
 	db := testdb.Open(t, testdb.Default)
 	lookup := util.AppendToBytesSlice(cnst.IdxFileHashLookupNamespace, "aGFzaA==")
 	const workers, each = 8, 250
@@ -61,6 +62,7 @@ func TestHashLookupAppendsConcurrently(t *testing.T) {
 // TestHashLookupReadsLegacyList checks that a lookup written as one list by
 // an earlier release is still read, together with members appended since.
 func TestHashLookupReadsLegacyList(t *testing.T) {
+	t.Parallel()
 	db := testdb.Open(t, testdb.Default)
 	lookup := util.AppendToBytesSlice(cnst.EviFileHashLookupNamespace, "bGVnYWN5")
 	legacy := [][]byte{dbio.CanonicalEvidenceKey([]byte("0000000000000001")), dbio.CanonicalEvidenceKey([]byte("0000000000000002"))}
@@ -103,6 +105,7 @@ func TestHashLookupReadsLegacyList(t *testing.T) {
 // million files could not be indexed. Members are now one key each and the
 // record stays the same size; records written with the map are still read.
 func TestPartitionMembersOutsideRecord(t *testing.T) {
+	t.Parallel()
 	db := testdb.Open(t, testdb.Default)
 	pid := []byte("partition-000001")
 	members := map[string]structs.InternalOffset{}

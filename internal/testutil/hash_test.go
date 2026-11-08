@@ -9,6 +9,7 @@ import (
 )
 
 func TestHashFileAndRange(t *testing.T) {
+	t.Parallel()
 	data := RandomBytes(7, 4096)
 	path := filepath.Join(t.TempDir(), "f")
 	if err := os.WriteFile(path, data, 0o600); err != nil {

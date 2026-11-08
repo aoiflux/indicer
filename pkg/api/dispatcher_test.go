@@ -54,6 +54,7 @@ func request(op string, extra string) string {
 }
 
 func TestDispatchContainsPanics(t *testing.T) {
+	t.Parallel()
 	d := fakeDispatcher(func(context.Context, string) (any, *coreerr.Error) {
 		panic("service panicked")
 	})
@@ -70,6 +71,7 @@ func TestDispatchContainsPanics(t *testing.T) {
 }
 
 func TestDispatchResultThatCannotBeEncoded(t *testing.T) {
+	t.Parallel()
 	d := fakeDispatcher(func(context.Context, string) (any, *coreerr.Error) {
 		return map[string]float64{"x": math.NaN()}, nil
 	})
@@ -80,6 +82,7 @@ func TestDispatchResultThatCannotBeEncoded(t *testing.T) {
 }
 
 func TestDispatchRefusesOversizedRequests(t *testing.T) {
+	t.Parallel()
 	called := false
 	d := fakeDispatcher(func(context.Context, string) (any, *coreerr.Error) {
 		called = true
@@ -97,6 +100,7 @@ func TestDispatchRefusesOversizedRequests(t *testing.T) {
 }
 
 func TestDispatchTimeout(t *testing.T) {
+	t.Parallel()
 	d := fakeDispatcher(func(ctx context.Context, _ string) (any, *coreerr.Error) {
 		select {
 		case <-ctx.Done():
@@ -116,6 +120,7 @@ func TestDispatchTimeout(t *testing.T) {
 }
 
 func TestDispatchHonoursCancellation(t *testing.T) {
+	t.Parallel()
 	d := fakeDispatcher(func(ctx context.Context, _ string) (any, *coreerr.Error) {
 		<-ctx.Done()
 		return nil, coreerr.FromContext(ctx)
@@ -129,6 +134,7 @@ func TestDispatchHonoursCancellation(t *testing.T) {
 }
 
 func TestDispatchRejectsNegativeTimeout(t *testing.T) {
+	t.Parallel()
 	d := fakeDispatcher(func(context.Context, string) (any, *coreerr.Error) { return "ok", nil })
 	env := decode(t, d.DispatchJSON(context.Background(), request("x", `,"timeout_ms":-1`)))
 	if env.Error == nil || env.Error.Code != coreerr.CodeInvalidRequest {
@@ -140,6 +146,7 @@ func TestDispatchRejectsNegativeTimeout(t *testing.T) {
 // whether it succeeded or failed; a request refused before running has no
 // duration.
 func TestDurationOfOperations(t *testing.T) {
+	t.Parallel()
 	d := fakeDispatcher(func(_ context.Context, op string) (any, *coreerr.Error) {
 		time.Sleep(20 * time.Millisecond)
 		if op == "fail" {

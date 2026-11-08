@@ -43,6 +43,7 @@ func dirEntries(t *testing.T, dir string) []string {
 }
 
 func TestCreateTempDeleteOnClose(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
 	f, err := CreateTempDeleteOnClose(dir, "spill-*")
 	if err != nil {
@@ -66,6 +67,7 @@ func TestCreateTempDeleteOnClose(t *testing.T) {
 // TestCreateTempDeleteOnCloseNeedsDir: an empty directory used to mean
 // os.TempDir, which reads TMPDIR, TMP and TEMP.
 func TestCreateTempDeleteOnCloseNeedsDir(t *testing.T) {
+	t.Parallel()
 	if f, err := CreateTempDeleteOnClose("", "spill-*"); err == nil {
 		_ = f.Close()
 		t.Fatalf("CreateTempDeleteOnClose(\"\") created %s", f.Name())
@@ -76,6 +78,7 @@ func TestCreateTempDeleteOnCloseNeedsDir(t *testing.T) {
 // it holds the file leaves nothing behind: the file can hold decompressed
 // evidence.
 func TestCreateTempDeleteOnCloseAfterCrash(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
 	child := testutil.StartChild(t, "hold-temp", dir)
 	child.WaitForPoint(t, "created", 30*time.Second)

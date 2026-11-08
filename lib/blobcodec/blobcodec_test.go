@@ -151,6 +151,7 @@ func TestV2SealedHidesContent(t *testing.T) {
 }
 
 func TestVerify(t *testing.T) {
+	t.Parallel()
 	data := []byte("x")
 	s256 := sha3.Sum256(data)
 	for _, ckey := range [][]byte{blakeKey(data), sha3Key(data), ckeyFor(s256[:]), ckeyFor([]byte("short"))} {
@@ -166,6 +167,7 @@ func TestVerify(t *testing.T) {
 // TestForUnregistered: a database dbopen did not open reads its chunks with
 // the legacy sealed codec and badger's key, and writes none.
 func TestForUnregistered(t *testing.T) {
+	t.Parallel()
 	db, err := badger.Open(badger.DefaultOptions("").WithInMemory(true).WithLogger(nil).
 		WithEncryptionKey(blobKey).WithIndexCacheSize(1 << 20))
 	if err != nil {

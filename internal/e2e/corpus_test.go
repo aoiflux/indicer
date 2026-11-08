@@ -43,6 +43,7 @@ var (
 // An image whose files would not fit the scratch volume is skipped and
 // named. A differencing disk whose ancestor is missing must be refused.
 func TestCorpusRoundTrip(t *testing.T) {
+	t.Parallel()
 	list := *corpusList
 	if list == "" {
 		t.Skip("pass -args -dues.corpus-list=FILE to run it")

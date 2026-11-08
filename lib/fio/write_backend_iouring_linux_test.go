@@ -49,6 +49,7 @@ func backendWith(h ioUringHandle) *ioUringWriteBackend {
 // back to a plain write at the file position, so the bytes the kernel had
 // already written were written a second time and every later offset moved.
 func TestIoUringWriteNeverDuplicates(t *testing.T) {
+	t.Parallel()
 	data := bytes.Repeat([]byte("0123456789"), 100)
 	cases := []struct {
 		name    string
@@ -89,6 +90,7 @@ func TestIoUringWriteNeverDuplicates(t *testing.T) {
 // TestIoUringWriteAtRealRing writes through the kernel ring at explicit
 // offsets, out of order, and checks the file.
 func TestIoUringWriteAtRealRing(t *testing.T) {
+	t.Parallel()
 	if err := probeIoUringSupport(); err != nil {
 		t.Skipf("io-uring unavailable: %v", err)
 	}

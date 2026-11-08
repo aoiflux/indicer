@@ -229,6 +229,7 @@ func TestConfigSetsNoGlobals(t *testing.T) {
 // workers and a queue of 4096 hold 1 GiB of 256 KiB chunks, and 256 GiB of
 // this database's 64 MiB ones.
 func TestConfigFitsTheDatabasesChunks(t *testing.T) {
+	t.Parallel()
 	root := filepath.Join(t.TempDir(), "db")
 	h, err := dbopen.Open(t.Context(), dbopen.Request{Path: root, Mode: dbopen.ReadWrite, Layout: dbopen.Requested{ChunkKiB: 65536}})
 	if err != nil {

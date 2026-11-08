@@ -166,6 +166,7 @@ func TestHitUnknownPointPanics(t *testing.T) {
 }
 
 func TestHitExitInChild(t *testing.T) {
+	t.Parallel()
 	c := testutil.StartChild(t, "hit", SelfTest+"=exit:42")
 	if code := c.Wait(t, 30*time.Second); code != 42 {
 		t.Fatalf("exit code %d, want 42\n%s", code, c.Output())
@@ -184,6 +185,7 @@ func TestChildIgnoresEnvironment(t *testing.T) {
 }
 
 func TestHitBlockNotifiesAndKill(t *testing.T) {
+	t.Parallel()
 	c := testutil.StartChild(t, "hit", SelfTest+"=block")
 	c.WaitForPoint(t, SelfTest+"#blocked", 30*time.Second)
 	c.Kill(t)
@@ -192,6 +194,7 @@ func TestHitBlockNotifiesAndKill(t *testing.T) {
 // TestHitHoldReleases: a held child stays at the point, past the time it
 // would otherwise take to exit, and goes on once released.
 func TestHitHoldReleases(t *testing.T) {
+	t.Parallel()
 	c := testutil.StartChild(t, "hit", SelfTest+"=hold")
 	c.WaitForPoint(t, SelfTest+"#held", 30*time.Second)
 	time.Sleep(300 * time.Millisecond)
@@ -210,6 +213,7 @@ func TestHitHoldReleases(t *testing.T) {
 }
 
 func TestHitSignalInChild(t *testing.T) {
+	t.Parallel()
 	if runtime.GOOS == "windows" && !winConsole {
 		// Ctrl-Break needs the child attached to a console; CI runners
 		// without one deliver nothing.

@@ -6,6 +6,7 @@ import (
 )
 
 func TestEntropy(t *testing.T) {
+	t.Parallel()
 	all := make([]byte, 256*4)
 	for i := range all {
 		all[i] = byte(i)

@@ -3,6 +3,7 @@ package cnst
 import "testing"
 
 func TestNormalizeHashAlgo(t *testing.T) {
+	t.Parallel()
 	tests := []struct {
 		name string
 		in   string
@@ -24,6 +25,7 @@ func TestNormalizeHashAlgo(t *testing.T) {
 }
 
 func TestParseHashAlgo(t *testing.T) {
+	t.Parallel()
 	if got, err := ParseHashAlgo("sha3"); err != nil || got != SHA3 {
 		t.Fatalf("ParseHashAlgo(sha3) = %q, %v; want %q", got, err, SHA3)
 	}
@@ -33,6 +35,7 @@ func TestParseHashAlgo(t *testing.T) {
 }
 
 func TestNormalizeHashStrategy(t *testing.T) {
+	t.Parallel()
 	tests := []struct {
 		name string
 		in   string
@@ -55,6 +58,7 @@ func TestNormalizeHashStrategy(t *testing.T) {
 }
 
 func TestParseHashStrategy(t *testing.T) {
+	t.Parallel()
 	if got, err := ParseHashStrategy("async"); err != nil || got != AsyncHashStrategy {
 		t.Fatalf("ParseHashStrategy(async) = %q, %v; want %q", got, err, AsyncHashStrategy)
 	}

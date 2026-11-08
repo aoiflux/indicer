@@ -9,6 +9,7 @@ import (
 )
 
 func TestHashPasswordAlways32Bytes(t *testing.T) {
+	t.Parallel()
 	cases := []string{"", "a", "short", "this-is-a-longer-password-with-symbols-123"}
 
 	for _, input := range cases {
@@ -23,6 +24,7 @@ func TestHashPasswordAlways32Bytes(t *testing.T) {
 }
 
 func TestHashPasswordIsDeterministic(t *testing.T) {
+	t.Parallel()
 	const password = "case-sensitive-password"
 	a, err := HashPassword(password)
 	if err != nil {
@@ -39,6 +41,7 @@ func TestHashPasswordIsDeterministic(t *testing.T) {
 }
 
 func TestSealAESUsesRandomNonce(t *testing.T) {
+	t.Parallel()
 	key := bytes.Repeat([]byte{1}, 32)
 	plaintext := []byte("forensic payload")
 
@@ -71,6 +74,7 @@ func TestSealAESUsesRandomNonce(t *testing.T) {
 }
 
 func TestUnsealAESReadsLegacyCiphertext(t *testing.T) {
+	t.Parallel()
 	key := bytes.Repeat([]byte{2}, 32)
 	plaintext := []byte("legacy payload")
 
@@ -85,6 +89,7 @@ func TestUnsealAESReadsLegacyCiphertext(t *testing.T) {
 }
 
 func TestUnsealAESRejectsMalformedCiphertext(t *testing.T) {
+	t.Parallel()
 	key := bytes.Repeat([]byte{3}, 32)
 	if _, err := UnsealAES(key, []byte("not-valid-ciphertext")); err == nil {
 		t.Fatal("UnsealAES accepted malformed ciphertext")

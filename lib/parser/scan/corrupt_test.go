@@ -79,6 +79,7 @@ func panicsIn(rep *core.ImageReport) int64 {
 // three quarters scans to completion: no crash, no hang, no extent past the
 // end of what is left.
 func TestCorruptImagesTruncated(t *testing.T) {
+	t.Parallel()
 	if testing.Short() {
 		t.Skip("scans every fixture several times")
 	}
@@ -100,6 +101,7 @@ func TestCorruptImagesTruncated(t *testing.T) {
 // TestCorruptImagesBitFlips: random bit flips in the blocks that hold
 // anything (metadata lives there) never crash or hang a scan.
 func TestCorruptImagesBitFlips(t *testing.T) {
+	t.Parallel()
 	if testing.Short() {
 		t.Skip("scans every fixture several times")
 	}
@@ -139,6 +141,7 @@ func TestCorruptImagesBitFlips(t *testing.T) {
 // grandparent. The scan must finish and report the cycle rather than loop or
 // silently lose the subtree.
 func TestCorruptImageDirectoryCycle(t *testing.T) {
+	t.Parallel()
 	data := rawFixture(t, fixtureByName(t, "fat/fat32_fsagen"))
 	vol, err := libfat.Open(bytes.NewReader(data))
 	if err != nil {

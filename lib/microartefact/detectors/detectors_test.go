@@ -9,6 +9,7 @@ import (
 )
 
 func TestRegistryHiveDetectorIgnoresNonHiveData(t *testing.T) {
+	t.Parallel()
 	detector := RegistryHiveDetector{}
 	artefacts, err := detector.Detect(model.FileRecord{Name: "not-hive.bin"}, []byte("not a registry hive"))
 	if err != nil {
@@ -20,6 +21,7 @@ func TestRegistryHiveDetectorIgnoresNonHiveData(t *testing.T) {
 }
 
 func TestEVTXDetectorIgnoresNonEVTXData(t *testing.T) {
+	t.Parallel()
 	detector := EVTXDetector{}
 	artefacts, err := detector.Detect(model.FileRecord{Name: "not-evtx.bin"}, []byte("not an evtx file"))
 	if err != nil {
@@ -31,6 +33,7 @@ func TestEVTXDetectorIgnoresNonEVTXData(t *testing.T) {
 }
 
 func TestRegistryValueStringFormatsMultiSZ(t *testing.T) {
+	t.Parallel()
 	formatted := registryValueString(&regparser.ValueData{MultiSz: []string{"alpha", "beta"}})
 	if formatted != "alpha;beta" {
 		t.Fatalf("unexpected formatted MultiSZ value: %q", formatted)

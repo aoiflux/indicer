@@ -10,6 +10,7 @@ import (
 // define (CLI_UX.md), including content that was all stored before and
 // content that grew on disk.
 func TestStorageLine(t *testing.T) {
+	t.Parallel()
 	const mib = 1 << 20
 	cases := []struct {
 		b    ingest.Bytes

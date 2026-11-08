@@ -12,6 +12,7 @@ import (
 )
 
 func TestLoadRefusesWhatOthersCanChange(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
 	p := filepath.Join(dir, "c.json")
 	if err := os.WriteFile(p, []byte(`{}`), 0o600); err != nil {
@@ -36,6 +37,7 @@ func TestLoadRefusesWhatOthersCanChange(t *testing.T) {
 }
 
 func TestCheckAccessOwner(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
 	info, err := os.Stat(dir)
 	if err != nil {
@@ -66,6 +68,7 @@ func (f fakeInfo) Sys() any          { return f.sys }
 func (f fakeInfo) Mode() os.FileMode { return f.perm }
 
 func TestLoadRefusesAFIFOWithoutWaiting(t *testing.T) {
+	t.Parallel()
 	p := filepath.Join(t.TempDir(), "c.json")
 	if err := syscall.Mkfifo(p, 0o600); err != nil {
 		t.Skipf("no FIFO here: %v", err)

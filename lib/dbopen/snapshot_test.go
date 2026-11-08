@@ -10,6 +10,7 @@ import (
 // open is refused and a read-only one is not; after Release a writer opens
 // again. A snapshot is refused while a writer holds the root.
 func TestSnapshotKeepsWritersOut(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	root := t.TempDir()
 	h, err := Open(ctx, Request{Path: root, Mode: ReadWrite})

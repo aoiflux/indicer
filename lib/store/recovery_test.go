@@ -9,6 +9,7 @@ import (
 )
 
 func TestRecoverIncompleteIngestsMarksPendingAsFailed(t *testing.T) {
+	t.Parallel()
 	db := openTestDB(t)
 
 	pendingInput := newTestInputFile(db, "pending-recovery.dd", bytes.Repeat([]byte{6}, 32))
@@ -41,6 +42,7 @@ func TestRecoverIncompleteIngestsMarksPendingAsFailed(t *testing.T) {
 }
 
 func TestRecoverIncompleteIngestsAutoCompletesFlushed(t *testing.T) {
+	t.Parallel()
 	db := openTestDB(t)
 
 	flushedInput := seedFlushedEvidenceWithChunk(t, db, "flushed-recovery.dd", 7)
@@ -75,6 +77,7 @@ func TestRecoverIncompleteIngestsAutoCompletesFlushed(t *testing.T) {
 }
 
 func TestRecoverIncompleteIngestsMarksInvalidFlushedAsFailed(t *testing.T) {
+	t.Parallel()
 	db := openTestDB(t)
 
 	flushedInput := newTestInputFile(db, "flushed-invalid-recovery.dd", bytes.Repeat([]byte{0x71}, 32))
@@ -111,6 +114,7 @@ func TestRecoverIncompleteIngestsMarksInvalidFlushedAsFailed(t *testing.T) {
 }
 
 func TestRecoverIncompleteIngestsSkipsCompletedAndAlreadyFailed(t *testing.T) {
+	t.Parallel()
 	db := openTestDB(t)
 
 	completedInput := newTestInputFile(db, "completed-recovery.dd", bytes.Repeat([]byte{8}, 32))

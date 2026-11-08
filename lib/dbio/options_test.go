@@ -10,6 +10,7 @@ import (
 )
 
 func TestBadgerOptions(t *testing.T) {
+	t.Parallel()
 	def := badger.DefaultOptions("")
 	for _, low := range []bool{true, false} {
 		tun := cnst.DefaultTuning()
@@ -31,6 +32,7 @@ func TestBadgerOptions(t *testing.T) {
 }
 
 func TestCompactValueLog(t *testing.T) {
+	t.Parallel()
 	opts := BadgerOptions(t.TempDir(), nil, options.None, cnst.DefaultTuning())
 	opts.ValueThreshold = 16
 	db, err := badger.Open(opts)

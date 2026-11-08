@@ -19,6 +19,7 @@ func estimator(r *Reporter, c *clock) func() Estimate {
 }
 
 func TestRate(t *testing.T) {
+	t.Parallel()
 	t0 := time.Date(2026, 10, 31, 12, 0, 0, 0, time.UTC)
 	v := View{State: Running, Started: t0, Total: 1000, Done: 100}
 	var r Rate
@@ -61,6 +62,7 @@ func TestRate(t *testing.T) {
 }
 
 func TestWeigh(t *testing.T) {
+	t.Parallel()
 	for _, c := range []struct {
 		v              View
 		weight, credit int64
@@ -86,6 +88,7 @@ func TestWeigh(t *testing.T) {
 // The default store at a series of moments: identify, then store with the
 // index beside it, then the index's tail and compact.
 func TestEstimateDefaultStore(t *testing.T) {
+	t.Parallel()
 	ctx, r, c := newTest(t)
 	est := estimator(r, c)
 	const size = 400 << 20
@@ -148,6 +151,7 @@ func TestEstimateDefaultStore(t *testing.T) {
 // An alias store stops after identify; the steps it planned go, and the
 // estimate has nothing left to measure.
 func TestEstimateAlias(t *testing.T) {
+	t.Parallel()
 	ctx, r, c := newTest(t)
 	est := estimator(r, c)
 	PlanSteps(ctx, Step{"identify", Bytes, 10}, Step{"store", Bytes, 10}, Step{"index", Files, Unknown})
@@ -161,6 +165,7 @@ func TestEstimateAlias(t *testing.T) {
 // Under the async strategy identify is not planned: it starts before the
 // pending store and is a work step all the same.
 func TestEstimateAsyncIdentify(t *testing.T) {
+	t.Parallel()
 	ctx, r, c := newTest(t)
 	est := estimator(r, c)
 	PlanSteps(ctx, Step{"store", Bytes, 100}, Step{"index", Files, Unknown})
@@ -173,6 +178,7 @@ func TestEstimateAsyncIdentify(t *testing.T) {
 // Identify's bytes cost a quarter of store's here: the bar shows the steps'
 // share of the time, not of the bytes read.
 func TestEstimateCost(t *testing.T) {
+	t.Parallel()
 	ctx, r, c := newTest(t)
 	est := estimator(r, c)
 	PlanSteps(ctx, Step{"identify", Bytes, 100}, Step{"store", Bytes, 100}, Step{"index", Files, Unknown})
@@ -208,6 +214,7 @@ func TestEstimateCost(t *testing.T) {
 
 // With --no-index the store is the only step.
 func TestEstimateNoIndex(t *testing.T) {
+	t.Parallel()
 	ctx, r, c := newTest(t)
 	est := estimator(r, c)
 	PlanSteps(ctx, Step{"store", Bytes, 100}, Step{"index", Files, Unknown})
@@ -223,6 +230,7 @@ func TestEstimateNoIndex(t *testing.T) {
 // Work found late (partition hashes) holds the bar rather than pulling it
 // back; with no byte work still to come it is a step of its own.
 func TestEstimatePartitionHashes(t *testing.T) {
+	t.Parallel()
 	for _, enrich := range []bool{false, true} {
 		ctx, r, c := newTest(t)
 		est := estimator(r, c)
@@ -259,6 +267,7 @@ func TestEstimatePartitionHashes(t *testing.T) {
 // the index and full-text; the planned entropy's real total replaces the
 // evidence size; graph is a step of its own.
 func TestEstimateFeatures(t *testing.T) {
+	t.Parallel()
 	ctx, r, c := newTest(t)
 	est := estimator(r, c)
 	PlanSteps(ctx, Step{"store", Bytes, 100}, Step{"index", Files, Unknown}, Step{"full-text", Files, Unknown},
@@ -299,6 +308,7 @@ func TestEstimateFeatures(t *testing.T) {
 // Work that has not begun does not make a bar: a reindex with --enrich
 // shows its index pass as activity, not as 0% of the entropy to come.
 func TestEstimateWorkNotBegun(t *testing.T) {
+	t.Parallel()
 	ctx, r, c := newTest(t)
 	est := estimator(r, c)
 	PlanSteps(ctx, Step{"delete old index", Files, Unknown}, Step{"index", Files, Unknown},
@@ -313,6 +323,7 @@ func TestEstimateWorkNotBegun(t *testing.T) {
 // A folder: items done plus the running item's share of its byte work, an
 // ETA from the pace so far, and no dip while the counter catches up.
 func TestEstimateItems(t *testing.T) {
+	t.Parallel()
 	ctx, r, c := newTest(t)
 	est := estimator(r, c)
 	all := Start(ctx, "evidence", Evidence, 4)
@@ -372,6 +383,7 @@ func TestEstimateItems(t *testing.T) {
 // as it takes. An item's weight counts as done when it ends, however it
 // ends.
 func TestEstimateItemsWeighed(t *testing.T) {
+	t.Parallel()
 	ctx, r, c := newTest(t)
 	est := estimator(r, c)
 	all := Start(ctx, "evidence", Evidence, 3)
@@ -435,6 +447,7 @@ func TestEstimateItemsWeighed(t *testing.T) {
 // repair --upgrade --verify: upgrade counts files, so it measures itself;
 // verify, the only byte work, is the work, and starts a bar of its own.
 func TestEstimateRepair(t *testing.T) {
+	t.Parallel()
 	ctx, r, c := newTest(t)
 	est := estimator(r, c)
 	up := Start(ctx, "upgrade", Files, 10)
@@ -455,6 +468,7 @@ func TestEstimateRepair(t *testing.T) {
 // A total that grows while the phase runs (micro extract finds files as it
 // goes) has no fraction.
 func TestEstimateGrowing(t *testing.T) {
+	t.Parallel()
 	ctx, r, c := newTest(t)
 	est := estimator(r, c)
 	m := Start(ctx, "micro", Files, 0)
@@ -474,6 +488,7 @@ func TestEstimateGrowing(t *testing.T) {
 
 // The tracker keeps rates only for running phases.
 func TestTrackerForgetsEndedPhases(t *testing.T) {
+	t.Parallel()
 	ctx, r, c := newTest(t)
 	tr := NewTracker()
 	p := Start(ctx, "store", Bytes, 100)
@@ -513,6 +528,7 @@ func TestUpdateAllocatesNothing(t *testing.T) {
 // Items stored at once: every running item's share counts, the row follows
 // the one started last, and the others are named, whichever ends first.
 func TestEstimateItemsAtOnce(t *testing.T) {
+	t.Parallel()
 	ctx, r, c := newTest(t)
 	est := estimator(r, c)
 	all := Start(ctx, "evidence", Evidence, 2)

@@ -96,6 +96,7 @@ func fileSHA256(t *testing.T, path string) string {
 // TestSplitArchiveSidecar (CMP-3): split parts are described by a sidecar
 // that readers check, so a damaged, missing or extra part is refused.
 func TestSplitArchiveSidecar(t *testing.T) {
+	t.Parallel()
 	for _, format := range []string{"duesarc", "zip", "tar.gz"} {
 		t.Run(format, func(t *testing.T) {
 			src := t.TempDir()
@@ -154,6 +155,7 @@ func TestSplitArchiveSidecar(t *testing.T) {
 // TestSplitReplacesEarlierOutput: writing an archive replaces what an
 // earlier one of the same name left, parts included.
 func TestSplitReplacesEarlierOutput(t *testing.T) {
+	t.Parallel()
 	src := t.TempDir()
 	testutil.WriteRandomFile(t, src, "big.bin", 3, 3_500_000)
 	dir := t.TempDir()
@@ -192,6 +194,7 @@ func TestSplitReplacesEarlierOutput(t *testing.T) {
 // TestNumberedFileIsNotASplitPart (CMP-3): image.001 is a file, not the
 // first part of an archive, and its neighbours are not concatenated to it.
 func TestNumberedFileIsNotASplitPart(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
 	makeZip(t, filepath.Join(dir, "image.001"), []entry{{name: "one.txt", content: "one"}})
 	if err := os.WriteFile(filepath.Join(dir, "image.002"), []byte("unrelated bytes"), 0o644); err != nil {
@@ -206,6 +209,7 @@ func TestNumberedFileIsNotASplitPart(t *testing.T) {
 // TestSplitReadingLeavesNoTemporaryFiles: reading a split archive used to
 // assemble it in a temporary directory that was never removed.
 func TestSplitReadingLeavesNoTemporaryFiles(t *testing.T) {
+	t.Parallel()
 	tmp := t.TempDir()
 	svc := NewWithOptions(Options{TempDir: tmp})
 	src := t.TempDir()
@@ -232,6 +236,7 @@ func TestSplitReadingLeavesNoTemporaryFiles(t *testing.T) {
 // TestWorkDirsGoInTempDir: work directories go in Options.TempDir
 // (--temp-dir), and the first one sweeps the stale ones left there.
 func TestWorkDirsGoInTempDir(t *testing.T) {
+	t.Parallel()
 	tmp := t.TempDir()
 	stale := filepath.Join(tmp, "duesarc-work-stale")
 	if err := os.Mkdir(stale, 0o700); err != nil {

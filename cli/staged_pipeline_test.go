@@ -21,6 +21,7 @@ import (
 // chunk hash the database records, so its chunk keys never matched those the
 // default pipeline writes.
 func TestStagedPipelineRoundTrip(t *testing.T) {
+	t.Parallel()
 	cs := matrixChunkKB * 1024
 	for _, algo := range []string{cnst.BLAKE3, cnst.SHA3} {
 		t.Run(algo, func(t *testing.T) {

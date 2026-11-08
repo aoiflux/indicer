@@ -37,6 +37,7 @@ func newRoot(t *testing.T) string {
 // TestResetDeletesOnlyDUESEntries is the ING-16 regression: reset removed the
 // whole directory it was given, whatever else it held.
 func TestResetDeletesOnlyDUESEntries(t *testing.T) {
+	t.Parallel()
 	root := newRoot(t)
 	_, removed, err := Reset(root)
 	if err != nil {
@@ -58,6 +59,7 @@ func TestResetDeletesOnlyDUESEntries(t *testing.T) {
 }
 
 func TestResetRemovesAnEmptiedRoot(t *testing.T) {
+	t.Parallel()
 	root := setup(t)
 	h := open(t, Request{Path: root, Mode: ReadWrite})
 	if err := h.Close(); err != nil {
@@ -112,6 +114,7 @@ func TestResetRefusals(t *testing.T) {
 }
 
 func TestResetRefusedWhileOpen(t *testing.T) {
+	t.Parallel()
 	root := newRoot(t)
 	h := open(t, Request{Path: root, Mode: ReadWrite})
 	if _, _, err := Reset(root); !errors.Is(err, ErrInUse) {
@@ -130,6 +133,7 @@ func TestResetRefusedWhileOpen(t *testing.T) {
 // full-text index are gone. The TUI used to drop badger and blobs only,
 // leaving the graph and full-text index describing deleted evidence.
 func TestHandleResetEmptiesAndStaysUsable(t *testing.T) {
+	t.Parallel()
 	root := newRoot(t)
 	h := open(t, Request{Path: root, Mode: ReadWrite})
 	storeChunk(t, h.DB, []byte("some chunk content to drop"))
@@ -176,6 +180,7 @@ func TestHandleResetEmptiesAndStaysUsable(t *testing.T) {
 // the root is a database. The records go first and the manifest last, with
 // DUES temporary files just before it.
 func TestResetRemovesRecordsFirst(t *testing.T) {
+	t.Parallel()
 	root := newRoot(t)
 	tmp := "." + dbmeta.ManifestName + ".dues-tmp-1"
 	if err := os.WriteFile(filepath.Join(root, tmp), []byte("partial"), 0o644); err != nil {

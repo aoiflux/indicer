@@ -36,6 +36,7 @@ func assertByteOrderMatchesValueOrder[T any](t *testing.T, name string, values [
 }
 
 func TestInt64_OrderIsPreserved(t *testing.T) {
+	t.Parallel()
 	values := []int64{
 		math.MinInt64, math.MinInt32, -65536, -256, -129, -128, -33, -32, -1,
 		0, 1, 32, 127, 128, 255, 256, 65535, 65536, math.MaxInt32, math.MaxInt64,
@@ -44,11 +45,13 @@ func TestInt64_OrderIsPreserved(t *testing.T) {
 }
 
 func TestUint64_OrderIsPreserved(t *testing.T) {
+	t.Parallel()
 	values := []uint64{0, 1, 127, 128, 255, 256, 65535, 1 << 20, 1 << 32, math.MaxUint64}
 	assertByteOrderMatchesValueOrder(t, "Uint64", values, propindex.Uint64)
 }
 
 func TestFloat64_OrderIsPreserved(t *testing.T) {
+	t.Parallel()
 	values := []float64{
 		math.Inf(-1), -1e308, -1, -0.5, 0, 0.5, 1, 5.42, 7.81, 1e308, math.Inf(1),
 	}
@@ -56,6 +59,7 @@ func TestFloat64_OrderIsPreserved(t *testing.T) {
 }
 
 func TestTime_OrderIsPreserved(t *testing.T) {
+	t.Parallel()
 	base := time.Date(2026, 8, 13, 9, 4, 11, 0, time.UTC)
 	values := []time.Time{
 		base.Add(-100 * 365 * 24 * time.Hour),
@@ -68,6 +72,7 @@ func TestTime_OrderIsPreserved(t *testing.T) {
 
 // The reason Bool exists rather than reusing strconv.FormatBool.
 func TestBool_IsNotStrconv(t *testing.T) {
+	t.Parallel()
 	if bytes.Equal(propindex.Bool(true), []byte(strconv.FormatBool(true))) {
 		t.Error("Bool encodes as strconv does; the point is that it does not")
 	}
@@ -79,6 +84,7 @@ func TestBool_IsNotStrconv(t *testing.T) {
 // The concrete failure this package exists to prevent: decimal strings are not
 // a valid byte-wise sort order, so a range query over them is wrong.
 func TestDecimalStrings_AreNotAValidSortOrder(t *testing.T) {
+	t.Parallel()
 	if bytes.Compare([]byte(strconv.Itoa(10)), []byte(strconv.Itoa(9))) >= 0 {
 		t.Fatal("expected \"10\" to sort below \"9\" byte-wise; the premise of this " +
 			"package no longer holds")
@@ -89,6 +95,7 @@ func TestDecimalStrings_AreNotAValidSortOrder(t *testing.T) {
 }
 
 func TestDecoders_RoundTrip(t *testing.T) {
+	t.Parallel()
 	if got, ok := propindex.DecodeInt64(propindex.Int64(-4711)); !ok || got != -4711 {
 		t.Errorf("DecodeInt64 = %d, %v; want -4711, true", got, ok)
 	}
@@ -105,6 +112,7 @@ func TestDecoders_RoundTrip(t *testing.T) {
 }
 
 func TestPrefixUpperBound_BoundsTheRange(t *testing.T) {
+	t.Parallel()
 	upper, ok := propindex.PrefixUpperBound([]byte("/Users/jane/"))
 	if !ok {
 		t.Fatal("PrefixUpperBound reported no bound for an ordinary prefix")
@@ -121,6 +129,7 @@ func TestPrefixUpperBound_BoundsTheRange(t *testing.T) {
 }
 
 func TestDeclare_RequiresARegistry(t *testing.T) {
+	t.Parallel()
 	if err := propindex.Declare(nil, nil); err == nil {
 		t.Error("Declare accepted a nil registry")
 	}
@@ -130,6 +139,7 @@ func TestDeclare_RequiresARegistry(t *testing.T) {
 // waiting on the rebuild, and getting that wrong would silently reinterpret
 // stored values.
 func TestKeySets_DoNotOverlap(t *testing.T) {
+	t.Parallel()
 	for _, declarable := range propindex.DeclarableNodeKeys {
 		if propindex.Deferred(declarable) {
 			t.Errorf("%q is listed as both declarable and deferred", declarable)
@@ -141,6 +151,7 @@ func TestKeySets_DoNotOverlap(t *testing.T) {
 // key leaves that set, the write path must have been changed to an
 // order-preserving encoder first.
 func TestDeferredKeys_AreTheStrconvOnes(t *testing.T) {
+	t.Parallel()
 	want := map[string]bool{
 		"start": true, "end": true,
 		"is_deleted": true, "is_fragmented": true, "deterministic_flag": true,
@@ -159,6 +170,7 @@ func TestDeferredKeys_AreTheStrconvOnes(t *testing.T) {
 // Timestamps must be declarable — the whole point of landing them was the
 // timeline window.
 func TestDeclarableKeys_IncludeTheTimestamps(t *testing.T) {
+	t.Parallel()
 	declarable := map[string]bool{}
 	for _, key := range propindex.DeclarableNodeKeys {
 		declarable[key] = true

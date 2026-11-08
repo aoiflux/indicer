@@ -96,6 +96,7 @@ func assertGolden(t *testing.T, name string, got any) {
 // v3 — so nothing errors when the vocabulary moves. Every NodesByType and every
 // Types: filter simply returns zero rows, and this hierarchy comes back empty.
 func TestLegacyFixture_EnrichmentHierarchy(t *testing.T) {
+	t.Parallel()
 	root := legacyFixture(t)
 
 	repo, err := enrichment.OpenGrapheneRepository(root)
@@ -119,6 +120,7 @@ func TestLegacyFixture_EnrichmentHierarchy(t *testing.T) {
 // TestLegacyFixture_MicroArtefactHierarchy is the other half, and additionally
 // covers the EdgeType(100) relation edges.
 func TestLegacyFixture_MicroArtefactHierarchy(t *testing.T) {
+	t.Parallel()
 	root := legacyFixture(t)
 
 	repo, err := microartefact.OpenGrapheneRepository(root)
@@ -153,6 +155,7 @@ func TestLegacyFixture_MicroArtefactHierarchy(t *testing.T) {
 // 128/129/130/131; relation edges are a raw EdgeType(100), which was never
 // offset-based and so is unaffected by the base moving.
 func TestLegacyFixture_OnDiskVocabulary(t *testing.T) {
+	t.Parallel()
 	root := legacyFixture(t)
 
 	g, err := graphenedb.Open(filepath.Join(root, "graph"))

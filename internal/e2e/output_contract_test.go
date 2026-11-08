@@ -19,6 +19,7 @@ import (
 // testutil.RunDues also fails any run that writes an escape code to a pipe
 // without asking for colour.
 func TestOutputContract(t *testing.T) {
+	t.Parallel()
 	bin := testutil.BuildDues(t)
 	work := t.TempDir()
 	db := filepath.Join(work, "db")

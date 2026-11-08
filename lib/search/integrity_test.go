@@ -21,6 +21,7 @@ import (
 // internal/e2e). The window is taken where it is ASCII or not UTF-8, which
 // match byte for byte.
 func TestSearchFindsEveryIndexedFile(t *testing.T) {
+	t.Parallel()
 	probed := 0
 	for _, m := range fsfixture.All(t) {
 		t.Run(m.Name, func(t *testing.T) {

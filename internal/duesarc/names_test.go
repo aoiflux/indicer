@@ -7,6 +7,7 @@ import (
 )
 
 func TestLocalName(t *testing.T) {
+	t.Parallel()
 	for name, want := range map[string]string{
 		"a.txt":       "a.txt",
 		"./a.txt":     "a.txt",

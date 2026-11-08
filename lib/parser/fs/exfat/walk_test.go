@@ -65,6 +65,7 @@ func walk(t *testing.T, r io.ReaderAt, size int64, lim core.Limits) walked {
 // does not descend into, or reads only part of, is an issue on that
 // directory (XFAT-U1), and the walk goes on past it.
 func TestWalkReportsSkippedDirectories(t *testing.T) {
+	t.Parallel()
 	var data []byte
 	for _, m := range fixture.All(t) {
 		if m.Name == "exfat/exfat" {

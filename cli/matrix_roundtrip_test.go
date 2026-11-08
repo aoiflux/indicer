@@ -23,6 +23,7 @@ const matrixChunkKB = 4
 // each and compares bytes. Two sessions write into the same database, which
 // is where container naming (STO-1) goes wrong.
 func TestMatrixStoreRestoreRoundTrip(t *testing.T) {
+	t.Parallel()
 	cs := matrixChunkKB * 1024
 	sizes := []int{1, cs - 1, cs, cs + 1, 3*cs + 17}
 	testdb.ForEachMode(t, func(t *testing.T, m testdb.Mode) {

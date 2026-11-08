@@ -38,6 +38,7 @@ func values(arts []model.Artefact, name string) []model.Artefact {
 // TestRegistryDetectorWalksAHive: every value of a real hive is found with
 // its key path and type, 500 levels down too.
 func TestRegistryDetectorWalksAHive(t *testing.T) {
+	t.Parallel()
 	arts, err := RegistryHiveDetector{MaxResults: 1000}.Detect(model.FileRecord{Name: "hive.dat"}, readHive(t))
 	if err != nil {
 		t.Fatal(err)
@@ -68,6 +69,7 @@ func TestRegistryDetectorWalksAHive(t *testing.T) {
 // it now visits each key once. The fixture is patched so that L40's subkey
 // list names Deep.
 func TestRegistryDetectorSurvivesACycle(t *testing.T) {
+	t.Parallel()
 	hive := readHive(t)
 	reg, err := regparser.NewRegistry(bytes.NewReader(hive))
 	if err != nil {

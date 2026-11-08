@@ -12,6 +12,7 @@ import (
 )
 
 func TestParseMBR(t *testing.T) {
+	t.Parallel()
 	const sector = 512
 	const partLBA = 2048
 	const partSectors = 100
@@ -49,6 +50,7 @@ func TestParseMBR(t *testing.T) {
 }
 
 func TestParseWholeDeviceFallback(t *testing.T) {
+	t.Parallel()
 	// No MBR signature / no recognised scheme → whole-device fallback.
 	buf := make([]byte, 4096)
 	img := image.NewRaw(bytes.NewReader(buf), int64(len(buf)))
@@ -91,6 +93,7 @@ func hasIssue(is []core.Issue, c core.IssueCode) bool {
 // cut to the image and reported (PAR-17). (libtable refuses an MBR whose
 // entry starts past the image, so that case never reaches the clamp.)
 func TestParseClampsToImage(t *testing.T) {
+	t.Parallel()
 	const total = 1 << 20 // 2048 sectors
 	buf := mbrImage(total, [2]uint32{2048 - 100, 1000}, [2]uint32{100, 10})
 	img := image.NewRaw(bytes.NewReader(buf), total)
@@ -116,6 +119,7 @@ func TestParseClampsToImage(t *testing.T) {
 // end with size 0 and reported, never turned into a small, plausible offset
 // (TABLE-U1).
 func TestConvertRefusesUnaddressableRanges(t *testing.T) {
+	t.Parallel()
 	const size = 1 << 30
 	tbl := &libtable.Table{BlockSize: 512, Partitions: []libtable.Partition{
 		{Index: 1, StartLBA: 2048, LengthLBA: 4096, Flags: libtable.PartFlagAlloc},
@@ -144,6 +148,7 @@ func TestConvertRefusesUnaddressableRanges(t *testing.T) {
 
 // TestParseReportsTableWarnings: overlapping entries reach the report.
 func TestParseReportsTableWarnings(t *testing.T) {
+	t.Parallel()
 	const total = 1 << 20
 	buf := mbrImage(total, [2]uint32{100, 400}, [2]uint32{300, 400})
 	tbl, issues, err := ParseReport(image.NewRaw(bytes.NewReader(buf), total))

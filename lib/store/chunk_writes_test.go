@@ -23,6 +23,7 @@ import (
 // that pass stored it under and writes nothing; once that pass ends the
 // database answers, and a claim that failed lets the next pass write.
 func TestPassesClaimTheChunksTheyStore(t *testing.T) {
+	t.Parallel()
 	db := testdb.Open(t, testdb.Default)
 	key := []byte("C|||:shared")
 	first, second := joinChunkWriter(db.DB), joinChunkWriter(db.DB)
@@ -75,8 +76,7 @@ func TestPassesClaimTheChunksTheyStore(t *testing.T) {
 	third := joinChunkWriter(db.DB)
 	other := []byte("C|||:other")
 	found := make(chan struct{})
-	claimFound = func() { close(found) }
-	t.Cleanup(func() { claimFound = func() {} })
+	second.claimFound = func() { close(found) }
 	started = make(chan struct{})
 	go func() {
 		_, _, _, err := third.store(other, func() ([]byte, int64, error) {
@@ -112,6 +112,7 @@ func TestPassesClaimTheChunksTheyStore(t *testing.T) {
 // pass's barrier syncs the frame another wrote for a chunk they share. The
 // last to leave closes it; the next pass starts another.
 func TestPassesAtOnceShareTheirContainers(t *testing.T) {
+	t.Parallel()
 	db := testdb.Open(t, testdb.Container)
 	first, second := joinChunkWriter(db.DB), joinChunkWriter(db.DB)
 	if first.containers() == nil || first.containers() != second.containers() {
@@ -142,6 +143,7 @@ func chunkKeyOf(s string) []byte { return append([]byte(cnst.ChonkNamespace), s.
 // shows only once a pass ends, and stored it: in container mode a frame for
 // every pass, which nothing reclaims.
 func TestPassesAtOnceStoreASharedChunkOnce(t *testing.T) {
+	t.Parallel()
 	for name, pass := range chunkPasses {
 		for _, m := range []testdb.Mode{testdb.Default, testdb.Container} {
 			t.Run(name+"/"+m.Name, func(t *testing.T) {

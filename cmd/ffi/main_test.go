@@ -32,6 +32,7 @@ func decode(t *testing.T, out string) envelope {
 }
 
 func TestLogConfig(t *testing.T) {
+	t.Parallel()
 	if cfg := logConfig("/some/dir"); cfg.Dir != "/some/dir" || cfg.Lazy || cfg.MinLevel != zapcore.InfoLevel {
 		t.Fatalf("with a log directory: %+v", cfg)
 	}
@@ -41,6 +42,7 @@ func TestLogConfig(t *testing.T) {
 }
 
 func TestParseConfig(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
 	file := filepath.Join(dir, "file")
 	if err := os.WriteFile(file, nil, 0o600); err != nil {
@@ -136,6 +138,7 @@ func TestConfigureOnceBeforeRequests(t *testing.T) {
 }
 
 func TestDispatchAlwaysAnswers(t *testing.T) {
+	t.Parallel()
 	d := platformapi.NewDefaultDispatcher(platformapi.Options{})
 	for _, req := range []string{"", "{", "null", `{"version":"v1"}`, emptyRequestJSON} {
 		if env := decode(t, dispatch(d, req)); env.Status != "error" {
@@ -149,6 +152,7 @@ func TestDispatchAlwaysAnswers(t *testing.T) {
 }
 
 func TestShutdownRefusesLaterRequests(t *testing.T) {
+	t.Parallel()
 	d := platformapi.NewDefaultDispatcher(platformapi.Options{})
 	start := time.Now()
 	env := decode(t, shutdown(d, 0))

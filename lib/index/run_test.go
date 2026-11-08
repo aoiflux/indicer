@@ -109,6 +109,7 @@ func indexKeys(t *testing.T, db *badger.DB) []string {
 // recoverable) has a record whose content is the true content, and that a
 // second pass writes exactly the same keys (I7).
 func TestRunIndexesFixtures(t *testing.T) {
+	t.Parallel()
 	for _, m := range fsfixture.All(t) {
 		t.Run(m.Name, func(t *testing.T) {
 			src, err := evidence.Open(t.Context(), fsfixture.Open(t, m), evidence.Options{Decode: true})

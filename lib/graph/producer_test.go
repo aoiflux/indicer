@@ -15,6 +15,7 @@ import (
 // be attributed afterwards, so the stamp is applied by the batch rather than
 // left to call sites that would eventually forget it.
 func TestProducer_EveryDerivedNodeIsStamped(t *testing.T) {
+	t.Parallel()
 	handle := enrichedStore(t)
 
 	for _, tc := range []struct{ key, value string }{
@@ -43,6 +44,7 @@ func TestProducer_EveryDerivedNodeIsStamped(t *testing.T) {
 // Edges are derived too, and a rule-built edge is exactly the kind of thing a
 // re-derivation adds, retracts or re-scores.
 func TestProducer_EdgesAreStampedToo(t *testing.T) {
+	t.Parallel()
 	handle := enrichedStore(t)
 
 	ids, err := handle.Graph().EdgesByType(graphstore.EdgeTypeContains)
@@ -70,6 +72,7 @@ func TestProducer_EdgesAreStampedToo(t *testing.T) {
 // A writer that names no producer must still stamp something, so an omission
 // degrades to a vague attribution rather than to none at all.
 func TestProducer_DefaultsRatherThanOmitting(t *testing.T) {
+	t.Parallel()
 	handle, err := duesgraph.Open(t.TempDir())
 	if err != nil {
 		t.Fatal(err)
@@ -103,6 +106,7 @@ func TestProducer_DefaultsRatherThanOmitting(t *testing.T) {
 // A caller carrying a value forward from an earlier derivation keeps that
 // value's original stamp, which is what makes an as-of view possible.
 func TestProducer_ExplicitStampIsNotOverwritten(t *testing.T) {
+	t.Parallel()
 	handle, err := duesgraph.Open(t.TempDir())
 	if err != nil {
 		t.Fatal(err)
@@ -136,6 +140,7 @@ func TestProducer_ExplicitStampIsNotOverwritten(t *testing.T) {
 }
 
 func TestProducer_StringNamesBothVersions(t *testing.T) {
+	t.Parallel()
 	got := duesgraph.Producer{Pipeline: "enrichment", Version: "2"}.String()
 	if !strings.HasPrefix(got, "enrichment@2/graphene@v") {
 		t.Errorf("String() = %q, want the pipeline and the linked graphene version", got)

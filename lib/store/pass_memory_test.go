@@ -13,6 +13,7 @@ import (
 // sizes to its chunks (at least two), and a chunk for each worker that can
 // have one; the staged pipeline also queues encoded chunks for its writer.
 func TestPassMemory(t *testing.T) {
+	t.Parallel()
 	db := testdb.Open(t, testdb.Default)
 	cs := dbmeta.ChunkSize(db.DB)
 	e := engine.For(db.DB)

@@ -124,6 +124,7 @@ func newReq(t *testing.T, method, url string, body io.Reader) *http.Request {
 }
 
 func TestConfigValidate(t *testing.T) {
+	t.Parallel()
 	for _, c := range []struct {
 		name    string
 		cfg     Config
@@ -166,6 +167,7 @@ func TestConfigValidate(t *testing.T) {
 
 // SRV-1: with no --listen the server is reachable only on loopback.
 func TestDefaultAddressesAreLoopback(t *testing.T) {
+	t.Parallel()
 	addrs, err := parseListen(nil)
 	if err != nil {
 		t.Fatal(err)
@@ -179,6 +181,7 @@ func TestDefaultAddressesAreLoopback(t *testing.T) {
 // The server speaks HTTP/1.1 and cleartext HTTP/2 with prior knowledge, the
 // transport gRPC and Connect clients use against a plain-text listener.
 func TestHTTPServerProtocols(t *testing.T) {
+	t.Parallel()
 	ls := startServer(t, Config{}, Deps{}, func(s *Server) {
 		s.mux.HandleFunc("GET /test/proto", func(w http.ResponseWriter, r *http.Request) { _, _ = io.WriteString(w, r.Proto) })
 	})
@@ -211,6 +214,7 @@ func TestHTTPServerProtocols(t *testing.T) {
 // SRV-1: only the health checks answer outside the service; "/" is no
 // longer a banner.
 func TestHealthAndUnknownPaths(t *testing.T) {
+	t.Parallel()
 	ls := startServer(t, Config{}, Deps{}, nil)
 	for _, c := range []struct {
 		method, path string
@@ -236,6 +240,7 @@ func TestHealthAndUnknownPaths(t *testing.T) {
 
 // SRV-1: a token, once set, is required on every request but health checks.
 func TestBearerToken(t *testing.T) {
+	t.Parallel()
 	ls := startServer(t, Config{Token: testToken}, Deps{}, func(s *Server) {
 		s.mux.HandleFunc("POST /test/echo", func(w http.ResponseWriter, r *http.Request) { _, _ = io.WriteString(w, "in") })
 	})
@@ -279,6 +284,7 @@ func TestBearerToken(t *testing.T) {
 // SRV-1: on a loopback address only localhost names are answered, so a page
 // whose name was rebound to 127.0.0.1 cannot reach the server.
 func TestHostCheckDefeatsRebinding(t *testing.T) {
+	t.Parallel()
 	ls := startServer(t, Config{}, Deps{}, nil)
 	for host, status := range map[string]int{
 		"attacker.example":       421,
@@ -303,6 +309,7 @@ func TestHostCheckDefeatsRebinding(t *testing.T) {
 // SRV-1: loopback pages on any port and the configured origins may call the
 // server; any other origin is refused, preflight or not.
 func TestCORS(t *testing.T) {
+	t.Parallel()
 	ls := startServer(t, Config{CORSOrigins: []string{"https://app.example.org"}}, Deps{}, func(s *Server) {
 		s.mux.HandleFunc("POST /test/echo", func(w http.ResponseWriter, r *http.Request) { _, _ = io.WriteString(w, "in") })
 	})
@@ -357,6 +364,7 @@ func TestCORS(t *testing.T) {
 
 // JSON request bodies are bounded.
 func TestJSONBodyLimit(t *testing.T) {
+	t.Parallel()
 	ls := startServer(t, Config{}, Deps{}, nil)
 	body := `{"file_path":"` + strings.Repeat("a", 64<<10) + `"}`
 	resp, msg := do(t, newReq(t, "POST", ls.url+"/web/upload/start", strings.NewReader(body)))
@@ -367,6 +375,7 @@ func TestJSONBodyLimit(t *testing.T) {
 
 // SRV-1: requests beyond the in-flight limit are refused, not queued.
 func TestInFlightLimit(t *testing.T) {
+	t.Parallel()
 	release := make(chan struct{})
 	entered := make(chan struct{}, 1)
 	lim := testLimits()
@@ -400,6 +409,7 @@ func TestInFlightLimit(t *testing.T) {
 
 // SRV-1: connections beyond the limit wait until one closes.
 func TestConnectionLimit(t *testing.T) {
+	t.Parallel()
 	lim := testLimits()
 	lim.MaxConns = 1
 	ls := startServer(t, Config{Limits: lim}, Deps{}, nil)
@@ -428,6 +438,7 @@ func TestConnectionLimit(t *testing.T) {
 
 // SRV-1: a client that never finishes its headers is cut off.
 func TestSlowHeadersAreCut(t *testing.T) {
+	t.Parallel()
 	lim := testLimits()
 	lim.ReadHeaderTimeout = 200 * time.Millisecond
 	ls := startServer(t, Config{Limits: lim}, Deps{}, nil)
@@ -453,6 +464,7 @@ func TestSlowHeadersAreCut(t *testing.T) {
 
 // A handler panic is a logged 500 with the request ID; the server goes on.
 func TestPanicBecomes500(t *testing.T) {
+	t.Parallel()
 	core, logs := observer.New(zap.InfoLevel)
 	ls := startServer(t, Config{}, Deps{Log: zap.New(core)}, func(s *Server) {
 		s.mux.HandleFunc("GET /test/panic", func(http.ResponseWriter, *http.Request) { panic("boom") })
@@ -472,6 +484,7 @@ func TestPanicBecomes500(t *testing.T) {
 
 // The access log has one line per request, with its ID, and never the token.
 func TestAccessLogOmitsToken(t *testing.T) {
+	t.Parallel()
 	core, logs := observer.New(zap.InfoLevel)
 	ls := startServer(t, Config{Token: testToken}, Deps{Log: zap.New(core)}, nil)
 	req := newReq(t, "GET", ls.url+"/readyz?x=1", nil)
@@ -495,6 +508,7 @@ func TestAccessLogOmitsToken(t *testing.T) {
 // SRV-7: a stop lets requests finish, then cancels them; when they return,
 // the stop is clean.
 func TestShutdownCancelsRequests(t *testing.T) {
+	t.Parallel()
 	entered := make(chan struct{}, 1)
 	ls := startServer(t, Config{}, Deps{}, func(s *Server) {
 		s.mux.HandleFunc("GET /test/wait", func(w http.ResponseWriter, r *http.Request) {
@@ -523,6 +537,7 @@ func TestShutdownCancelsRequests(t *testing.T) {
 // SRV-7: work that does not stop when told makes the stop unclean, so the
 // database is not closed under it.
 func TestShutdownWithStuckWorkIsUnclean(t *testing.T) {
+	t.Parallel()
 	entered := make(chan struct{}, 1)
 	release := make(chan struct{})
 	ls := startServer(t, Config{}, Deps{}, func(s *Server) {
@@ -546,6 +561,7 @@ func TestShutdownWithStuckWorkIsUnclean(t *testing.T) {
 // Work started by a request (an upload's ingest) counts too, and is told to
 // stop through its context.
 func TestShutdownWaitsForWork(t *testing.T) {
+	t.Parallel()
 	stopped := make(chan error, 1)
 	ls := startServer(t, Config{}, Deps{}, nil)
 	ls.goWork(func(ctx context.Context) {
@@ -562,6 +578,7 @@ func TestShutdownWaitsForWork(t *testing.T) {
 
 // A draining server is not ready and takes no new requests.
 func TestDrainingRefusesRequests(t *testing.T) {
+	t.Parallel()
 	h := openDB(t)
 	s, err := New(Config{Limits: testLimits()}, Deps{DB: h.DB, Root: h.Root})
 	if err != nil {

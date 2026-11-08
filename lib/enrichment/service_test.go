@@ -17,6 +17,7 @@ import (
 )
 
 func TestEnrichAllCreatesFileNodesAtAllLevels(t *testing.T) {
+	t.Parallel()
 	root := t.TempDir()
 	dbPath := filepath.Join(root, "badger")
 	db, err := badger.Open(badger.DefaultOptions(dbPath).WithLogger(nil))

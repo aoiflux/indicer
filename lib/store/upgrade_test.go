@@ -63,6 +63,7 @@ func assertChunksInBadger(t *testing.T, db *badger.DB, content []byte, keys [][]
 // block index record becomes C||| metadata, checked against its chunk, and a
 // second run finds nothing left to do.
 func TestUpgradeBlockIndexMovesRecords(t *testing.T) {
+	t.Parallel()
 	db, content, keys := legacyBlockIndexDB(t, 8)
 
 	report, err := UpgradeBlockIndex(t.Context(), db.DB)
@@ -86,6 +87,7 @@ func TestUpgradeBlockIndexMovesRecords(t *testing.T) {
 // TestUpgradeBlockIndexKeepsDamagedRecords checks that a record whose chunk
 // does not verify is reported and not written to C|||, while the others are.
 func TestUpgradeBlockIndexKeepsDamagedRecords(t *testing.T) {
+	t.Parallel()
 	db, content, keys := legacyBlockIndexDB(t, 6)
 	loc, err := dbio.LocateChunk(keys[2], db.DB)
 	if err != nil {
@@ -121,6 +123,7 @@ func TestUpgradeBlockIndexKeepsDamagedRecords(t *testing.T) {
 // TestUpgradeBlockIndexCancelled checks that a cancelled upgrade stops and
 // says so.
 func TestUpgradeBlockIndexCancelled(t *testing.T) {
+	t.Parallel()
 	db, _, _ := legacyBlockIndexDB(t, 4)
 	ctx, cancel := context.WithCancel(t.Context())
 	cancel()

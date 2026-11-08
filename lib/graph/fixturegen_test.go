@@ -28,6 +28,7 @@ import (
 )
 
 func TestGenerateLegacyV1Fixture(t *testing.T) {
+	t.Parallel()
 	// The whole point of the fixture is that it was written by a graphene whose
 	// custom band starts at 128. v0.4.0 moved that to 32768.
 	if got := graphstore.CustomNodeType(0); uint16(got) != 128 {

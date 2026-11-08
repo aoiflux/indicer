@@ -14,6 +14,7 @@ import (
 // or opened through another drive letter could not restore anything, and a
 // copy could read another case's blobs where the old path still existed.
 func TestStoreRestoreAfterRelocation(t *testing.T) {
+	t.Parallel()
 	testdb.ForEachMode(t, func(t *testing.T, m testdb.Mode) {
 		dir := t.TempDir()
 		oldRoot := filepath.Join(dir, "case-a", "db")

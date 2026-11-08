@@ -18,6 +18,7 @@ func containerRequest(path string) Request {
 // hierarchical database becomes a container database, and the change
 // survives a reopen.
 func TestSetStorage(t *testing.T) {
+	t.Parallel()
 	root := setup(t)
 	h := open(t, containerRequest(root))
 	if err := h.SetStorage(dbmeta.StorageContainerBIDX); err != nil {
@@ -54,6 +55,7 @@ func TestSetStorage(t *testing.T) {
 // and the manifest file one after the other. A crash between them must not
 // leave a database that refuses to open.
 func TestStorageChangeInterrupted(t *testing.T) {
+	t.Parallel()
 	root := setup(t)
 	h := open(t, containerRequest(root))
 	if err := h.SetStorage(dbmeta.StorageContainerBIDX); err != nil {
@@ -77,6 +79,7 @@ func TestStorageChangeInterrupted(t *testing.T) {
 // whose manifest says container (an upgrade that kept them, or one cut
 // short) keep the block index lookup on.
 func TestBlockFilesKeepLegacyLookup(t *testing.T) {
+	t.Parallel()
 	root := setup(t)
 	open(t, containerRequest(root)).Close()
 	err := testutil.WriteLegacyBlockIndex(filepath.Join(root, cnst.BLOBSDIR), []testutil.LegacyBlockRecord{

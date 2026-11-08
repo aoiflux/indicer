@@ -18,6 +18,7 @@ import (
 // to a whole-device partition, fail to mount a filesystem, and skip it — with no
 // error and no records.
 func TestWalkImageNoFilesystem(t *testing.T) {
+	t.Parallel()
 	img := image.NewRaw(bytes.NewReader(make([]byte, 1<<20)), 1<<20)
 	defer img.Close()
 
@@ -52,6 +53,7 @@ func mbrDisk(total int64, starts []uint32, fill func(i int, part []byte)) []byte
 // TestScanAnnouncesEveryPartition: partitions DUES cannot walk are still
 // registered, with a status saying why (PAR-2, PAR-26).
 func TestScanAnnouncesEveryPartition(t *testing.T) {
+	t.Parallel()
 	buf := mbrDisk(8<<20, []uint32{2048, 4096, 6144}, func(i int, part []byte) {
 		switch i {
 		case 1:
@@ -104,6 +106,7 @@ func (f *failAfter) ReadAt(p []byte, off int64) (int, error) {
 // the scan with a SourceReadError, not a stream of per-file errors on an
 // index that looks complete (PAR-32).
 func TestScanSourceReadErrorIsFatal(t *testing.T) {
+	t.Parallel()
 	m := fixtureByName(t, "ntfs/ntfs_fsagen")
 	base, err := image.Open(fixture.Open(t, m))
 	if err != nil {
@@ -155,6 +158,7 @@ func fixtureByName(t *testing.T, name string) fixture.Manifest {
 
 // TestScanReportsCounts: the per-partition report counts what the walk saw.
 func TestScanReportsCounts(t *testing.T) {
+	t.Parallel()
 	m := fixtureByName(t, "fat/fat32_fsagen")
 	img, err := image.Open(fixture.Open(t, m))
 	if err != nil {
@@ -188,6 +192,7 @@ func TestScanReportsCounts(t *testing.T) {
 
 // TestScanCancel: a cancelled context stops the walk with its error.
 func TestScanCancel(t *testing.T) {
+	t.Parallel()
 	m := fixtureByName(t, "ext/ext4_fsagen")
 	img, err := image.Open(fixture.Open(t, m))
 	if err != nil {
@@ -208,6 +213,7 @@ func TestScanCancel(t *testing.T) {
 // signature, so its boot code can parse as a partition table whose entries
 // hold no filesystem. The scan then tries the device as one volume.
 func TestScanFallsBackToWholeVolume(t *testing.T) {
+	t.Parallel()
 	data := rawFixture(t, fixtureByName(t, "fat/fat16"))
 	// One "partition" in the boot code area, pointing at zeros past the
 	// FAT structures.

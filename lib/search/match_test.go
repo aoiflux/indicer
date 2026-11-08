@@ -21,6 +21,7 @@ func countInPieces(term string, data []byte, cuts []int) int64 {
 }
 
 func TestMatcherCounts(t *testing.T) {
+	t.Parallel()
 	for _, c := range []struct {
 		term, data string
 		want       int64
@@ -43,6 +44,7 @@ func TestMatcherCounts(t *testing.T) {
 // depend on where it is cut into spans, and for a bytewise term they are
 // what counting the whole stream finds.
 func TestMatcherStreamsAcrossCuts(t *testing.T) {
+	t.Parallel()
 	rng := rand.New(rand.NewPCG(1, 2))
 	alphabet := []string{"a", "b", "A", "B", "é", "É", ".", "\xc3"}
 	for _, term := range []string{"ab", "aba", "bAb", "é", "éa", "aÉb", "\xc3a"} {

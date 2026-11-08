@@ -44,6 +44,7 @@ func lookups() map[string]result {
 
 // TestPrintDirs is the child of TestIgnoresEnvironment.
 func TestPrintDirs(t *testing.T) {
+	t.Parallel()
 	if !*printChild {
 		t.Skip("run by TestIgnoresEnvironment")
 	}
@@ -91,6 +92,7 @@ func TestIgnoresEnvironment(t *testing.T) {
 }
 
 func TestDirsAreAbsolute(t *testing.T) {
+	t.Parallel()
 	for name, r := range lookups() {
 		if name == "UserName" {
 			continue
@@ -111,6 +113,7 @@ func TestDirsAreAbsolute(t *testing.T) {
 }
 
 func TestLayout(t *testing.T) {
+	t.Parallel()
 	cache, err := Cache()
 	if err != nil {
 		t.Skipf("no cache directory: %v", err)
@@ -132,6 +135,7 @@ func TestLayout(t *testing.T) {
 }
 
 func TestTempOr(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
 	if got, err := TempOr(dir); err != nil || got != dir {
 		t.Errorf("TempOr(%q) = %q, %v; want the flag's directory", dir, got, err)
@@ -144,6 +148,7 @@ func TestTempOr(t *testing.T) {
 }
 
 func TestAbsolute(t *testing.T) {
+	t.Parallel()
 	for _, dir := range []string{"", "relative", "." + string(filepath.Separator) + "x"} {
 		if _, err := absolute("test folder", dir); err == nil || !strings.Contains(err.Error(), "test folder") {
 			t.Errorf("absolute(%q) = %v, want an error naming the folder", dir, err)

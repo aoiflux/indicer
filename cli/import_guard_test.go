@@ -16,6 +16,7 @@ import (
 // server and the compression product did, for Common; they now open the
 // database with dbopen.Open, as Common does.
 func TestOnlyMainImportsTheCLI(t *testing.T) {
+	t.Parallel()
 	root, err := filepath.Abs("..")
 	if err != nil {
 		t.Fatal(err)

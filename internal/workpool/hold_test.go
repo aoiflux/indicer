@@ -12,10 +12,10 @@ import (
 // starts beside the first item not yet finished, and that one always may,
 // so the run ends; done still sees every item, in order.
 func TestHoldLetsOnlyTheFirstUnfinishedStart(t *testing.T) {
+	t.Parallel()
 	waits := make(chan struct{})
 	var once sync.Once
-	holding = func() { once.Do(func() { close(waits) }) }
-	t.Cleanup(func() { holding = func() {} })
+	holding := func() { once.Do(func() { close(waits) }) }
 
 	items := make([]Item, 8)
 	var busy, most atomic.Int32
@@ -40,7 +40,7 @@ func TestHoldLetsOnlyTheFirstUnfinishedStart(t *testing.T) {
 		return nil
 	}
 	rec := newRecorder()
-	if _, err := RunHeld(t.Context(), 4, items, func() bool { return true }, do, rec.done); err != nil {
+	if _, err := run(t.Context(), 4, items, func() bool { return true }, holding, do, rec.done); err != nil {
 		t.Fatal(err)
 	}
 	if m := most.Load(); m != 1 {

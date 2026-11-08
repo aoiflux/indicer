@@ -11,6 +11,7 @@ import (
 )
 
 func TestExtentReaderReadsDataAndHoles(t *testing.T) {
+	t.Parallel()
 	src := bytes.Repeat([]byte("0123456789"), 10) // 100 bytes
 	ext := []structs.Extent{
 		{FileOffset: 0, Length: 4, Offset: 10, Kind: structs.ExtentData},  // "0123"
@@ -51,6 +52,7 @@ func TestExtentReaderReadsDataAndHoles(t *testing.T) {
 }
 
 func TestExtentReaderShortSource(t *testing.T) {
+	t.Parallel()
 	r, err := dbio.NewExtentReader(bytes.NewReader(make([]byte, 10)), []structs.Extent{{FileOffset: 0, Length: 8, Offset: 6}})
 	if err != nil {
 		t.Fatal(err)
@@ -61,6 +63,7 @@ func TestExtentReaderShortSource(t *testing.T) {
 }
 
 func TestExtentReaderRejectsBadExtents(t *testing.T) {
+	t.Parallel()
 	for name, ext := range map[string][]structs.Extent{
 		"gap":      {{FileOffset: 0, Length: 4}, {FileOffset: 5, Length: 1}},
 		"overlap":  {{FileOffset: 0, Length: 4}, {FileOffset: 3, Length: 1}},

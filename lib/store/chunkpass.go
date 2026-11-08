@@ -46,6 +46,20 @@ type ChunkPass struct {
 	// Credit places the pass in a run whose passes count new chunks as one
 	// at a time would (ChunkCredits); the zero Credit counts what it stores.
 	Credit Credit
+
+	// materialize, when not nil, writes the chunks in place of
+	// dbio.MaterializeChonkNode; tests count the chunks a pass writes so.
+	materialize materializeFunc
+}
+
+// join gives the pass its part in its database's chunkWriter.
+func (p ChunkPass) join() *passChunks {
+	writes := joinChunkWriter(p.DB)
+	writes.credit = p.Credit
+	if p.materialize != nil {
+		writes.materialize = p.materialize
+	}
+	return writes
 }
 
 // ChunkResult is what a chunk pass computed over exactly the bytes it stored.

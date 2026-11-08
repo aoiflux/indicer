@@ -14,6 +14,7 @@ import (
 // that the folders built from the profile are the ones the known-folder
 // API reports, so this machine has not moved AppData\Local.
 func TestMatchesKnownFolders(t *testing.T) {
+	t.Parallel()
 	for _, c := range []struct {
 		name string
 		got  func() (string, error)
@@ -35,6 +36,7 @@ func TestMatchesKnownFolders(t *testing.T) {
 // TestHomeIsTheAccountProfile: Home, read from the token directly, is the
 // folder user.Current reports for the same account.
 func TestHomeIsTheAccountProfile(t *testing.T) {
+	t.Parallel()
 	u, err := user.Current()
 	if err != nil {
 		t.Fatal(err)
@@ -45,6 +47,7 @@ func TestHomeIsTheAccountProfile(t *testing.T) {
 }
 
 func TestUserNameHasNoDomain(t *testing.T) {
+	t.Parallel()
 	u, err := user.Current()
 	if err != nil {
 		t.Fatal(err)

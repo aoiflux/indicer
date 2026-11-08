@@ -59,6 +59,7 @@ func indexedHashes(t *testing.T, db *badger.DB, eid []byte) map[string]string {
 // or from the source file, writes exactly the keys the first ingest wrote,
 // with the same records; a file that does not hold the evidence is refused.
 func TestReindexRebuildsTheSameIndex(t *testing.T) {
+	t.Parallel()
 	for _, name := range []string{"ntfs/ntfs_compressed", "part/gpt_multi", "ewf/fat12_multiseg"} {
 		t.Run(name, func(t *testing.T) {
 			db := openDB(t)
@@ -103,6 +104,7 @@ func TestReindexRebuildsTheSameIndex(t *testing.T) {
 // decoded content its index stores, at ingest and again at reindex. Reindex
 // stored that content without them, whatever the evidence was stored with.
 func TestStoreOptionsReachDecodedContent(t *testing.T) {
+	t.Parallel()
 	db := openDB(t)
 	res, err := Run(t.Context(), db, Request{Path: fixture(t, "ntfs/ntfs_compressed"), Decode: true, Quiet: true, RevRel: true, Simhash: true})
 	if err != nil {
@@ -156,20 +158,19 @@ func TestStoreOptionsReachDecodedContent(t *testing.T) {
 // TestReindexAfterAFailedIndex: an index pass that failed at ingest is
 // rebuilt by a reindex, from the stored chunks.
 func TestReindexAfterAFailedIndex(t *testing.T) {
+	t.Parallel()
 	db := openDB(t)
 	path := fixture(t, "fat/fat16")
-	prev := runIndex
-	t.Cleanup(func() { runIndex = prev })
-	runIndex = func(ctx context.Context, o index.Options) (index.Result, error) {
-		res, _ := prev(ctx, o)
-		return res, errors.New("simulated index failure")
-	}
-	res, err := Run(t.Context(), db, Request{Path: path, Decode: true, Quiet: true})
+	res, err := runWith(t.Context(), db, Request{Path: path, Decode: true, Quiet: true}, func(p *passes) {
+		p.index = func(ctx context.Context, o index.Options) (index.Result, error) {
+			res, _ := index.Run(ctx, o)
+			return res, errors.New("simulated index failure")
+		}
+	})
 	var incomplete *IndexIncompleteError
 	if !errors.As(err, &incomplete) {
 		t.Fatalf("ingest: %v", err)
 	}
-	runIndex = prev
 	r, err := Reindex(t.Context(), db, res.EvidenceID, ReindexOptions{})
 	if err != nil || r.Index.State != structs.IndexComplete || r.Index.Coverage.FilesIndexed == 0 {
 		t.Fatalf("reindex: %v, %+v", err, r.Index)
@@ -183,6 +184,7 @@ func TestReindexAfterAFailedIndex(t *testing.T) {
 // TestReindexRefuses: evidence that is not stored, holds a container DUES
 // cannot decode, or has a quarantined index is not reindexed.
 func TestReindexRefuses(t *testing.T) {
+	t.Parallel()
 	db := openDB(t)
 	path := testutil.WriteRandomFile(t, t.TempDir(), "x.bin", 9, 9000)
 	res, err := Run(t.Context(), db, Request{Path: path, Decode: true, Quiet: true, NoIndex: true})

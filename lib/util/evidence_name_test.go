@@ -13,6 +13,7 @@ import (
 // partition names carry it base64-encoded; decoding only base64 made every
 // read of an indexed file fail ("illegal base64 data").
 func TestGetEvidenceFileHashAcceptsRawPrefix(t *testing.T) {
+	t.Parallel()
 	sep := cnst.DataSeperator
 	partHash := base64.StdEncoding.EncodeToString([]byte("partition-hash-0"))
 	ids := map[string][]byte{

@@ -121,6 +121,7 @@ func computeExpectedHochoHashForTest(filePath string, chunkSize int64) (string, 
 }
 
 func TestStoreHashStrategyEvidenceParity(t *testing.T) {
+	t.Parallel()
 	inputPath := filepath.Join(t.TempDir(), "sample.bin")
 	chunk := []byte("hash-strategy-parity")
 	data := bytes.Repeat(chunk, 8192)
@@ -186,6 +187,7 @@ func TestStoreHashStrategyEvidenceParity(t *testing.T) {
 }
 
 func TestStoreHashStrategyKeyModelContract(t *testing.T) {
+	t.Parallel()
 	inputPath := filepath.Join(t.TempDir(), "key-model.bin")
 	data := bytes.Repeat([]byte("key-model-contract"), 4096)
 	if err := os.WriteFile(inputPath, data, 0o600); err != nil {

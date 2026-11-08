@@ -29,6 +29,7 @@ func exitCode(err error) int {
 // stored without reverse relations says to add them; once repair --fix
 // --revrel has, near runs.
 func TestLegacySearchAndNear(t *testing.T) {
+	t.Parallel()
 	if testing.Short() {
 		t.Skip("builds the dues binary")
 	}

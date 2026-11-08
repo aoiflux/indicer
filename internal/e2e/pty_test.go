@@ -91,6 +91,7 @@ var ptyHeader = regexp.MustCompile(`^◆ DUES v\S+ · store · ev\.bin →`)
 // report and footer left behind. The screen wraps as a terminal does: the
 // report lines on stdout may be longer than the terminal is wide.
 func TestLiveDisplayInPTY(t *testing.T) {
+	t.Parallel()
 	script := ptyScript(t)
 	bin := testutil.BuildDues(t)
 	for _, cols := range []int{100, 50} {

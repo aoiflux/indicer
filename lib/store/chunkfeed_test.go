@@ -37,6 +37,7 @@ func sum(b []byte) []byte {
 // The feed delivers every chunk once, in any order, and the tap hashes the
 // bytes in order, whatever the number of readers.
 func TestChunkFeedDigests(t *testing.T) {
+	t.Parallel()
 	content := testutil.RandomBytes(3, 10*4096+123)
 	ranges := []ByteRange{{0, 512}, {4000, 9000}, {5000, 100}, {40000, 100000}}
 	for _, readers := range []int{1, 4} {
@@ -70,6 +71,7 @@ func TestChunkFeedDigests(t *testing.T) {
 // The ring bounds what the feed holds: with every slot unreleased, no further
 // chunk is read.
 func TestChunkFeedRingIsBounded(t *testing.T) {
+	t.Parallel()
 	content := make([]byte, 20*4096)
 	var reads atomic.Int64
 	src := readerFunc(func(p []byte, off int64) (int, error) {
@@ -109,6 +111,7 @@ func (f readerFunc) ReadAt(p []byte, off int64) (int, error) { return f(p, off) 
 // A read error ends the pass with the offset it happened at, and the
 // evidence is not taken as stored.
 func TestIngestChunksSourceReadError(t *testing.T) {
+	t.Parallel()
 	for _, mode := range []string{cnst.StorePipelineBatch, cnst.StorePipelineStaged} {
 		t.Run(mode, func(t *testing.T) {
 			tun := testdb.Tuning()
@@ -147,6 +150,7 @@ func TestIngestChunksSourceReadError(t *testing.T) {
 
 // The EWF digests are checked over exactly the decoded bytes stored.
 func TestIngestChunksVerifiesEWF(t *testing.T) {
+	t.Parallel()
 	var m fsfixture.Manifest
 	for _, x := range fsfixture.All(t) {
 		if x.Name == "ewf/fat12_multiseg" {

@@ -50,6 +50,7 @@ const guardFile = "internal/osdirs/noenv_guard_test.go"
 // TestNoEnvironmentReads fails on any new environment read in DUES code,
 // tests and test helpers included.
 func TestNoEnvironmentReads(t *testing.T) {
+	t.Parallel()
 	root, err := filepath.Abs(filepath.Join("..", ".."))
 	if err != nil {
 		t.Fatal(err)

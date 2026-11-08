@@ -6,6 +6,7 @@ import "testing"
 // must be at least 1 (0 deadlocks badger) and at most MaxPendingBatchTxns
 // (each pending transaction holds memory), whatever the chunk size (CFG-5).
 func TestMaxBatchCountBounded(t *testing.T) {
+	t.Parallel()
 	for _, low := range []bool{false, true} {
 		for _, size := range []int64{0, -1, 4 * KB, 256 * KB, 64 * MB, 1 << 50} {
 			if n := (Tuning{LowResource: low}).MaxBatchCount(size); n < 1 || n > MaxPendingBatchTxns {

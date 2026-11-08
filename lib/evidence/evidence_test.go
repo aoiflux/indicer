@@ -45,6 +45,7 @@ func digest(t *testing.T, r io.ReaderAt, size int64) string {
 // A container is opened as the disk it holds: its size, its bytes and its
 // members are the decoded device's (D5, ING-7).
 func TestOpenDecodesContainers(t *testing.T) {
+	t.Parallel()
 	for _, c := range []struct {
 		fixture, format string
 		members         int
@@ -89,6 +90,7 @@ func TestOpenDecodesContainers(t *testing.T) {
 // Without decoding, a file is stored as its own bytes and a container in it
 // is not indexed.
 func TestOpenPlainKeepsFileBytes(t *testing.T) {
+	t.Parallel()
 	_, path := fixture(t, "ewf/fat12_multiseg")
 	src, err := Open(context.Background(), path, Options{Decode: false})
 	if err != nil {
@@ -115,6 +117,7 @@ func TestOpenPlainKeepsFileBytes(t *testing.T) {
 }
 
 func TestOpenUnsupportedEmptyAndIrregular(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
 	qcow := filepath.Join(dir, "disk.qcow2")
 	if err := os.WriteFile(qcow, append([]byte("QFI\xfb"), make([]byte, 4092)...), 0o600); err != nil {
@@ -148,6 +151,7 @@ func TestOpenUnsupportedEmptyAndIrregular(t *testing.T) {
 }
 
 func TestFingerprint(t *testing.T) {
+	t.Parallel()
 	newHash := func() hash.Hash { return sha256.New() }
 	fp := func(b []byte) string {
 		t.Helper()
@@ -182,6 +186,7 @@ func TestFingerprint(t *testing.T) {
 }
 
 func TestPlanGroupsSets(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
 	write := func(name string, data []byte) string {
 		p := filepath.Join(dir, name)

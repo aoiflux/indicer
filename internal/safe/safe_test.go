@@ -47,6 +47,7 @@ func TestCallRecoversPanic(t *testing.T) {
 }
 
 func TestCallPassesErrorsThrough(t *testing.T) {
+	t.Parallel()
 	want := errors.New("plain")
 	if err := Call(Site{Component: "test", Op: "plain"}, func() error { return want }); err != want {
 		t.Fatalf("got %v, want %v", err, want)
@@ -127,6 +128,7 @@ func TestGroupCancelsAndWaits(t *testing.T) {
 }
 
 func TestGroupLimit(t *testing.T) {
+	t.Parallel()
 	g, _ := WithContext(context.Background())
 	g.SetLimit(2)
 	var running, peak atomic.Int32

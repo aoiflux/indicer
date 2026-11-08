@@ -21,6 +21,7 @@ func (panicDetector) Detect(model.FileRecord, []byte) ([]model.Artefact, error) 
 // TestDetectContainsPanics: a detector that panics on evidence fails that
 // file with an error instead of ending the process (PAR-1).
 func TestDetectContainsPanics(t *testing.T) {
+	t.Parallel()
 	e := NewEngine([]detectorpkg.Detector{panicDetector{}}, []Method{{ID: "m", DetectorName: "boom", AppliesTo: []parsingpkg.Kind{parsingpkg.KindText}, Enabled: true}})
 	_, err := e.Detect(model.FileRecord{}, parsingpkg.Result{Kind: parsingpkg.KindText, Content: []byte("x")})
 	if !safe.IsPanic(err) {

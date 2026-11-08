@@ -96,6 +96,7 @@ func listEvidence(t *testing.T, bin, work, root string) []listedEvidence {
 // reserve, a store fails before writing anything. badger used to crash the
 // process with SIGBUS when the disk filled under one of its mapped files.
 func TestStoreDiskFullRefusedUpFront(t *testing.T) {
+	t.Parallel()
 	small := testutil.ENOSPCDir.Require(t)
 	bin := testutil.BuildDues(t)
 	work := t.TempDir()
@@ -113,6 +114,7 @@ func TestStoreDiskFullRefusedUpFront(t *testing.T) {
 // with a clear error, the database stays whole, and earlier evidence still
 // restores verified.
 func TestStoreDiskFullMidway(t *testing.T) {
+	t.Parallel()
 	low := testutil.LowSpaceDir.Require(t)
 	bin := testutil.BuildDues(t)
 	work := t.TempDir()
@@ -152,6 +154,7 @@ func TestStoreDiskFullMidway(t *testing.T) {
 // full volume: each fails, leaves no output or temporary file there, and the
 // database (elsewhere) is untouched.
 func TestOutputsDiskFull(t *testing.T) {
+	t.Parallel()
 	small := testutil.ENOSPCDir.Require(t)
 	bin := testutil.BuildDues(t)
 	work := t.TempDir()
@@ -190,6 +193,7 @@ func TestOutputsDiskFull(t *testing.T) {
 
 // TestLogDirDiskFull: a full log volume does not stop a command.
 func TestLogDirDiskFull(t *testing.T) {
+	t.Parallel()
 	small := testutil.ENOSPCDir.Require(t)
 	bin := testutil.BuildDues(t)
 	work := t.TempDir()
@@ -203,6 +207,7 @@ func TestLogDirDiskFull(t *testing.T) {
 // from write-protected media: every read command works, every write command
 // fails with an error, and nothing changes.
 func TestReadOnlyMediaDatabase(t *testing.T) {
+	t.Parallel()
 	srcDir := testutil.ReadOnlySrc.Require(t)
 	roDir := testutil.ReadOnlyDB.Require(t)
 	bin := testutil.BuildDues(t)
@@ -254,6 +259,7 @@ func TestReadOnlyMediaDatabase(t *testing.T) {
 // restore and a verification with an error naming it; once readable again,
 // the evidence restores.
 func TestPermissionUnreadableBlob(t *testing.T) {
+	t.Parallel()
 	testutil.RequireLinuxNonRoot(t)
 	bin := testutil.BuildDues(t)
 	work := t.TempDir()
@@ -288,6 +294,7 @@ func TestPermissionUnreadableBlob(t *testing.T) {
 // TestPermissionUnreadableSource: a source file the user cannot read is not
 // stored, and nothing is recorded for it.
 func TestPermissionUnreadableSource(t *testing.T) {
+	t.Parallel()
 	testutil.RequireLinuxNonRoot(t)
 	bin := testutil.BuildDues(t)
 	work := t.TempDir()
@@ -307,6 +314,7 @@ func TestPermissionUnreadableSource(t *testing.T) {
 // TestPermissionReadOnlyDataRoot: a data root the user may only read works
 // for read commands and refuses write commands with an error.
 func TestPermissionReadOnlyDataRoot(t *testing.T) {
+	t.Parallel()
 	testutil.RequireLinuxNonRoot(t)
 	bin := testutil.BuildDues(t)
 	work := t.TempDir()
@@ -326,6 +334,7 @@ func TestPermissionReadOnlyDataRoot(t *testing.T) {
 // TestPermissionLogDir: a log directory the user cannot write does not stop
 // a command.
 func TestPermissionLogDir(t *testing.T) {
+	t.Parallel()
 	testutil.RequireLinuxNonRoot(t)
 	bin := testutil.BuildDues(t)
 	work := t.TempDir()

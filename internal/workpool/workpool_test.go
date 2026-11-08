@@ -56,6 +56,7 @@ func (r *recorder) done(i int, _ error) {
 // them in index order; chained items never overlap, nor a heavy item with
 // anything; and no more than jobs run at once.
 func TestOrderChainsAndHeavyItems(t *testing.T) {
+	t.Parallel()
 	items := make([]Item, 200)
 	for i := range items {
 		switch {
@@ -99,6 +100,7 @@ func TestOrderChainsAndHeavyItems(t *testing.T) {
 // TestHeavyItemIsNotStarved: a heavy item waits only for those already
 // running; items after it wait for it.
 func TestHeavyItemIsNotStarved(t *testing.T) {
+	t.Parallel()
 	items := make([]Item, 50)
 	items[3].Heavy = true
 	var started []int
@@ -128,6 +130,7 @@ func TestHeavyItemIsNotStarved(t *testing.T) {
 // has returned for every item before it, so what done settles for them is
 // settled before the heavy one runs, however slow done is.
 func TestHeavyStartsAfterEarlierReported(t *testing.T) {
+	t.Parallel()
 	items := make([]Item, 6)
 	items[3].Heavy = true
 	var reported atomic.Int32
@@ -157,6 +160,7 @@ func TestHeavyStartsAfterEarlierReported(t *testing.T) {
 
 // TestErrorsDoNotStopOthers: an item's error goes to done and the rest run.
 func TestErrorsDoNotStopOthers(t *testing.T) {
+	t.Parallel()
 	items := make([]Item, 20)
 	errs := make([]error, len(items))
 	_, err := Run(t.Context(), 3, items, func(_ context.Context, i int) error {
@@ -179,6 +183,7 @@ func TestErrorsDoNotStopOthers(t *testing.T) {
 // finish, done hears of every item that ran, in order, and Run returns the
 // cause.
 func TestCancelStopsStarting(t *testing.T) {
+	t.Parallel()
 	cause := errors.New("stop now")
 	ctx, cancel := context.WithCancelCause(t.Context())
 	items := make([]Item, 100)
@@ -255,12 +260,12 @@ func TestGoroutinesAreBounded(t *testing.T) {
 // and Held the time one waited while the items left were held back, here by
 // the earlier item of their chain.
 func TestStatsSayHowTheRunWasSpent(t *testing.T) {
+	t.Parallel()
 	waits := make(chan struct{})
 	var once sync.Once
-	holding = func() { once.Do(func() { close(waits) }) }
-	t.Cleanup(func() { holding = func() {} })
+	holding := func() { once.Do(func() { close(waits) }) }
 	const hold = 20 * time.Millisecond
-	st, err := Run(t.Context(), 2, []Item{{Key: "a"}, {Key: "a"}}, func(_ context.Context, i int) error {
+	st, err := run(t.Context(), 2, []Item{{Key: "a"}, {Key: "a"}}, nil, holding, func(_ context.Context, i int) error {
 		if i == 0 {
 			// The other goroutine waits for this item, its chain's first.
 			<-waits

@@ -15,6 +15,7 @@ import (
 // task per evidence and a region per step of its store, and never replaces
 // a file already there.
 func TestTraceFlag(t *testing.T) {
+	t.Parallel()
 	bin := testutil.BuildDues(t)
 	work := t.TempDir()
 	dir := filepath.Join(work, "case")

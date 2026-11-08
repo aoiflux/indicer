@@ -76,11 +76,19 @@ func Run(ctx context.Context, jobs int, items []Item, do func(ctx context.Contex
 // the earlier ones bounds it so. hold is asked before an item starts, and
 // again once an item finishes and once done returns; nil never holds.
 func RunHeld(ctx context.Context, jobs int, items []Item, hold func() bool, do func(ctx context.Context, i int) error, done func(i int, err error)) (Stats, error) {
+	return run(ctx, jobs, items, hold, nil, do, done)
+}
+
+// run is RunHeld. holding, when not nil, is called under the scheduler's
+// lock each time a goroutine starts to wait for an item; tests pass it to
+// know one waits.
+func run(ctx context.Context, jobs int, items []Item, hold func() bool, holding func(), do func(ctx context.Context, i int) error, done func(i int, err error)) (Stats, error) {
 	jobs = max(jobs, 1)
 	runCtx, stop := context.WithCancelCause(ctx)
 	defer stop(nil)
 	s := newScheduler(items, jobs)
 	s.hold = hold
+	s.holding = holding
 	busy := make([]time.Duration, jobs)
 	start := time.Now()
 	var wg sync.WaitGroup
@@ -135,6 +143,7 @@ type scheduler struct {
 	// never holds back.
 	unfinished int
 	hold       func() bool
+	holding    func() // see run; nil for none
 	// held is how long each goroutine waited for an item to start.
 	held []time.Duration
 }
@@ -190,7 +199,9 @@ func (s *scheduler) next(ctx context.Context, g int) (int, bool) {
 		if s.first >= len(s.items) {
 			return 0, false
 		}
-		holding()
+		if s.holding != nil {
+			s.holding()
+		}
 		waited := time.Now()
 		region := trace.StartRegion(ctx, "held")
 		s.cond.Wait()
@@ -198,10 +209,6 @@ func (s *scheduler) next(ctx context.Context, g int) (int, bool) {
 		s.held[g] += time.Since(waited)
 	}
 }
-
-// holding is called, under the scheduler's lock, when a goroutine starts to
-// wait for an item; tests replace it to know one waits.
-var holding = func() {}
 
 // ready finds the lowest waiting item that may start now.
 func (s *scheduler) ready() (int, bool) {

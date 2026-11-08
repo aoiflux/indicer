@@ -66,6 +66,7 @@ func TestServerTokenSources(t *testing.T) {
 
 // TestServerFlagsParse: the listen and origin flags repeat.
 func TestServerFlagsParse(t *testing.T) {
+	t.Parallel()
 	cliDef := newCLIDefinition()
 	if _, err := cliDef.app.Parse([]string{"server", "--listen", "127.0.0.1:1", "--listen", "[::1]:2",
 		"--cors-origin", "https://a.example", "--cors-origin", "http://b.example:8080"}); err != nil {
@@ -82,6 +83,7 @@ func TestServerFlagsParse(t *testing.T) {
 // TestServerRefusesExposureWithoutToken: a non-loopback address without a
 // token is a usage error, found before the database is opened or created.
 func TestServerRefusesExposureWithoutToken(t *testing.T) {
+	t.Parallel()
 	root := filepath.Join(t.TempDir(), "db")
 	err := api.Server(context.Background(), dbopen.Request{Path: root}, api.Options{Listen: []string{"0.0.0.0:0"}})
 	if lifecycle.ExitCode(err) != lifecycle.ExitUsage || !strings.Contains(err.Error(), "token") {

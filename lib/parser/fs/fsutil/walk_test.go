@@ -12,6 +12,7 @@ import (
 )
 
 func TestEscapeName(t *testing.T) {
+	t.Parallel()
 	cases := []struct {
 		in, want  string
 		sanitized bool
@@ -39,6 +40,7 @@ func TestEscapeName(t *testing.T) {
 }
 
 func TestJoinCapsNames(t *testing.T) {
+	t.Parallel()
 	long := strings.Repeat("é", 100) // 200 bytes
 	p, san := Join("/dir", long, 51)
 	if !san {
@@ -95,6 +97,7 @@ func walkAll(t *testing.T, w *TreeWalker, root core.Node) ([]string, error) {
 }
 
 func TestTreeWalkerPreorder(t *testing.T) {
+	t.Parallel()
 	tr := tree{
 		1: {dir(2, "a"), file(3, "z.txt")},
 		2: {file(4, "b.txt"), dir(5, "c")},
@@ -116,6 +119,7 @@ func TestTreeWalkerPreorder(t *testing.T) {
 }
 
 func TestTreeWalkerParents(t *testing.T) {
+	t.Parallel()
 	tr := tree{1: {dir(2, "a")}, 2: {file(3, "b")}}
 	parents := map[string]uint64{}
 	w := &TreeWalker{List: tr.list}
@@ -129,6 +133,7 @@ func TestTreeWalkerParents(t *testing.T) {
 }
 
 func TestTreeWalkerCycle(t *testing.T) {
+	t.Parallel()
 	// /a/loop names directory 1 (the root) again.
 	tr := tree{1: {dir(2, "a")}, 2: {dir(1, "loop"), file(3, "f")}}
 	var is issues
@@ -143,6 +148,7 @@ func TestTreeWalkerCycle(t *testing.T) {
 }
 
 func TestTreeWalkerUnreadableAndPartial(t *testing.T) {
+	t.Parallel()
 	partial := errors.New("index block 7 unreadable")
 	tr := tree{1: {dir(2, "gone"), dir(3, "part"), file(9, "after")}}
 	list := func(d core.Node) ([]core.Node, error) {
@@ -166,6 +172,7 @@ func TestTreeWalkerUnreadableAndPartial(t *testing.T) {
 }
 
 func TestTreeWalkerUnreadableRoot(t *testing.T) {
+	t.Parallel()
 	w := &TreeWalker{List: tree{}.list}
 	if _, err := walkAll(t, w, dir(1, "/")); err == nil {
 		t.Fatal("an unreadable root must fail the walk")
@@ -173,6 +180,7 @@ func TestTreeWalkerUnreadableRoot(t *testing.T) {
 }
 
 func TestTreeWalkerDeepTree(t *testing.T) {
+	t.Parallel()
 	// 1,500 nested directories: no recursion, capped at MaxDepth.
 	tr := tree{}
 	for i := uint64(1); i <= 1500; i++ {
@@ -190,6 +198,7 @@ func TestTreeWalkerDeepTree(t *testing.T) {
 }
 
 func TestTreeWalkerEntryBudget(t *testing.T) {
+	t.Parallel()
 	kids := make([]core.Node, 100)
 	for i := range kids {
 		kids[i] = file(uint64(i+10), fmt.Sprint(i))
@@ -203,6 +212,7 @@ func TestTreeWalkerEntryBudget(t *testing.T) {
 }
 
 func TestTreeWalkerSanitizes(t *testing.T) {
+	t.Parallel()
 	var is issues
 	w := &TreeWalker{List: tree{1: {file(2, "a/b")}}.list, Sink: is.sink}
 	var got core.Node
@@ -213,6 +223,7 @@ func TestTreeWalkerSanitizes(t *testing.T) {
 }
 
 func TestTreeWalkerCancel(t *testing.T) {
+	t.Parallel()
 	ctx, cancel := context.WithCancel(context.Background())
 	tr := tree{1: {file(2, "a"), file(3, "b")}}
 	w := &TreeWalker{List: tr.list}
@@ -223,6 +234,7 @@ func TestTreeWalkerCancel(t *testing.T) {
 }
 
 func TestRawPaths(t *testing.T) {
+	t.Parallel()
 	r := &RawPaths{}
 	type step struct {
 		raw, name string

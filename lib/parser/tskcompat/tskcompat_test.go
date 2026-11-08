@@ -11,6 +11,7 @@ import (
 )
 
 func TestRenderValidJSON(t *testing.T) {
+	t.Parallel()
 	img := image.NewRaw(bytes.NewReader(make([]byte, 1<<20)), 1<<20)
 	defer img.Close()
 
@@ -28,6 +29,7 @@ func TestRenderValidJSON(t *testing.T) {
 }
 
 func TestToFile(t *testing.T) {
+	t.Parallel()
 	rec := core.FileRecord{
 		Path:      "/dir/a.txt",
 		Kind:      core.KindFile,
@@ -61,6 +63,7 @@ func TestToFile(t *testing.T) {
 // JSON shape, which had no timestamp fields — so the times were parsed and
 // discarded on the way to storage.
 func TestToFile_CarriesMACBAndPreservesAbsentTimes(t *testing.T) {
+	t.Parallel()
 	modified := time.Date(2026, 8, 13, 9, 4, 11, 0, time.UTC)
 	accessed := time.Date(2026, 8, 13, 10, 0, 0, 0, time.UTC)
 
@@ -90,6 +93,7 @@ func TestToFile_CarriesMACBAndPreservesAbsentTimes(t *testing.T) {
 // A zero time is the "not carried" sentinel fsutil.TimePtr already uses; it
 // must not be rendered as an epoch timestamp.
 func TestToFile_ZeroTimeIsAbsentNotEpoch(t *testing.T) {
+	t.Parallel()
 	zero := time.Time{}
 	got := toFile(core.FileRecord{
 		Path: "/notes.txt",
@@ -105,6 +109,7 @@ func TestToFile_ZeroTimeIsAbsentNotEpoch(t *testing.T) {
 // A file with no timestamps must serialise to exactly the legacy shape, so the
 // extension stays invisible to anything reading the original contract.
 func TestToFile_NoTimesOmitsTheFieldsEntirely(t *testing.T) {
+	t.Parallel()
 	encoded, err := json.Marshal(toFile(core.FileRecord{
 		Path: "/notes.txt", Kind: core.KindFile, Size: 10,
 	}))

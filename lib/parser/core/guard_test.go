@@ -38,6 +38,7 @@ type panicReader struct{}
 func (panicReader) Read([]byte) (int, error) { panic("lazy decode") }
 
 func TestGuardContainsPanics(t *testing.T) {
+	t.Parallel()
 	g := Guard(panicFS{walkPanicAt: 3})
 	if _, err := g.Stat(Node{}); !safe.IsPanic(err) {
 		t.Fatalf("Stat: %v, want a recovered panic", err)
@@ -61,6 +62,7 @@ func TestGuardContainsPanics(t *testing.T) {
 }
 
 func TestGuardKeepsCallbackErrors(t *testing.T) {
+	t.Parallel()
 	stop := errors.New("stop")
 	err := Guard(panicFS{walkPanicAt: -1}).Walk(context.Background(), func(Node) error { return stop })
 	if err != stop {

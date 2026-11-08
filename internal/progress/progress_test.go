@@ -28,6 +28,7 @@ func newTest(t *testing.T) (context.Context, *Reporter, *clock) {
 }
 
 func TestNilSafety(t *testing.T) {
+	t.Parallel()
 	var ctx context.Context
 	if From(ctx) != nil || Current(ctx) != nil {
 		t.Fatal("nil context has a reporter")
@@ -59,6 +60,7 @@ func TestNilSafety(t *testing.T) {
 }
 
 func TestPlanStartSkip(t *testing.T) {
+	t.Parallel()
 	ctx, r, _ := newTest(t)
 	Plan(ctx, "store", "index", "full-text")
 	Skip(ctx, "full-text", "no --fts")
@@ -102,6 +104,7 @@ func TestPlanStartSkip(t *testing.T) {
 // PlanSteps gives pending phases the work they expect; Start replaces it
 // with the real figures. Only planned phases say so.
 func TestPlanSteps(t *testing.T) {
+	t.Parallel()
 	ctx, r, _ := newTest(t)
 	PlanSteps(ctx, Step{"identify", Bytes, 100}, Step{"store", Bytes, 100}, Step{"index", Files, Unknown})
 	Plan(ctx, "full-text")
@@ -136,6 +139,7 @@ func TestPlanSteps(t *testing.T) {
 
 // Unplan drops pending phases without a trace: no event, no "not run".
 func TestUnplan(t *testing.T) {
+	t.Parallel()
 	ctx, r, _ := newTest(t)
 	Plan(ctx, "identify", "store", "index")
 	Start(ctx, "identify", Bytes, 10).Done(nil)
@@ -163,6 +167,7 @@ func TestUnplan(t *testing.T) {
 }
 
 func TestItem(t *testing.T) {
+	t.Parallel()
 	ctx, r, _ := newTest(t)
 	p := Start(ctx, "index", Files, Unknown)
 	p.Item(`Windows\System32\config\SOFTWARE`)
@@ -176,6 +181,7 @@ func TestItem(t *testing.T) {
 }
 
 func TestWithinCurrentWithout(t *testing.T) {
+	t.Parallel()
 	ctx, r, _ := newTest(t)
 	group := Start(ctx, "evidence", Evidence, 2)
 	inner := Within(ctx, group)
@@ -204,6 +210,7 @@ func TestWithinCurrentWithout(t *testing.T) {
 }
 
 func TestDoneClassification(t *testing.T) {
+	t.Parallel()
 	warning := &lifecycle.WarningError{Err: errors.New("index partial")}
 	cases := []struct {
 		name   string
@@ -240,6 +247,7 @@ func TestDoneClassification(t *testing.T) {
 }
 
 func TestInterruptedWhenCommandCancelled(t *testing.T) {
+	t.Parallel()
 	root, cancel := context.WithCancel(context.Background())
 	r := New(root, nil)
 	ctx := With(root, r)
@@ -252,6 +260,7 @@ func TestInterruptedWhenCommandCancelled(t *testing.T) {
 }
 
 func TestFinish(t *testing.T) {
+	t.Parallel()
 	ctx, r, _ := newTest(t)
 	Plan(ctx, "store", "index")
 	Start(ctx, "store", Bytes, 10)
@@ -279,6 +288,7 @@ func TestFinish(t *testing.T) {
 }
 
 func TestEventsAndRing(t *testing.T) {
+	t.Parallel()
 	ctx, r, _ := newTest(t)
 	g := Start(ctx, "evidence", Evidence, 2)
 	in := Within(ctx, g)
@@ -305,6 +315,7 @@ func TestEventsAndRing(t *testing.T) {
 }
 
 func TestTalliesHintsMeters(t *testing.T) {
+	t.Parallel()
 	ctx, r, _ := newTest(t)
 	Tally(ctx, "read", Bytes).Add(100)
 	Tally(ctx, "read", Bytes).Add(20)
@@ -327,6 +338,7 @@ func TestTalliesHintsMeters(t *testing.T) {
 }
 
 func TestPruneFoldsFinishedGroups(t *testing.T) {
+	t.Parallel()
 	ctx, r, _ := newTest(t)
 	g := Start(ctx, "a.dd", None, 0)
 	Start(Within(ctx, g), "store", Bytes, 1).Done(nil)
@@ -343,6 +355,7 @@ func TestPruneFoldsFinishedGroups(t *testing.T) {
 // TestConcurrentAdds is meant for -race: many goroutines count while
 // phases start and end and a renderer takes snapshots.
 func TestConcurrentAdds(t *testing.T) {
+	t.Parallel()
 	ctx, r, _ := newTest(t)
 	p := Start(ctx, "store", Bytes, Unknown)
 	m := p.Meter("new", Bytes)

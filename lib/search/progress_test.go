@@ -11,6 +11,7 @@ import (
 // TestSearchProgress: a search counts every object it reads toward the
 // objects it planned, never backwards, with the bytes it read on a meter.
 func TestSearchProgress(t *testing.T) {
+	t.Parallel()
 	db := openSearchDB(t)
 	for i := range 4 {
 		content := testutil.RandomBytes(uint64(70+i), 300<<10)

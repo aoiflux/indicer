@@ -66,6 +66,7 @@ func openDBIOTestDBWith(t testing.TB, rawValues bool) *badger.DB {
 }
 
 func TestGetReverseRelationNodeReadsAppendPrimary(t *testing.T) {
+	t.Parallel()
 	db := openDBIOTestDB(t)
 	revKey := util.AppendToBytesSlice(cnst.ReverseRelationNamespace, []byte("chunk-a"), cnst.DataSeperator, int64(2))
 
@@ -97,6 +98,7 @@ func TestGetReverseRelationNodeReadsAppendPrimary(t *testing.T) {
 }
 
 func TestGetReverseRelationNodeAppendPrimaryDedupesDuplicateMembers(t *testing.T) {
+	t.Parallel()
 	db := openDBIOTestDB(t)
 	revKey := util.AppendToBytesSlice(cnst.ReverseRelationNamespace, []byte("chunk-b"), cnst.DataSeperator, int64(3))
 
@@ -126,6 +128,7 @@ func TestGetReverseRelationNodeAppendPrimaryDedupesDuplicateMembers(t *testing.T
 }
 
 func TestGetReverseRelationNodeReturnsNotFoundWithoutAppendMembers(t *testing.T) {
+	t.Parallel()
 	db := openDBIOTestDB(t)
 	revKey := util.AppendToBytesSlice(cnst.ReverseRelationNamespace, []byte("chunk-empty"), cnst.DataSeperator, int64(4))
 
@@ -136,6 +139,7 @@ func TestGetReverseRelationNodeReturnsNotFoundWithoutAppendMembers(t *testing.T)
 }
 
 func TestGetReverseRelationNodeReadsLegacyAppendPrimaryKeys(t *testing.T) {
+	t.Parallel()
 	db := openDBIOTestDB(t)
 	chash := []byte("chunk-legacy")
 	fhash := []byte("legacy-member")
@@ -177,6 +181,7 @@ func TestGetReverseRelationNodeReadsLegacyAppendPrimaryKeys(t *testing.T) {
 }
 
 func TestGetReverseRelationNodeReadsSegmentMembers(t *testing.T) {
+	t.Parallel()
 	db := openDBIOTestDB(t)
 	chash := []byte("chunk-segment")
 	idx := int64(11)
@@ -215,6 +220,7 @@ func TestGetReverseRelationNodeReadsSegmentMembers(t *testing.T) {
 }
 
 func TestReverseRelationLookupPartsHandlesSeparatorLikeChunkHash(t *testing.T) {
+	t.Parallel()
 	chash := []byte("chunk-with-|||:sep")
 	idx := int64(8650752)
 	key := util.AppendToBytesSlice(cnst.ReverseRelationNamespace, chash, cnst.DataSeperator, idx)
@@ -232,6 +238,7 @@ func TestReverseRelationLookupPartsHandlesSeparatorLikeChunkHash(t *testing.T) {
 }
 
 func TestReverseRelationAppendMemberIndexParsesLegacyPayloadRobustly(t *testing.T) {
+	t.Parallel()
 	chash := []byte("chunk-legacy-|||:sep")
 	index := int64(12345)
 	fhash := []byte("file-hash")
@@ -257,6 +264,7 @@ func TestReverseRelationAppendMemberIndexParsesLegacyPayloadRobustly(t *testing.
 }
 
 func TestForEachChunkOccurrenceReadsEveryForm(t *testing.T) {
+	t.Parallel()
 	db := openDBIOTestDB(t)
 	chash := []byte("chunk-everywhere")
 

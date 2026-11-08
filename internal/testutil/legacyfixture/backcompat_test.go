@@ -99,6 +99,7 @@ func restoreAndCheck(t *testing.T, f Fixture, bin, work, db, hash, out string, w
 // file of it and writes no manifest: a read-only open adopts what it infers
 // without persisting it.
 func TestLegacyReadsChangeNothing(t *testing.T) {
+	t.Parallel()
 	if testing.Short() {
 		t.Skip("builds the dues binary")
 	}
@@ -136,6 +137,7 @@ func TestLegacyReadsChangeNothing(t *testing.T) {
 // earlier release wrote keeps that database's layout and encoding, and both
 // it and the old evidence restore.
 func TestStoreIntoLegacyDatabase(t *testing.T) {
+	t.Parallel()
 	if testing.Short() {
 		t.Skip("builds the dues binary")
 	}
@@ -188,6 +190,7 @@ func TestStoreIntoLegacyDatabase(t *testing.T) {
 // quarantine (TestQuarantineRawContainerIndexes covers one that does).
 // `repair --upgrade` leaves it as it was: it restores to the E01 file.
 func TestLegacyE01AfterUpgrade(t *testing.T) {
+	t.Parallel()
 	if testing.Short() {
 		t.Skip("builds the dues binary")
 	}

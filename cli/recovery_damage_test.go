@@ -20,6 +20,7 @@ import (
 // FLUSHED ingest whose blobs a crash or a full disk left short, or whose
 // container lost its tail, was marked COMPLETED and could never be restored.
 func TestRecoveryFailsFlushedEvidenceWithDamagedMaterial(t *testing.T) {
+	t.Parallel()
 	testdb.ForEachMode(t, func(t *testing.T, m testdb.Mode) {
 		dir := t.TempDir()
 		dbPath := filepath.Join(dir, "db")

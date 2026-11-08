@@ -74,6 +74,7 @@ func childArchiveMemory(args []string) int {
 // (best level) and badger's table encoder (level 15) each kept one 50 MB
 // state per CPU after the first archive: about 1.1 GB live here.
 func TestArchiveOperationsReleaseEncoders(t *testing.T) {
+	t.Parallel()
 	c := testutil.StartChild(t, "archive-memory", t.TempDir(), "16")
 	if code := c.Wait(t, 3*time.Minute); code != 0 {
 		t.Fatalf("child exited %d:\n%s", code, c.Output())

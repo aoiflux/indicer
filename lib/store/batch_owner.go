@@ -121,8 +121,7 @@ func ingestChunksBatchOwner(parentCtx context.Context, p ChunkPass) (res ChunkRe
 		}()
 	}
 
-	writes := joinChunkWriter(p.DB)
-	writes.credit = p.Credit
+	writes := p.join()
 	defer writes.leave(&err)
 
 	// ctx is cancelled when the caller cancels or any stage fails, which

@@ -48,6 +48,7 @@ func timestampedRecord() enrichment.FileRecord {
 // asserts the times now arrive as node properties, and — just as importantly —
 // that the ones the filesystem did not record are absent rather than zero.
 func TestTimestamps_ReachTheGraph(t *testing.T) {
+	t.Parallel()
 	root := t.TempDir()
 
 	handle, err := duesgraph.Open(root)
@@ -169,6 +170,7 @@ func TestTimestamps_SupportARangeQuery(t *testing.T) {
 // A record with no timestamps must write no time properties at all, so the
 // absence stays legible instead of becoming a wall of epoch values.
 func TestTimestamps_AbsentTimesWriteNothing(t *testing.T) {
+	t.Parallel()
 	root := t.TempDir()
 
 	handle, err := duesgraph.Open(root)

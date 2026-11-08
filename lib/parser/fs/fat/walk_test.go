@@ -97,6 +97,7 @@ func entries(t *testing.T, data []byte) (*libfat.Volume, map[string]libfat.DirEn
 // not descend into is an issue on that directory (FAT-U1), and the walk goes
 // on past it.
 func TestWalkReportsSkippedDirectories(t *testing.T) {
+	t.Parallel()
 	data := fixtureBytes(t, "fat/fat32_fsagen")
 	size := int64(len(data))
 	vol, ents := entries(t, data)
@@ -147,6 +148,7 @@ func TestWalkReportsSkippedDirectories(t *testing.T) {
 // creating another leaves on disk; libfat v0.3.3 lost the subtree, v0.3.5
 // does not.
 func TestWalkKeepsLiveDirectoryAfterDeletedOne(t *testing.T) {
+	t.Parallel()
 	data := fixtureBytes(t, "fat/fat32_fsagen")
 	_, ents := entries(t, data)
 	deep := ents["/deep"]

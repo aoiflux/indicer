@@ -113,7 +113,7 @@ func (s *Session) Reindex(ctx context.Context, eid []byte, opts ReindexOptions) 
 		return res, err
 	}
 	region := trace.StartRegion(ctx, "index")
-	idx, idxErr := runIndex(ctx, index.Options{
+	idx, idxErr := s.passes.index(ctx, index.Options{
 		DB: db, EvidenceID: eid, EvidenceName: e.Name, Image: img, Entropy: req.Enrich,
 		RevRel: req.RevRel, Simhash: req.Simhash, MaxWorkers: opts.MaxWorkers,
 	})

@@ -30,6 +30,7 @@ func roundTrip(t *testing.T, value any) props.Map {
 // float64 only, so every value msgpack chose to encode narrower — which is
 // most of them — read back as 0.
 func TestInt64_EveryMsgpackWidth(t *testing.T) {
+	t.Parallel()
 	cases := []struct {
 		name  string
 		value any
@@ -75,6 +76,7 @@ func TestInt64_EveryMsgpackWidth(t *testing.T) {
 }
 
 func TestInt64_UnconvertibleYieldsZero(t *testing.T) {
+	t.Parallel()
 	for _, value := range []any{"not a number", true, []any{1, 2}, nil} {
 		if got := roundTrip(t, value).Int64("k"); got != 0 {
 			t.Errorf("Int64 of %#v = %d, want 0", value, got)
@@ -86,6 +88,7 @@ func TestInt64_UnconvertibleYieldsZero(t *testing.T) {
 }
 
 func TestFloat_CoercesAcrossWidths(t *testing.T) {
+	t.Parallel()
 	cases := []struct {
 		name  string
 		value any
@@ -110,6 +113,7 @@ func TestFloat_CoercesAcrossWidths(t *testing.T) {
 // Confidence is declared float32 throughout the model, so this is the path
 // that actually runs on artefact and relation blobs.
 func TestFloat32_RoundTripsConfidence(t *testing.T) {
+	t.Parallel()
 	for _, want := range []float32{0, 0.55, 0.88, 0.92, 1} {
 		if got := roundTrip(t, want).Float32("k"); got != want {
 			t.Errorf("Float32 = %v, want %v", got, want)
@@ -120,6 +124,7 @@ func TestFloat32_RoundTripsConfidence(t *testing.T) {
 // The enrichment copy rejected the string form. Index values are written with
 // strconv.FormatBool, so the string form genuinely occurs.
 func TestBool_AcceptsStringAndNumericForms(t *testing.T) {
+	t.Parallel()
 	cases := []struct {
 		name  string
 		value any
@@ -146,6 +151,7 @@ func TestBool_AcceptsStringAndNumericForms(t *testing.T) {
 }
 
 func TestStr_HandlesBytesAndRejectsOthers(t *testing.T) {
+	t.Parallel()
 	if got := roundTrip(t, "History").Str("k"); got != "History" {
 		t.Errorf("Str = %q, want %q", got, "History")
 	}
@@ -160,6 +166,7 @@ func TestStr_HandlesBytesAndRejectsOthers(t *testing.T) {
 }
 
 func TestStrings_DecodesArraysAndPromotesScalars(t *testing.T) {
+	t.Parallel()
 	got := roundTrip(t, []string{"acquired", "verified"}).Strings("k")
 	if len(got) != 2 || got[0] != "acquired" || got[1] != "verified" {
 		t.Errorf("Strings = %#v, want [acquired verified]", got)
@@ -176,6 +183,7 @@ func TestStrings_DecodesArraysAndPromotesScalars(t *testing.T) {
 }
 
 func TestTime_AcceptsEveryStoredForm(t *testing.T) {
+	t.Parallel()
 	want := time.Date(2026, 8, 13, 9, 4, 11, 0, time.UTC)
 
 	if got := roundTrip(t, want.Format(time.RFC3339Nano)).Time("k"); !got.Equal(want) {
@@ -192,6 +200,7 @@ func TestTime_AcceptsEveryStoredForm(t *testing.T) {
 // Unpack must never hand back a nil Map: call sites index the result directly.
 // A blob that does not decode is an error, not an empty Map (GRA-10).
 func TestUnpack_NeverNil(t *testing.T) {
+	t.Parallel()
 	for _, name := range []string{"nil", "empty", "garbage"} {
 		var input []byte
 		switch name {
@@ -213,6 +222,7 @@ func TestUnpack_NeverNil(t *testing.T) {
 // The same properties always pack to the same bytes, whatever the order Go
 // iterates the map in.
 func TestPack_IsDeterministic(t *testing.T) {
+	t.Parallel()
 	fields := map[string]any{}
 	for _, k := range []string{"z", "a", "m", "b", "y", "c", "x", "d"} {
 		fields[k] = map[string]any{"q": 1, "p": k}
@@ -233,6 +243,7 @@ func TestPack_IsDeterministic(t *testing.T) {
 }
 
 func TestHas_DistinguishesAbsentFromZero(t *testing.T) {
+	t.Parallel()
 	m := roundTrip(t, int64(0))
 	if !m.Has("k") {
 		t.Error("Has: a present zero value reported absent")

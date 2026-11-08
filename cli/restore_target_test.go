@@ -18,6 +18,7 @@ import (
 // room for its backup, moved a directory target aside, and left its temp
 // file behind when interrupted.
 func TestRestoreTargetSafety(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
 	dbPath := filepath.Join(dir, "db")
 	opts := optsFor(dbPath, matrixChunkKB, nil)

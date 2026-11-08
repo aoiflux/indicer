@@ -31,6 +31,7 @@ const (
 )
 
 func TestOpenVHDFileReadsUnalignedInPartialBlocks(t *testing.T) {
+	t.Parallel()
 	dir := corpusVHD.Require(t)
 	path := filepath.Join(dir, corpusPartialChild)
 	if _, err := os.Stat(path); err != nil {
@@ -74,6 +75,7 @@ func TestOpenVHDFileReadsUnalignedInPartialBlocks(t *testing.T) {
 const corpusTailLayer = "ubuntu_B6F397AF-91E2-41AC-B269-1334DF75AD38.avhdx"
 
 func TestOpenVHDFileReadsPartialLastChunk(t *testing.T) {
+	t.Parallel()
 	dir := corpusVHD.Require(t)
 	path := filepath.Join(dir, corpusTailLayer)
 	if _, err := os.Stat(path); err != nil {

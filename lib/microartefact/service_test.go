@@ -33,6 +33,7 @@ func (r *captureRepository) Close() error {
 }
 
 func TestServiceProcessDetectsSimpleArtefacts(t *testing.T) {
+	t.Parallel()
 	repo := &captureRepository{}
 	service := NewService(repo)
 
@@ -62,6 +63,7 @@ func TestServiceProcessDetectsSimpleArtefacts(t *testing.T) {
 }
 
 func TestServiceSkipsUnsupportedFileType(t *testing.T) {
+	t.Parallel()
 	repo := &captureRepository{}
 	service := NewService(repo)
 
@@ -77,6 +79,7 @@ func TestServiceSkipsUnsupportedFileType(t *testing.T) {
 }
 
 func TestServiceWithSpecCanDisableDetectionMethod(t *testing.T) {
+	t.Parallel()
 	repo := &captureRepository{}
 	sheet := specpkg.Default()
 	sheet.RemoveDetectionRule("text.url")
@@ -108,6 +111,7 @@ func TestServiceWithSpecCanDisableDetectionMethod(t *testing.T) {
 }
 
 func TestGrapheneRepositoryStoresNodesAndEdges(t *testing.T) {
+	t.Parallel()
 	root := t.TempDir()
 	enrichmentRepo, err := enrichment.OpenGrapheneRepository(root)
 	if err != nil {

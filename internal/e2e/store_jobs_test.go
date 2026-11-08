@@ -19,6 +19,7 @@ import (
 // files that share their first chunks, which evidence stored at once each
 // wrote: in container mode as frames nothing points at.
 func TestStoreJobsLeaveWhatOneAtATimeLeaves(t *testing.T) {
+	t.Parallel()
 	bin := testutil.BuildDues(t)
 	work := t.TempDir()
 	dir := filepath.Join(work, "case")

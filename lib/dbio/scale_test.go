@@ -79,6 +79,7 @@ func TestMillionPartitionMembers(t *testing.T) {
 // common DLL) each append one key to its hash lookup, and all are read back.
 // The lookup used to be one value rewritten in full at every append (STO-22).
 func TestPopularHashLookup(t *testing.T) {
+	t.Parallel()
 	db := testdb.Open(t, testdb.Default)
 	const n = 200_000
 	key := []byte("IH|||:empty-file-hash")

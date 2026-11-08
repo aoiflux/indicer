@@ -21,6 +21,7 @@ import (
 // value here is past badger's value threshold, and the database is unencrypted
 // so the log is read through its mapping.
 func TestGetNodeOwnsItsValue(t *testing.T) {
+	t.Parallel()
 	db := testdb.Open(t, testdb.Quick)
 	key := []byte("S|||:large")
 	want := bytes.Repeat([]byte("dues"), 1<<19) // 2 MiB

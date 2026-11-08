@@ -245,6 +245,7 @@ func indexSynthetic(t *testing.T) (*badger.DB, memImage, map[string][]indexed, R
 }
 
 func TestIndexerContentKinds(t *testing.T) {
+	t.Parallel()
 	db, img, recs, res := indexSynthetic(t)
 	large, decoded := syntheticLarge, syntheticDecoded
 	want := map[string]struct {
@@ -376,6 +377,7 @@ func countPrefix(t *testing.T, db *badger.DB, prefix []byte) int {
 // TestIndexerExtentPages: a file with more extents than a record carries
 // keeps them in pages of their own.
 func TestIndexerExtentPages(t *testing.T) {
+	t.Parallel()
 	img := memImage(randomBytes(1<<20, 4))
 	db := openIndexDB(t, img.Size())
 	ix := newIndexer(t.Context(), Options{DB: db, EvidenceID: testEID, EvidenceName: "ev.img", Image: img, Workers: 2})
@@ -422,6 +424,7 @@ func TestIndexerExtentPages(t *testing.T) {
 // cancel) leaves members its partition record does not count yet, records,
 // and stored objects; deleting the evidence's index finds them all.
 func TestInterruptedPassIsDeletable(t *testing.T) {
+	t.Parallel()
 	img := memImage(randomBytes(64<<10, 5))
 	db := openIndexDB(t, img.Size())
 	ctx, cancel := context.WithCancel(t.Context())
@@ -486,6 +489,7 @@ func TestInterruptedPassIsDeletable(t *testing.T) {
 }
 
 func TestSetPartitionHash(t *testing.T) {
+	t.Parallel()
 	img := memImage(make([]byte, 4096))
 	db := openIndexDB(t, img.Size())
 	ix := newIndexer(t.Context(), Options{DB: db, EvidenceID: testEID, EvidenceName: "ev.img", Image: img})

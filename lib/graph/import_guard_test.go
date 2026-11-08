@@ -25,6 +25,7 @@ var openCall = regexp.MustCompile(`\b(graphene|graphenedb|graphdb|disk)\.(Open|O
 // disguising one, and a test that a reviewer can understand in ten seconds is
 // worth more than an AST walk that they will not read.
 func TestNoDirectStoreOpensOutsideThisPackage(t *testing.T) {
+	t.Parallel()
 	repoRoot, err := filepath.Abs(filepath.Join("..", ".."))
 	if err != nil {
 		t.Fatal(err)

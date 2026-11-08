@@ -41,10 +41,6 @@ var (
 	chunkWriters   = map[*badger.DB]*chunkWriter{}
 )
 
-// claimFound is called when a pass finds another's claim, before it waits;
-// tests replace it to hold that claim's write until then.
-var claimFound = func() {}
-
 // passChunks is one pass's part in its database's chunkWriter.
 type passChunks struct {
 	w       *chunkWriter
@@ -52,7 +48,17 @@ type passChunks struct {
 	// credit counts the chunks the pass stores, or finds stored, in its run
 	// (ChunkCredits).
 	credit Credit
+	// materialize encodes one chunk and writes its blob or container record:
+	// dbio.MaterializeChonkNode, unless the pass's ChunkPass gave another.
+	materialize materializeFunc
+	// claimFound, when not nil, is called when the pass finds another's
+	// claim, before it waits; tests set it to hold that claim's write until
+	// then.
+	claimFound func()
 }
+
+// materializeFunc writes one chunk, as dbio.MaterializeChonkNode does.
+type materializeFunc = func(key, data []byte, db *badger.DB, c *fio.ContainerManager) ([]byte, int64, error)
 
 // joinChunkWriter gives a pass its part in db's chunkWriter, which the first
 // pass starts, with its container manager in container mode.
@@ -68,7 +74,7 @@ func joinChunkWriter(db *badger.DB) *passChunks {
 		chunkWriters[db] = w
 	}
 	w.refs++
-	return &passChunks{w: w}
+	return &passChunks{w: w, materialize: dbio.MaterializeChonkNode}
 }
 
 // containers is the container manager the pass writes through, nil in file
@@ -112,7 +118,9 @@ func (p *passChunks) store(ckey []byte, write func() ([]byte, int64, error)) (me
 		w.mu.Lock()
 		if c := w.claims[k]; c != nil {
 			w.mu.Unlock()
-			claimFound()
+			if p.claimFound != nil {
+				p.claimFound()
+			}
 			<-c.done
 			if c.err == nil {
 				return c.meta, 0, false, nil

@@ -30,6 +30,7 @@ func openEmptyDB(t *testing.T) *badger.DB {
 }
 
 func TestSearchReturnsCanceled(t *testing.T) {
+	t.Parallel()
 	db := openEmptyDB(t)
 	ctx, cancel := context.WithCancel(t.Context())
 	cancel()
@@ -39,6 +40,7 @@ func TestSearchReturnsCanceled(t *testing.T) {
 }
 
 func TestSearchValidatesShortQueryFirst(t *testing.T) {
+	t.Parallel()
 	db := openEmptyDB(t)
 	out := filepath.Join(t.TempDir(), "report.json")
 	if _, err := SearchReport(t.Context(), db, Request{Query: "a", Out: out}); !errors.Is(err, cnst.ErrSmallQuery) {
@@ -63,6 +65,7 @@ func readReport(t *testing.T, path string) structs.SearchReport {
 }
 
 func TestSearchReportWritesSchemaVersion(t *testing.T) {
+	t.Parallel()
 	db := openEmptyDB(t)
 	out := filepath.Join(t.TempDir(), "custom-report.json")
 	if _, err := SearchReport(t.Context(), db, Request{Query: "ab", Out: out}); err != nil {
@@ -76,6 +79,7 @@ func TestSearchReportWritesSchemaVersion(t *testing.T) {
 // TestSearchReportRefusesExistingFile (SRC-11): a report never replaces a
 // file unless asked to, and nothing is searched when it would.
 func TestSearchReportRefusesExistingFile(t *testing.T) {
+	t.Parallel()
 	db := openEmptyDB(t)
 	out := filepath.Join(t.TempDir(), "report.json")
 	if err := os.WriteFile(out, []byte("earlier work"), 0o600); err != nil {
@@ -103,6 +107,7 @@ func TestSearchReportRefusesExistingFile(t *testing.T) {
 // its record, so a path holding the name separator is reported whole, and
 // the summary counts each level on its own (SRC-9).
 func TestSearchReportNamesObjects(t *testing.T) {
+	t.Parallel()
 	db := openSearchDB(t)
 	eid := []byte("search-evidence6")
 	content := plantedEvidence()
@@ -148,6 +153,7 @@ func TestSearchReportNamesObjects(t *testing.T) {
 // indexed files the full-text index offers and says so; a database without
 // an index falls back to searching everything, and no index is built.
 func TestFullTextModeReportsCoverage(t *testing.T) {
+	t.Parallel()
 	for _, withFTS := range []bool{true, false} {
 		db := openSearchDB(t)
 		var path string

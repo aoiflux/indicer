@@ -25,6 +25,7 @@ func buildImage() (io.ReaderAt, []core.AbsRange, string) {
 }
 
 func TestReadAll(t *testing.T) {
+	t.Parallel()
 	src, frags, want := buildImage()
 	r := New(src, frags)
 
@@ -41,6 +42,7 @@ func TestReadAll(t *testing.T) {
 }
 
 func TestReadAtSpanningFragments(t *testing.T) {
+	t.Parallel()
 	src, frags, want := buildImage()
 	r := New(src, frags)
 
@@ -70,6 +72,7 @@ func TestReadAtSpanningFragments(t *testing.T) {
 }
 
 func TestSparseFragment(t *testing.T) {
+	t.Parallel()
 	img := make([]byte, 2048)
 	copy(img[500:], "XY")
 	src := bytes.NewReader(img)

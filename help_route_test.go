@@ -13,6 +13,7 @@ import (
 // -d x help" and "dues -d x" used to fall through to kingpin's own usage
 // text, and "dues -d x store --help" asked for the command "-d x store".
 func TestHelpTopic(t *testing.T) {
+	t.Parallel()
 	model := newCLIDefinition().app.Model()
 	help := func(topic ...string) []string { return append([]string{}, topic...) }
 	cases := []struct {

@@ -7,6 +7,7 @@ import (
 )
 
 func TestParseSpec(t *testing.T) {
+	t.Parallel()
 	rules, err := ParseSpec(" ingest.before_commit=error , restore.mid=sleep:20ms@3+, reset.mid=exit:7@2,index.mid=signal:INT ")
 	if err != nil {
 		t.Fatal(err)
@@ -31,6 +32,7 @@ func TestParseSpec(t *testing.T) {
 }
 
 func TestParseSpecRejects(t *testing.T) {
+	t.Parallel()
 	for _, spec := range []string{
 		"nosuch.point=error",
 		"ingest.before_commit",
@@ -53,6 +55,7 @@ func TestParseSpecRejects(t *testing.T) {
 }
 
 func TestRuleFires(t *testing.T) {
+	t.Parallel()
 	every := Rule{}
 	nth := Rule{Nth: 2}
 	from := Rule{Nth: 2, AndAll: true}
@@ -65,6 +68,7 @@ func TestRuleFires(t *testing.T) {
 }
 
 func TestPointsAreUniqueAndDotted(t *testing.T) {
+	t.Parallel()
 	seen := map[string]bool{}
 	for _, p := range Points() {
 		if seen[p] {

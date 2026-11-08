@@ -166,6 +166,7 @@ func expectedCounts(query string, eid, content []byte) map[string]int64 {
 // once, nothing past an object's end is matched, and the total counts the
 // stored bytes once rather than once per level.
 func TestSearchCountsAcrossChunkBoundaries(t *testing.T) {
+	t.Parallel()
 	db := openSearchDB(t)
 	eid := []byte("search-evidence1")
 	content := plantedEvidence()
@@ -183,6 +184,7 @@ func TestSearchCountsAcrossChunkBoundaries(t *testing.T) {
 // an object in its first chunk neither panics nor misses a match that
 // crosses the boundary.
 func TestSearchLongQueryAcrossChunks(t *testing.T) {
+	t.Parallel()
 	db := openSearchDB(t)
 	eid := []byte("search-evidence2")
 	content := bytes.Repeat([]byte("."), 3*4096)
@@ -204,6 +206,7 @@ func TestSearchLongQueryAcrossChunks(t *testing.T) {
 // not stored is not searched at all, and the partitions and files of a
 // quarantined index are not searched, though its evidence is.
 func TestSearchSkipsUnstoredEvidenceAndQuarantinedIndexes(t *testing.T) {
+	t.Parallel()
 	db := openSearchDB(t)
 	content := plantedEvidence()
 	stored, flushed, quarantined := []byte("search-evidence3"), []byte("search-evidence4"), []byte("search-evidence5")
@@ -232,6 +235,7 @@ func TestSearchSkipsUnstoredEvidenceAndQuarantinedIndexes(t *testing.T) {
 // (extents with holes, inline, materialised content), every evidence,
 // partition and file reports the hits in the bytes its reader serves.
 func TestSearchCountsIndexedContent(t *testing.T) {
+	t.Parallel()
 	for _, name := range []string{"ntfs/ntfs_compressed", "ext/ext4", "fat/fat16", "xfs/xfs"} {
 		t.Run(name, func(t *testing.T) {
 			db := openSearchDB(t)

@@ -62,6 +62,7 @@ type stdoutNow struct{}
 func (stdoutNow) Write(p []byte) (int, error) { return os.Stdout.Write(p) }
 
 func TestWrapHelpLine(t *testing.T) {
+	t.Parallel()
 	desc := strings.Repeat("word ", 20) + "end"
 	cases := []struct {
 		name, line string

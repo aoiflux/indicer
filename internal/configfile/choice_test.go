@@ -13,6 +13,7 @@ import (
 )
 
 func TestChoiceRead(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
 	write := func(name, content string) string {
 		p := filepath.Join(dir, name)
@@ -68,6 +69,7 @@ func TestChoiceRead(t *testing.T) {
 }
 
 func TestSourceSetting(t *testing.T) {
+	t.Parallel()
 	setting := func(s Source) map[string]any {
 		enc := zapcore.NewMapObjectEncoder()
 		s.Setting().AddTo(enc)
@@ -92,6 +94,7 @@ func TestSourceSetting(t *testing.T) {
 }
 
 func TestCheckPath(t *testing.T) {
+	t.Parallel()
 	abs, err := filepath.Abs("x")
 	if err != nil {
 		t.Fatal(err)

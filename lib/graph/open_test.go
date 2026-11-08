@@ -285,6 +285,7 @@ func TestSlowOpenDoesNotBlockOtherStores(t *testing.T) {
 // GRA-8: each holder records itself, and a shared holder's release removes
 // only its own record, not the other holders'.
 func TestSharedHolderKeepsOtherHoldersInfo(t *testing.T) {
+	t.Parallel()
 	dir := filepath.Join(t.TempDir(), "graph")
 	if err := os.MkdirAll(dir, 0o755); err != nil {
 		t.Fatal(err)
@@ -397,6 +398,7 @@ func TestMarkerlessStoreOfBuiltinKindsOpens(t *testing.T) {
 
 // No error advises a command that does not exist.
 func TestNoAdviceToRunMissingCommands(t *testing.T) {
+	t.Parallel()
 	for _, msg := range []string{
 		schema.CheckLibraryBases(1, 1).Error(),
 		propindex.ErrLegacyEncoding.Error(),

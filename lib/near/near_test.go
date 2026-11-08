@@ -99,6 +99,7 @@ func matchFor(r nearJSONReport, key []byte) (nearReportMatch, bool) {
 // not found"; once added, the shared chunks are found, and the confidence is
 // the matched share of the other evidence's chunks.
 func TestNearNeedsReverseRelations(t *testing.T) {
+	t.Parallel()
 	d := openNearDB(t)
 	a := randomBytes(16*cs, 1)
 	b := append(append([]byte(nil), a[:8*cs]...), randomBytes(8*cs, 2)...)
@@ -192,6 +193,7 @@ func TestNearDurationCoversTheSearch(t *testing.T) {
 // hold many times counts once per chunk of the match, so the confidence
 // never passes 1.
 func TestNearConfidenceIsAShare(t *testing.T) {
+	t.Parallel()
 	d := openNearDB(t)
 	x := randomBytes(cs, 3)
 	a := bytes.Repeat(x, 4)
@@ -213,6 +215,7 @@ func TestNearConfidenceIsAShare(t *testing.T) {
 // its partition only where no file holds them; the query's own objects are
 // not matches.
 func TestNearAttributesToFiles(t *testing.T) {
+	t.Parallel()
 	d := openNearDB(t)
 	var img []byte
 	for _, m := range fsfixture.All(t) {
@@ -298,6 +301,7 @@ func ownerOf(db *badger.DB, key []byte) ([]byte, error) {
 // of the chunk size, and closes it; a file stored whole is its exact match
 // unless the chunks are asked for.
 func TestNearOutReadsTheFile(t *testing.T) {
+	t.Parallel()
 	d := openNearDB(t)
 	a := randomBytes(8*cs, 5)
 	ea, _ := storeFile(t, d.DB, "a.bin", a, true, false)
@@ -345,6 +349,7 @@ func TestNearOutReadsTheFile(t *testing.T) {
 // TestNearReportRefusesExistingFile (SRC-11): a report never replaces a
 // file unless asked to, and nothing is searched when it would.
 func TestNearReportRefusesExistingFile(t *testing.T) {
+	t.Parallel()
 	d := openNearDB(t)
 	_, ha := storeFile(t, d.DB, "a.bin", randomBytes(4*cs, 7), true, false)
 	out := filepath.Join(t.TempDir(), "near.json")
@@ -369,6 +374,7 @@ func TestNearReportRefusesExistingFile(t *testing.T) {
 // each reports alone; before, every call reset package-wide result stores
 // the others were writing.
 func TestNearRunsAreIndependent(t *testing.T) {
+	t.Parallel()
 	d := openNearDB(t)
 	base := randomBytes(12*cs, 8)
 	var hashes []string
@@ -426,6 +432,7 @@ func TestNearRunsAreIndependent(t *testing.T) {
 // signatures are close, with their similarity as the confidence; without
 // signatures it says so and reports exact matches only.
 func TestNearDeepMatchesSimilarChunks(t *testing.T) {
+	t.Parallel()
 	d := openNearDB(t)
 	a := randomBytes(8*cs, 9)
 	b := append([]byte(nil), a...)
@@ -484,6 +491,7 @@ func TestNearSkipsCommonChunks(t *testing.T) {
 }
 
 func TestChunksOfExtents(t *testing.T) {
+	t.Parallel()
 	ext := []structs.Extent{
 		{Offset: 100, Length: 50},      // chunk 0
 		{Offset: 4000, Length: 200},    // chunks 0 and 1
@@ -502,6 +510,7 @@ func TestChunksOfExtents(t *testing.T) {
 // how the file is cut into pieces, now that a piece is no longer copied
 // whole onto the carry.
 func TestFileSimHashInPieces(t *testing.T) {
+	t.Parallel()
 	data := randomBytes(10000, 13)
 	whole := newFileSimHashAccumulator()
 	whole.write(data)

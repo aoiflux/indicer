@@ -50,6 +50,7 @@ func startStore(t *testing.T, keys io.Writer, g *gate) {
 // Run returns its cause only once every job has stopped, so the database is
 // never closed under one.
 func TestRunWaitsForJobs(t *testing.T) {
+	t.Parallel()
 	var stopped atomic.Bool
 	g := newGate()
 	acts := Actions{Store: func(ctx context.Context, _ string, _ StoreOptions) (Outcome, error) {
@@ -98,6 +99,7 @@ func TestRunLeavesAStuckJob(t *testing.T) {
 // TestRunQuitsThroughTheDialog: ctrl+c while a store runs asks; y stops the
 // store, and the program ends once it has stopped.
 func TestRunQuitsThroughTheDialog(t *testing.T) {
+	t.Parallel()
 	g := newGate()
 	keys, done := program(t, t.Context(), Actions{Store: storeWith(g, Outcome{})})
 	startStore(t, keys, g)
@@ -125,6 +127,7 @@ func TestRunQuitsThroughTheDialog(t *testing.T) {
 
 // TestRunQuits: q on the menu ends the program at once.
 func TestRunQuits(t *testing.T) {
+	t.Parallel()
 	keys, done := program(t, t.Context(), Actions{})
 	if _, err := io.WriteString(keys, "q"); err != nil {
 		t.Fatal(err)

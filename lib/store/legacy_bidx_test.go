@@ -11,10 +11,7 @@ import (
 	"indicer/lib/dbio"
 	"indicer/lib/dbmeta"
 	"indicer/lib/engine"
-	"indicer/lib/fio"
 	"indicer/lib/util"
-
-	"github.com/dgraph-io/badger/v4"
 )
 
 // TestReingestFindsChunksInLegacyBlockIndex is the STO-21 regression.
@@ -23,6 +20,7 @@ import (
 // again. Ingest must find chunks a legacy block index holds, and reads must
 // still reach them.
 func TestReingestFindsChunksInLegacyBlockIndex(t *testing.T) {
+	t.Parallel()
 	for name, pass := range chunkPasses {
 		t.Run(name, func(t *testing.T) {
 			db := testdb.Open(t, testdb.Container, testdb.Options{ChunkKiB: 4})
@@ -32,14 +30,8 @@ func TestReingestFindsChunksInLegacyBlockIndex(t *testing.T) {
 			testdb.MoveChunkMetaToBlockIndex(t, db.DB)
 			engine.For(db.DB).SetBlockIndex(true)
 
-			prev := materializeChunk
-			t.Cleanup(func() { materializeChunk = prev })
 			var calls atomic.Int64
-			materializeChunk = func(key, data []byte, db *badger.DB, c *fio.ContainerManager) ([]byte, int64, error) {
-				calls.Add(1)
-				return prev(key, data, db, c)
-			}
-			runChunkPass(t, pass, db.DB, "second", content)
+			runPass(t, pass, ChunkPass{DB: db.DB, ID: []byte("second"), Source: byteReaderAt(content), Size: int64(len(content)), Quiet: true, materialize: counted(&calls)})
 			if n := calls.Load(); n != 0 {
 				t.Fatalf("re-ingest stored %d chunks the block index already holds, want 0", n)
 			}

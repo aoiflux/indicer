@@ -26,6 +26,7 @@ func adjusted(t *testing.T, l *ChunkCredits, want map[int][2]int64) {
 // own pass comes before those of the objects its index stores, and the pass
 // of an object counts no bytes of its own.
 func TestChunkCreditsGoToTheFirstInOrder(t *testing.T) {
+	t.Parallel()
 	l := NewChunkCredits()
 	key := []byte("C|||:shared")
 	l.stored(key, Credit{Item: 2}, 10, 4)
@@ -46,6 +47,7 @@ func TestChunkCreditsGoToTheFirstInOrder(t *testing.T) {
 // ledger's lock: none for the first unsettled item while nothing is held,
 // one for each store ahead of it and each find while chunks are held.
 func TestChunkCreditsCountTheirLocks(t *testing.T) {
+	t.Parallel()
 	if (*ChunkCredits)(nil).Stats() != (CreditStats{}) {
 		t.Fatal("no ledger has stats")
 	}
@@ -69,6 +71,7 @@ func TestChunkCreditsCountTheirLocks(t *testing.T) {
 // TestChunkCreditsStoredAgainIsTheNewOwners: a chunk stored again was not
 // kept by the pass that stored it first, so it is the new pass's to give.
 func TestChunkCreditsStoredAgainIsTheNewOwners(t *testing.T) {
+	t.Parallel()
 	l := NewChunkCredits()
 	key := []byte("C|||:again")
 	l.stored(key, Credit{Item: 3}, 10, 4)
@@ -81,6 +84,7 @@ func TestChunkCreditsStoredAgainIsTheNewOwners(t *testing.T) {
 // chunk no pass before its owner can still need, and lets go of the rest as
 // items settle, and of an object's chunks once its evidence's pass ended.
 func TestChunkCreditsHoldOnlyWhatAPassBeforeMayNeed(t *testing.T) {
+	t.Parallel()
 	l := NewChunkCredits()
 	held := func(want int64) {
 		t.Helper()
@@ -116,6 +120,7 @@ func TestChunkCreditsHoldOnlyWhatAPassBeforeMayNeed(t *testing.T) {
 // TestChunkCreditsFull: a ledger is full at creditsHeld chunks, and no longer
 // once Settle lets go of them. No ledger is never full.
 func TestChunkCreditsFull(t *testing.T) {
+	t.Parallel()
 	l := NewChunkCredits()
 	for i := range creditsHeld {
 		if l.Full() {
@@ -140,6 +145,7 @@ func TestChunkCreditsFull(t *testing.T) {
 // that share chunks stores them first, the earlier, finding them stored,
 // takes them over, and each counts what it would one at a time.
 func TestPassesOfARunCountSharedChunksInOrder(t *testing.T) {
+	t.Parallel()
 	db := testdb.Open(t, testdb.Default)
 	if err := util.EnsureBlobPath(db.DB.Opts().Dir); err != nil {
 		t.Fatal(err)
@@ -177,6 +183,7 @@ func TestPassesOfARunCountSharedChunksInOrder(t *testing.T) {
 // object stores is held while its item's evidence pass may still need it,
 // and let go once that pass ended.
 func TestObjectChunksAreHeldUntilTheirEvidencePassEnds(t *testing.T) {
+	t.Parallel()
 	db := testdb.Open(t, testdb.Default)
 	if err := util.EnsureBlobPath(db.DB.Opts().Dir); err != nil {
 		t.Fatal(err)

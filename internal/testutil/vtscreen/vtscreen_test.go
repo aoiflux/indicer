@@ -8,6 +8,7 @@ import (
 )
 
 func TestScreen(t *testing.T) {
+	t.Parallel()
 	s := New(t, 40)
 	s.Write([]byte("one\ntwo\n\x1b[?25l\x1b[1;32mrow1\x1b[0m\x1b[K\nrow2\x1b[K\n"))
 	s.Write([]byte("\r\x1b[2A\x1b[J"))
@@ -22,6 +23,7 @@ func TestScreen(t *testing.T) {
 // Taskbar progress passes only when allowed, only ended by ST, and may be
 // split across writes.
 func TestTaskbar(t *testing.T) {
+	t.Parallel()
 	s := New(t, 40, AllowTaskbar())
 	s.Write([]byte("a\x1b]9;4;1;45\x1b"))
 	s.Write([]byte("\\b\x1b]9;4;0;0\x1b\\"))
@@ -62,6 +64,7 @@ func (r *recorder) Errorf(format string, args ...any) {
 }
 
 func TestWrapFails(t *testing.T) {
+	t.Parallel()
 	rec := &recorder{TB: t}
 	s := New(rec, 3)
 	s.Write([]byte("abcd"))

@@ -13,6 +13,7 @@ func r(code rune) string   { return string(code) }
 func esc(code rune) string { return fmt.Sprintf("%cu%04x", 0x5c, code) }
 
 func TestStringEscapesControls(t *testing.T) {
+	t.Parallel()
 	cases := map[string]string{
 		"plain.txt":                            "plain.txt",
 		"na" + r(0xef) + "ve.doc":              "na" + r(0xef) + "ve.doc",
@@ -35,6 +36,7 @@ func TestStringEscapesControls(t *testing.T) {
 }
 
 func TestBlockKeepsLayout(t *testing.T) {
+	t.Parallel()
 	in := "line one\n\tindented\x1b[31m\r\n"
 	want := "line one\n\tindented" + `\x1b` + "[31m" + `\x0d` + "\n"
 	if got := Block(in); got != want {

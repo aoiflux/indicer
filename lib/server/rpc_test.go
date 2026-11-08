@@ -86,6 +86,7 @@ func evidenceID(raw []byte) string {
 // SRV-6: the evidence listing is paged, in the order evidence was stored,
 // and lists stored evidence once, whatever its aliases.
 func TestGetEviFilesPages(t *testing.T) {
+	t.Parallel()
 	ls, c, stored := rpcServer(t, Deps{}, "fat/fat12", "fat/fat16", "exfat/exfat")
 	if res := storeFile(t, ls.deps.DB, fixture(t, "fat/fat16")); string(res.EvidenceID) != string(stored["fat/fat16"].EvidenceID) {
 		t.Fatal("storing fat16 again made another evidence")
@@ -137,6 +138,7 @@ func TestGetEviFilesPages(t *testing.T) {
 // a file's evidence was found by parsing its record's name, which records
 // written since W6 no longer carry.
 func TestGetPartiAndIdxFiles(t *testing.T) {
+	t.Parallel()
 	ls, c, stored := rpcServer(t, Deps{}, "part/gpt_multi")
 	db := ls.deps.DB
 	eid := evidenceID(stored["part/gpt_multi"].EvidenceID)
@@ -270,6 +272,7 @@ func TestChunkMapBudget(t *testing.T) {
 }
 
 func TestListingErrors(t *testing.T) {
+	t.Parallel()
 	ls, c, stored := rpcServer(t, Deps{}, "fat/fat16")
 	ctx := context.Background()
 	unknown := evidenceID([]byte("0123456789abcdef"))
@@ -333,6 +336,7 @@ func TestListingErrors(t *testing.T) {
 // path as an alias. It used to look the hash up as an evidence key, which
 // finds nothing since evidence keys are UUIDs, and to rename the evidence.
 func TestAppendIfExistsRecordsAlias(t *testing.T) {
+	t.Parallel()
 	ls, c, stored := rpcServer(t, Deps{}, "fat/fat16")
 	db := ls.deps.DB
 	ev := stored["fat/fat16"]
@@ -390,6 +394,7 @@ func TestAppendIfExistsRecordsAlias(t *testing.T) {
 }
 
 func TestSearchRPC(t *testing.T) {
+	t.Parallel()
 	h := openDB(t)
 	if err := util.EnsureBlobPath(h.Root); err != nil {
 		t.Fatal(err)
@@ -462,6 +467,7 @@ func TestRPCErrorsAreSanitised(t *testing.T) {
 // A unary message is bounded after decompression, so a small compressed
 // request cannot expand into a large one.
 func TestRPCMessageLimit(t *testing.T) {
+	t.Parallel()
 	ls, c, _ := rpcServer(t, Deps{})
 	url := ls.url
 	ctx := context.Background()

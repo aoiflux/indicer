@@ -40,6 +40,7 @@ func minimalPE(sectionOffset uint32) []byte {
 // GRA-13: the PE detector parses the file's own bytes and finds its compile
 // time and sections.
 func TestPEMetadataDetectorParsesRawPE(t *testing.T) {
+	t.Parallel()
 	d := PEMetadataDetector{}
 	if !d.WantsRaw() {
 		t.Fatal("the PE detector does not ask for the file's bytes")
@@ -60,6 +61,7 @@ func TestPEMetadataDetectorParsesRawPE(t *testing.T) {
 // GRA-13: a section whose raw data lies past the end of the file is clamped.
 // The slice used to run out of range and panic.
 func TestPESectionPastEndDoesNotPanic(t *testing.T) {
+	t.Parallel()
 	arts, err := PEMetadataDetector{}.Detect(model.FileRecord{}, minimalPE(0x10000))
 	if err != nil {
 		t.Fatal(err)
@@ -73,6 +75,7 @@ func TestPESectionPastEndDoesNotPanic(t *testing.T) {
 
 // GRA-18: truncation keeps whole runes.
 func TestTruncateKeepsRunes(t *testing.T) {
+	t.Parallel()
 	s := "abc" + "ééé" + "€"
 	for limit := 0; limit <= len(s); limit++ {
 		got := truncate(s, limit)
@@ -85,6 +88,7 @@ func TestTruncateKeepsRunes(t *testing.T) {
 // GRA-18: a FILETIME before 1970 has no RFC 3339 rendering here. The
 // subtraction used to wrap and print a date tens of thousands of years ahead.
 func TestFiletimeBeforeEpoch(t *testing.T) {
+	t.Parallel()
 	for _, ft := range []uint64{1, filetimeUnixEpoch - 1, filetimeUnixEpoch} {
 		if got := windowsFiletimeToRFC3339(ft); got != "" {
 			t.Errorf("FILETIME %d rendered as %q", ft, got)
@@ -97,6 +101,7 @@ func TestFiletimeBeforeEpoch(t *testing.T) {
 
 // GRA-17: the log-line detector allocates for the results it keeps.
 func TestLogLineDetectorKeepsAtMostMax(t *testing.T) {
+	t.Parallel()
 	var content []byte
 	for i := 0; i < 1000; i++ {
 		content = append(content, "2024-01-01 10:00:00 error something\n"...)

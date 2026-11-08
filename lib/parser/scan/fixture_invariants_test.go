@@ -29,6 +29,7 @@ func TestMain(m *testing.M) {
 // split EWF and VHD/VHDX containers, decodes to the disk the manifest
 // describes.
 func TestFixtureImageDecodes(t *testing.T) {
+	t.Parallel()
 	for _, m := range fixture.All(t) {
 		t.Run(m.Name, func(t *testing.T) {
 			img, err := image.Open(fixture.Open(t, m))
@@ -74,6 +75,7 @@ func knownDefectFor(fixtureName, path string) (string, bool) {
 // ground truth is found, with the right kind and size, and that its data
 // runs, read from the image and cut to its size, hash to the true content.
 func TestFixtureInvariants(t *testing.T) {
+	t.Parallel()
 	for _, m := range fixture.All(t) {
 		t.Run(m.Name, func(t *testing.T) {
 			img, err := image.Open(fixture.Open(t, m))
@@ -114,6 +116,7 @@ func TestFixtureInvariants(t *testing.T) {
 // TestFixtureDeletedRecovery checks that every deleted file the ground truth
 // marks fully recoverable is reported as deleted, with its true content.
 func TestFixtureDeletedRecovery(t *testing.T) {
+	t.Parallel()
 	for _, m := range fixture.All(t) {
 		for _, part := range m.Partitions {
 			for _, want := range part.Deleted {
@@ -276,6 +279,7 @@ var knownOpenDefects = map[string]string{}
 // own reader returns. The two paths are independent, so a disagreement means
 // one of them is wrong.
 func TestFixtureContentMatchesOpen(t *testing.T) {
+	t.Parallel()
 	for _, m := range fixture.All(t) {
 		t.Run(m.Name, func(t *testing.T) {
 			img, err := image.Open(fixture.Open(t, m))
@@ -340,6 +344,7 @@ func TestFixtureContentMatchesOpen(t *testing.T) {
 // is emitted as a "path:stream" record with its true content, and every file
 // with more than one name is flagged a hard link.
 func TestFixtureStreamsAndLinks(t *testing.T) {
+	t.Parallel()
 	for _, m := range fixture.All(t) {
 		var streams, links int
 		for _, part := range m.Partitions {

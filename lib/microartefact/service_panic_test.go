@@ -17,6 +17,7 @@ func (panicParser) Parse(model.FileRecord, []byte) (parsingpkg.Result, bool) {
 // TestExtractContainsParserPanics: a file parser that panics on evidence
 // fails that file with an error instead of ending the process (PAR-1).
 func TestExtractContainsParserPanics(t *testing.T) {
+	t.Parallel()
 	s := NewService(nil)
 	s.parser = panicParser{}
 	if _, err := s.Extract(FileRecord{Path: "/evil.exe"}, []byte("MZ")); !safe.IsPanic(err) {

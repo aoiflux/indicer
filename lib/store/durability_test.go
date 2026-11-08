@@ -9,6 +9,7 @@ import (
 
 	"indicer/internal/testutil"
 	"indicer/internal/testutil/testdb"
+	"indicer/lib/dbio"
 	"indicer/lib/dbmeta"
 	"indicer/lib/fio"
 
@@ -39,12 +40,12 @@ func TestChunkMetaVisibleOnlyAfterSync(t *testing.T) {
 					syncs    atomic.Int64
 					sets     atomic.Int64
 				)
-				prevMaterialize, prevSync, prevSet := materializeChunk, syncChunkMaterial, setChunkMeta
+				prevSync, prevSet := syncChunkMaterial, setChunkMeta
 				t.Cleanup(func() {
-					materializeChunk, syncChunkMaterial, setChunkMeta = prevMaterialize, prevSync, prevSet
+					syncChunkMaterial, setChunkMeta = prevSync, prevSet
 				})
-				materializeChunk = func(key, data []byte, db *badger.DB, c *fio.ContainerManager) ([]byte, int64, error) {
-					meta, written, err := prevMaterialize(key, data, db, c)
+				materialize := func(key, data []byte, db *badger.DB, c *fio.ContainerManager) ([]byte, int64, error) {
+					meta, written, err := dbio.MaterializeChonkNode(key, data, db, c)
 					if err == nil {
 						mu.Lock()
 						produced[string(key)] = seq.Add(1)
@@ -74,7 +75,7 @@ func TestChunkMetaVisibleOnlyAfterSync(t *testing.T) {
 					return prevSet(db, key, val, batch)
 				}
 
-				runChunkPass(t, pass, db.DB, "evidence", content)
+				runPass(t, pass, ChunkPass{DB: db.DB, ID: []byte("evidence"), Source: byteReaderAt(content), Size: int64(len(content)), Quiet: true, materialize: materialize})
 				if sets.Load() != 40 {
 					t.Fatalf("%d chunk metadata entries set, want 40", sets.Load())
 				}
@@ -91,6 +92,7 @@ func TestChunkMetaVisibleOnlyAfterSync(t *testing.T) {
 // delay since the oldest pending entry, and on an explicit fire. Nothing is
 // released when the sync fails.
 func TestChunkMetaBarrierThresholds(t *testing.T) {
+	t.Parallel()
 	newBarrier := func(syncErr error) (*chunkMetaBarrier, *testutil.FakeClock, *int, *[]string) {
 		clock := testutil.NewFakeClock(time.Date(2026, 10, 17, 0, 0, 0, 0, time.UTC))
 		syncs, set := 0, []string{}

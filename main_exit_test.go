@@ -101,6 +101,7 @@ func TestVersionFlag(t *testing.T) {
 }
 
 func TestFlagFromArgs(t *testing.T) {
+	t.Parallel()
 	for _, c := range []struct {
 		args  []string
 		want  string
@@ -131,6 +132,7 @@ func TestFlagFromArgs(t *testing.T) {
 }
 
 func TestBoolFlagFromArgs(t *testing.T) {
+	t.Parallel()
 	for _, c := range []struct {
 		args            []string
 		want, wantGiven bool

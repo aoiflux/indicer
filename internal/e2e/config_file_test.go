@@ -17,6 +17,7 @@ import (
 // before it writes anything, and a test's run reads no config file unless
 // it names one.
 func TestConfigFile(t *testing.T) {
+	t.Parallel()
 	bin := testutil.BuildDues(t)
 	work := t.TempDir()
 	testutil.WriteRandomFile(t, work, "ev.bin", 3, 256<<10)

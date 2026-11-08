@@ -51,6 +51,7 @@ func closeTo(a, b float64) bool { return math.Abs(a-b) < 1e-9 }
 // the evidence), names the evidence by the path it was stored from, and a
 // reindex leaves no node of an index that no longer exists.
 func TestEnrichmentGraph(t *testing.T) {
+	t.Parallel()
 	db := openDB(t)
 	path := fixture(t, "part/gpt_multi")
 	source, err := os.ReadFile(path)

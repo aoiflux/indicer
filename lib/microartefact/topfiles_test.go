@@ -13,6 +13,7 @@ import (
 // artefacts, most first, at most perFile artefacts of each, under their
 // partitions and evidence, with exact totals over every file.
 func TestTopFiles(t *testing.T) {
+	t.Parallel()
 	root := t.TempDir()
 	enr, err := enrichment.OpenGrapheneRepository(root)
 	if err != nil {

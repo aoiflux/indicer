@@ -7,6 +7,7 @@ import (
 )
 
 func TestLZNT1(t *testing.T) {
+	t.Parallel()
 	cases := []struct {
 		name string
 		src  []byte
@@ -50,6 +51,7 @@ func TestLZNT1(t *testing.T) {
 }
 
 func TestLZNT1RejectsCorruptData(t *testing.T) {
+	t.Parallel()
 	cases := map[string][]byte{
 		"reference before the chunk": {0x03, 0xB0, 0x01, 0x00, 0x00},
 		"chunk past the end":         {0x10, 0xB0, 0x00, 'x'},

@@ -16,6 +16,7 @@ import (
 // database, which lists the evidence, and not over one; split, the parts
 // verify from any of them.
 func TestPackage(t *testing.T) {
+	t.Parallel()
 	bin := testutil.BuildDues(t)
 	work := t.TempDir()
 	testutil.WriteRandomFile(t, work, "ev.bin", 5, 512<<10)

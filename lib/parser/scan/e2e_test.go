@@ -25,6 +25,7 @@ import (
 //     i.e. the DataRuns → image-absolute AbsRange contract (the crux of the
 //     libtusk replacement) is correct end-to-end.
 func TestE2E_FAT32(t *testing.T) {
+	t.Parallel()
 	if testing.Short() {
 		t.Skip("skipping e2e image test in -short mode")
 	}

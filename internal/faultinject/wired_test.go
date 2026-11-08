@@ -16,6 +16,7 @@ import (
 // named by a test outside this package, so a point cannot be added, or its
 // call removed, without the crash tests noticing.
 func TestEveryPointIsWired(t *testing.T) {
+	t.Parallel()
 	_, here, _, _ := runtime.Caller(0)
 	dir := filepath.Dir(here)
 	repo := filepath.Join(dir, "..", "..")

@@ -22,6 +22,7 @@ import (
 // memory-mapped, so storing one failed, and a folder holding one stopped
 // there.
 func TestStoreZeroByteFile(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
 	opts := optsFor(filepath.Join(dir, "db"), matrixChunkKB, nil)
 	empty := filepath.Join(dir, "empty.bin")
@@ -46,6 +47,7 @@ func TestStoreZeroByteFile(t *testing.T) {
 // refuses to rename a file another handle holds open, so a rename after the
 // failed store shows the handle is gone.
 func TestStoreReleasesEvidenceFile(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
 	opts := optsFor(filepath.Join(dir, "db"), matrixChunkKB, nil)
 	src := testutil.WriteRandomFile(t, dir, "evidence.bin", 31, 3*matrixChunkKB*1024)

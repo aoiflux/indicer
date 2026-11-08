@@ -12,6 +12,7 @@ import (
 )
 
 func TestRecordRefsReadBothForms(t *testing.T) {
+	t.Parallel()
 	eid := []byte("0123456789abcdef")
 	pid := []byte("partition-id-xyz")
 	sep := cnst.DataSeperator
@@ -94,6 +95,7 @@ type legacyIndexed struct {
 }
 
 func TestRecordsDecodeLegacyAndNewShapes(t *testing.T) {
+	t.Parallel()
 	old := legacyIndexed{Name: "n", Size: 5, Start: 512, IndexedType: "text", FileHash: "h"}
 	data, err := msgpack.Marshal(old)
 	if err != nil {

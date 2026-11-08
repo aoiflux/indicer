@@ -74,6 +74,7 @@ func sized(n int) map[int]int {
 }
 
 func TestCheckAcceptsWellFormedValues(t *testing.T) {
+	t.Parallel()
 	for name, b := range encodings(t) {
 		if err := Check(b); err != nil {
 			t.Errorf("%s: %v", name, err)
@@ -86,6 +87,7 @@ func TestCheckAcceptsWellFormedValues(t *testing.T) {
 }
 
 func TestUnmarshalDecodesAsMsgpackDoes(t *testing.T) {
+	t.Parallel()
 	for name, b := range encodings(t) {
 		var want, got any
 		werr := msgpack.Unmarshal(b, &want)
@@ -97,6 +99,7 @@ func TestUnmarshalDecodesAsMsgpackDoes(t *testing.T) {
 }
 
 func TestCheckRefusesEveryTruncation(t *testing.T) {
+	t.Parallel()
 	for name, b := range encodings(t) {
 		step := 1
 		if len(b) > 512 {
@@ -112,6 +115,7 @@ func TestCheckRefusesEveryTruncation(t *testing.T) {
 }
 
 func TestCheckRefusesMalformedValues(t *testing.T) {
+	t.Parallel()
 	for name, b := range map[string][]byte{
 		"reserved code":          {0xc1},
 		"reserved code in array": {0x92, 0x01, 0xc1},
@@ -133,6 +137,7 @@ func TestCheckRefusesMalformedValues(t *testing.T) {
 }
 
 func TestCheckLimitsDepth(t *testing.T) {
+	t.Parallel()
 	nest := func(depth int) []byte {
 		return append(bytes.Repeat([]byte{0x91}, depth), 0xc0)
 	}

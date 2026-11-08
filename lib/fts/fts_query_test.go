@@ -19,6 +19,7 @@ func extract(pieces ...[]byte) string {
 // a word, gives the same words as the whole; before, a piece ending inside a
 // rune was taken for binary and dropped, and every piece ended a word.
 func TestTextExtractorAcrossPieces(t *testing.T) {
+	t.Parallel()
 	text := []byte("Héllo wörld, ünïcode text: path/to/file_name.txt")
 	whole := extract(text)
 	if whole != "héllo wörld ünïcode text: path/to/file_name.txt" {
@@ -35,6 +36,7 @@ func TestTextExtractorAcrossPieces(t *testing.T) {
 }
 
 func TestTextExtractorStopsAtTheLimit(t *testing.T) {
+	t.Parallel()
 	x := textExtractor{remaining: 10}
 	if full := x.write([]byte("abcdefghijklmnop")); !full {
 		t.Fatal("the extractor wants more past its limit")
@@ -45,6 +47,7 @@ func TestTextExtractorStopsAtTheLimit(t *testing.T) {
 }
 
 func TestBuildQuery(t *testing.T) {
+	t.Parallel()
 	if q := buildQuery([]string{" ", ""}, QueryModeAnd); q != nil {
 		t.Fatalf("empty terms built %T", q)
 	}

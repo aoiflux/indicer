@@ -94,6 +94,7 @@ func checkReader(t *testing.T, db *badger.DB, img io.ReaderAt, recs map[string][
 }
 
 func TestReaderContentKinds(t *testing.T) {
+	t.Parallel()
 	db, img, recs, _ := indexSynthetic(t)
 	storeEvidence(t, db, img, img.Size(), false, nil)
 	checkReader(t, db, img, recs, 1<<30)
@@ -103,6 +104,7 @@ func TestReaderContentKinds(t *testing.T) {
 }
 
 func TestReaderServesFixtures(t *testing.T) {
+	t.Parallel()
 	for _, m := range fsfixture.All(t) {
 		t.Run(m.Name, func(t *testing.T) {
 			src, err := evidence.Open(t.Context(), fsfixture.Open(t, m), evidence.Options{Decode: true})

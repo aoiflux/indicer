@@ -16,6 +16,7 @@ import (
 // Badger rejects all but one of a set of overlapping transactions with
 // ErrConflict; UpdateEvidence must retry those, so no change is lost.
 func TestUpdateEvidenceConcurrentWritersKeepEveryChange(t *testing.T) {
+	t.Parallel()
 	for _, quick := range []bool{true, false} {
 		t.Run(fmt.Sprintf("quick=%v", quick), func(t *testing.T) {
 			db := openDBIOTestDBWith(t, quick)
@@ -62,6 +63,7 @@ func TestUpdateEvidenceConcurrentWritersKeepEveryChange(t *testing.T) {
 }
 
 func TestUpdateEvidenceOutcomes(t *testing.T) {
+	t.Parallel()
 	db := openDBIOTestDB(t)
 	eid := []byte("evidence-outcomes")
 

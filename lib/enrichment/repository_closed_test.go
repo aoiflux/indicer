@@ -8,6 +8,7 @@ import (
 // GRA-10: a write through a repository that is not open is an error. It used
 // to succeed and write nothing.
 func TestClosedRepositoryRefusesWrites(t *testing.T) {
+	t.Parallel()
 	repo, err := OpenGrapheneRepository(t.TempDir())
 	if err != nil {
 		t.Fatal(err)

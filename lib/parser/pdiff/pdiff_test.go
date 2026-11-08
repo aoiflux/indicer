@@ -3,6 +3,7 @@ package pdiff
 import "testing"
 
 func TestCompareIdentical(t *testing.T) {
+	t.Parallel()
 	j := `{"partitions":[{"filesystem":{"type":"ntfs"},"files":[
 		{"filename":"/a.txt","type":"file","size":100,"fragments":[{"start_offset":2048,"end_offset":2147}]},
 		{"filename":"/b.txt","type":"file","size":50,"fragments":[{"start_offset":4096,"end_offset":4145}]}
@@ -20,6 +21,7 @@ func TestCompareIdentical(t *testing.T) {
 }
 
 func TestCompareDifferences(t *testing.T) {
+	t.Parallel()
 	tusk := `{"partitions":[{"filesystem":{"type":"ntfs"},"files":[
 		{"filename":"/a.txt","size":100,"fragments":[{"start_offset":2048,"end_offset":2147}]},
 		{"filename":"/only-tusk.txt","size":10,"fragments":[]}
@@ -50,6 +52,7 @@ func TestCompareDifferences(t *testing.T) {
 }
 
 func TestCompareFlatLayout(t *testing.T) {
+	t.Parallel()
 	// Flat (single-filesystem) layout, no partitions[].
 	j := `{"filesystem":{"type":"exfat"},"files":[{"filename":"/x","size":1,"fragments":[]}]}`
 	rep, err := Compare(j, j)

@@ -18,6 +18,7 @@ import (
 // not in the database is ErrMaterialMissing, the one outcome that justifies
 // failing an ingest (ING-10).
 func TestValidateFlushedClassifiesMissingMaterial(t *testing.T) {
+	t.Parallel()
 	db := openTestDB(t)
 	infile := seedFlushedEvidenceWithChunk(t, db, "missing.dd", 3)
 	e, err := dbio.GetEvidenceFile(infile.GetID(), db)
@@ -76,6 +77,7 @@ func TestRecoveryKeepsFlushedEvidenceOnTransientError(t *testing.T) {
 // decoded every key in the database as an evidence record, so any value that
 // happened to decode as one was reported, and with --fix acted on.
 func TestRepairInspectsEvidenceRecordsOnly(t *testing.T) {
+	t.Parallel()
 	db := openTestDB(t)
 	lookalike := structs.NewEvidenceFile("not-evidence", 0, 1, nil, "raw", "")
 	data, err := msgpack.Marshal(lookalike)

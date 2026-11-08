@@ -49,6 +49,7 @@ func ewfSet(t *testing.T) (string, string) {
 }
 
 func TestOpenSourceEWF(t *testing.T) {
+	t.Parallel()
 	dir, first := ewfSet(t)
 	// PAR-23: a sibling that only looks like a segment is not one.
 	if err := os.WriteFile(filepath.Join(dir, "fat12_multiseg.Exe"), []byte("MZ not evidence"), 0o644); err != nil {
@@ -89,6 +90,7 @@ func TestOpenSourceEWF(t *testing.T) {
 }
 
 func TestOpenSourceEWFMissingSegment(t *testing.T) {
+	t.Parallel()
 	dir, first := ewfSet(t)
 	if err := os.Remove(filepath.Join(dir, "fat12_multiseg.E02")); err != nil {
 		t.Fatal(err)
@@ -101,6 +103,7 @@ func TestOpenSourceEWFMissingSegment(t *testing.T) {
 }
 
 func TestOpenSourceSplitRaw(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
 	data := bytes.Repeat([]byte("0123456789abcdef"), 4096) // 64 KiB
 	parts := [][]byte{data[:20000], data[20000:50000], data[50000:]}
@@ -131,6 +134,7 @@ func TestOpenSourceSplitRaw(t *testing.T) {
 }
 
 func TestOpenSourceUnsupportedContainers(t *testing.T) {
+	t.Parallel()
 	cases := map[string][]byte{
 		"vmdk":  append([]byte("KDMV"), make([]byte, 1020)...),
 		"qcow2": append([]byte("QFI\xfb"), make([]byte, 1020)...),
@@ -163,6 +167,7 @@ func TestOpenSourceUnsupportedContainers(t *testing.T) {
 }
 
 func TestOpenSourceRaw(t *testing.T) {
+	t.Parallel()
 	p := filepath.Join(t.TempDir(), "disk.img")
 	if err := os.WriteFile(p, make([]byte, 8192), 0o644); err != nil {
 		t.Fatal(err)

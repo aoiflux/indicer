@@ -9,6 +9,7 @@ import (
 )
 
 func TestInspectEvidenceRepairsDoesNotMutateWithoutFix(t *testing.T) {
+	t.Parallel()
 	db := openTestDB(t)
 	infile := newTestInputFile(db, "pending.dd", bytes.Repeat([]byte{4}, 32))
 	evidenceFile := structs.NewEvidenceFile(infile.GetName(), infile.GetStartIndex(), infile.GetSize(), infile.GetInternalObjects(), "dd", "")
@@ -43,6 +44,7 @@ func TestInspectEvidenceRepairsDoesNotMutateWithoutFix(t *testing.T) {
 }
 
 func TestInspectEvidenceRepairsFixMarksPendingEvidenceFailed(t *testing.T) {
+	t.Parallel()
 	db := openTestDB(t)
 	infile := newTestInputFile(db, "repair.dd", bytes.Repeat([]byte{5}, 32))
 	evidenceFile := structs.NewEvidenceFile(infile.GetName(), infile.GetStartIndex(), infile.GetSize(), infile.GetInternalObjects(), "dd", "")
@@ -77,6 +79,7 @@ func TestInspectEvidenceRepairsFixMarksPendingEvidenceFailed(t *testing.T) {
 }
 
 func TestInspectEvidenceRepairsFixAutoCompletesFlushed(t *testing.T) {
+	t.Parallel()
 	db := openTestDB(t)
 	infile := seedFlushedEvidenceWithChunk(t, db, "flushed-repair.dd", 0xAA)
 
@@ -110,6 +113,7 @@ func TestInspectEvidenceRepairsFixAutoCompletesFlushed(t *testing.T) {
 }
 
 func TestInspectEvidenceRepairsFixMarksInvalidFlushedFailed(t *testing.T) {
+	t.Parallel()
 	db := openTestDB(t)
 	infile := newTestInputFile(db, "flushed-invalid-repair.dd", bytes.Repeat([]byte{0xAB}, 32))
 	evidenceFile := structs.NewEvidenceFile(infile.GetName(), infile.GetStartIndex(), infile.GetSize(), infile.GetInternalObjects(), "dd", "")

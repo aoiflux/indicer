@@ -17,6 +17,7 @@ import (
 // store under it, and the value-log compaction. The items weigh their size,
 // so the overall bar moves with the bytes.
 func TestStoreFolderProgress(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
 	src := filepath.Join(dir, "case")
 	for i, name := range []string{"a.bin", "b.bin", "c.bin"} {
@@ -69,6 +70,7 @@ func stateName(s progress.State) string {
 // what was left: an unfinished attempt resumes; stored evidence needs its
 // index finished.
 func TestInterruptHint(t *testing.T) {
+	t.Parallel()
 	cases := []struct {
 		res  ingest.Result
 		want string

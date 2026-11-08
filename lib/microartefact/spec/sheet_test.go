@@ -7,6 +7,7 @@ import (
 )
 
 func TestSheetAddRemoveDetectionRule(t *testing.T) {
+	t.Parallel()
 	sheet := Default()
 	base := len(sheet.DetectionRules)
 
@@ -29,6 +30,7 @@ func TestSheetAddRemoveDetectionRule(t *testing.T) {
 }
 
 func TestSheetAddRemoveRelationRule(t *testing.T) {
+	t.Parallel()
 	sheet := Default()
 	base := len(sheet.RelationRules)
 

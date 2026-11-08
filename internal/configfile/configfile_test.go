@@ -24,6 +24,7 @@ type testSection struct {
 }
 
 func TestParseAccepts(t *testing.T) {
+	t.Parallel()
 	for _, tc := range []struct {
 		name, in string
 		want     testConfig
@@ -52,6 +53,7 @@ func TestParseAccepts(t *testing.T) {
 }
 
 func TestParseRejects(t *testing.T) {
+	t.Parallel()
 	for _, tc := range []struct {
 		name, in  string
 		line, col int
@@ -107,6 +109,7 @@ func TestParseRejects(t *testing.T) {
 }
 
 func TestErrorText(t *testing.T) {
+	t.Parallel()
 	for _, tc := range []struct {
 		e    Error
 		want string
@@ -122,6 +125,7 @@ func TestErrorText(t *testing.T) {
 }
 
 func TestErrorfPlacesTheValue(t *testing.T) {
+	t.Parallel()
 	var c testConfig
 	f, err := parse("c.json", []byte("{\n  \"store\": {\n    \"mode\": \"fast\"\n  }\n}"), &c)
 	if err != nil {
@@ -137,6 +141,7 @@ func TestErrorfPlacesTheValue(t *testing.T) {
 }
 
 func TestLoad(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
 	write := func(name, content string) string {
 		p := filepath.Join(dir, name)
@@ -198,6 +203,7 @@ func TestDefaultPath(t *testing.T) {
 var defaultHomeDir = homeDir
 
 func TestBadSchemasPanic(t *testing.T) {
+	t.Parallel()
 	for name, into := range map[string]any{
 		"not a pointer": testConfig{},
 		"not a struct":  new("x"),

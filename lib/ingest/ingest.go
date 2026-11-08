@@ -152,11 +152,14 @@ func (e *DigestMismatchError) Error() string {
 
 func (e *DigestMismatchError) Unwrap() error { return ErrDigestMismatch }
 
-// The passes an ingest runs; tests replace them.
-var (
-	runIndex     = index.Run
-	ingestChunks = store.IngestChunks
-)
+// passes are the passes an ingest runs. A session runs these; a test gives
+// its own to the session it makes.
+type passes struct {
+	index  func(context.Context, index.Options) (index.Result, error)
+	chunks func(context.Context, store.ChunkPass) (store.ChunkResult, error)
+}
+
+func defaultPasses() passes { return passes{index: index.Run, chunks: store.IngestChunks} }
 
 // Run ingests req.Path into db, in a session of its own: the full-text index
 // and graph it opens are closed before it returns.
@@ -431,12 +434,12 @@ func (s *Session) run(ctx context.Context, src *evidence.Source, eid []byte, nam
 		go func() {
 			defer wg.Done()
 			defer trace.StartRegion(idxCtx, "index").End()
-			idx, idxErr = runIndex(idxCtx, index.Options{DB: db, EvidenceID: eid, EvidenceName: name, Image: src.Image(), Entropy: req.Enrich, RevRel: req.RevRel, Simhash: req.Simhash, MaxWorkers: req.MaxWorkers, Credit: req.Credit})
+			idx, idxErr = s.passes.index(idxCtx, index.Options{DB: db, EvidenceID: eid, EvidenceName: name, Image: src.Image(), Entropy: req.Enrich, RevRel: req.RevRel, Simhash: req.Simhash, MaxWorkers: req.MaxWorkers, Credit: req.Credit})
 		}()
 	}
 
 	region := trace.StartRegion(ctx, "chunks")
-	chunks, err := ingestChunks(ctx, store.ChunkPass{
+	chunks, err := s.passes.chunks(ctx, store.ChunkPass{
 		DB: db, ID: eid, Source: src.Image(), Size: src.Size(),
 		Parallel: src.Parallel(), Ranges: ranges, EWF: src.EWF(), Quiet: req.Quiet,
 		RevRel: req.RevRel, Simhash: req.Simhash, MaxWorkers: req.MaxWorkers,

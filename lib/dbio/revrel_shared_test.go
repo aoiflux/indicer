@@ -18,6 +18,7 @@ import (
 // maps and segments, or a mix of them. A chunk hash holding the separator's
 // bytes is read by its length.
 func TestCountSharedChunksReadsEveryForm(t *testing.T) {
+	t.Parallel()
 	db := openDBIOTestDB(t)
 	const hashLen = 32
 	chunk := func(name string) []byte {

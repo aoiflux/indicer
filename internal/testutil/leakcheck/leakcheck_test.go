@@ -29,6 +29,7 @@ func leakForever() { select {} }
 // TestRunFailsOnALeak: the tests passed, but one left a goroutine running,
 // so the binary fails and names it.
 func TestRunFailsOnALeak(t *testing.T) {
+	t.Parallel()
 	out, err := exec.Command(os.Args[0], "-test.run=^TestLeaky$", "-leakcheck.leaky").CombinedOutput()
 	var exit *exec.ExitError
 	if !errors.As(err, &exit) || exit.ExitCode() != 1 {
@@ -42,6 +43,7 @@ func TestRunFailsOnALeak(t *testing.T) {
 }
 
 func TestWaitLetsGoroutinesEnd(t *testing.T) {
+	t.Parallel()
 	before := ids()
 	done := make(chan struct{})
 	go func() {
@@ -55,6 +57,7 @@ func TestWaitLetsGoroutinesEnd(t *testing.T) {
 }
 
 func TestWaitReportsWhatIsStillRunning(t *testing.T) {
+	t.Parallel()
 	before := ids()
 	started, stop := make(chan struct{}), make(chan struct{})
 	defer close(stop)

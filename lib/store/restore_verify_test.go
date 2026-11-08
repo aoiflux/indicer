@@ -86,6 +86,7 @@ func evidenceHocho(db *badger.DB, content []byte, cs int64) string {
 // evidence matching the current setting restored. The chunk size of each
 // evidence now comes from its own relations.
 func TestRestoreUsesEachEvidenceChunkSize(t *testing.T) {
+	t.Parallel()
 	db := testdb.Open(t, testdb.Default, testdb.Options{ChunkKiB: 4})
 
 	a := testutil.RandomBytes(1, 5*4096+7)
@@ -155,6 +156,7 @@ func swapChunkBlobs(t *testing.T, db *badger.DB, rid []byte, x, y int64) {
 // additional data), so a blob holding another chunk's bytes restored as
 // wrong content without an error.
 func TestRestoreRejectsSubstitutedChunk(t *testing.T) {
+	t.Parallel()
 	for _, m := range fileModes {
 		t.Run(m.Name, func(t *testing.T) {
 			db := testdb.Open(t, m, testdb.Options{ChunkKiB: 4})
@@ -203,6 +205,7 @@ func TestRestoreRejectsSubstitutedChunk(t *testing.T) {
 // with every chunk intact, restore still compares what it wrote with the
 // hash the record carries, in each form ingest computes it.
 func TestRestoreVerifiesRecordedHash(t *testing.T) {
+	t.Parallel()
 	for _, algo := range []string{cnst.BLAKE3, cnst.SHA3} {
 		t.Run(algo, func(t *testing.T) {
 			db := testdb.Open(t, testdb.Default, testdb.Options{ChunkKiB: 4, Hash: algo})
@@ -275,6 +278,7 @@ func TestRestoreVerifiesRecordedHash(t *testing.T) {
 // TestLogicalReadAt reads evidence and partitions at arbitrary offsets
 // through the logical reader.
 func TestLogicalReadAt(t *testing.T) {
+	t.Parallel()
 	db := testdb.Open(t, testdb.Default, testdb.Options{ChunkKiB: 4})
 	cs := int64(4096)
 	content := testutil.RandomBytes(6, int(5*cs+77))

@@ -47,6 +47,7 @@ func newLegacyBlockIndex(t *testing.T, n int) (string, []testutil.LegacyBlockRec
 }
 
 func TestBlockIndexLookup(t *testing.T) {
+	t.Parallel()
 	root, recs := newLegacyBlockIndex(t, 600)
 	for i, r := range recs {
 		path, off, size, err := LookupBlockIndex(root, bidxKey(r.Hash))
@@ -73,6 +74,7 @@ func TestBlockIndexLookup(t *testing.T) {
 // restore report it missing) and never an allocation sized by the file's own
 // counts (STO-16).
 func TestBlockIndexRejectsDamage(t *testing.T) {
+	t.Parallel()
 	blockFile := func(root string, hash []byte) string {
 		return filepath.Join(root, "blob", "blocks", fmt.Sprintf("block_%x.bidx", hash[:1]))
 	}

@@ -9,6 +9,7 @@ import (
 // --- query parser tests ---
 
 func TestParseQuerySingleTerm(t *testing.T) {
+	t.Parallel()
 	pq := parseQuery("foo")
 	if len(pq.terms) != 1 || pq.terms[0] != "foo" {
 		t.Fatalf("expected [foo], got %v", pq.terms)
@@ -19,6 +20,7 @@ func TestParseQuerySingleTerm(t *testing.T) {
 }
 
 func TestParseQueryAndMultiWord(t *testing.T) {
+	t.Parallel()
 	pq := parseQuery("foo bar")
 	if len(pq.terms) != 2 || pq.terms[0] != "foo" || pq.terms[1] != "bar" {
 		t.Fatalf("expected [foo bar], got %v", pq.terms)
@@ -29,6 +31,7 @@ func TestParseQueryAndMultiWord(t *testing.T) {
 }
 
 func TestParseQueryOrOperator(t *testing.T) {
+	t.Parallel()
 	pq := parseQuery("foo|bar")
 	if len(pq.terms) != 2 || pq.terms[0] != "foo" || pq.terms[1] != "bar" {
 		t.Fatalf("expected [foo bar], got %v", pq.terms)
@@ -39,6 +42,7 @@ func TestParseQueryOrOperator(t *testing.T) {
 }
 
 func TestParseQueryPhraseTerm(t *testing.T) {
+	t.Parallel()
 	pq := parseQuery(`"foo bar"`)
 	if len(pq.terms) != 1 || pq.terms[0] != "foo bar" {
 		t.Fatalf("expected single phrase term [foo bar], got %v", pq.terms)
@@ -49,6 +53,7 @@ func TestParseQueryPhraseTerm(t *testing.T) {
 }
 
 func TestParseQueryNormalizesCase(t *testing.T) {
+	t.Parallel()
 	pq := parseQuery("FOO BAR")
 	for _, term := range pq.terms {
 		for _, r := range term {
@@ -60,12 +65,14 @@ func TestParseQueryNormalizesCase(t *testing.T) {
 }
 
 func TestValidateTermsRejectsShortTerm(t *testing.T) {
+	t.Parallel()
 	if err := validateTerms([]string{"a"}); err == nil {
 		t.Fatal("expected error for single-char term, got nil")
 	}
 }
 
 func TestValidateTermsRejectsEmpty(t *testing.T) {
+	t.Parallel()
 	if err := validateTerms(nil); err == nil {
 		t.Fatal("expected error for empty terms, got nil")
 	}
@@ -74,6 +81,7 @@ func TestValidateTermsRejectsEmpty(t *testing.T) {
 // TestValidateTermsCapsQueries (SRC-2): a term longer than MaxTermBytes, or
 // more than MaxTerms terms, is refused before anything is read.
 func TestValidateTermsCapsQueries(t *testing.T) {
+	t.Parallel()
 	long := strings.Repeat("x", MaxTermBytes+1)
 	if err := validateTerms([]string{long}); !errors.Is(err, ErrQueryTooLong) {
 		t.Fatalf("a %d-byte term: %v, want ErrQueryTooLong", len(long), err)
@@ -93,6 +101,7 @@ func TestValidateTermsCapsQueries(t *testing.T) {
 // --- BM25 tests ---
 
 func TestRankBM25ReturnsNilForEmptyHits(t *testing.T) {
+	t.Parallel()
 	result := rankBM25([]map[string]int{{}}, map[string]int64{}, 10, queryOpAnd, DefaultRankAlpha)
 	if result != nil {
 		t.Fatalf("expected nil for empty hits, got %v", result)
@@ -100,6 +109,7 @@ func TestRankBM25ReturnsNilForEmptyHits(t *testing.T) {
 }
 
 func TestRankBM25ReturnsNilForZeroTotalDocs(t *testing.T) {
+	t.Parallel()
 	hits := map[string]int{"a": 5}
 	result := rankBM25([]map[string]int{hits}, map[string]int64{"a": 100}, 0, queryOpAnd, DefaultRankAlpha)
 	if result != nil {
@@ -108,6 +118,7 @@ func TestRankBM25ReturnsNilForZeroTotalDocs(t *testing.T) {
 }
 
 func TestRankBM25ScoresDescending(t *testing.T) {
+	t.Parallel()
 	// doc "a" has more occurrences than doc "b" with same size, expect higher score
 	hits := map[string]int{"a": 10, "b": 1}
 	sizes := map[string]int64{"a": 1000, "b": 1000}
@@ -124,6 +135,7 @@ func TestRankBM25ScoresDescending(t *testing.T) {
 }
 
 func TestRankBM25ANDIntersects(t *testing.T) {
+	t.Parallel()
 	term1 := map[string]int{"a": 5, "b": 3}
 	term2 := map[string]int{"b": 2, "c": 1}
 	sizes := map[string]int64{"a": 1000, "b": 1000, "c": 1000}
@@ -136,6 +148,7 @@ func TestRankBM25ANDIntersects(t *testing.T) {
 }
 
 func TestRankBM25ORUnion(t *testing.T) {
+	t.Parallel()
 	term1 := map[string]int{"a": 5}
 	term2 := map[string]int{"b": 3}
 	sizes := map[string]int64{"a": 1000, "b": 1000}
@@ -147,6 +160,7 @@ func TestRankBM25ORUnion(t *testing.T) {
 }
 
 func TestRankBM25TFSummedAcrossTerms(t *testing.T) {
+	t.Parallel()
 	term1 := map[string]int{"a": 3}
 	term2 := map[string]int{"a": 4}
 	sizes := map[string]int64{"a": 1000}
@@ -158,6 +172,7 @@ func TestRankBM25TFSummedAcrossTerms(t *testing.T) {
 }
 
 func TestBuildCandidateSetAND(t *testing.T) {
+	t.Parallel()
 	hitMaps := []map[string]int{
 		{"a": 1, "b": 2},
 		{"b": 3, "c": 1},
@@ -172,6 +187,7 @@ func TestBuildCandidateSetAND(t *testing.T) {
 }
 
 func TestBuildCandidateSetOR(t *testing.T) {
+	t.Parallel()
 	hitMaps := []map[string]int{
 		{"a": 1},
 		{"b": 3},
@@ -183,6 +199,7 @@ func TestBuildCandidateSetOR(t *testing.T) {
 }
 
 func TestSortRankedResultsTieBreaksByTF(t *testing.T) {
+	t.Parallel()
 	results := []RankedResult{
 		{FileID: "a", Score: 1.25, TF: 2},
 		{FileID: "b", Score: 1.25, TF: 5},
@@ -196,6 +213,7 @@ func TestSortRankedResultsTieBreaksByTF(t *testing.T) {
 }
 
 func TestSortRankedResultsTieBreaksByFileID(t *testing.T) {
+	t.Parallel()
 	results := []RankedResult{
 		{FileID: "z", Score: 1.25, TF: 5},
 		{FileID: "a", Score: 1.25, TF: 5},
@@ -209,6 +227,7 @@ func TestSortRankedResultsTieBreaksByFileID(t *testing.T) {
 }
 
 func TestSortRankedResultsHybridCanPreferHigherTF(t *testing.T) {
+	t.Parallel()
 	results := []RankedResult{
 		{FileID: "low-tf", Score: 1.00, TF: 1},
 		{FileID: "high-tf", Score: 0.90, TF: 100},
@@ -222,6 +241,7 @@ func TestSortRankedResultsHybridCanPreferHigherTF(t *testing.T) {
 }
 
 func TestSortRankedResultsNegativeAlphaCountsAsZero(t *testing.T) {
+	t.Parallel()
 	results := []RankedResult{
 		{FileID: "high-tf", Score: 0.90, TF: 100},
 		{FileID: "low-tf", Score: 1.00, TF: 1},
@@ -235,6 +255,7 @@ func TestSortRankedResultsNegativeAlphaCountsAsZero(t *testing.T) {
 }
 
 func TestFTSBoostKeepsRankAlpha(t *testing.T) {
+	t.Parallel()
 	results := []RankedResult{
 		{FileID: "low-tf", Score: 1.00, TF: 1},
 		{FileID: "high-tf", Score: 0.90, TF: 100},

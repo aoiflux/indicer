@@ -46,6 +46,15 @@ func openDBStrategy(t *testing.T, strategy string) *badger.DB {
 	return openDBWith(t, testdb.Options{ChunkKiB: 64, Tuning: &tun})
 }
 
+// runWith ingests req into db, as Run does, in a session whose passes edit
+// replaced.
+func runWith(ctx context.Context, db *badger.DB, req Request, edit func(*passes)) (Result, error) {
+	s := NewSession(db)
+	edit(&s.passes)
+	res, err := s.Run(ctx, req)
+	return res, s.closeWith(err)
+}
+
 // openDBWith opens a database with the options given.
 func openDBWith(t *testing.T, o testdb.Options) *badger.DB {
 	t.Helper()
@@ -110,6 +119,7 @@ func restoreBytes(t *testing.T, db *badger.DB, eid []byte) []byte {
 // enough that the fingerprint is exact and for content whose root must be
 // confirmed.
 func TestReingestIsAnAlias(t *testing.T) {
+	t.Parallel()
 	for _, strategy := range []string{cnst.SyncHashStrategy, cnst.AsyncHashStrategy, cnst.HochoHashStrategy} {
 		for _, size := range []int{64 << 10, 5 << 20} {
 			t.Run(fmt.Sprintf("%s/%dKiB", strategy, size>>10), func(t *testing.T) {
@@ -159,6 +169,7 @@ func TestReingestIsAnAlias(t *testing.T) {
 // that run at once each store it, and the commit makes exactly one the
 // evidence; the others become aliases and their records are removed.
 func TestConcurrentIngestsHaveOneWinner(t *testing.T) {
+	t.Parallel()
 	db := openDBStrategy(t, cnst.AsyncHashStrategy)
 	dir := t.TempDir()
 	src := testutil.WriteRandomFile(t, dir, "src.bin", 7, 300<<10)
@@ -216,23 +227,21 @@ func TestConcurrentIngestsHaveOneWinner(t *testing.T) {
 // failed with its error, stops its index pass, and the next ingest of the
 // same file carries on under the same ID.
 func TestStorageFailureResumes(t *testing.T) {
+	t.Parallel()
 	db := openDB(t)
 	path := fixture(t, "fat/fat16")
-	prev := ingestChunks
-	t.Cleanup(func() { ingestChunks = prev })
 	boom := errors.New("simulated read failure")
 	var indexErr error
-	prevIndex := runIndex
-	t.Cleanup(func() { runIndex = prevIndex })
-	runIndex = func(ctx context.Context, o index.Options) (index.Result, error) {
-		res, err := prevIndex(ctx, o)
-		indexErr = err
-		return res, err
-	}
-	ingestChunks = func(ctx context.Context, p store.ChunkPass) (store.ChunkResult, error) {
-		return store.ChunkResult{}, boom
-	}
-	r1, err := Run(t.Context(), db, Request{Path: path, Decode: true, Quiet: true})
+	r1, err := runWith(t.Context(), db, Request{Path: path, Decode: true, Quiet: true}, func(p *passes) {
+		p.index = func(ctx context.Context, o index.Options) (index.Result, error) {
+			res, err := index.Run(ctx, o)
+			indexErr = err
+			return res, err
+		}
+		p.chunks = func(context.Context, store.ChunkPass) (store.ChunkResult, error) {
+			return store.ChunkResult{}, boom
+		}
+	})
 	if !errors.Is(err, boom) {
 		t.Fatalf("ingest with a failing chunk pass: %v", err)
 	}
@@ -245,7 +254,6 @@ func TestStorageFailureResumes(t *testing.T) {
 	}
 	_ = indexErr // the index pass may have finished before storage failed
 
-	ingestChunks = prev
 	r2, err := Run(t.Context(), db, Request{Path: path, Decode: true, Quiet: true})
 	if err != nil {
 		t.Fatal(err)
@@ -262,6 +270,7 @@ func TestStorageFailureResumes(t *testing.T) {
 // when it records a source path other than the file it read (server uploads
 // read a part file and record the client's path).
 func TestCommitClearsAttemptKey(t *testing.T) {
+	t.Parallel()
 	for _, sourcePath := range []string{"", "client/upload.img"} {
 		t.Run("source="+sourcePath, func(t *testing.T) {
 			db := openDB(t)
@@ -288,15 +297,15 @@ func TestCommitClearsAttemptKey(t *testing.T) {
 // evidence being stored and committed; the ingest reports the index
 // incomplete, and the evidence records why.
 func TestIndexFailureKeepsStorage(t *testing.T) {
+	t.Parallel()
 	db := openDB(t)
 	path := fixture(t, "fat/fat12")
-	prev := runIndex
-	t.Cleanup(func() { runIndex = prev })
 	boom := errors.New("simulated index failure")
-	runIndex = func(ctx context.Context, o index.Options) (index.Result, error) {
-		return index.Result{}, boom
-	}
-	res, err := Run(t.Context(), db, Request{Path: path, Decode: true, Quiet: true})
+	res, err := runWith(t.Context(), db, Request{Path: path, Decode: true, Quiet: true}, func(p *passes) {
+		p.index = func(context.Context, index.Options) (index.Result, error) {
+			return index.Result{}, boom
+		}
+	})
 	var incomplete *IndexIncompleteError
 	if !errors.As(err, &incomplete) || !errors.Is(err, boom) || incomplete.State != structs.IndexFailed {
 		t.Fatalf("ingest: %v, want an incomplete index wrapping the failure", err)
@@ -310,6 +319,7 @@ func TestIndexFailureKeepsStorage(t *testing.T) {
 // TestEWFDigestMismatch: an EWF set whose stored digest does not match is
 // stored and flagged, or, with RequireVerified, not committed.
 func TestEWFDigestMismatch(t *testing.T) {
+	t.Parallel()
 	path := fixture(t, "ewf/fat12_multiseg")
 	t.Run("verified", func(t *testing.T) {
 		db := openDB(t)
@@ -328,18 +338,19 @@ func TestEWFDigestMismatch(t *testing.T) {
 			t.Fatalf("the result does not report the check: %+v", res.Source.EWF)
 		}
 	})
-	prev := ingestChunks
-	t.Cleanup(func() { ingestChunks = prev })
-	ingestChunks = func(ctx context.Context, p store.ChunkPass) (store.ChunkResult, error) {
-		res, err := prev(ctx, p)
-		if res.EWF != nil {
-			res.EWF.MD5Match = false
+	// The chunk pass finds the stored digest does not match.
+	mismatch := func(p *passes) {
+		p.chunks = func(ctx context.Context, cp store.ChunkPass) (store.ChunkResult, error) {
+			res, err := store.IngestChunks(ctx, cp)
+			if res.EWF != nil {
+				res.EWF.MD5Match = false
+			}
+			return res, err
 		}
-		return res, err
 	}
 	t.Run("flagged", func(t *testing.T) {
 		db := openDB(t)
-		res, err := Run(t.Context(), db, Request{Path: path, Decode: true, Quiet: true})
+		res, err := runWith(t.Context(), db, Request{Path: path, Decode: true, Quiet: true}, mismatch)
 		var mis *DigestMismatchError
 		if !errors.As(err, &mis) || !mis.Stored || res.Outcome != store.CommitStored {
 			t.Fatalf("ingest: %v, outcome %s; want stored and flagged", err, res.Outcome)
@@ -350,7 +361,7 @@ func TestEWFDigestMismatch(t *testing.T) {
 	})
 	t.Run("required", func(t *testing.T) {
 		db := openDB(t)
-		res, err := Run(t.Context(), db, Request{Path: path, Decode: true, Quiet: true, RequireVerified: true})
+		res, err := runWith(t.Context(), db, Request{Path: path, Decode: true, Quiet: true, RequireVerified: true}, mismatch)
 		var mis *DigestMismatchError
 		if !errors.As(err, &mis) || mis.Stored || res.Outcome != "" {
 			t.Fatalf("ingest: %v, outcome %q; want a failure", err, res.Outcome)

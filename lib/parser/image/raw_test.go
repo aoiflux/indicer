@@ -10,6 +10,7 @@ import (
 )
 
 func TestNewRaw(t *testing.T) {
+	t.Parallel()
 	data := []byte("the quick brown fox")
 	im := NewRaw(bytes.NewReader(data), int64(len(data)))
 	defer im.Close()
@@ -32,6 +33,7 @@ func TestNewRaw(t *testing.T) {
 }
 
 func TestOpenRawFile(t *testing.T) {
+	t.Parallel()
 	data := bytes.Repeat([]byte{0xAB}, 4096)
 	path := filepath.Join(t.TempDir(), "disk.dd")
 	if err := os.WriteFile(path, data, 0o644); err != nil {
@@ -57,6 +59,7 @@ func TestOpenRawFile(t *testing.T) {
 }
 
 func TestOpenRawSegments(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
 	// Three segments; a full logical device of A*10 + B*10 + C*10.
 	parts := [][]byte{

@@ -44,6 +44,7 @@ func waitTask(t *testing.T, svc *Service, id string) progressRes {
 // TestAsyncTaskPanicIsContained is the FFI-1 regression for async tasks: a
 // panic on a task's goroutine ended the host process.
 func TestAsyncTaskPanicIsContained(t *testing.T) {
+	t.Parallel()
 	svc := New()
 	id := startTask(t, svc, context.Background(), func(context.Context, progressReporter) (any, *coreerr.Error) {
 		panic("task panicked")
@@ -55,6 +56,7 @@ func TestAsyncTaskPanicIsContained(t *testing.T) {
 }
 
 func TestAsyncTasksAreCapped(t *testing.T) {
+	t.Parallel()
 	svc := New()
 	var ids []string
 	for i := 0; i < maxActiveTasks; i++ {
@@ -81,6 +83,7 @@ func TestAsyncTasksAreCapped(t *testing.T) {
 }
 
 func TestAsyncTaskDeadline(t *testing.T) {
+	t.Parallel()
 	svc := New()
 	ctx, cancel := context.WithTimeout(context.Background(), 50*time.Millisecond)
 	defer cancel()
@@ -94,6 +97,7 @@ func TestAsyncTaskDeadline(t *testing.T) {
 // TestAsyncTaskOutlivesItsRequest: an async request returns at once, and
 // the end of its request's context does not stop the task.
 func TestAsyncTaskOutlivesItsRequest(t *testing.T) {
+	t.Parallel()
 	svc := New()
 	ctx, cancel := context.WithCancel(context.Background())
 	release := make(chan struct{})
@@ -114,6 +118,7 @@ func TestAsyncTaskOutlivesItsRequest(t *testing.T) {
 }
 
 func TestShutdownCancelsTasks(t *testing.T) {
+	t.Parallel()
 	svc := New()
 	a := startTask(t, svc, context.Background(), blockUntilDone)
 	b := startTask(t, svc, context.Background(), blockUntilDone)
@@ -134,6 +139,7 @@ func TestShutdownCancelsTasks(t *testing.T) {
 }
 
 func TestShutdownReportsStuckTasks(t *testing.T) {
+	t.Parallel()
 	svc := New()
 	release := make(chan struct{})
 	defer close(release)
@@ -149,6 +155,7 @@ func TestShutdownReportsStuckTasks(t *testing.T) {
 }
 
 func TestFinishedTasksAreBounded(t *testing.T) {
+	t.Parallel()
 	svc := New()
 	for i := 0; i < maxRetainedTasks+40; i++ {
 		id := startTask(t, svc, context.Background(), func(context.Context, progressReporter) (any, *coreerr.Error) {
@@ -162,6 +169,7 @@ func TestFinishedTasksAreBounded(t *testing.T) {
 }
 
 func TestCanceledErrorReasons(t *testing.T) {
+	t.Parallel()
 	ctx, cancel := context.WithCancelCause(context.Background())
 	cancel(errShutdown)
 	if r := canceledError(ctx).Details["reason"]; r != "shutdown" {

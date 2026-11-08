@@ -61,6 +61,7 @@ func fixturePath(t *testing.T, name string) string {
 // hidden from the listing; an index over a raw image or a fixed VHD (a raw
 // disk with a footer) is right and is kept.
 func TestQuarantineRawContainerIndexes(t *testing.T) {
+	t.Parallel()
 	db := testdb.Open(t, testdb.Default, testdb.Options{ChunkKiB: 4})
 	if err := util.EnsureBlobPath(db.Root); err != nil {
 		t.Fatal(err)

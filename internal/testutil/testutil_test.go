@@ -48,6 +48,7 @@ func TestMain(m *testing.M) {
 // its log in a directory of the test's own, unless the test chooses a config
 // file or a log directory itself.
 func TestIsolatedArgs(t *testing.T) {
+	t.Parallel()
 	const logs = "<logs>"
 	for _, c := range []struct{ args, want []string }{
 		{nil, []string{"--no-config", "--log-dir", logs}},
@@ -77,6 +78,7 @@ func TestIsolatedArgs(t *testing.T) {
 // TestChildArgs: a child gets its arguments as given, flag-like ones
 // included, and not its parent's scenario flags.
 func TestChildArgs(t *testing.T) {
+	t.Parallel()
 	args := []string{"a dir", "-dues.child=exit3", "--faults=x", ""}
 	c := StartChild(t, "args", args...)
 	if code := c.Wait(t, 30*time.Second); code != 0 {
@@ -88,6 +90,7 @@ func TestChildArgs(t *testing.T) {
 }
 
 func TestChildExitCode(t *testing.T) {
+	t.Parallel()
 	c := StartChild(t, "exit3")
 	if got := c.Wait(t, 30*time.Second); got != 3 {
 		t.Fatalf("exit code %d, want 3\n%s", got, c.Output())
@@ -95,6 +98,7 @@ func TestChildExitCode(t *testing.T) {
 }
 
 func TestChildInterrupt(t *testing.T) {
+	t.Parallel()
 	c := StartChild(t, "point")
 	c.WaitForPoint(t, "ready", 30*time.Second)
 	c.Interrupt(t)
@@ -104,12 +108,14 @@ func TestChildInterrupt(t *testing.T) {
 }
 
 func TestChildKill(t *testing.T) {
+	t.Parallel()
 	c := StartChild(t, "point")
 	c.WaitForPoint(t, "ready", 30*time.Second)
 	c.Kill(t)
 }
 
 func TestFailingReaderAt(t *testing.T) {
+	t.Parallel()
 	src := bytes.NewReader(RandomBytes(1, 100))
 	r := &FailingReaderAt{R: src, FailAt: 50}
 	buf := make([]byte, 40)
@@ -126,6 +132,7 @@ func TestFailingReaderAt(t *testing.T) {
 }
 
 func TestShortReaderAt(t *testing.T) {
+	t.Parallel()
 	r := &ShortReaderAt{R: bytes.NewReader(make([]byte, 100)), Max: 7}
 	n, err := r.ReadAt(make([]byte, 50), 0)
 	if n != 7 || err != nil {
@@ -134,6 +141,7 @@ func TestShortReaderAt(t *testing.T) {
 }
 
 func TestENOSPCWriter(t *testing.T) {
+	t.Parallel()
 	var sink bytes.Buffer
 	w := NewENOSPCWriter(&sink, 10)
 	if n, err := w.Write([]byte("12345")); n != 5 || err != nil {
@@ -152,6 +160,7 @@ func TestENOSPCWriter(t *testing.T) {
 }
 
 func TestShortWriterAndErrCloser(t *testing.T) {
+	t.Parallel()
 	var sink bytes.Buffer
 	sw := &ShortWriter{W: &sink, Max: 3}
 	if n, _ := sw.Write([]byte("abcdef")); n != 3 {
@@ -164,6 +173,7 @@ func TestShortWriterAndErrCloser(t *testing.T) {
 }
 
 func TestRandomBytesDeterministic(t *testing.T) {
+	t.Parallel()
 	a, b := RandomBytes(42, 1001), RandomBytes(42, 1001)
 	if !bytes.Equal(a, b) {
 		t.Fatal("same seed gave different bytes")
@@ -180,6 +190,7 @@ func TestRandomBytesDeterministic(t *testing.T) {
 }
 
 func TestTreeHashAndAssertNoFiles(t *testing.T) {
+	t.Parallel()
 	a, b := t.TempDir(), t.TempDir()
 	for _, d := range []string{a, b} {
 		WriteRandomFile(t, d, "x/one.bin", 1, 100)
@@ -199,6 +210,7 @@ func TestTreeHashAndAssertNoFiles(t *testing.T) {
 }
 
 func TestFakeClock(t *testing.T) {
+	t.Parallel()
 	c := NewFakeClock(time.Unix(0, 0))
 	ch := c.After(time.Second)
 	c.Advance(500 * time.Millisecond)
@@ -219,6 +231,7 @@ func TestFakeClock(t *testing.T) {
 }
 
 func TestPeakHeapAndAllocBelow(t *testing.T) {
+	t.Parallel()
 	var keep []byte
 	peak := PeakHeap(func() { keep = make([]byte, 8<<20); time.Sleep(5 * time.Millisecond) })
 	if peak < 8<<20 {
@@ -231,6 +244,7 @@ func TestPeakHeapAndAllocBelow(t *testing.T) {
 var testDir = NewDirFlag("dues.test-dir", "a directory for TestDirFlag")
 
 func TestDirFlag(t *testing.T) {
+	t.Parallel()
 	set := func(v string) {
 		t.Helper()
 		if err := flag.Set("dues.test-dir", v); err != nil {

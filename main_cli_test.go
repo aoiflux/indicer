@@ -95,6 +95,7 @@ func TestEveryCommandHasHelp(t *testing.T) {
 // The extras are chosen by command name: each name they use must still be
 // a command that shows progress, so a renamed command is caught here.
 func TestEggCommandsAreCommands(t *testing.T) {
+	t.Parallel()
 	def := newCLIDefinition()
 	known := map[string]bool{}
 	for _, c := range def.app.Model().Commands {

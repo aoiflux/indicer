@@ -35,6 +35,7 @@ func assertNoTemps(t *testing.T, dir string) {
 }
 
 func TestWriteFileAtomicCreatesAndReplaces(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
 	path := filepath.Join(dir, "manifest.json")
 
@@ -63,6 +64,7 @@ func TestWriteFileAtomicCreatesAndReplaces(t *testing.T) {
 }
 
 func TestWriteAtomicFailureLeavesTargetIntact(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
 	path := filepath.Join(dir, "marker")
 	if err := WriteFileAtomic(path, []byte("original"), 0o644); err != nil {
@@ -84,6 +86,7 @@ func TestWriteAtomicFailureLeavesTargetIntact(t *testing.T) {
 }
 
 func TestWriteAtomicNoOverwrite(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
 	path := filepath.Join(dir, "restored.bin")
 	write := func(s string) func(*os.File) error {
@@ -104,6 +107,7 @@ func TestWriteAtomicNoOverwrite(t *testing.T) {
 }
 
 func TestWriteNewFile(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
 	path := filepath.Join(dir, "chunk.blob")
 
@@ -124,6 +128,7 @@ func TestWriteNewFile(t *testing.T) {
 }
 
 func TestWriteNewFailureRemovesFile(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
 	path := filepath.Join(dir, "chunk.blob")
 
@@ -141,6 +146,7 @@ func TestWriteNewFailureRemovesFile(t *testing.T) {
 }
 
 func TestReplaceFile(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
 	src := filepath.Join(dir, "src")
 	dst := filepath.Join(dir, "dst")
@@ -169,6 +175,7 @@ func TestReplaceFile(t *testing.T) {
 }
 
 func TestSweepTempsRemovesOnlyOldOwnTemps(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
 	old := time.Now().Add(-2 * time.Hour)
 	mk := func(name string, mtime time.Time) string {
@@ -208,6 +215,7 @@ func TestSweepTempsRemovesOnlyOldOwnTemps(t *testing.T) {
 }
 
 func TestLockExclusion(t *testing.T) {
+	t.Parallel()
 	path := filepath.Join(t.TempDir(), "dues.lock")
 
 	ex, err := TryLock(path, false)
@@ -245,6 +253,7 @@ func TestLockExclusion(t *testing.T) {
 // TestSharedLockOnReadOnlyFile covers read-only media: the lock file cannot be
 // opened for writing, yet readers must still be able to share it.
 func TestSharedLockOnReadOnlyFile(t *testing.T) {
+	t.Parallel()
 	if runtime.GOOS != "windows" {
 		testutil.RequireLinuxNonRoot(t)
 	}
@@ -272,6 +281,7 @@ func TestSharedLockOnReadOnlyFile(t *testing.T) {
 // TestWriteAtomicRemovesStaleTemps: with RemoveStale, a write first removes
 // what killed writes to the same path left, and nothing else.
 func TestWriteAtomicRemovesStaleTemps(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
 	target := filepath.Join(dir, "report.json")
 	mk := func(name string) string {

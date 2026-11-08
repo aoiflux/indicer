@@ -14,6 +14,7 @@ import (
 // with "invalid reverse-relation append key": the keys written since W3 have
 // three parts, not four.
 func TestStatsWithReverseRelations(t *testing.T) {
+	t.Parallel()
 	db := testdb.Open(t, testdb.Default, testdb.Options{ChunkKiB: 4})
 	cs := int(dbmeta.ChunkSize(db.DB))
 	a := testutil.RandomBytes(51, 6*cs)

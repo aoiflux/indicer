@@ -26,6 +26,7 @@ var guardExempt = []string{
 // this package: production code reads records it cannot assume are intact,
 // and msgpack alone allocates whatever a damaged length asks for.
 func TestDecodesGoThroughMsgpackx(t *testing.T) {
+	t.Parallel()
 	root, err := filepath.Abs(filepath.Join("..", ".."))
 	if err != nil {
 		t.Fatal(err)

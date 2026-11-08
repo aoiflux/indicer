@@ -40,6 +40,7 @@ func testPE() []byte {
 // GRA-13: through the service, the PE detector gets the file's bytes, not
 // the text the PE parser made of them, and finds the PE's metadata.
 func TestServicePEDetectorGetsRawBytes(t *testing.T) {
+	t.Parallel()
 	repo := &captureRepository{}
 	out, err := NewService(repo).ProcessFile(FileRecord{Name: "a.exe", Path: "/a.exe", FileType: "pe"}, testPE(), 1024, false)
 	if err != nil {
@@ -59,6 +60,7 @@ func TestServicePEDetectorGetsRawBytes(t *testing.T) {
 // GRA-16: the outcome says what happened, so a parse failure or a file too
 // large to parse is not reported as a file with no artefacts.
 func TestServiceOutcomes(t *testing.T) {
+	t.Parallel()
 	svc := NewService(&captureRepository{})
 	text := []byte("see https://example.org/a and key=value\n")
 	brokenPE := append(append([]byte("MZ"), make([]byte, 62)...), "PE\x00\x00 junk https://example.org/b"...)
@@ -89,6 +91,7 @@ func TestServiceOutcomes(t *testing.T) {
 
 // GRA-18: removing a rule from a copy of a sheet leaves the original alone.
 func TestSpecFiltersCopyOnWrite(t *testing.T) {
+	t.Parallel()
 	base := specpkg.Default()
 	var want []string
 	for _, r := range base.DetectionRules {
@@ -109,6 +112,7 @@ func TestSpecFiltersCopyOnWrite(t *testing.T) {
 // GRA-17: a value found many times in a file is related to itself as a
 // star, not every pair, so its relation edges stay bounded.
 func TestRelationEdgesAreBounded(t *testing.T) {
+	t.Parallel()
 	root := t.TempDir()
 	enr, err := enrichment.OpenGrapheneRepository(root)
 	if err != nil {

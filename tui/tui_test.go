@@ -18,6 +18,7 @@ import (
 // TestQuitWhileJobsRunAsks (TUI-3): ctrl+c while a store runs asks first,
 // with No chosen; yes stops the store and quits once it has stopped.
 func TestQuitWhileJobsRunAsks(t *testing.T) {
+	t.Parallel()
 	g := newGate()
 	d := newDriver(t, Actions{Store: storeWith(g, Outcome{})})
 	d.open(StateStore)
@@ -51,6 +52,7 @@ func TestQuitWhileJobsRunAsks(t *testing.T) {
 // TestQuitDialogKeys: n, esc and q keep working; tab and the arrows change
 // the choice; enter takes it.
 func TestQuitDialogKeys(t *testing.T) {
+	t.Parallel()
 	g := newGate()
 	d := newDriver(t, Actions{Store: storeWith(g, Outcome{})})
 	d.open(StateStore)
@@ -82,6 +84,7 @@ func TestQuitDialogKeys(t *testing.T) {
 // TestSecondCtrlCWhileStoppingQuits: while stopping, ctrl+c quits at once.
 // Run still waits for the job before the database is closed.
 func TestSecondCtrlCWhileStoppingQuits(t *testing.T) {
+	t.Parallel()
 	g := newGate()
 	g.ignoreCancel = true
 	d := newDriver(t, Actions{Store: storeWith(g, Outcome{})})
@@ -103,6 +106,7 @@ func TestSecondCtrlCWhileStoppingQuits(t *testing.T) {
 // TestQuitWithNothingRunning: q and ctrl+c on the menu quit at once when no
 // job runs.
 func TestQuitWithNothingRunning(t *testing.T) {
+	t.Parallel()
 	for _, k := range []string{"q", "esc", "ctrl+c"} {
 		d := newDriver(t, Actions{})
 		d.press(k)
@@ -117,6 +121,7 @@ func TestQuitWithNothingRunning(t *testing.T) {
 // TestQIsText (TUI-4): q is typed into a focused input; elsewhere it goes
 // back to the menu.
 func TestQIsText(t *testing.T) {
+	t.Parallel()
 	cases := []struct {
 		state State
 		setup []string
@@ -153,6 +158,7 @@ func TestQIsText(t *testing.T) {
 // checkboxes in both modes, typing d into the query is text, and the
 // analysis gets what is ticked.
 func TestNearOptionsAreCheckboxes(t *testing.T) {
+	t.Parallel()
 	type call struct {
 		mode, query string
 		opts        NearOptions
@@ -201,6 +207,7 @@ func TestNearOptionsAreCheckboxes(t *testing.T) {
 // TestNearModeListCannotPanic (TUI-4): the mode list has no filter, and an
 // empty selection is not taken for a mode.
 func TestNearModeListCannotPanic(t *testing.T) {
+	t.Parallel()
 	d := newDriver(t, Actions{})
 	d.open(StateNear)
 	d.press("/", "z", "z")
@@ -220,6 +227,7 @@ func TestNearModeListCannotPanic(t *testing.T) {
 // TestCancelReturnsToMenu (TUI-4): the Cancel buttons go back to the menu;
 // they used to quit.
 func TestCancelReturnsToMenu(t *testing.T) {
+	t.Parallel()
 	for _, c := range []struct {
 		state State
 		tabs  int
@@ -241,6 +249,7 @@ func TestCancelReturnsToMenu(t *testing.T) {
 // TestEscKeepsTheJob (TUI-4): leaving a screen leaves its job running, the
 // menu lists it, ctrl+x on the menu cancels it, and its outcome shows.
 func TestEscKeepsTheJob(t *testing.T) {
+	t.Parallel()
 	var mu sync.Mutex
 	var causes []error
 	d := newDriver(t, Actions{Search: func(ctx context.Context, q string) (Outcome, error) {
@@ -268,6 +277,7 @@ func TestEscKeepsTheJob(t *testing.T) {
 // TestCtrlXCancelsTheScreensJob: on a screen, ctrl+x cancels its own job
 // only.
 func TestCtrlXCancelsTheScreensJob(t *testing.T) {
+	t.Parallel()
 	store, search := newGate(), newGate()
 	d := newDriver(t, Actions{
 		Store:  storeWith(store, Outcome{}),
@@ -296,6 +306,7 @@ func TestCtrlXCancelsTheScreensJob(t *testing.T) {
 // TestOutcomeAfterLeaving: a store that ends after the screen was left
 // reports on the menu, warnings as warnings.
 func TestOutcomeAfterLeaving(t *testing.T) {
+	t.Parallel()
 	g := newGate()
 	d := newDriver(t, Actions{Store: storeWith(g, Outcome{Lines: []string{"Stored as evidence AAA (10 bytes, raw)", "Index partial"}, Warning: true})})
 	d.open(StateStore)
@@ -314,6 +325,7 @@ func TestOutcomeAfterLeaving(t *testing.T) {
 // layout is shown read-only and the store gets only its options (CFG-6);
 // "store another" starts afresh.
 func TestStoreScreen(t *testing.T) {
+	t.Parallel()
 	type call struct {
 		path string
 		opts StoreOptions
@@ -362,6 +374,7 @@ func TestStoreScreen(t *testing.T) {
 // and enrichment read the index, so skipping it turns them off, and the
 // focus passes them by while they cannot be chosen.
 func TestStoreOptions(t *testing.T) {
+	t.Parallel()
 	var got record[StoreOptions]
 	d := newDriver(t, Actions{Store: func(_ context.Context, _ string, o StoreOptions) (Outcome, error) {
 		got.add(o)
@@ -401,6 +414,7 @@ func TestStoreOptions(t *testing.T) {
 // and the question whether to store another are on screen; the options give
 // way to them.
 func TestStoreQuestionFits(t *testing.T) {
+	t.Parallel()
 	d := newDriver(t, Actions{Store: func(context.Context, string, StoreOptions) (Outcome, error) {
 		return Outcome{Lines: []string{"Storing ev.bin", "Stored as evidence AAA (16 bytes, raw) in 1s",
 			"Index complete: 1 partitions, 3 of 3 files indexed", "Warning: 2 EWF chunk tables failed"}, Warning: true}, nil
@@ -420,6 +434,7 @@ func TestStoreQuestionFits(t *testing.T) {
 // TestRestoreAsksBeforeReplacing (TUI-2): an existing target is replaced
 // only after the user agrees; No is chosen.
 func TestRestoreAsksBeforeReplacing(t *testing.T) {
+	t.Parallel()
 	type call struct {
 		id, path string
 		replace  bool
@@ -473,6 +488,7 @@ func evidenceRows(n int) []EvidenceRow {
 // TestListWindowFollowsTheSelection (TUI-5): the list is drawn as a window
 // around the selection, and says when it holds only the first rows.
 func TestListWindowFollowsTheSelection(t *testing.T) {
+	t.Parallel()
 	var limit int
 	d := newDriver(t, Actions{List: func(_ context.Context, n int) (EvidenceList, error) {
 		limit = n
@@ -510,6 +526,7 @@ func TestListWindowFollowsTheSelection(t *testing.T) {
 // TestListRestore: the list restores the selected evidence beside the working
 // directory, asking before it replaces a file.
 func TestListRestore(t *testing.T) {
+	t.Parallel()
 	var replaced record[bool]
 	d := newDriver(t, Actions{
 		List: func(context.Context, int) (EvidenceList, error) {
@@ -572,6 +589,7 @@ func TestClipboardIsACommand(t *testing.T) {
 // TestEvidenceStringsAreMadeSafe (TUI-5): an escape sequence in a name, an
 // outcome or an error does not reach the terminal.
 func TestEvidenceStringsAreMadeSafe(t *testing.T) {
+	t.Parallel()
 	const evil = "x\x1b]0;pwned\x07\x1b[2J"
 	tree := microTree(evil, evil, evil, evil, evil, 1)
 	acts := Actions{
@@ -627,6 +645,7 @@ func TestEvidenceStringsAreMadeSafe(t *testing.T) {
 // name field; No is the next button; Yes works only once the data root's
 // name is typed.
 func TestResetNeedsTheNameAndDefaultsToNo(t *testing.T) {
+	t.Parallel()
 	var resets atomic.Int32
 	d := newDriver(t, Actions{Reset: func(context.Context) error { resets.Add(1); return nil }})
 	d.open(StateReset)
@@ -661,6 +680,7 @@ func TestResetNeedsTheNameAndDefaultsToNo(t *testing.T) {
 // TestResetWaitsForOtherJobs: the reset is unavailable while another job
 // runs, and nothing starts while it runs.
 func TestResetWaitsForOtherJobs(t *testing.T) {
+	t.Parallel()
 	store, reset := newGate(), newGate()
 	d := newDriver(t, Actions{
 		Store: storeWith(store, Outcome{}),
@@ -697,6 +717,7 @@ func TestResetWaitsForOtherJobs(t *testing.T) {
 // TestStatsScreen: the layout comes from the database's own description;
 // a loader's failure shows on the menu, its success does not.
 func TestStatsScreen(t *testing.T) {
+	t.Parallel()
 	fail := true
 	d := newDriver(t, Actions{Stats: func(context.Context) (*store.DBStats, error) {
 		if fail {
@@ -743,6 +764,7 @@ func microTree(evidence, partition, path, kind, value string, count int) *microa
 // TestMicroScreen: the view says when it shows only some files, and how many
 // artefacts a file holds beyond those shown.
 func TestMicroScreen(t *testing.T) {
+	t.Parallel()
 	tree := microTree("case.e01", "p1", "/Windows/notepad.exe", "url", "http://example.com/"+strings.Repeat("a", 200), 25)
 	d := newDriver(t, Actions{Micro: func(context.Context) (MicroView, error) {
 		return MicroView{Tree: tree, Files: 700, Artefacts: 9000, Shown: 500, PerFile: 20}, nil
@@ -770,6 +792,7 @@ func TestMicroScreen(t *testing.T) {
 // TestMenuShowsTheDatabase (CFG-6): the menu shows the layout read-only and
 // says when the database is not encrypted.
 func TestMenuShowsTheDatabase(t *testing.T) {
+	t.Parallel()
 	d := newDriver(t, Actions{})
 	for _, want := range []string{testInfo.Root, "Chunks of 256 KiB, hashed with blake3", "This database is not encrypted."} {
 		if !d.shows(want) {
@@ -802,6 +825,7 @@ type unknownMsg struct{}
 // TestModelPanicIsContained: a panic in Update ends the program and cancels
 // every job; one in View is drawn, and the next key ends the program.
 func TestModelPanicIsContained(t *testing.T) {
+	t.Parallel()
 	g := newGate()
 	d := newDriver(t, Actions{Store: storeWith(g, Outcome{})})
 	d.open(StateStore)

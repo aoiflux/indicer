@@ -10,6 +10,7 @@ import (
 )
 
 func TestStoreDataSmallFileWithIndexingAcrossHashStrategies(t *testing.T) {
+	t.Parallel()
 	const chunkKB = 256
 
 	inputPath := filepath.Join(t.TempDir(), "tiny.bin")

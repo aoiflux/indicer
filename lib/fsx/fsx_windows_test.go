@@ -28,6 +28,7 @@ func holdExclusively(t *testing.T, path string) func() {
 }
 
 func TestReplaceFileRetriesWhileTargetBusy(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
 	src, dst := filepath.Join(dir, "src"), filepath.Join(dir, "dst")
 	for p, s := range map[string]string{src: "new", dst: "old"} {
@@ -50,6 +51,7 @@ func TestReplaceFileRetriesWhileTargetBusy(t *testing.T) {
 }
 
 func TestReplaceFileReportsPersistentHolder(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
 	src, dst := filepath.Join(dir, "src"), filepath.Join(dir, "dst")
 	for p, s := range map[string]string{src: "new", dst: "old"} {

@@ -21,6 +21,7 @@ import (
 // TestFixturesExtract checks every archive named by golden.json unpacks into
 // a badger directory.
 func TestFixturesExtract(t *testing.T) {
+	t.Parallel()
 	for _, f := range Load(t) {
 		t.Run(f.Mode, func(t *testing.T) {
 			db := Extract(t, f)
@@ -34,6 +35,7 @@ func TestFixturesExtract(t *testing.T) {
 }
 
 func TestExtractRejectsUnsafeEntries(t *testing.T) {
+	t.Parallel()
 	cases := []struct {
 		name string
 		hdr  tar.Header
@@ -94,6 +96,7 @@ func writeArchive(t *testing.T, path string, hdr tar.Header) {
 // defect ID, and once fixed it passes. An object that restored correctly at
 // generation time and fails now is a regression.
 func TestLegacyRestore(t *testing.T) {
+	t.Parallel()
 	if testing.Short() {
 		t.Skip("builds the dues binary")
 	}

@@ -14,6 +14,7 @@ import (
 // so every user could list the database and read whatever its files allowed.
 // They are now the owner's only. Windows keeps access in ACLs, not these bits.
 func TestNewDataRootIsPrivate(t *testing.T) {
+	t.Parallel()
 	if runtime.GOOS == "windows" {
 		t.Skip("file modes are not enforced on Windows")
 	}

@@ -7,6 +7,7 @@ import (
 )
 
 func TestIntersect(t *testing.T) {
+	t.Parallel()
 	const cs = 4096
 	tests := []struct {
 		name                           string

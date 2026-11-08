@@ -23,6 +23,7 @@ import (
 // relations, and the buffer grew with the evidence. Every ingest must leave
 // its relation for every shared chunk.
 func TestRevrelConcurrentIngestsKeepEveryRelation(t *testing.T) {
+	t.Parallel()
 	for name, pass := range chunkPasses {
 		t.Run(name, func(t *testing.T) {
 			db := testdb.Open(t, testdb.Default, testdb.Options{ChunkKiB: 4})
@@ -91,6 +92,7 @@ func TestRevrelConcurrentIngestsKeepEveryRelation(t *testing.T) {
 // neither, and each writes only what it asked for. They were process
 // globals, which TUI stores running side by side could not set apart.
 func TestChunkPassOptionsArePerPass(t *testing.T) {
+	t.Parallel()
 	for name, pass := range chunkPasses {
 		t.Run(name, func(t *testing.T) {
 			db := testdb.Open(t, testdb.Default, testdb.Options{ChunkKiB: 4})

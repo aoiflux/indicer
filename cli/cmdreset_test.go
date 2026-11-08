@@ -15,6 +15,7 @@ import (
 // "y" deleted any non-empty directory, and a script piping "y" could do so
 // unattended.
 func TestResetDataConfirmation(t *testing.T) {
+	t.Parallel()
 	newDB := func(t *testing.T) string {
 		dbPath := filepath.Join(t.TempDir(), "caseA")
 		h, err := openTestDB(dbPath, nil)

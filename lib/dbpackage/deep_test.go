@@ -44,6 +44,7 @@ func noDeepStage(t *testing.T, tmp string) {
 // its evidence back and leaves nothing in the temporary directory, which it
 // also clears of what a killed verify left.
 func TestVerifyDeepReadsTheEvidence(t *testing.T) {
+	t.Parallel()
 	res := export(t, ExportOptions{Path: newRoot(t, dbmeta.NoPassword())})
 	tmp := t.TempDir()
 	stale := filepath.Join(tmp, deepStagePrefix+"killed")
@@ -72,6 +73,7 @@ func TestVerifyDeepReadsTheEvidence(t *testing.T) {
 // a damaged chunk matches its manifest, so verify passes; a deep verify
 // reads the evidence back and reports it damaged.
 func TestVerifyDeepFindsDamagedEvidence(t *testing.T) {
+	t.Parallel()
 	root := newRoot(t, dbmeta.NoPassword())
 	var blob string
 	err := filepath.WalkDir(filepath.Join(root, cnst.BLOBSDIR), func(p string, d fs.DirEntry, err error) error {
@@ -117,6 +119,7 @@ func TestVerifyDeepFindsDamagedEvidence(t *testing.T) {
 // password; one whose files do not match the manifest, or whose database
 // holds other evidence than the manifest says, fails. None leaves its copy.
 func TestVerifyDeepRefuses(t *testing.T) {
+	t.Parallel()
 	tmp := t.TempDir()
 
 	enc := export(t, ExportOptions{Path: newRoot(t, dbmeta.Password("right"))})

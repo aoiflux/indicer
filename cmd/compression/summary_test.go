@@ -13,6 +13,7 @@ import (
 // the operation's duration and the size ratio. auto stays quiet when stderr
 // is not a terminal, as here; off is always quiet.
 func TestSummary(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
 	src := filepath.Join(dir, "case")
 	if err := os.MkdirAll(filepath.Join(src, "sub"), 0o755); err != nil {

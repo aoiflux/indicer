@@ -35,6 +35,7 @@ func fixtureManifest(t *testing.T, name string) string {
 }
 
 func TestManifestDigestsAgree(t *testing.T) {
+	t.Parallel()
 	out := fixtureManifest(t, "fat/fat16")
 	idx, err := readManifest(out)
 	if err != nil {
@@ -53,6 +54,7 @@ func TestManifestDigestsAgree(t *testing.T) {
 }
 
 func TestDiffSameAndChanged(t *testing.T) {
+	t.Parallel()
 	a := fixtureManifest(t, "fat/fat12")
 	var stdout, stderr bytes.Buffer
 	if code := runDiff([]string{a, a}, &stdout, &stderr); code != 0 {
@@ -96,6 +98,7 @@ func TestDiffSameAndChanged(t *testing.T) {
 }
 
 func TestDiffRejectsUnknownCategory(t *testing.T) {
+	t.Parallel()
 	a := fixtureManifest(t, "fat/fat12")
 	allow := filepath.Join(t.TempDir(), "allow.json")
 	if err := os.WriteFile(allow, []byte(`{"fat12.img": ["sise_changed"]}`), 0o644); err != nil {
@@ -107,6 +110,7 @@ func TestDiffRejectsUnknownCategory(t *testing.T) {
 }
 
 func TestRunRejectsBadFlags(t *testing.T) {
+	t.Parallel()
 	for _, args := range [][]string{{}, {"-hash", "md5", "x"}, {"-max-hash", "-1", "x"}} {
 		if code := run(args, &bytes.Buffer{}, &bytes.Buffer{}); code != 2 {
 			t.Errorf("run(%q) exit %d, want 2", args, code)

@@ -9,6 +9,7 @@ import (
 )
 
 func TestDetect(t *testing.T) {
+	t.Parallel()
 	cases := []struct {
 		name   string
 		setup  func([]byte)
@@ -55,6 +56,7 @@ func TestDetect(t *testing.T) {
 }
 
 func TestDetectShortVolume(t *testing.T) {
+	t.Parallel()
 	// A volume smaller than the probe windows is not a read error.
 	buf := make([]byte, 2048)
 	copy(buf[3:], "NTFS    ")
@@ -69,12 +71,14 @@ type failingReader struct{}
 func (failingReader) ReadAt([]byte, int64) (int, error) { return 0, errors.New("device not ready") }
 
 func TestDetectReadError(t *testing.T) {
+	t.Parallel()
 	if _, err := DetectErr(failingReader{}); err == nil {
 		t.Fatal("a read error must not look like an unknown filesystem (PAR-16)")
 	}
 }
 
 func TestOpenUnknownFS(t *testing.T) {
+	t.Parallel()
 	if _, err := Open(core.FSUnknown, core.OpenParams{Reader: bytes.NewReader(make([]byte, 512)), Size: 512}); err != ErrUnknownFS {
 		t.Fatalf("Open(unknown) err = %v, want ErrUnknownFS", err)
 	}

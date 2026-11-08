@@ -30,6 +30,7 @@ var corpusNTFS = flag.String("dues.corpus-ntfs", "", "real images whose NTFS par
 // read the same through both decoders. -dues.corpus-ntfs adds images of the
 // real corpus, each NTFS partition of which is checked too.
 func TestDecoderMatchesLibntfs(t *testing.T) {
+	t.Parallel()
 	compressed := 0
 	for _, m := range fsfixture.All(t) {
 		if !strings.HasPrefix(m.Name, "ntfs/") {

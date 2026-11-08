@@ -11,6 +11,7 @@ import (
 // TestUniformChunkSize: only a database registered with a manifest it was
 // created with has one chunk size for all its evidence.
 func TestUniformChunkSize(t *testing.T) {
+	t.Parallel()
 	db, err := badger.Open(badger.DefaultOptions(filepath.Join(t.TempDir(), "kvdb")).WithLogger(nil))
 	if err != nil {
 		t.Fatal(err)

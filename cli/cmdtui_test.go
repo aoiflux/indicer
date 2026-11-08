@@ -250,6 +250,7 @@ func countKeys(t *testing.T, db *badger.DB, prefix string) int {
 // reading, and no view starts while it runs; a view that ends lets it go. A
 // read-only handle open in the process would make its writable open fail.
 func TestGraphGate(t *testing.T) {
+	t.Parallel()
 	var g graphGate
 	reading, release := make(chan struct{}), make(chan struct{})
 	viewed := make(chan error, 1)
@@ -306,6 +307,7 @@ func mustRead(t *testing.T, path string) []byte {
 // TestTUIOutcome: a warning is a finished action that needs attention, not
 // a failure; blank lines are dropped.
 func TestTUIOutcome(t *testing.T) {
+	t.Parallel()
 	out, err := outcome("\nStored as evidence A\n\n  Index partial  \n", &lifecycle.WarningError{Err: errors.New("index partial")})
 	if err != nil || !out.Warning || len(out.Lines) != 2 || out.Lines[1] != "Index partial" {
 		t.Fatalf("warning: %v %+v", err, out)

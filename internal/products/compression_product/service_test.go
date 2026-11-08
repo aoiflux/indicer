@@ -45,6 +45,7 @@ const (
 )
 
 func TestHandle_CompressDecompressBytes_RoundTrip(t *testing.T) {
+	t.Parallel()
 	svc := New()
 	input := []byte("compression product round trip")
 
@@ -87,6 +88,7 @@ func TestHandle_CompressDecompressBytes_RoundTrip(t *testing.T) {
 }
 
 func TestHandle_CompressDecompressFile_RoundTrip(t *testing.T) {
+	t.Parallel()
 	svc := New()
 	dir := t.TempDir()
 	inPath := filepath.Join(dir, "input.txt")
@@ -138,6 +140,7 @@ func TestHandle_CompressDecompressFile_RoundTrip(t *testing.T) {
 }
 
 func TestHandle_DecompressFile_LegacyZstdRoundTrip(t *testing.T) {
+	t.Parallel()
 	svc := New()
 	dir := t.TempDir()
 	inPath := filepath.Join(dir, "legacy.txt")
@@ -194,6 +197,7 @@ func TestHandle_DecompressFile_LegacyZstdRoundTrip(t *testing.T) {
 }
 
 func TestHandle_CompressFile_AsyncProgress(t *testing.T) {
+	t.Parallel()
 	svc := New()
 	dir := t.TempDir()
 	inPath := filepath.Join(dir, "compress-async.txt")
@@ -258,6 +262,7 @@ func TestHandle_CompressFile_AsyncProgress(t *testing.T) {
 }
 
 func TestHandle_CompressFile_AsyncCancel(t *testing.T) {
+	t.Parallel()
 	svc := New()
 	dir := t.TempDir()
 	inPath := filepath.Join(dir, "compress-cancel.txt")
@@ -317,6 +322,7 @@ func TestHandle_CompressFile_AsyncCancel(t *testing.T) {
 }
 
 func TestHandle_DecompressFile_AsyncProgress(t *testing.T) {
+	t.Parallel()
 	svc := New()
 	dir := t.TempDir()
 	inPath := filepath.Join(dir, "legacy-async.txt")
@@ -400,6 +406,7 @@ func TestHandle_DecompressFile_AsyncProgress(t *testing.T) {
 }
 
 func TestHandle_DecompressFile_AsyncCancel(t *testing.T) {
+	t.Parallel()
 	svc := New()
 	dir := t.TempDir()
 	inPath := filepath.Join(dir, "legacy-cancel.txt")
@@ -486,6 +493,7 @@ func TestHandle_DecompressFile_AsyncCancel(t *testing.T) {
 }
 
 func TestHandle_Capabilities(t *testing.T) {
+	t.Parallel()
 	svc := New()
 	res, rerr := svc.Handle(context.Background(), testOpCapabilities, json.RawMessage(`{}`))
 	if rerr != nil {
@@ -502,6 +510,7 @@ func TestHandle_Capabilities(t *testing.T) {
 }
 
 func TestHandle_InvalidBase64(t *testing.T) {
+	t.Parallel()
 	svc := New()
 	params := json.RawMessage(`{"data_base64":"@@@"}`)
 	_, rerr := svc.Handle(context.Background(), testOpCompressBytes, params)
@@ -514,6 +523,7 @@ func TestHandle_InvalidBase64(t *testing.T) {
 }
 
 func TestHandle_CreateArchive_File(t *testing.T) {
+	t.Parallel()
 	svc := New()
 	dir := t.TempDir()
 	in := filepath.Join(dir, "sample.txt")
@@ -562,6 +572,7 @@ func TestHandle_CreateArchive_File(t *testing.T) {
 }
 
 func TestHandle_CreateArchive_SplitVolumes(t *testing.T) {
+	t.Parallel()
 	svc := New()
 	dir := t.TempDir()
 	in := filepath.Join(dir, "big.txt")
@@ -608,6 +619,7 @@ func TestHandle_CreateArchive_SplitVolumes(t *testing.T) {
 }
 
 func TestHandle_ExtractArchive_File(t *testing.T) {
+	t.Parallel()
 	svc := New()
 	dir := t.TempDir()
 	in := filepath.Join(dir, "extract-src.txt")
@@ -655,6 +667,7 @@ func TestHandle_ExtractArchive_File(t *testing.T) {
 }
 
 func TestHandle_CreateArchive_MultiFile(t *testing.T) {
+	t.Parallel()
 	svc := New()
 	dir := t.TempDir()
 	inputDir := filepath.Join(dir, "inputs")
@@ -715,6 +728,7 @@ func TestHandle_CreateArchive_MultiFile(t *testing.T) {
 }
 
 func TestHandle_CreateArchive_MultiFileRejectsDirectory(t *testing.T) {
+	t.Parallel()
 	svc := New()
 	dir := t.TempDir()
 	inputDir := filepath.Join(dir, "inputs")
@@ -739,6 +753,7 @@ func TestHandle_CreateArchive_MultiFileRejectsDirectory(t *testing.T) {
 }
 
 func TestHandle_CreateArchive_AsyncProgress(t *testing.T) {
+	t.Parallel()
 	svc := New()
 	dir := t.TempDir()
 	in := filepath.Join(dir, "async-src.txt")
@@ -809,6 +824,7 @@ func TestHandle_CreateArchive_AsyncProgress(t *testing.T) {
 }
 
 func TestHandle_CancelTask_NotFound(t *testing.T) {
+	t.Parallel()
 	svc := New()
 	params, _ := json.Marshal(map[string]any{"task_id": "missing-task"})
 	_, rerr := svc.Handle(context.Background(), testOpCancelTask, params)
@@ -821,6 +837,7 @@ func TestHandle_CancelTask_NotFound(t *testing.T) {
 }
 
 func TestHandle_CreateArchive_AsyncCancel(t *testing.T) {
+	t.Parallel()
 	svc := New()
 	dir := t.TempDir()
 	in := filepath.Join(dir, "cancel-src.txt")
@@ -887,6 +904,7 @@ func TestHandle_CreateArchive_AsyncCancel(t *testing.T) {
 }
 
 func TestHandle_ListArchive_File(t *testing.T) {
+	t.Parallel()
 	svc := New()
 	dir := t.TempDir()
 	in := filepath.Join(dir, "list-src.txt")
@@ -941,6 +959,7 @@ func TestHandle_ListArchive_File(t *testing.T) {
 }
 
 func TestHandle_ListArchive_AsyncProgress(t *testing.T) {
+	t.Parallel()
 	svc := New()
 	dir := t.TempDir()
 	in := filepath.Join(dir, "list-async-src.txt")
@@ -1007,6 +1026,7 @@ func TestHandle_ListArchive_AsyncProgress(t *testing.T) {
 }
 
 func TestHandle_ListArchive_AsyncCancel(t *testing.T) {
+	t.Parallel()
 	svc := New()
 	dir := t.TempDir()
 	in := filepath.Join(dir, "list-cancel-src.txt")
@@ -1071,6 +1091,7 @@ func TestHandle_ListArchive_AsyncCancel(t *testing.T) {
 }
 
 func TestHandle_VerifyArchive_File(t *testing.T) {
+	t.Parallel()
 	svc := New()
 	dir := t.TempDir()
 	in := filepath.Join(dir, "verify-src.txt")
@@ -1121,6 +1142,7 @@ func TestHandle_VerifyArchive_File(t *testing.T) {
 }
 
 func TestHandle_VerifyArchive_ZipProvidesFormatMetadata(t *testing.T) {
+	t.Parallel()
 	svc := New()
 	dir := t.TempDir()
 	in := filepath.Join(dir, "verify-zip-src.txt")
@@ -1165,6 +1187,7 @@ func TestHandle_VerifyArchive_ZipProvidesFormatMetadata(t *testing.T) {
 }
 
 func TestHandle_VerifyArchive_CorruptFile(t *testing.T) {
+	t.Parallel()
 	svc := New()
 	dir := t.TempDir()
 	arc := filepath.Join(dir, "corrupt"+testArchiveExt)
@@ -1181,6 +1204,7 @@ func TestHandle_VerifyArchive_CorruptFile(t *testing.T) {
 }
 
 func TestHandle_VerifyArchive_MissingSplitPart(t *testing.T) {
+	t.Parallel()
 	svc := New()
 	dir := t.TempDir()
 	in := filepath.Join(dir, "split-src.txt")
@@ -1225,6 +1249,7 @@ func TestHandle_VerifyArchive_MissingSplitPart(t *testing.T) {
 }
 
 func TestHandle_VerifyArchive_AsyncCancel(t *testing.T) {
+	t.Parallel()
 	svc := New()
 	dir := t.TempDir()
 	in := filepath.Join(dir, "verify-cancel-src.txt")
@@ -1301,6 +1326,7 @@ func structToMap(v any) (map[string]any, bool) {
 }
 
 func TestSizeRatio(t *testing.T) {
+	t.Parallel()
 	for _, c := range []struct {
 		original, archived int64
 		ratio, saved       float64

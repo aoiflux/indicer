@@ -14,6 +14,7 @@ import (
 // returns, the ingest a crash left pending. Without Recover (repair inspects
 // first), or read-only (CFG-11), the open leaves it as it was.
 func TestOpenRecoversWhenAsked(t *testing.T) {
+	t.Parallel()
 	root := setup(t)
 	id := []byte("crashed-evidence")
 	h := open(t, Request{Path: root, Mode: ReadWrite})
@@ -47,6 +48,7 @@ func TestOpenRecoversWhenAsked(t *testing.T) {
 // chunk, with chunks under 128 KiB, is advised to use containers. One in
 // containers, one with larger chunks, and one that already existed are not.
 func TestSmallChunksAdviseContainers(t *testing.T) {
+	t.Parallel()
 	root := setup(t)
 	advised := func(req Request) bool {
 		t.Helper()

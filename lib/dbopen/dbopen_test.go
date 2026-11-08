@@ -92,6 +92,7 @@ func blobsContain(t *testing.T, root string, needle []byte) bool {
 var secret = bytes.Repeat([]byte("PLAINTEXT-EVIDENCE-MARKER "), 4096)
 
 func TestCreateUnencrypted(t *testing.T) {
+	t.Parallel()
 	root := setup(t)
 	h := open(t, Request{Path: root, Mode: ReadWrite})
 	if !h.Created || h.Manifest.Encrypted() || h.Manifest.Layout.BlobEncoding != blobcodec.V2 {
@@ -133,6 +134,7 @@ func TestCreateUnencrypted(t *testing.T) {
 }
 
 func TestCreateEncrypted(t *testing.T) {
+	t.Parallel()
 	root := setup(t)
 	h := open(t, Request{Path: root, Mode: ReadWrite, Creds: dbmeta.Password("s3cret")})
 	if h.Manifest.Encryption.Scheme != dbmeta.SchemeArgon2id || len(h.Notices) != 0 {
@@ -166,6 +168,7 @@ func TestCreateEncrypted(t *testing.T) {
 // TestQuickNeverDropsEncryption is the CFG-2 regression: --quick with a
 // password stored plaintext.
 func TestQuickNeverDropsEncryption(t *testing.T) {
+	t.Parallel()
 	root := setup(t)
 	h := open(t, Request{Path: root, Mode: ReadWrite, Creds: dbmeta.Password("pw"), Layout: Requested{Quick: true}})
 	if !h.Manifest.Encrypted() || h.Manifest.Layout.BadgerCompression != dbmeta.EncodingNone {
@@ -184,6 +187,7 @@ func TestQuickNeverDropsEncryption(t *testing.T) {
 }
 
 func TestReadOnlyNeverCreates(t *testing.T) {
+	t.Parallel()
 	root := setup(t)
 	err := openErr(t, Request{Path: root, Mode: ReadOnly})
 	if !errors.Is(err, ErrNoDatabase) {
@@ -204,6 +208,7 @@ func TestReadOnlyNeverCreates(t *testing.T) {
 // TestChunkKiBOf: the chunk size of an existing database is read from its
 // manifest, before any open; there is none for a new database.
 func TestChunkKiBOf(t *testing.T) {
+	t.Parallel()
 	root := setup(t)
 	if got := ChunkKiBOf(root); got != 0 {
 		t.Fatalf("ChunkKiBOf(a new database) = %d, want 0", got)
@@ -217,6 +222,7 @@ func TestChunkKiBOf(t *testing.T) {
 }
 
 func TestLayoutConflicts(t *testing.T) {
+	t.Parallel()
 	root := setup(t)
 	open(t, Request{Path: root, Mode: ReadWrite, Layout: Requested{ChunkKiB: 64}}).Close()
 
@@ -244,6 +250,7 @@ func TestLayoutConflicts(t *testing.T) {
 }
 
 func TestRootLock(t *testing.T) {
+	t.Parallel()
 	root := setup(t)
 	w := open(t, Request{Path: root, Mode: ReadWrite})
 	if err := openErr(t, Request{Path: root, Mode: ReadWrite}); !errors.Is(err, ErrInUse) {
@@ -265,6 +272,7 @@ func TestRootLock(t *testing.T) {
 }
 
 func TestMarkerDetectsEditedManifest(t *testing.T) {
+	t.Parallel()
 	root := setup(t)
 	open(t, Request{Path: root, Mode: ReadWrite}).Close()
 	m, err := dbmeta.Load(root)
@@ -284,6 +292,7 @@ func TestMarkerDetectsEditedManifest(t *testing.T) {
 }
 
 func TestNewerFormatRefused(t *testing.T) {
+	t.Parallel()
 	root := setup(t)
 	h := open(t, Request{Path: root, Mode: ReadWrite})
 	m := h.Manifest
@@ -343,6 +352,7 @@ func readSomeChunks(t *testing.T, db *badger.DB, root string, container bool) in
 }
 
 func TestLegacyFixtures(t *testing.T) {
+	t.Parallel()
 	for _, f := range legacyfixture.Load(t) {
 		t.Run(f.Mode, func(t *testing.T) {
 			setup(t)
@@ -419,6 +429,7 @@ func copyTree(t *testing.T, src, dst string) {
 // command failed with "Log truncate required" until a writer opened the
 // database (CFG-13).
 func TestReadOnlyOpenRecoversUncleanDatabase(t *testing.T) {
+	t.Parallel()
 	root := setup(t)
 	w := open(t, Request{Path: root, Mode: ReadWrite})
 	if err := w.DB.Update(func(txn *badger.Txn) error { return txn.Set([]byte("k"), []byte("v")) }); err != nil {
@@ -457,6 +468,7 @@ func TestReadOnlyOpenRecoversUncleanDatabase(t *testing.T) {
 // (creating or resetting the database stopped part way) is no database to a
 // reader, and a writer finishes creating it.
 func TestReadOnlyOpenOfUnfinishedDatabase(t *testing.T) {
+	t.Parallel()
 	root := setup(t)
 	h := open(t, Request{Path: root, Mode: ReadWrite})
 	if err := h.Close(); err != nil {
@@ -482,6 +494,7 @@ func TestReadOnlyOpenOfUnfinishedDatabase(t *testing.T) {
 // closed database, or every open in a long-running process (the FFI library)
 // keeps one alive.
 func TestCloseForgetsTheDatabase(t *testing.T) {
+	t.Parallel()
 	root := setup(t)
 	h := open(t, Request{Path: root, Mode: ReadWrite})
 	db := h.DB
@@ -497,6 +510,7 @@ func TestCloseForgetsTheDatabase(t *testing.T) {
 }
 
 func TestWritableOpenSweepsTemps(t *testing.T) {
+	t.Parallel()
 	root := setup(t)
 	h := open(t, Request{Path: root, Mode: ReadWrite})
 	if err := h.Close(); err != nil {
@@ -581,6 +595,7 @@ func TestDefaultRoot(t *testing.T) {
 // data in place, changes nothing, and removes the temporary directory at
 // close.
 func TestReadOnlyOpenOfUnwritableDatabase(t *testing.T) {
+	t.Parallel()
 	if runtime.GOOS != "windows" {
 		testutil.RequireLinuxNonRoot(t)
 	}

@@ -13,6 +13,7 @@ import (
 // tuning its flags gave (DBOptions.Tuning), and that tuning stays with it: a
 // database opened beside it without one runs with the default tuning.
 func TestCommonOpensWithTheCommandsTuning(t *testing.T) {
+	t.Parallel()
 	tun := cnst.DefaultTuning()
 	tun.LowResource, tun.CompressLevel, tun.HashStrategy, tun.StoreWorkers = true, "fast", cnst.AsyncHashStrategy, 3
 	opts := optsFor(filepath.Join(t.TempDir(), "db"), 64, nil)

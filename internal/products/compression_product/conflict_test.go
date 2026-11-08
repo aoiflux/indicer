@@ -14,6 +14,7 @@ import (
 // an archive extracted with "error" over an existing tree, or with a file
 // where a directory is, is not first restored into the staging directory.
 func TestExtractConflictsFoundBeforeWriting(t *testing.T) {
+	t.Parallel()
 	for _, c := range []struct {
 		policy   string
 		existing map[string]bool // name -> is a directory

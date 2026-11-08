@@ -170,6 +170,7 @@ func countIngests(n *atomic.Int32) func(*uploads) {
 // name and returns its evidence. It used to fail after storing the file
 // ("metadata failed: must provide a file to save"), leaving it orphaned.
 func TestUploadV2(t *testing.T) {
+	t.Parallel()
 	var ingests atomic.Int32
 	ls := uploadServer(t, nil, countIngests(&ingests))
 	db := ls.deps.DB
@@ -255,6 +256,7 @@ func TestUploadV2(t *testing.T) {
 // Upload v1 is gone: a start without size opens no session, and a chunk
 // without Upload-Offset is refused.
 func TestUploadNeedsSizeAndOffset(t *testing.T) {
+	t.Parallel()
 	ls := uploadServer(t, nil, nil)
 	db := ls.deps.DB
 	data := []byte("no size")
@@ -277,6 +279,7 @@ func TestUploadNeedsSizeAndOffset(t *testing.T) {
 // SRV-3: the server checks the bytes against the client's hash before
 // storing anything.
 func TestUploadHashMismatchStoresNothing(t *testing.T) {
+	t.Parallel()
 	ls := uploadServer(t, nil, nil)
 	db := ls.deps.DB
 	data := []byte("what the client meant to send")
@@ -306,6 +309,7 @@ func TestUploadHashMismatchStoresNothing(t *testing.T) {
 
 // SRV-2: sessions, sizes, chunks and free space are bounded.
 func TestUploadLimits(t *testing.T) {
+	t.Parallel()
 	lim := DefaultUploadLimits()
 	lim.MaxSessions = 2
 	lim.MaxSize = 1 << 20
@@ -360,6 +364,7 @@ func TestUploadLimits(t *testing.T) {
 // SRV-2: a full disk truncates the file back to what was acknowledged and
 // answers 507; the chunk can then be sent again.
 func TestUploadDiskFull(t *testing.T) {
+	t.Parallel()
 	var fail atomic.Bool
 	ls := uploadServer(t, nil, func(m *uploads) {
 		m.writeAt = func(f *os.File, p []byte, off int64) (int, error) {
@@ -396,6 +401,7 @@ func TestUploadDiskFull(t *testing.T) {
 
 // SRV-2: finalize runs once, however many calls race for it.
 func TestUploadFinalizeOnce(t *testing.T) {
+	t.Parallel()
 	var ingests atomic.Int32
 	ls := uploadServer(t, nil, countIngests(&ingests))
 	db := ls.deps.DB
@@ -437,6 +443,7 @@ func TestUploadFinalizeOnce(t *testing.T) {
 // A finalize that outlasts FinalizeWait answers 202; status and a later
 // finalize give the result.
 func TestUploadFinalizePending(t *testing.T) {
+	t.Parallel()
 	lim := DefaultUploadLimits()
 	lim.FinalizeWait = 100 * time.Millisecond
 	release := make(chan struct{})
@@ -478,6 +485,7 @@ func TestUploadFinalizePending(t *testing.T) {
 // it started however active; a finished one is forgotten after DoneTTL. It
 // used to end 30 minutes after it started, active or not.
 func TestUploadExpiry(t *testing.T) {
+	t.Parallel()
 	clock := &fakeClock{t: time.Unix(1_700_000_000, 0)}
 	lim := DefaultUploadLimits()
 	lim.ReapInterval = time.Hour
@@ -532,6 +540,7 @@ func TestUploadExpiry(t *testing.T) {
 }
 
 func TestUploadAbort(t *testing.T) {
+	t.Parallel()
 	ls := uploadServer(t, nil, nil)
 	h := plainHash(ls.deps.DB, []byte("x"))
 	id := start(t, ls, "/x", "", h, 10).str("upload_id")
@@ -550,6 +559,7 @@ func TestUploadAbort(t *testing.T) {
 // Part files: created for the session alone, readable by the owner only,
 // and swept when the server starts.
 func TestUploadFiles(t *testing.T) {
+	t.Parallel()
 	h := openDB(t)
 	dir := filepath.Join(h.Root, cnst.UploadsDir)
 	if err := os.MkdirAll(dir, 0o700); err != nil {
@@ -582,6 +592,7 @@ func TestUploadFiles(t *testing.T) {
 // SRV-4: StreamFile goes through the same sessions. A client that goes
 // away mid-stream leaves no part file and no evidence.
 func TestStreamFile(t *testing.T) {
+	t.Parallel()
 	ls := uploadServer(t, nil, nil)
 	db := ls.deps.DB
 	c := pbconnect.NewDuesServiceClient(http.DefaultClient, ls.url)
@@ -653,6 +664,7 @@ func TestStreamFile(t *testing.T) {
 // on one upload applies to the bytes it sends: up to the cap is stored, one
 // byte more is refused and leaves nothing behind.
 func TestStreamFileWithoutSizeIsCapped(t *testing.T) {
+	t.Parallel()
 	lim := DefaultUploadLimits()
 	lim.MaxSize = 1 << 20
 	ls := uploadServer(t, &lim, nil)
@@ -689,6 +701,7 @@ func TestStreamFileWithoutSizeIsCapped(t *testing.T) {
 // Content already stored is recorded as an alias; the client's file type
 // does not change the evidence that holds it.
 func TestUploadOfStoredContent(t *testing.T) {
+	t.Parallel()
 	ls := uploadServer(t, nil, nil)
 	db := ls.deps.DB
 	path := fixture(t, "fat/fat12")
@@ -725,6 +738,7 @@ func TestUploadOfStoredContent(t *testing.T) {
 // three of others. Every upload is stored or aliased, each content is
 // stored once, and the clients of one content get the same evidence.
 func TestConcurrentUploads(t *testing.T) {
+	t.Parallel()
 	ls := uploadServer(t, nil, nil)
 	db := ls.deps.DB
 	shared := bytes.Repeat([]byte("shared content "), 20_000)

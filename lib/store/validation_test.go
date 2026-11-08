@@ -72,6 +72,7 @@ func flipByte(t *testing.T, path string, off int64) {
 // short blob or container from the material level, and damaged or
 // misplaced bytes only from the content level.
 func TestValidateEvidenceLevels(t *testing.T) {
+	t.Parallel()
 	type outcome struct{ locations, material, content error }
 	cases := []struct {
 		name   string
@@ -182,6 +183,7 @@ func TestValidateEvidenceLevels(t *testing.T) {
 // missing, so recovery would fail good evidence; at a larger one it skips
 // chunks, so repair --verify would miss damage.
 func TestValidateUsesEachEvidenceChunkSize(t *testing.T) {
+	t.Parallel()
 	db := testdb.Open(t, testdb.Default, testdb.Options{ChunkKiB: 8})
 	big := testutil.RandomBytes(5, 6*8192+3)
 	bigID := runChunkPass(t, ingestChunksBatchOwner, db.DB, "evidence-at-8kib", big)
@@ -215,6 +217,7 @@ func TestValidateUsesEachEvidenceChunkSize(t *testing.T) {
 // container to <name>.blob.zst, while its chunks' metadata still names
 // <name>.blob. Validation must find the compressed container, as reads do.
 func TestValidateCompressedLegacyContainer(t *testing.T) {
+	t.Parallel()
 	db, id, ev, ckey := validationCase(t, testdb.Container)
 	path, _ := chunkFile(t, db.DB, ckey)
 	raw, err := os.ReadFile(path)

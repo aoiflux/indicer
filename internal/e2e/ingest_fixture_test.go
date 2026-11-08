@@ -72,6 +72,7 @@ func ingestDefect(fixture string, f fsfixture.File) (string, bool) {
 // checks that each live file in the ground truth is listed as an indexed
 // file and restores to its true content.
 func TestIngestFixtures(t *testing.T) {
+	t.Parallel()
 	if testing.Short() {
 		t.Skip("builds and runs the dues binary")
 	}

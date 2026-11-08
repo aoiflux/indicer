@@ -35,6 +35,7 @@ func runCLI(t *testing.T, ctx context.Context, stdin string, args ...string) (in
 }
 
 func TestExitCodes(t *testing.T) {
+	t.Parallel()
 	interrupted, cancel := context.WithCancelCause(context.Background())
 	cancel(&lifecycle.SignalError{Signal: os.Interrupt})
 	for _, c := range []struct {
@@ -61,6 +62,7 @@ func TestExitCodes(t *testing.T) {
 
 // TestErrorExitsNonZero is the CMP-5 regression: a failed request exited 0.
 func TestErrorExitsNonZero(t *testing.T) {
+	t.Parallel()
 	code, env, _ := runCLI(t, context.Background(), "", cmdListArchive, "--input", filepath.Join(t.TempDir(), "missing.duesarc"))
 	if code == 0 || env["status"] != "error" {
 		t.Fatalf("exit %d, %v", code, env)
@@ -68,6 +70,7 @@ func TestErrorExitsNonZero(t *testing.T) {
 }
 
 func TestAsyncCommandsRemoved(t *testing.T) {
+	t.Parallel()
 	if code, _, _ := runCLI(t, context.Background(), "", "get-progress", "--task-id", "x"); code != 2 {
 		t.Fatalf("get-progress: exit %d", code)
 	}
@@ -110,6 +113,7 @@ func TestPasswordSources(t *testing.T) {
 }
 
 func TestArchiveCommands(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
 	src := filepath.Join(dir, "case")
 	if err := os.MkdirAll(filepath.Join(src, "sub"), 0o755); err != nil {
@@ -155,6 +159,7 @@ func TestArchiveCommands(t *testing.T) {
 }
 
 func TestInterruptedCommandExitsWithSignalCode(t *testing.T) {
+	t.Parallel()
 	ctx, cancel := context.WithCancelCause(context.Background())
 	cancel(&lifecycle.SignalError{Signal: os.Interrupt})
 	code, env, _ := runCLI(t, ctx, "", cmdCompressFile, "--input", filepath.Join(t.TempDir(), "x"))
@@ -166,6 +171,7 @@ func TestInterruptedCommandExitsWithSignalCode(t *testing.T) {
 // TestGlobalOptions: --temp-dir must be an existing directory, -h prints
 // the usage, and work directories go in --temp-dir.
 func TestGlobalOptions(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	file := filepath.Join(t.TempDir(), "file")
 	if err := os.WriteFile(file, nil, 0o600); err != nil {

@@ -48,6 +48,7 @@ func pdfWithStream(t *testing.T, data []byte) []byte {
 // GRA-14: a PDF whose stream inflates past the limits is refused before
 // pdfcpu, which inflates every stream without a limit, reads it.
 func TestPDFInflationIsBounded(t *testing.T) {
+	t.Parallel()
 	bomb := pdfWithStream(t, make([]byte, 40<<20))
 	if len(bomb) > 1<<20 {
 		t.Fatalf("the test PDF is %d bytes", len(bomb))
@@ -74,6 +75,7 @@ func TestPDFInflationIsBounded(t *testing.T) {
 // A registry hive is recognised by its signature, whatever its record's type
 // says; a hive is typed "dat" from its extension, or not at all.
 func TestParseRecognisesRegistryHives(t *testing.T) {
+	t.Parallel()
 	hive := append([]byte("regf"), make([]byte, 4092)...)
 	for _, ft := range []string{"", "unknown", "dat"} {
 		parsed, ok := Parse(model.FileRecord{Name: "NTUSER.DAT", FileType: ft}, hive)
@@ -89,6 +91,7 @@ func TestParseRecognisesRegistryHives(t *testing.T) {
 // GRA-16: a PE whose parser fails still yields its printable strings for the
 // text detectors, and the failure is reported.
 func TestParseFailureKeepsStrings(t *testing.T) {
+	t.Parallel()
 	content := append([]byte("MZ"), make([]byte, 62)...)
 	content[0x3c] = 0x40
 	content = append(content, []byte("PE\x00\x00 garbage https://example.org/payload trailing text")...)

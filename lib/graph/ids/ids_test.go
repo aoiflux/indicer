@@ -11,6 +11,7 @@ import (
 // the consolidation changed a persisted value and every node keyed by it in
 // every existing store has been orphaned.
 func TestHashText_MatchesStoredIdentifiers(t *testing.T) {
+	t.Parallel()
 	cases := []struct {
 		name  string
 		value string
@@ -45,6 +46,7 @@ func TestHashText_MatchesStoredIdentifiers(t *testing.T) {
 
 // The NUL separator is what stops component boundaries from being ambiguous.
 func TestHashText_SeparatesComponents(t *testing.T) {
+	t.Parallel()
 	if ids.HashText("ab", "c") == ids.HashText("a", "bc") {
 		t.Error(`HashText("ab","c") collides with HashText("a","bc"): components are not separated`)
 	}
@@ -54,6 +56,7 @@ func TestHashText_SeparatesComponents(t *testing.T) {
 }
 
 func TestHashText_IsDeterministic(t *testing.T) {
+	t.Parallel()
 	first := ids.HashText("path-node", "p1", "/tmp/x")
 	for i := 0; i < 100; i++ {
 		if got := ids.HashText("path-node", "p1", "/tmp/x"); got != first {
@@ -66,6 +69,7 @@ func TestHashText_IsDeterministic(t *testing.T) {
 }
 
 func TestArtefactLookupKey_DistinguishesKindFromValue(t *testing.T) {
+	t.Parallel()
 	if ids.ArtefactLookupKey("url", "x") == ids.ArtefactLookupKey("ur", "lx") {
 		t.Error("ArtefactLookupKey does not separate kind from value")
 	}

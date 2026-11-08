@@ -181,6 +181,7 @@ func TestCompressedContainerSizeCapped(t *testing.T) {
 // TestCompressedContainerWithoutCache checks the uncached path, used outside
 // restore, still reads every chunk.
 func TestCompressedContainerWithoutCache(t *testing.T) {
+	t.Parallel()
 	path, chunks := writeLegacyCompressedContainer(t, t.TempDir(), "plain", 3, 10, 2000)
 	for i, c := range chunks {
 		got, err := ReadChunkFromContainer(path, c.offset, c.size)

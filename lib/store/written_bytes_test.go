@@ -14,6 +14,7 @@ import (
 // its new chunks take on disk, and as NewBytes their raw size; a chunk the
 // pass already stored, or one stored before it, counts in neither.
 func TestWrittenBytesAreTheBlobs(t *testing.T) {
+	t.Parallel()
 	for name, pass := range chunkPasses {
 		for _, m := range fileModes {
 			t.Run(name+"/"+m.Name, func(t *testing.T) {

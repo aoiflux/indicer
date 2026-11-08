@@ -27,6 +27,7 @@ func register(t *testing.T, db *badger.DB, l dbmeta.Layout, tun cnst.Tuning) *En
 // the default layout and tuning, keeps no block index, and encodes with the
 // default encoder.
 func TestUnregisteredHasTheDefaults(t *testing.T) {
+	t.Parallel()
 	db := new(badger.DB)
 	e := For(db)
 	if _, ok := e.Layout(); ok {
@@ -54,6 +55,7 @@ func TestUnregisteredHasTheDefaults(t *testing.T) {
 // TestRegisteredKeepsItsOwn: a registered database answers from its layout
 // and tuning until it is unregistered.
 func TestRegisteredKeepsItsOwn(t *testing.T) {
+	t.Parallel()
 	db := new(badger.DB)
 	l := dbmeta.Layout{ChunkKiB: 64, ChunkHash: dbmeta.HashBLAKE3, Storage: dbmeta.StorageContainerBIDX}
 	tun := cnst.DefaultTuning()
@@ -79,6 +81,7 @@ func TestRegisteredKeepsItsOwn(t *testing.T) {
 // TestSetLayoutInPlace: repair changes an open database's storage; whoever
 // holds its engine sees the change.
 func TestSetLayoutInPlace(t *testing.T) {
+	t.Parallel()
 	db := new(badger.DB)
 	l := dbmeta.Layout{ChunkKiB: 256, Storage: dbmeta.StorageContainerBIDX}
 	held := register(t, db, l, cnst.DefaultTuning())
@@ -97,6 +100,7 @@ func TestSetLayoutInPlace(t *testing.T) {
 // TestConcurrentUse: readers and the repair that changes the layout and the
 // block index may run at once (run under -race).
 func TestConcurrentUse(t *testing.T) {
+	t.Parallel()
 	db := new(badger.DB)
 	e := register(t, db, dbmeta.Layout{ChunkKiB: 256, Storage: dbmeta.StorageContainerBIDX}, cnst.DefaultTuning())
 	var wg sync.WaitGroup
@@ -122,6 +126,7 @@ func TestConcurrentUse(t *testing.T) {
 // TestMaxBatchCountTakesTheChunkSize: the pending-transaction limit comes
 // from the database's chunk size and its tuning.
 func TestMaxBatchCountTakesTheChunkSize(t *testing.T) {
+	t.Parallel()
 	// Chunks of a TiB: no machine has four available, so one transaction.
 	huge := dbmeta.Layout{ChunkKiB: 1 << 30, Storage: dbmeta.StorageFile}
 	if n := register(t, new(badger.DB), huge, cnst.DefaultTuning()).MaxBatchCount(); n != 1 {
@@ -137,6 +142,7 @@ func TestMaxBatchCountTakesTheChunkSize(t *testing.T) {
 // TestEncodeValueFollowsTheLayout: a database of raw values stores them as
 // they are and any other compresses them with its own encoder.
 func TestEncodeValueFollowsTheLayout(t *testing.T) {
+	t.Parallel()
 	data := bytes.Repeat([]byte("record "), 200)
 	raw := register(t, new(badger.DB), dbmeta.Layout{ChunkKiB: 256, Storage: dbmeta.StorageFile, ValueEncoding: dbmeta.EncodingRaw}, cnst.DefaultTuning())
 	zst := register(t, new(badger.DB), dbmeta.Layout{ChunkKiB: 256, Storage: dbmeta.StorageFile, ValueEncoding: dbmeta.EncodingZstd}, cnst.DefaultTuning())

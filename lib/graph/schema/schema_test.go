@@ -12,6 +12,7 @@ import (
 // store pays one posting-list lookup per query; a legacy store pays two, and
 // only for the four kinds that could ever have reached disk under v1.
 func TestMatchTypes_WidensOnlyForLegacyStores(t *testing.T) {
+	t.Parallel()
 	current := NewRegistry()
 	legacy := NewLegacyRegistry()
 
@@ -41,6 +42,7 @@ func TestMatchTypes_WidensOnlyForLegacyStores(t *testing.T) {
 // with, or the shim maps old values onto the wrong kind — which is worse than
 // not reading them at all.
 func TestContainerKinds_OffsetsAreFrozen(t *testing.T) {
+	t.Parallel()
 	for kind, wantLegacy := range map[NodeKind]graphstore.NodeType{
 		KindEvidenceFile: 128,
 		KindPartition:    129,
@@ -58,6 +60,7 @@ func TestContainerKinds_OffsetsAreFrozen(t *testing.T) {
 // EdgeType(100) was a raw literal below the old custom base, not an offset from
 // it, so it is the one kind whose legacy encoding cannot be derived.
 func TestMatchEdgeTypes_RelationIsSpecialCased(t *testing.T) {
+	t.Parallel()
 	legacy := NewLegacyRegistry()
 
 	got := legacy.MatchEdgeTypes(EdgeKindRelation)
@@ -78,6 +81,7 @@ func TestMatchEdgeTypes_RelationIsSpecialCased(t *testing.T) {
 }
 
 func TestIs_MatchesEitherEncoding(t *testing.T) {
+	t.Parallel()
 	legacy := NewLegacyRegistry()
 
 	old := &graphstore.Node{Labels: []graphstore.NodeType{130}}
@@ -107,6 +111,7 @@ func TestIs_MatchesEitherEncoding(t *testing.T) {
 // No two kinds may share an offset, in either space. A collision would make two
 // concepts indistinguishable on disk, permanently.
 func TestKindOffsets_AreUnique(t *testing.T) {
+	t.Parallel()
 	seenNode := map[NodeKind]string{}
 	for kind, name := range nodeKindNames {
 		if other, clash := seenNode[kind]; clash {
@@ -127,6 +132,7 @@ func TestKindOffsets_AreUnique(t *testing.T) {
 // Every named kind must fit graphene's custom band. CustomNodeType panics above
 // the maximum offset, so a kind past it would crash at the first write.
 func TestKindOffsets_FitTheCustomBand(t *testing.T) {
+	t.Parallel()
 	maxOffset := uint16(graphstore.NodeCustomEnd)
 	for kind, name := range nodeKindNames {
 		if uint16(kind) > maxOffset {
@@ -147,6 +153,7 @@ func TestKindOffsets_FitTheCustomBand(t *testing.T) {
 }
 
 func TestName_RendersUnnamedKindsDistinctly(t *testing.T) {
+	t.Parallel()
 	r := NewRegistry()
 	if got := r.Name(KindIndexedFile); got != "indexed_file" {
 		t.Errorf("Name = %q, want %q", got, "indexed_file")
@@ -158,6 +165,7 @@ func TestName_RendersUnnamedKindsDistinctly(t *testing.T) {
 }
 
 func TestParseKind_RoundTrips(t *testing.T) {
+	t.Parallel()
 	r := NewRegistry()
 	for kind := range nodeKindNames {
 		parsed, ok := ParseKind(r.Name(kind))
@@ -173,6 +181,7 @@ func TestParseKind_RoundTrips(t *testing.T) {
 // This is the generalised fix: a store records the base it was written with, so
 // a future band move is a refused open rather than empty query results.
 func TestCheckLibraryBases_RefusesAMovedBand(t *testing.T) {
+	t.Parallel()
 	if err := CheckLibraryBases(uint16(graphstore.NodeCustomBase), uint16(graphstore.EdgeCustomBase)); err != nil {
 		t.Errorf("current bases were rejected: %v", err)
 	}
@@ -185,6 +194,7 @@ func TestCheckLibraryBases_RefusesAMovedBand(t *testing.T) {
 }
 
 func TestMarker_RoundTrips(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
 
 	if _, found, err := ReadMarker(dir); err != nil || found {
@@ -220,6 +230,7 @@ func TestMarker_RoundTrips(t *testing.T) {
 }
 
 func TestMarker_UnreadableIsAnError(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
 	if err := os.WriteFile(filepath.Join(dir, MarkerFileName), []byte("{not json"), 0o644); err != nil {
 		t.Fatal(err)
@@ -231,6 +242,7 @@ func TestMarker_UnreadableIsAnError(t *testing.T) {
 }
 
 func TestRegistryFor_HonoursMixedAndRefusesTheFuture(t *testing.T) {
+	t.Parallel()
 	mixed := NewMarker("t", true)
 	r, err := RegistryFor(mixed)
 	if err != nil {

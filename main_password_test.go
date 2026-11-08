@@ -59,6 +59,7 @@ func TestPasswordSources(t *testing.T) {
 // TestPasswordFlagRemoved: --password and -p are refused, naming what
 // replaces them, even with a file or stdin source given too.
 func TestPasswordFlagRemoved(t *testing.T) {
+	t.Parallel()
 	pwFile := filepath.Join(t.TempDir(), "pw")
 	if err := os.WriteFile(pwFile, []byte("from-file\n"), 0o600); err != nil {
 		t.Fatal(err)
@@ -74,6 +75,7 @@ func TestPasswordFlagRemoved(t *testing.T) {
 }
 
 func TestPasswordFileErrors(t *testing.T) {
+	t.Parallel()
 	_, err := credsFor(t, "", "--password-file", filepath.Join(t.TempDir(), "missing"), "list")
 	if err == nil || lifecycle.ExitCode(err) != lifecycle.ExitUsage {
 		t.Fatalf("missing password file: %v (exit %d)", err, lifecycle.ExitCode(err))

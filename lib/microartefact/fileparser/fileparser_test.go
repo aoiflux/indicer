@@ -7,6 +7,7 @@ import (
 )
 
 func TestParseUsesIndexedFileTypeOverHeuristics(t *testing.T) {
+	t.Parallel()
 	content := []byte("alpha=bravo\ncharlie=delta\n")
 	file := model.FileRecord{
 		Name:     "sample.bin",
@@ -24,6 +25,7 @@ func TestParseUsesIndexedFileTypeOverHeuristics(t *testing.T) {
 }
 
 func TestParseFailsWhenIndexedTypeUnsupported(t *testing.T) {
+	t.Parallel()
 	content := []byte("plain text content")
 	file := model.FileRecord{
 		Name:     "sample.txt",
@@ -37,6 +39,7 @@ func TestParseFailsWhenIndexedTypeUnsupported(t *testing.T) {
 }
 
 func TestParseFallsBackWhenFileTypeUnknown(t *testing.T) {
+	t.Parallel()
 	content := []byte("alpha=bravo\ncharlie=delta\n")
 	file := model.FileRecord{
 		Name:     "sample.txt",

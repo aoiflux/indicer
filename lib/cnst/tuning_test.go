@@ -15,6 +15,7 @@ import (
 // engine) or travel in a Tuning; a process-wide setting would let one
 // database's settings reach another's (I3).
 func TestNoMutableConfigGlobals(t *testing.T) {
+	t.Parallel()
 	fset := token.NewFileSet()
 	files, err := filepath.Glob("*.go")
 	if err != nil {
@@ -62,6 +63,7 @@ func isErrorsNew(e ast.Expr) bool {
 // TestPipelineOverrides: set workers and queues replace the machine's, and
 // a queue is never shorter than the workers it feeds.
 func TestPipelineOverrides(t *testing.T) {
+	t.Parallel()
 	for _, container := range []bool{false, true} {
 		w, q := DefaultStoreTuning(runtime.NumCPU(), false, container)
 		if gw, gq := (Tuning{}).StorePipeline(container); gw != w || gq != q {
@@ -79,6 +81,7 @@ func TestPipelineOverrides(t *testing.T) {
 // TestRestoreWriteBuffer: the default is 256 MiB, 32 MiB in low-resource
 // mode, and a set size is capped at 256 MiB.
 func TestRestoreWriteBuffer(t *testing.T) {
+	t.Parallel()
 	for _, c := range []struct {
 		t    Tuning
 		want int

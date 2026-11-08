@@ -19,6 +19,7 @@ import (
 // badger, where hierarchical mode keeps none (they are in the block index),
 // so recovery marked every such ingest failed in that mode.
 func TestRecoveryCompletesFlushedEvidenceInEveryMode(t *testing.T) {
+	t.Parallel()
 	testdb.ForEachMode(t, func(t *testing.T, m testdb.Mode) {
 		dir := t.TempDir()
 		dbPath := filepath.Join(dir, "db")

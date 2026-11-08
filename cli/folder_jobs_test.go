@@ -96,6 +96,7 @@ func storeReport(t *testing.T, dir string, jobs int) (string, map[string]string)
 // prints what a store of one at a time prints, in the same order, and its
 // copies alias the same first copy.
 func TestFolderJobsReadAsOneAtATime(t *testing.T) {
+	t.Parallel()
 	dir := folderForJobs(t)
 	one, aliasesOne := storeReport(t, dir, 1)
 	four, aliasesFour := storeReport(t, dir, 4)
@@ -236,6 +237,7 @@ func TestFolderJobsReportFailuresInFolderOrder(t *testing.T) {
 // TestStoreJobs: --store-jobs takes 0 to 64; 0 picks a number, and
 // low-resource mode stores one at a time.
 func TestStoreJobs(t *testing.T) {
+	t.Parallel()
 	for _, n := range []int{-1, 65} {
 		if _, err := StoreJobs(n, false); err == nil {
 			t.Errorf("StoreJobs(%d) accepted", n)

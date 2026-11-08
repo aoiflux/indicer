@@ -27,6 +27,7 @@ func TestSampleCountsCollections(t *testing.T) {
 
 // TestSinceNeverGoesNegative: samples given in the wrong order clamp at 0.
 func TestSinceNeverGoesNegative(t *testing.T) {
+	t.Parallel()
 	a := Runtime{GCCycles: 5, GCCPUSeconds: 2, GCPauseSeconds: 1}
 	d := Runtime{}.Since(a)
 	if d.GCCycles != 0 || d.GCCPUSeconds != 0 || d.GCPauseSeconds != 0 {

@@ -23,6 +23,7 @@ import (
 // replacement over it while the first still held it open, which Windows
 // refuses, so the ingest failed.
 func TestWriteChonkConcurrentSameChunk(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
 	if err := os.MkdirAll(filepath.Join(dir, "blob"), 0o755); err != nil {
 		t.Fatal(err)
@@ -147,6 +148,7 @@ func TestWriteChonkWaitsForAnOpenWriter(t *testing.T) {
 // new blob is created in place, and an existing file under the blob's name
 // (a blob torn by a crash, or truncated) is replaced whole.
 func TestWriteChonkCreatesAndReplaces(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
 	blobDir := filepath.Join(dir, "blob")
 	if err := os.MkdirAll(blobDir, 0o755); err != nil {

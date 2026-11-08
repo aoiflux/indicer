@@ -45,6 +45,7 @@ func handle(svc *Service, op string, params map[string]any) (any, *coreerr.Error
 // TestDecompressBytesIsBounded is the CMP-1 regression for decompress_bytes:
 // a few kilobytes decoded to whatever their frames declared.
 func TestDecompressBytesIsBounded(t *testing.T) {
+	t.Parallel()
 	svc := New()
 	bomb := base64.StdEncoding.EncodeToString(zeroStream(t, 80<<20))
 	if _, rerr := handle(svc, opDecompressBytes, map[string]any{"data_base64": bomb}); rerr == nil || rerr.Code != coreerr.CodeLimitExceeded {
@@ -63,6 +64,7 @@ func TestDecompressBytesIsBounded(t *testing.T) {
 }
 
 func TestDecompressFileIsBounded(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
 	in := filepath.Join(dir, "bomb.zst")
 	if err := os.WriteFile(in, zeroStream(t, 20<<20), 0o644); err != nil {
@@ -87,6 +89,7 @@ func TestDecompressFileIsBounded(t *testing.T) {
 }
 
 func TestOutputGuardRatio(t *testing.T) {
+	t.Parallel()
 	limits, _ := Limits{MaxRatio: 100}.resolve()
 	in := int64(10)
 	g := &outputGuard{limits: limits, in: func() int64 { return in }, grace: 1000}
@@ -107,6 +110,7 @@ func TestOutputGuardRatio(t *testing.T) {
 // back intact (FFI-2). Under -race, it also catches two databases sharing
 // state that one of them writes.
 func TestConcurrentArchiveOperations(t *testing.T) {
+	t.Parallel()
 	root := t.TempDir()
 	var wg sync.WaitGroup
 	errs := make(chan error, 8)
@@ -156,6 +160,7 @@ func TestConcurrentArchiveOperations(t *testing.T) {
 // operations have reached that point. Operations that took turns would
 // leave the rest waiting until the minute ran out.
 func TestArchiveOperationsRunAtOnce(t *testing.T) {
+	t.Parallel()
 	const password = "correct horse"
 	root := t.TempDir()
 	ctx := t.Context()

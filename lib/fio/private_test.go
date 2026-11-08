@@ -14,6 +14,7 @@ import (
 // and were created readable by every user (0644). They are now the owner's
 // only. Windows keeps file access in ACLs, not these bits.
 func TestStoredFilesArePrivate(t *testing.T) {
+	t.Parallel()
 	if runtime.GOOS == "windows" {
 		t.Skip("file modes are not enforced on Windows")
 	}

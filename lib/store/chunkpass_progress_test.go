@@ -20,6 +20,7 @@ import (
 // command's tallies, and the same counts in ChunkResult. A second pass of
 // the same content stores nothing new.
 func TestChunkPassProgress(t *testing.T) {
+	t.Parallel()
 	for name, pass := range chunkPasses {
 		t.Run(name, func(t *testing.T) {
 			db := testdb.Open(t, testdb.Default, testdb.Options{ChunkKiB: 4})
@@ -66,6 +67,7 @@ func TestChunkPassProgress(t *testing.T) {
 }
 
 func TestChunkPassQuietReportsNothing(t *testing.T) {
+	t.Parallel()
 	db := testdb.Open(t, testdb.Default)
 	if err := util.EnsureBlobPath(db.DB.Opts().Dir); err != nil {
 		t.Fatal(err)
@@ -83,6 +85,7 @@ func TestChunkPassQuietReportsNothing(t *testing.T) {
 // TestChunkPassInterrupted: a pass stopped by a signal ends interrupted,
 // short of its total, never full.
 func TestChunkPassInterrupted(t *testing.T) {
+	t.Parallel()
 	for name, pass := range chunkPasses {
 		t.Run(name, func(t *testing.T) {
 			db := testdb.Open(t, testdb.Default)
@@ -108,6 +111,7 @@ func TestChunkPassInterrupted(t *testing.T) {
 // nothing when they are not. The codecs are the ones dbopen registers for a
 // new database with and without a password.
 func TestChunkPassNotesEncryption(t *testing.T) {
+	t.Parallel()
 	for name, key := range map[string][]byte{"unencrypted": nil, "encrypted": bytes.Repeat([]byte{7}, 32)} {
 		t.Run(name, func(t *testing.T) {
 			db := testdb.Open(t, testdb.Default)

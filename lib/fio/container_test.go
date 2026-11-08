@@ -74,6 +74,7 @@ func closeManager(t testing.TB, cm *ContainerManager) {
 // once wrote containers differently; container writing no longer depends on
 // it, so one run covers both.
 func TestContainerSessionsNeverShareFile(t *testing.T) {
+	t.Parallel()
 	dir := newContainerDB(t)
 	cm1 := NewContainerManager(dir)
 	first := writeChunks(t, cm1, 0, 5)
@@ -112,6 +113,7 @@ func (b *failingBackend) WriteAt(file *os.File, data []byte, off int64) (int, er
 // write or a full disk left the partial bytes appended without advancing the
 // recorded offset, so every later chunk's offset pointed into the wrong bytes.
 func TestContainerFailedWriteKeepsOffsets(t *testing.T) {
+	t.Parallel()
 	dir := newContainerDB(t)
 	cm := NewContainerManager(dir)
 	backend := &failingBackend{failAt: 7} // header, two frames of two writes, then a payload
@@ -178,6 +180,7 @@ func TestContainerRotation(t *testing.T) {
 // TestScanContainer checks that the frames alone are enough to rebuild the
 // chunk index, and that a damaged frame is reported, not skipped.
 func TestScanContainer(t *testing.T) {
+	t.Parallel()
 	dir := newContainerDB(t)
 	cm := NewContainerManager(dir)
 	chunks := writeChunks(t, cm, 0, 4)
@@ -224,6 +227,7 @@ func TestScanContainer(t *testing.T) {
 // TestContainerFileHeader checks that a new container starts with the v2
 // header, and that an existing file is never appended to.
 func TestContainerFileHeader(t *testing.T) {
+	t.Parallel()
 	dir := newContainerDB(t)
 	cm := NewContainerManager(dir)
 	chunks := writeChunks(t, cm, 0, 1)

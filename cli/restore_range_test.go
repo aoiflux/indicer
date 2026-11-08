@@ -22,6 +22,7 @@ import (
 // the second, so a small range straddling a chunk boundary came back too
 // long; a range reaching past the evidence read past the last chunk.
 func TestRestoreLogicalRangeAcrossChunkBoundaries(t *testing.T) {
+	t.Parallel()
 	cs := int64(matrixChunkKB * 1024)
 	evidenceSize := 3*cs + 17
 

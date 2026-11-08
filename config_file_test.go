@@ -37,6 +37,7 @@ func jsonPath(p string) string {
 // renamed flag cannot leave a key behind; and every key has one binding,
 // to a value of its own type.
 func TestConfigKeysAreFlags(t *testing.T) {
+	t.Parallel()
 	cliDef := newCLIDefinition()
 	app := cliDef.app
 	bound := map[string]binding{}
@@ -85,6 +86,7 @@ func TestConfigKeysAreFlags(t *testing.T) {
 }
 
 func TestConfigArgs(t *testing.T) {
+	t.Parallel()
 	for _, c := range []struct {
 		args        []string
 		path        string
@@ -185,6 +187,7 @@ func TestReadConfigChoosesTheFile(t *testing.T) {
 }
 
 func TestConfigValidate(t *testing.T) {
+	t.Parallel()
 	abs := jsonPath(filepath.Join(t.TempDir(), "x"))
 	good := `{
 	"color": "never", "plain": true, "ci": false, "no-fun": true, "theme": "dark", "taskbar": true,
@@ -254,6 +257,7 @@ func filled(t *testing.T, file string, args ...string) (cliFlags, sources) {
 
 // TestConfigPrecedence: the command line, then the file, then the default.
 func TestConfigPrecedence(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
 	file := `{"theme": "light", "plain": true, "no-fun": true, "dbpath": ` + jsonPath(dir) + `, "debug": true}`
 
@@ -281,6 +285,7 @@ func TestConfigPrecedence(t *testing.T) {
 // dues restore. The server section does not apply to it, and the store
 // section applies to no command but store and the TUI.
 func TestConfigTuningReachesTheTUI(t *testing.T) {
+	t.Parallel()
 	def := cnst.DefaultTuning()
 	file := `{
 	  "store": {"pipeline": "staged", "hash-strategy": "async", "io-engine": "stdlib",
@@ -347,6 +352,7 @@ func TestConfigTuningReachesTheTUI(t *testing.T) {
 // explicit against each other, and give way together to a preset on the
 // command line.
 func TestConfigPresetRules(t *testing.T) {
+	t.Parallel()
 	file := `{"preset": "quick", "compress-level": "best"}`
 	for _, c := range []struct {
 		args          []string
@@ -385,6 +391,7 @@ func TestConfigPresetRules(t *testing.T) {
 }
 
 func TestConfigUnlockRule(t *testing.T) {
+	t.Parallel()
 	pw := filepath.Join(t.TempDir(), "pw")
 	other := filepath.Join(t.TempDir(), "other")
 	file := `{"password-file": ` + jsonPath(pw) + `}`
@@ -408,6 +415,7 @@ func TestConfigUnlockRule(t *testing.T) {
 // TestConfigSections: a section applies to its own command only, and a
 // list on the command line replaces the file's.
 func TestConfigSections(t *testing.T) {
+	t.Parallel()
 	file := `{"store": {"store-workers": 3, "pipeline": "staged"}, "restore": {"restore-workers": 5},
 		"server": {"listen": ["127.0.0.1:7000", "[::1]:7000"], "cors-origin": ["https://a.example"]}}`
 

@@ -172,6 +172,7 @@ func TestOpen_AfterFullReleaseReopens(t *testing.T) {
 // the process, so a second acquisition contends here exactly as it would from a
 // second dues invocation.
 func TestLock_ContendedDirectoryIsRefused(t *testing.T) {
+	t.Parallel()
 	dir := filepath.Join(t.TempDir(), "graph")
 
 	held, err := acquireLock(dir, false)
@@ -200,6 +201,7 @@ func TestLock_ContendedDirectoryIsRefused(t *testing.T) {
 }
 
 func TestLock_ReleasedLockCanBeRetaken(t *testing.T) {
+	t.Parallel()
 	dir := filepath.Join(t.TempDir(), "graph")
 
 	first, err := acquireLock(dir, false)
@@ -220,6 +222,7 @@ func TestLock_ReleasedLockCanBeRetaken(t *testing.T) {
 }
 
 func TestLock_SharedLocksCoexist(t *testing.T) {
+	t.Parallel()
 	dir := filepath.Join(t.TempDir(), "graph")
 	// A shared lock is taken on a store that exists.
 	if err := os.MkdirAll(dir, 0o755); err != nil {
@@ -246,6 +249,7 @@ func TestLock_SharedLocksCoexist(t *testing.T) {
 // so a second writer is refused. If this starts failing, graphene has dropped
 // that lock and the registry in handle.go is load-bearing again.
 func TestGraphene_SecondWriterRefused(t *testing.T) {
+	t.Parallel()
 	dir := filepath.Join(t.TempDir(), "graph")
 
 	first, err := graphenedb.Open(dir)

@@ -27,6 +27,7 @@ func set(flags ...string) map[string]bool {
 }
 
 func TestResolveRejects(t *testing.T) {
+	t.Parallel()
 	cases := []struct {
 		name string
 		raw  Raw
@@ -75,6 +76,7 @@ func TestResolveRejects(t *testing.T) {
 }
 
 func TestResolveReportsEveryBadFlag(t *testing.T) {
+	t.Parallel()
 	raw := with(base(cnst.CmdList), func(r *Raw) { r.ChunkKiB = 0; r.CompressLevel = "x"; r.ListStatus = "y" })
 	_, _, err := Resolve(raw, machine)
 	for _, f := range []string{FlagChunkSize, FlagCompressLevel, FlagListStatus} {
@@ -87,6 +89,7 @@ func TestResolveReportsEveryBadFlag(t *testing.T) {
 // A bad preset is the only error: the compression level it never got to
 // apply is not blamed.
 func TestBadPresetBlamesOnlyThePreset(t *testing.T) {
+	t.Parallel()
 	for _, raw := range []Raw{
 		with(base(cnst.CmdList), func(r *Raw) { r.Preset = "turbo" }),
 		with(base(cnst.CmdList), func(r *Raw) { r.Preset = "quick"; r.LowResourcePreset = true }),
@@ -100,6 +103,7 @@ func TestBadPresetBlamesOnlyThePreset(t *testing.T) {
 
 // A value from the config file says so.
 func TestMessagesNameTheOrigin(t *testing.T) {
+	t.Parallel()
 	origin := map[string]string{FlagStoreWorkers: "config file /c.json"}
 	raw := with(base(cnst.CmdStore), func(r *Raw) { r.StoreWorkers = -1; r.Set = set(FlagStoreWorkers); r.Origin = origin })
 	_, _, err := Resolve(raw, machine)
@@ -117,6 +121,7 @@ func TestMessagesNameTheOrigin(t *testing.T) {
 }
 
 func TestResolveAcceptsDefaults(t *testing.T) {
+	t.Parallel()
 	for _, cmd := range []string{cnst.CmdStore, cnst.CmdRestore, cnst.CmdList, cnst.CmdSearch, "near in", "micro extract", cnst.CmdServer, cnst.CmdTui} {
 		if _, _, err := Resolve(base(cmd), machine); err != nil {
 			t.Errorf("%s with defaults: %v", cmd, err)
@@ -132,6 +137,7 @@ func TestResolveAcceptsDefaults(t *testing.T) {
 // TestPresetHonoursExplicitFalse is the regression for --quick-mode=false
 // activating the quick preset: only a flag set to true selects a preset.
 func TestPresetHonoursExplicitFalse(t *testing.T) {
+	t.Parallel()
 	raw := with(base(cnst.CmdStore), func(r *Raw) {
 		r.QuickModePreset = false
 		r.Set = set(FlagQuickMode)
@@ -146,6 +152,7 @@ func TestPresetHonoursExplicitFalse(t *testing.T) {
 }
 
 func TestPresetDefaultsYieldToExplicitFlags(t *testing.T) {
+	t.Parallel()
 	eff, _, err := Resolve(with(base(cnst.CmdStore), func(r *Raw) { r.Preset = "quick" }), machine)
 	if err != nil {
 		t.Fatal(err)
@@ -182,6 +189,7 @@ func TestPresetDefaultsYieldToExplicitFlags(t *testing.T) {
 }
 
 func TestStoreTuningFitsMemoryBudget(t *testing.T) {
+	t.Parallel()
 	small := Sys{CPUs: 64, AvailableRAM: 512 << 20}
 	eff, issues, err := Resolve(with(base(cnst.CmdStore), func(r *Raw) { r.ChunkKiB = 65536 }), small)
 	if err != nil {
@@ -210,6 +218,7 @@ func TestStoreTuningFitsMemoryBudget(t *testing.T) {
 // TestIngestingCommandsFitMemoryBudget covers the TUI and the server, which
 // store evidence with default tuning and have no tuning flags.
 func TestIngestingCommandsFitMemoryBudget(t *testing.T) {
+	t.Parallel()
 	small := Sys{CPUs: 64, AvailableRAM: 512 << 20}
 	for _, cmd := range []string{cnst.CmdTui, cnst.CmdServer} {
 		eff, issues, err := Resolve(with(base(cmd), func(r *Raw) { r.ChunkKiB = 65536 }), small)
@@ -232,6 +241,7 @@ func TestIngestingCommandsFitMemoryBudget(t *testing.T) {
 // not fit come down, and counts the user gave that do not fit are refused
 // without asking for another chunk size, which the database fixed.
 func TestTuningFitsTheDatabasesChunks(t *testing.T) {
+	t.Parallel()
 	sys := Sys{CPUs: 8, AvailableRAM: 4 << 30} // a 1 GiB budget
 	if eff, issues, err := Resolve(base(cnst.CmdStore), sys); err != nil || len(issues) != 0 {
 		t.Fatalf("256 KiB chunks: %+v, %v, %v; want the defaults", eff, issues, err)
@@ -261,6 +271,7 @@ func TestTuningFitsTheDatabasesChunks(t *testing.T) {
 }
 
 func TestMachineReportsCPUs(t *testing.T) {
+	t.Parallel()
 	if Machine().CPUs < 1 {
 		t.Fatal("no CPUs reported")
 	}
@@ -269,6 +280,7 @@ func TestMachineReportsCPUs(t *testing.T) {
 // TestHierarchicalRetired: D9 retires --hierarchical. It still parses, so
 // scripts keep working, but it changes nothing and says so.
 func TestHierarchicalRetired(t *testing.T) {
+	t.Parallel()
 	for _, container := range []bool{false, true} {
 		eff, issues, err := Resolve(with(base(cnst.CmdStore), func(r *Raw) {
 			r.Hierarchical, r.Container = true, container
@@ -286,6 +298,7 @@ func TestHierarchicalRetired(t *testing.T) {
 }
 
 func TestRestoreClampsWithWarnings(t *testing.T) {
+	t.Parallel()
 	eff, issues, err := Resolve(with(base(cnst.CmdRestore), func(r *Raw) {
 		r.RestoreBufferMB = 4096
 	}), machine)

@@ -33,6 +33,7 @@ func finished(t *testing.T, j *job) {
 // TestRunnerResetRunsAlone: a reset starts only when no job runs, and no job
 // starts while it runs; other jobs run side by side.
 func TestRunnerResetRunsAlone(t *testing.T) {
+	t.Parallel()
 	r := newRunner(t.Context())
 	store, search := newGate(), newGate()
 	js := startGate(t, r, "store a", sharedJob, store)
@@ -80,6 +81,7 @@ func TestRunnerResetRunsAlone(t *testing.T) {
 // TestRunnerCancelGivesCause: a cancelled job ends with the cause it was
 // cancelled with, not just "context canceled".
 func TestRunnerCancelGivesCause(t *testing.T) {
+	t.Parallel()
 	r := newRunner(t.Context())
 	a, b, c := newGate(), newGate(), newGate()
 	ja := startGate(t, r, "a", sharedJob, a)
@@ -111,6 +113,7 @@ func TestRunnerCancelGivesCause(t *testing.T) {
 // TestRunnerFollowsTheCommand: the command's context ending (a signal) ends
 // every job with its cause.
 func TestRunnerFollowsTheCommand(t *testing.T) {
+	t.Parallel()
 	signal := errors.New("interrupted")
 	ctx, cancel := context.WithCancelCause(t.Context())
 	r := newRunner(ctx)
@@ -125,6 +128,7 @@ func TestRunnerFollowsTheCommand(t *testing.T) {
 
 // TestRunnerKeepsTheJobsOwnError: an error the job returned itself is kept.
 func TestRunnerKeepsTheJobsOwnError(t *testing.T) {
+	t.Parallel()
 	r := newRunner(t.Context())
 	failed := errors.New("disk full")
 	j, err := r.start("store a", sharedJob, func(context.Context) (any, error) { return Outcome{Lines: []string{"partial"}}, failed })
@@ -143,6 +147,7 @@ func TestRunnerKeepsTheJobsOwnError(t *testing.T) {
 // TestRunnerContainsPanics: a job that panics ends with a panic error, and
 // the runner goes on.
 func TestRunnerContainsPanics(t *testing.T) {
+	t.Parallel()
 	r := newRunner(t.Context())
 	j, err := r.start("store a", sharedJob, func(context.Context) (any, error) { panic("boom") })
 	if err != nil {
@@ -167,6 +172,7 @@ func TestRunnerContainsPanics(t *testing.T) {
 // TestRunnerClosedRefusesJobs: once closed, nothing starts, so a command
 // bubbletea runs after the program ended returns at once (TUI-3).
 func TestRunnerClosedRefusesJobs(t *testing.T) {
+	t.Parallel()
 	r := newRunner(t.Context())
 	r.close()
 	_, err := r.start("store a", sharedJob, func(context.Context) (any, error) {
@@ -184,6 +190,7 @@ func TestRunnerClosedRefusesJobs(t *testing.T) {
 // TestRunnerWait: wait returns once every job ends, or reports the ones
 // still running at its timeout.
 func TestRunnerWait(t *testing.T) {
+	t.Parallel()
 	r := newRunner(t.Context())
 	if !r.wait(time.Millisecond) {
 		t.Fatal("wait with no job reported one running")
@@ -210,6 +217,7 @@ func TestRunnerWait(t *testing.T) {
 
 // TestAwaitReportsTheJob: the command a job comes with reports its end.
 func TestAwaitReportsTheJob(t *testing.T) {
+	t.Parallel()
 	r := newRunner(t.Context())
 	j, err := r.start("search a", sharedJob, func(context.Context) (any, error) { return Outcome{Lines: []string{"1 object"}}, nil })
 	if err != nil {

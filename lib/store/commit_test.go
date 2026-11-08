@@ -80,6 +80,7 @@ func countPrefix(t *testing.T, db *badger.DB, prefix []byte) int {
 // The second ingest of the same content becomes an alias of the first, and
 // its relations go (D1, ING-6).
 func TestCommitAliasesStoredContent(t *testing.T) {
+	t.Parallel()
 	db := testdb.Open(t, testdb.Default, testdb.Options{ChunkKiB: 4})
 	content := testutil.RandomBytes(11, 5*4096+7)
 
@@ -145,6 +146,7 @@ func rootOf(t *testing.T, db *badger.DB, content []byte) []byte {
 
 // Concurrent commits of the same content leave exactly one winner.
 func TestCommitConcurrentSingleWinner(t *testing.T) {
+	t.Parallel()
 	db := testdb.Open(t, testdb.Default, testdb.Options{ChunkKiB: 4})
 	content := testutil.RandomBytes(12, 3*4096)
 	var ids [][]byte
@@ -184,6 +186,7 @@ func TestCommitConcurrentSingleWinner(t *testing.T) {
 // Evidence stored before W6 has no content root; a later ingest of the same
 // bytes still finds it by its plain hash.
 func TestCommitFindsLegacyWinner(t *testing.T) {
+	t.Parallel()
 	db := testdb.Open(t, testdb.Default, testdb.Options{ChunkKiB: 4})
 	content := testutil.RandomBytes(13, 2*4096+1)
 	plain := base64.StdEncoding.EncodeToString(sum(content))
@@ -206,6 +209,7 @@ func TestCommitFindsLegacyWinner(t *testing.T) {
 // Cleanup removes a duplicate's index records too: an index pass that ran
 // alongside its chunk pass wrote them before the commit decided.
 func TestCleanupDuplicateRemovesIndex(t *testing.T) {
+	t.Parallel()
 	db := testdb.Open(t, testdb.Default, testdb.Options{ChunkKiB: 4})
 	content := testutil.RandomBytes(14, 4096)
 	first := flushedEvidence(t, db.DB, "/a", content)
@@ -265,6 +269,7 @@ func TestCleanupDuplicateRemovesIndex(t *testing.T) {
 // An attempt that failed resumes under its ID when the same path is stored
 // again with the same content; changed content starts a new evidence.
 func TestBeginAttemptResumes(t *testing.T) {
+	t.Parallel()
 	db := testdb.Open(t, testdb.Default)
 	rec := structs.NewEvidenceFile("e", 0, 100, nil, cnst.UnknownEvidenceType, "")
 	rec.ContentModel, rec.Fingerprint, rec.ChunkSize = structs.ContentModelV2, "fp", 4096

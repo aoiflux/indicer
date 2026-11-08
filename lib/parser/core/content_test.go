@@ -16,6 +16,7 @@ func hole(fileOff, length int64) Extent {
 }
 
 func TestNormalizeExtents(t *testing.T) {
+	t.Parallel()
 	cases := []struct {
 		name string
 		in   []Extent
@@ -115,6 +116,7 @@ func TestNormalizeExtents(t *testing.T) {
 }
 
 func TestNormalizeExtentsRejects(t *testing.T) {
+	t.Parallel()
 	cases := []struct {
 		name string
 		in   []Extent
@@ -137,6 +139,7 @@ func TestNormalizeExtentsRejects(t *testing.T) {
 }
 
 func TestNormalizeExtentsKeepsInput(t *testing.T) {
+	t.Parallel()
 	in := []Extent{data(4096, 4096, 90000), data(0, 4096, 10000)}
 	orig := append([]Extent(nil), in...)
 	if _, err := NormalizeExtents(in, 8192); err != nil {
@@ -148,6 +151,7 @@ func TestNormalizeExtentsKeepsInput(t *testing.T) {
 }
 
 func TestExtentContentTotals(t *testing.T) {
+	t.Parallel()
 	c, err := ExtentContent(16384, []Extent{data(0, 4096, 10000), data(12288, 2048, 20000)})
 	if err != nil {
 		t.Fatal(err)
@@ -164,6 +168,7 @@ func TestExtentContentTotals(t *testing.T) {
 }
 
 func TestExtentContentEmpty(t *testing.T) {
+	t.Parallel()
 	c, err := ExtentContent(0, nil)
 	if err != nil {
 		t.Fatal(err)
@@ -174,6 +179,7 @@ func TestExtentContentEmpty(t *testing.T) {
 }
 
 func TestContentValidate(t *testing.T) {
+	t.Parallel()
 	b := Bounds{PartStart: 1 << 20, PartEnd: 2 << 20, ImageSize: 4 << 20}
 	t.Run("inside", func(t *testing.T) {
 		c, _ := ExtentContent(8192, []Extent{data(0, 4096, 1<<20), data(4096, 4096, 1<<20+8192)})
@@ -220,6 +226,7 @@ func TestContentValidate(t *testing.T) {
 }
 
 func TestProvString(t *testing.T) {
+	t.Parallel()
 	p := ProvDeleted | ProvOutOfBounds
 	if got := p.String(); got != "deleted|out_of_bounds" {
 		t.Fatalf("String = %q", got)
@@ -230,6 +237,7 @@ func TestProvString(t *testing.T) {
 }
 
 func TestUnwrittenFrom(t *testing.T) {
+	t.Parallel()
 	ext := []Extent{data(0, 4096, 10000), data(4096, 4096, 50000)}
 	got := UnwrittenFrom(ext, 6000)
 	want := []Extent{data(0, 4096, 10000), data(4096, 1904, 50000), {FileOffset: 6000, Length: 2192, Kind: ExtentUnwritten}}

@@ -82,6 +82,7 @@ func editManifest(t *testing.T, archive string, fn func(m *archiveManifest)) {
 }
 
 func TestCompressFileRoundTrip(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
 	in := filepath.Join(dir, "report.bin")
 	testutil.WriteRandomFile(t, dir, "report.bin", 11, 700_000)
@@ -181,6 +182,7 @@ func makeV1Archive(t *testing.T, src, archive string, namesOnly bool) {
 // duplicates come back; older ones only names, so files of the same name get
 // distinct names instead of overwriting each other.
 func TestExtractV1Archives(t *testing.T) {
+	t.Parallel()
 	src := filepath.Join(t.TempDir(), "case")
 	tree := map[string]string{"a.txt": "same", "sub/a.txt": "different", "sub/dup.txt": "same"}
 	writeTree(t, src, tree)
@@ -215,6 +217,7 @@ func TestExtractV1Archives(t *testing.T) {
 }
 
 func TestVerifyArchiveChecksContent(t *testing.T) {
+	t.Parallel()
 	src := filepath.Join(t.TempDir(), "case")
 	writeTree(t, src, map[string]string{"one.txt": strings.Repeat("one ", 5000), "two/two.txt": strings.Repeat("two ", 5000)})
 	archive := filepath.Join(t.TempDir(), "case.duesarc")
@@ -256,6 +259,7 @@ func TestVerifyArchiveChecksContent(t *testing.T) {
 // TestDuesarcDeduplicationBomb: content stored once but listed under many
 // paths counts once per path against the limits (CMP-1).
 func TestDuesarcDeduplicationBomb(t *testing.T) {
+	t.Parallel()
 	src := t.TempDir()
 	testutil.WriteRandomFile(t, src, "one.bin", 5, 1<<20)
 	archive := filepath.Join(t.TempDir(), "bomb.duesarc")
@@ -285,6 +289,7 @@ func TestDuesarcDeduplicationBomb(t *testing.T) {
 }
 
 func TestDuesarcManifestIsChecked(t *testing.T) {
+	t.Parallel()
 	src := t.TempDir()
 	writeTree(t, src, map[string]string{"a.txt": "a"})
 	good := filepath.Join(t.TempDir(), "good.duesarc")
@@ -319,6 +324,7 @@ func TestDuesarcManifestIsChecked(t *testing.T) {
 }
 
 func TestDuesarcKeepsTimesAndSkipsLinks(t *testing.T) {
+	t.Parallel()
 	src := filepath.Join(t.TempDir(), "case")
 	writeTree(t, src, map[string]string{"a.txt": "a", "d/b.txt": "b"})
 	when := time.Date(2020, 2, 3, 4, 5, 6, 0, time.UTC)
@@ -353,6 +359,7 @@ func toStrings(v any) []string {
 }
 
 func TestWorkDirRules(t *testing.T) {
+	t.Parallel()
 	src := t.TempDir()
 	writeTree(t, src, map[string]string{"a.txt": "a"})
 	work := t.TempDir()
@@ -366,6 +373,7 @@ func TestWorkDirRules(t *testing.T) {
 }
 
 func TestSweepStaleWorkDirs(t *testing.T) {
+	t.Parallel()
 	tmp := t.TempDir()
 	old := time.Now().Add(-48 * time.Hour)
 	mk := func(name string) string {
@@ -407,6 +415,7 @@ func TestSweepStaleWorkDirs(t *testing.T) {
 // database, and extraction follows that copy even when manifest.json is
 // edited to list other entries.
 func TestEncryptedArchiveHidesItsPaths(t *testing.T) {
+	t.Parallel()
 	src := filepath.Join(t.TempDir(), "case")
 	files := map[string]string{
 		"secret-name-one.txt":          "first",
@@ -471,6 +480,7 @@ func TestEncryptedArchiveHidesItsPaths(t *testing.T) {
 // kind database) is not an archive of files; list, verify and extract each
 // refuse it and name the dues commands that read it.
 func TestDatabasePackageIsRefused(t *testing.T) {
+	t.Parallel()
 	pkg := filepath.Join(t.TempDir(), "case.duesarc")
 	var buf bytes.Buffer
 	zw := zip.NewWriter(&buf)

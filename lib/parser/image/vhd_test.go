@@ -34,6 +34,7 @@ func resolveName(t *testing.T, req libvhdi.ParentRequest) (string, error) {
 // base name in the child's own directory, never through a directory the
 // evidence names.
 func TestSiblingResolverStaysInChildDir(t *testing.T) {
+	t.Parallel()
 	childDir, otherDir := t.TempDir(), t.TempDir()
 	elsewhere := filepath.Join(otherDir, "parent.vhdx")
 	writeFile(t, elsewhere, "not this one")
@@ -61,6 +62,7 @@ func TestSiblingResolverStaysInChildDir(t *testing.T) {
 }
 
 func TestSiblingResolverMatchesCaseInsensitively(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
 	want := filepath.Join(dir, "Parent.VHDX")
 	writeFile(t, want, "x")
@@ -74,6 +76,7 @@ func TestSiblingResolverMatchesCaseInsensitively(t *testing.T) {
 }
 
 func TestSiblingResolverRejectsUnsafeNames(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
 	writeFile(t, filepath.Join(dir, "x"), "x")
 	if err := os.Mkdir(filepath.Join(dir, "sub.vhdx"), 0o755); err != nil {
@@ -97,6 +100,7 @@ const (
 )
 
 func TestOpenVHDFileResolvesSiblingChain(t *testing.T) {
+	t.Parallel()
 	dir := corpusVHD.Require(t)
 	im, err := OpenVHDFile(filepath.Join(dir, corpusChild))
 	if err != nil {
@@ -116,6 +120,7 @@ func TestOpenVHDFileResolvesSiblingChain(t *testing.T) {
 // cannot be completed from its own directory is refused, even when the
 // absolute parent path recorded in the image exists on this machine.
 func TestOpenVHDFileFailsClosed(t *testing.T) {
+	t.Parallel()
 	dir := corpusVHD.Require(t)
 
 	t.Run("missing ancestor", func(t *testing.T) {

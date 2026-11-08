@@ -22,6 +22,7 @@ var setFileAllowed = map[string]bool{
 // TestEvidenceWritesUseUpdateEvidence fails on a SetFile call outside the
 // allowed functions in non-test code.
 func TestEvidenceWritesUseUpdateEvidence(t *testing.T) {
+	t.Parallel()
 	root, err := filepath.Abs(filepath.Join("..", ".."))
 	if err != nil {
 		t.Fatal(err)

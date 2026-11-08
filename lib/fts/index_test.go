@@ -96,6 +96,7 @@ func search(t *testing.T, db *badger.DB, mode fts.QueryMode, terms ...string) ma
 // a word of its text, and both together (one document holds both); an AND
 // query needs every term, an OR query any.
 func TestCandidatesMatchNameAndText(t *testing.T) {
+	t.Parallel()
 	d, eid := storeFixture(t, "fat/fat32_fsagen", true)
 	jobs := jobsOf(t, d.DB, eid)
 	readme, ok := jobs["/docs/readme.txt"]
@@ -122,6 +123,7 @@ func TestCandidatesMatchNameAndText(t *testing.T) {
 // TestSearchCandidatesTreatsTermsLiterally (SRC-3): terms are never parsed
 // as query syntax, so a term with its operators is not an error.
 func TestSearchCandidatesTreatsTermsLiterally(t *testing.T) {
+	t.Parallel()
 	d, _ := storeFixture(t, "fat/fat16", true)
 	for _, term := range []string{"name:foo", "c++", `"unbalanced`, `+-=&|><!(){}[]^~*?:\/`, "AND OR NOT", "foo*"} {
 		if _, err := fts.SearchCandidates(t.Context(), d.DB, []string{term}, fts.QueryModeAnd, 0); err != nil {
@@ -134,6 +136,7 @@ func TestSearchCandidatesTreatsTermsLiterally(t *testing.T) {
 // process share one open index, instead of each call opening it again and
 // waiting for the file lock of the others' opens.
 func TestConcurrentUseSharesOneIndex(t *testing.T) {
+	t.Parallel()
 	d, eid := storeFixture(t, "fat/fat16", true)
 	var jobs []fts.IndexedFileJob
 	for _, j := range jobsOf(t, d.DB, eid) {
@@ -170,6 +173,7 @@ func TestConcurrentUseSharesOneIndex(t *testing.T) {
 // an error after a short wait, not a hang; before, the open waited for as
 // long as the other holder kept it.
 func TestIndexHeldElsewhereTimesOut(t *testing.T) {
+	t.Parallel()
 	d, _ := storeFixture(t, "fat/fat16", true)
 	other, err := bleve.Open(util.FTSPath(d.Root))
 	if err != nil {
@@ -209,6 +213,7 @@ func reopenReadOnly(t *testing.T, d *testdb.DB) *badger.DB {
 // searches its index read-only, and one without an index gets
 // ErrIndexNotReady and no index; before, a search built one.
 func TestReadOnlyDatabaseSearchesWithoutWriting(t *testing.T) {
+	t.Parallel()
 	d, _ := storeFixture(t, "fat/fat16", true)
 	ro := reopenReadOnly(t, d)
 	if _, err := fts.SearchCandidates(t.Context(), ro, []string{"txt"}, fts.QueryModeAnd, 0); err != nil {
@@ -229,6 +234,7 @@ func TestReadOnlyDatabaseSearchesWithoutWriting(t *testing.T) {
 // read keeps its name document and is counted; before, the error was
 // dropped and the file indexed as if it held no text.
 func TestIndexFilesCountsUnreadableText(t *testing.T) {
+	t.Parallel()
 	d, eid := storeFixture(t, "fat/fat32_fsagen", false)
 	jobs := jobsOf(t, d.DB, eid)
 	blobs, err := filepath.Glob(filepath.Join(d.Root, "blob", "*"))
@@ -266,6 +272,7 @@ func openElsewhere(root string) (bleve.Index, error) {
 // open across the run's evidence, and across the package's one-shot calls,
 // which used to open and close it once each; Release closes it, once.
 func TestHeldIndexStaysOpen(t *testing.T) {
+	t.Parallel()
 	d, eid := storeFixture(t, "fat/fat16", true)
 	var jobs []fts.IndexedFileJob
 	for _, j := range jobsOf(t, d.DB, eid) {

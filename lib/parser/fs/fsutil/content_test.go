@@ -10,6 +10,7 @@ import (
 )
 
 func TestOpenContent(t *testing.T) {
+	t.Parallel()
 	part := make([]byte, 64)
 	for i := range part {
 		part[i] = byte('a' + i%26)

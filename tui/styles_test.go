@@ -64,6 +64,7 @@ func noColor(c color.Color) bool {
 // theme. Colours are checked as sent in truecolor and as the xterm-256
 // colour a 256-colour terminal shows instead. Borders are not text.
 func TestStyleContrast(t *testing.T) {
+	t.Parallel()
 	for _, dark := range []bool{true, false} {
 		st := newStyles(dark)
 		if st.dark != dark {
@@ -109,6 +110,7 @@ func fgSGR(r ui.Role, t ui.Theme) string {
 // any screen showing, to the light styles. Inputs and content drawn
 // before the answer are redrawn.
 func TestBackgroundAnswerSwitchesTheme(t *testing.T) {
+	t.Parallel()
 	stats := Actions{Stats: func(context.Context) (*store.DBStats, error) {
 		return &store.DBStats{TotalFiles: 1, CompletedFiles: 1, TotalLogicalSize: 2048, UniqueChunks: 1, TotalChunkRefs: 1}, nil
 	}}
@@ -151,6 +153,7 @@ func TestBackgroundAnswerSwitchesTheme(t *testing.T) {
 // TestThemeFlagIsKept: --theme dark or light is used as given, and an
 // answer the TUI did not ask for changes nothing.
 func TestThemeFlagIsKept(t *testing.T) {
+	t.Parallel()
 	for _, c := range []struct {
 		theme  ui.Theme
 		answer color.Color
@@ -189,6 +192,7 @@ func (s *syncBuffer) String() string {
 // background (OSC 11) under --theme auto only. The question goes out as
 // the program starts; the menu is drawn by then.
 func TestOnlyAutoAsksTheTerminal(t *testing.T) {
+	t.Parallel()
 	for _, c := range []struct {
 		theme ui.Theme
 		asks  bool
@@ -258,6 +262,7 @@ func isEmoji(r rune) bool {
 // and terminals, and they do not belong in case work; menu entries and
 // titles are words.
 func TestNoEmoji(t *testing.T) {
+	t.Parallel()
 	for _, r := range []rune{'💾', '🔬', 0xFE0F, '✅', '🇬'} {
 		if !isEmoji(r) {
 			t.Fatalf("isEmoji(%U) = false", r)

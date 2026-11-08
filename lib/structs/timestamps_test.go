@@ -26,6 +26,7 @@ type legacyIndexedFile struct {
 // timestamps encodes to exactly the bytes it encoded to before the field
 // existed. No migration, and no rewrite of stored evidence.
 func TestTimestamps_AddingThemIsByteIdentical(t *testing.T) {
+	t.Parallel()
 	legacy := legacyIndexedFile{
 		Name: "/Windows/System32/svchost.exe", Size: 55320, Start: 4096,
 		IndexedType: "pe", IsDeleted: false, IsFragmented: true, FileHash: "aGFzaA==",
@@ -54,6 +55,7 @@ func TestTimestamps_AddingThemIsByteIdentical(t *testing.T) {
 // A record written before timestamps existed must still decode, with every
 // time reported as absent rather than as the epoch.
 func TestTimestamps_LegacyRecordDecodesWithNoTimes(t *testing.T) {
+	t.Parallel()
 	legacyBytes, err := msgpack.Marshal(legacyIndexedFile{
 		Name: "notes.txt", Size: 1041, IndexedType: "txt", IsDeleted: true,
 	})
@@ -81,6 +83,7 @@ func TestTimestamps_LegacyRecordDecodesWithNoTimes(t *testing.T) {
 // time and exFAT no change time, and reporting the epoch for those would
 // assert a timestamp no evidence supports.
 func TestTimestamps_PartialTimesRoundTripWithNilsIntact(t *testing.T) {
+	t.Parallel()
 	const mtime, atime = int64(1755075851000000000), int64(1755075999000000000)
 
 	original := NewIndexedFile("History", 0, 262144, "sqlite", false, "aGlzdG9yeQ==")
@@ -116,6 +119,7 @@ func TestTimestamps_PartialTimesRoundTripWithNilsIntact(t *testing.T) {
 // A newer record must stay readable by code that predates the field, so a
 // mixed-version deployment cannot corrupt a case.
 func TestTimestamps_NewRecordDecodesIntoTheOldShape(t *testing.T) {
+	t.Parallel()
 	current := NewIndexedFile("svchost.exe", 4096, 55320, "pe", false, "aGFzaA==")
 	current.Times = &Timestamps{Modified: ptr(1755075851000000000)}
 
@@ -133,6 +137,7 @@ func TestTimestamps_NewRecordDecodesIntoTheOldShape(t *testing.T) {
 }
 
 func TestTimestamps_AnyReportsPresence(t *testing.T) {
+	t.Parallel()
 	cases := map[string]struct {
 		times *Timestamps
 		want  bool

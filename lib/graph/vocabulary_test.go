@@ -17,6 +17,7 @@ import (
 // migration: opening a store written by graphene v0.1.3 classifies it, widens
 // reads, and stamps a marker — with no user action and nothing rewritten.
 func TestVocabulary_LegacyFixtureIsDetectedAndShimmed(t *testing.T) {
+	t.Parallel()
 	root := legacyFixture(t)
 
 	handle, err := duesgraph.Open(root)
@@ -52,6 +53,7 @@ func TestVocabulary_LegacyFixtureIsDetectedAndShimmed(t *testing.T) {
 // migration: rewriting stored evidence to correct a client-side constant would
 // change every node's version hash.
 func TestVocabulary_OpeningALegacyStoreRewritesNothing(t *testing.T) {
+	t.Parallel()
 	root := legacyFixture(t)
 	wal := filepath.Join(root, "graph", "graphene.wal")
 
@@ -83,6 +85,7 @@ func TestVocabulary_OpeningALegacyStoreRewritesNothing(t *testing.T) {
 }
 
 func TestVocabulary_FreshStoreIsCurrentAndMarked(t *testing.T) {
+	t.Parallel()
 	root := t.TempDir()
 
 	handle, err := duesgraph.Open(root)
@@ -113,6 +116,7 @@ func TestVocabulary_FreshStoreIsCurrentAndMarked(t *testing.T) {
 // Writing to a legacy store makes it genuinely mixed: new nodes carry the
 // current encoding while the old ones keep theirs. Both must stay readable.
 func TestVocabulary_WritingToALegacyStoreYieldsMixed(t *testing.T) {
+	t.Parallel()
 	root := legacyFixture(t)
 
 	handle, err := duesgraph.Open(root)
@@ -176,6 +180,7 @@ func TestVocabulary_WritingToALegacyStoreYieldsMixed(t *testing.T) {
 // re-run against a legacy store would find no match for any of them and write a
 // second copy of every containment edge in the case.
 func TestVocabulary_ReRunOnLegacyStoreDoesNotDuplicateEdges(t *testing.T) {
+	t.Parallel()
 	root := legacyFixture(t)
 
 	handle, err := duesgraph.Open(root)
@@ -217,6 +222,7 @@ func TestVocabulary_ReRunOnLegacyStoreDoesNotDuplicateEdges(t *testing.T) {
 // A read-only open must not stamp the marker: inspecting evidence should not
 // write to it.
 func TestVocabulary_ReadOnlyOpenDoesNotMark(t *testing.T) {
+	t.Parallel()
 	root := legacyFixture(t)
 
 	handle, err := duesgraph.OpenWith(root, duesgraph.OpenOptions{ReadOnly: true})

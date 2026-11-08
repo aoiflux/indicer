@@ -108,6 +108,7 @@ func enrichedStore(t *testing.T) *duesgraph.Handle {
 // Evidence nodes used to carry only id, name, path, size and hash — nothing
 // about how the evidence was acquired or whether ingest finished.
 func TestArtefactEnrichment_EvidenceCarriesAcquisitionAndIngestState(t *testing.T) {
+	t.Parallel()
 	handle := enrichedStore(t)
 	fields := nodeProps(t, handle, "evidence_file_id", enrEvidenceID)
 
@@ -131,6 +132,7 @@ func TestArtefactEnrichment_EvidenceCarriesAcquisitionAndIngestState(t *testing.
 // Partition nodes were the thinnest in the graph: three properties, with their
 // location, size, filesystem and hash all parsed at ingest and discarded.
 func TestArtefactEnrichment_PartitionCarriesGeometryAndFilesystem(t *testing.T) {
+	t.Parallel()
 	handle := enrichedStore(t)
 	fields := nodeProps(t, handle, "partition_id", enrPartitionID)
 
@@ -154,6 +156,7 @@ func TestArtefactEnrichment_PartitionCarriesGeometryAndFilesystem(t *testing.T) 
 // The indexed-file node is what a traversal lands on, but its byte offset and
 // its deleted/fragmented flags lived only on the separate per-name FILE node.
 func TestArtefactEnrichment_IndexedFileCarriesOffsetAndFlags(t *testing.T) {
+	t.Parallel()
 	handle := enrichedStore(t)
 	fields := nodeProps(t, handle, "indexed_file_id", enrIndexedID)
 
@@ -174,6 +177,7 @@ func TestArtefactEnrichment_IndexedFileCarriesOffsetAndFlags(t *testing.T) {
 // SimHash was computed at ingest and cached in KV, but only lib/near could
 // read it, so similarity was invisible to the graph.
 func TestArtefactEnrichment_SimhashReachesTheGraph(t *testing.T) {
+	t.Parallel()
 	handle := enrichedStore(t)
 	fields := nodeProps(t, handle, "indexed_file_id", enrIndexedID)
 
@@ -188,6 +192,7 @@ func TestArtefactEnrichment_SimhashReachesTheGraph(t *testing.T) {
 // A file with no fingerprint must say so rather than claim a zero one — the
 // fingerprint is written asynchronously at ingest, so a miss is legitimate.
 func TestArtefactEnrichment_AbsentSimhashIsReportedNotZeroed(t *testing.T) {
+	t.Parallel()
 	handle, err := duesgraph.Open(t.TempDir())
 	if err != nil {
 		t.Fatal(err)
@@ -222,6 +227,7 @@ func TestArtefactEnrichment_AbsentSimhashIsReportedNotZeroed(t *testing.T) {
 // an examiner actually wants — big files, high-entropy carve candidates —
 // resolve through an index rather than a scan.
 func TestArtefactEnrichment_SizeAndEntropyAreRangeQueryable(t *testing.T) {
+	t.Parallel()
 	handle := enrichedStore(t)
 	indexed := handle.Schema().MatchTypes(schema.KindIndexedFile)
 

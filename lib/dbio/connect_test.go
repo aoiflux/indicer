@@ -12,6 +12,7 @@ import (
 // NumCompactors to 1, which badger refuses, so no database could be opened.
 // The low-resource setting is part of the tuning a database is opened with.
 func TestConnectDBLowResourceMode(t *testing.T) {
+	t.Parallel()
 	for _, low := range []bool{true, false} {
 		tun := cnst.DefaultTuning()
 		tun.LowResource = low

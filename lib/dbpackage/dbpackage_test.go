@@ -103,6 +103,7 @@ func paths(m duesarc.DatabaseManifest) []string {
 // has the same content hash; and --without-derived leaves out the
 // full-text index and the graph.
 func TestExportCopiesTheRoot(t *testing.T) {
+	t.Parallel()
 	root := newRoot(t, dbmeta.NoPassword())
 	res := export(t, ExportOptions{Path: root})
 	m := res.Manifest
@@ -215,6 +216,7 @@ func rewrite(t *testing.T, src string, edit func(name string, data []byte) ([]by
 // TestVerifyNamesWhatIsWrong: verify names the entry that does not match
 // the manifest, whatever is wrong with it.
 func TestVerifyNamesWhatIsWrong(t *testing.T) {
+	t.Parallel()
 	res := export(t, ExportOptions{Path: newRoot(t, dbmeta.NoPassword())})
 	const target = "db/kvdb/MANIFEST"
 	same := func(name string, data []byte) ([]byte, bool) { return data, true }
@@ -264,6 +266,7 @@ func TestVerifyNamesWhatIsWrong(t *testing.T) {
 // content hash, or that a newer DUES wrote, is refused before anything is
 // read; a package cut short is damaged.
 func TestOpenRefusesABadManifest(t *testing.T) {
+	t.Parallel()
 	res := export(t, ExportOptions{Path: newRoot(t, dbmeta.NoPassword())})
 	editManifest := func(change func(m map[string]any)) string {
 		return rewrite(t, res.Output, func(name string, data []byte) ([]byte, bool) {
@@ -312,6 +315,7 @@ func TestOpenRefusesABadManifest(t *testing.T) {
 // or that was not closed cleanly, into the database, or over a package
 // already there.
 func TestExportRefuses(t *testing.T) {
+	t.Parallel()
 	root := newRoot(t, dbmeta.NoPassword())
 	ctx := context.Background()
 
@@ -367,6 +371,7 @@ func isUsage(err error) bool {
 // manifest and a warning that its full-text index and graph are not
 // encrypted. A password given is checked.
 func TestExportEncrypted(t *testing.T) {
+	t.Parallel()
 	root := newRoot(t, dbmeta.Password("right"))
 	res := export(t, ExportOptions{Path: root})
 	m := res.Manifest
@@ -392,6 +397,7 @@ func TestExportEncrypted(t *testing.T) {
 // TestExportSplit: a split package's parts and sidecar verify from any
 // part; a changed part is found by the sidecar.
 func TestExportSplit(t *testing.T) {
+	t.Parallel()
 	res := export(t, ExportOptions{Path: newRoot(t, dbmeta.NoPassword()), PartSize: 128 << 10})
 	if len(res.Files) < 2 {
 		t.Fatalf("files = %v, want parts", res.Files)
@@ -460,6 +466,7 @@ func noStage(t *testing.T, root string, rootMayExist bool) {
 // TestImportRoundTrip: an imported database holds the package's files as
 // they were, opens, counts what the package says, and takes new evidence.
 func TestImportRoundTrip(t *testing.T) {
+	t.Parallel()
 	src := newRoot(t, dbmeta.NoPassword())
 	res := export(t, ExportOptions{Path: src})
 	target := filepath.Join(t.TempDir(), "copy")
@@ -502,6 +509,7 @@ func TestImportRoundTrip(t *testing.T) {
 // TestImportEncrypted: an encrypted package imports without its password,
 // unopened, and with it, opened; a wrong password imports nothing.
 func TestImportEncrypted(t *testing.T) {
+	t.Parallel()
 	src := newRoot(t, dbmeta.Password("right"))
 	res := export(t, ExportOptions{Path: src})
 
@@ -528,6 +536,7 @@ func TestImportEncrypted(t *testing.T) {
 // target holds anything, the package is damaged or from a newer DUES, or
 // the import is cancelled; it sweeps what a killed import left.
 func TestImportRefuses(t *testing.T) {
+	t.Parallel()
 	res := export(t, ExportOptions{Path: newRoot(t, dbmeta.NoPassword())})
 	ctx := t.Context()
 
@@ -606,6 +615,7 @@ func isDamaged(err error, entry string) bool {
 // does, reads the manifest and no file's data: a package whose every file
 // is damaged opens, and only verify finds the damage.
 func TestOpenReadsOnlyTheManifest(t *testing.T) {
+	t.Parallel()
 	res := export(t, ExportOptions{Path: newRoot(t, dbmeta.NoPassword())})
 	data, err := os.ReadFile(res.Output)
 	if err != nil {

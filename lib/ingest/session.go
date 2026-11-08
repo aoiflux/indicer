@@ -23,7 +23,8 @@ import (
 // each time. A Session is safe for concurrent use. Its transactions stay one
 // per evidence: it shares resources, not commits.
 type Session struct {
-	db *badger.DB
+	db     *badger.DB
+	passes passes
 
 	mu     sync.Mutex
 	text   *fts.Index
@@ -43,7 +44,7 @@ var errSessionClosed = errors.New("ingest: the session is closed")
 
 // NewSession starts a session on db. It opens nothing until an ingest needs
 // it.
-func NewSession(db *badger.DB) *Session { return &Session{db: db} }
+func NewSession(db *badger.DB) *Session { return &Session{db: db, passes: defaultPasses()} }
 
 // DB is the session's database.
 func (s *Session) DB() *badger.DB { return s.db }

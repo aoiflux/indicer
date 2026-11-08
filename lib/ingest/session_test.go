@@ -17,6 +17,7 @@ import (
 // full-text index and the graph once each, not once per evidence. Close
 // releases them; a closed session refuses work before writing anything.
 func TestSessionOpensEachStoreOnce(t *testing.T) {
+	t.Parallel()
 	db := openDB(t)
 	s := NewSession(db)
 	var ids [][]byte
@@ -62,6 +63,7 @@ func TestSessionOpensEachStoreOnce(t *testing.T) {
 // failed. The next evidence that needs it tries again, and opens it once the
 // cause is gone (another process held it, say).
 func TestSessionRetriesAFailedOpen(t *testing.T) {
+	t.Parallel()
 	db := openDB(t)
 	root := dbio.KVDir(db)
 	blocked := []string{util.FTSPath(root), util.GraphPath(root)}
@@ -101,6 +103,7 @@ func TestSessionRetriesAFailedOpen(t *testing.T) {
 // with no indexed files neither opens nor creates the index, as before
 // sessions; and a reindex of a database without a graph creates none.
 func TestSessionMakesNoIndexWithoutFiles(t *testing.T) {
+	t.Parallel()
 	db := openDB(t)
 	path := testutil.WriteRandomFile(t, t.TempDir(), "noise.bin", 7, 300<<10)
 	s := NewSession(db)
@@ -129,6 +132,7 @@ func TestSessionMakesNoIndexWithoutFiles(t *testing.T) {
 // store's release gave, and still lets go of everything: the session is
 // closed, and a second Close has nothing left to release.
 func TestSessionCloseReportsAReleaseThatFailed(t *testing.T) {
+	t.Parallel()
 	db := openDB(t)
 	s := NewSession(db)
 	if _, err := s.textIndex(true); err != nil {

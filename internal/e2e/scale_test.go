@@ -16,6 +16,7 @@ import (
 // segments are stored once, as one decoded evidence; every distinct content
 // once; and a sample of the files restores to its content.
 func TestFolderOfTenThousandFiles(t *testing.T) {
+	t.Parallel()
 	testutil.LongTest(t)
 	bin := testutil.BuildDues(t)
 	work := t.TempDir()

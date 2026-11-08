@@ -68,6 +68,7 @@ func countNodes(t *testing.T, repo *GrapheneRepository) uint64 {
 // their edges, keeps the evidence node when asked, and leaves other evidence
 // alone.
 func TestDeleteEvidenceIndex(t *testing.T) {
+	t.Parallel()
 	repo, err := OpenGrapheneRepository(t.TempDir())
 	if err != nil {
 		t.Fatal(err)

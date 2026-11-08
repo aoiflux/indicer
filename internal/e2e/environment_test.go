@@ -21,6 +21,7 @@ import (
 // would have changed what it did. Both print the same, and nothing is
 // written where the variables point.
 func TestEnvironmentIsIgnored(t *testing.T) {
+	t.Parallel()
 	bin := testutil.BuildDues(t)
 	junk := t.TempDir()
 	dir := func(name string) string {
@@ -154,11 +155,12 @@ func newMasker(work string) *masker { return &masker{work: work, ids: map[string
 
 func (m *masker) apply(s string) string {
 	s = strings.ReplaceAll(s, m.work, "<work>")
-	s = durationRE.ReplaceAllString(s, "<duration>")
-	return idRE.ReplaceAllStringFunc(s, func(id string) string {
+	// IDs first: an ID can hold what reads as a duration ("T1M3s+Q==").
+	s = idRE.ReplaceAllStringFunc(s, func(id string) string {
 		if _, ok := m.ids[id]; !ok {
 			m.ids[id] = "<id" + string(rune('A'+len(m.ids))) + ">"
 		}
 		return m.ids[id]
 	})
+	return durationRE.ReplaceAllString(s, "<duration>")
 }

@@ -111,6 +111,7 @@ func call(t *testing.T, svc *Service, op string, params map[string]any) map[stri
 // same name in different directories, an empty file and an empty directory
 // comes back exactly as it was archived.
 func TestDuesarcFolderRoundTrip(t *testing.T) {
+	t.Parallel()
 	src := filepath.Join(t.TempDir(), "case")
 	tree := map[string]string{
 		"a.txt":            "same content in two places",
@@ -138,6 +139,7 @@ func TestDuesarcFolderRoundTrip(t *testing.T) {
 // TestDuesarcMultiFileRoundTrip: files given one by one, two of them with
 // the same base name and two with the same content, all come back.
 func TestDuesarcMultiFileRoundTrip(t *testing.T) {
+	t.Parallel()
 	root := t.TempDir()
 	writeTree(t, root, map[string]string{
 		"x/report.txt": "one",

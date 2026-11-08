@@ -11,6 +11,7 @@ import (
 // TestLSMStatsReadsTheTree: a sample of a database with keys written reads
 // without negative counts, and as one log field each.
 func TestLSMStatsReadsTheTree(t *testing.T) {
+	t.Parallel()
 	d := testdb.Open(t, testdb.Default)
 	wb := d.DB.NewWriteBatch()
 	for i := range 2000 {

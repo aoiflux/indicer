@@ -19,6 +19,7 @@ import (
 // TestOpenRegistersEngine: an open registers the database's layout and the
 // tuning it was asked for, and closing it forgets them.
 func TestOpenRegistersEngine(t *testing.T) {
+	t.Parallel()
 	root := setup(t)
 	tun := cnst.DefaultTuning()
 	tun.LowResource, tun.HashStrategy, tun.StoreWorkers = true, cnst.AsyncHashStrategy, 3
@@ -42,6 +43,7 @@ func TestOpenRegistersEngine(t *testing.T) {
 // TestOpenTakesDefaultTuning: an open given no tuning runs with
 // cnst.DefaultTuning, whatever tuning another open database was given.
 func TestOpenTakesDefaultTuning(t *testing.T) {
+	t.Parallel()
 	root := setup(t)
 	tun := cnst.DefaultTuning()
 	tun.HashStrategy = cnst.AsyncHashStrategy
@@ -59,6 +61,7 @@ func TestOpenTakesDefaultTuning(t *testing.T) {
 // TestOpenNeedsNoProcessEncoder: an open database compresses its records
 // and chunks with its own encoder, so it writes with no process encoder.
 func TestOpenNeedsNoProcessEncoder(t *testing.T) {
+	t.Parallel()
 	root := setup(t)
 	h := open(t, Request{Path: root, Mode: ReadWrite})
 	if engine.For(h.DB).Encoder() == nil {
@@ -80,6 +83,7 @@ func TestOpenNeedsNoProcessEncoder(t *testing.T) {
 // record values raw and a new one compresses them, both open at once in one
 // process (I3).
 func TestDatabasesKeepTheirValueEncodings(t *testing.T) {
+	t.Parallel()
 	root := setup(t)
 	var quick legacyfixture.Fixture
 	for _, f := range legacyfixture.Load(t) {

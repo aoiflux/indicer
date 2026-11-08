@@ -49,6 +49,7 @@ func indexedFileRecord(root string) enrichment.FileRecord {
 // corruption the file lock and the registry exist to prevent. With a shared
 // handle the write is simply visible.
 func TestNestedOpen_WriteThroughInnerRepoIsVisibleToOuter(t *testing.T) {
+	t.Parallel()
 	root := t.TempDir()
 	record := indexedFileRecord(root)
 
@@ -92,6 +93,7 @@ func TestNestedOpen_WriteThroughInnerRepoIsVisibleToOuter(t *testing.T) {
 // The inner repository closing must not close the store out from under the
 // outer one, which is what a naive de-duplication would do.
 func TestNestedOpen_InnerCloseLeavesOuterUsable(t *testing.T) {
+	t.Parallel()
 	root := t.TempDir()
 
 	microRepo, err := microartefact.OpenGrapheneRepository(root)
@@ -118,6 +120,7 @@ func TestNestedOpen_InnerCloseLeavesOuterUsable(t *testing.T) {
 // repository, then store artefacts through the outer one. Store() hard-fails if
 // it cannot find the indexed-file node, so this fails loudly on a split store.
 func TestNestedOpen_ArtefactStoreAfterBackfill(t *testing.T) {
+	t.Parallel()
 	root := t.TempDir()
 	record := indexedFileRecord(root)
 

@@ -23,6 +23,7 @@ import (
 // start before, on and after a boundary and end anywhere. 64 MiB chunks make
 // files of up to 192 MiB, so that size runs only as a long test.
 func TestChunkBoundaryMatrix(t *testing.T) {
+	t.Parallel()
 	for _, kib := range []int{4, 64, 1024, 65536} {
 		t.Run(fmt.Sprintf("%dKiB", kib), func(t *testing.T) {
 			if kib >= 65536 {

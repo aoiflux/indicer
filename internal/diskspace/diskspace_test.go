@@ -11,6 +11,7 @@ import (
 )
 
 func TestFree(t *testing.T) {
+	t.Parallel()
 	n, err := Free(t.TempDir())
 	if err != nil {
 		t.Fatal(err)
@@ -24,6 +25,7 @@ func TestFree(t *testing.T) {
 }
 
 func TestIsNoSpace(t *testing.T) {
+	t.Parallel()
 	full := testutil.ErrNoSpace()
 	if !IsNoSpace(full) || !IsNoSpace(fmt.Errorf("write blob: %w", &os.PathError{Op: "write", Path: "x", Err: full})) {
 		t.Fatal("the platform disk-full error was not recognised")
@@ -36,6 +38,7 @@ func TestIsNoSpace(t *testing.T) {
 // TestIsNoSpaceOnRealDevice fills the tmpfs that scripts/wsl/mounts.sh
 // provides, so the error comes from the kernel rather than a fake.
 func TestIsNoSpaceOnRealDevice(t *testing.T) {
+	t.Parallel()
 	dir := testutil.ENOSPCDir.Require(t)
 	f, err := os.CreateTemp(dir, "fill-*")
 	if err != nil {

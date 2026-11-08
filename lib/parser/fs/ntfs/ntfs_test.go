@@ -22,6 +22,7 @@ func TestMain(m *testing.M) {
 // that is not an NTFS volume. Content is checked against ground truth by the
 // fixture invariant tests in lib/parser/scan.
 func TestOpenRejectsNonNTFS(t *testing.T) {
+	t.Parallel()
 	buf := make([]byte, 64*1024)
 	if _, err := Open(core.OpenParams{Reader: bytes.NewReader(buf), Size: int64(len(buf))}); err == nil {
 		t.Fatal("Open on non-NTFS data: expected error, got nil")
@@ -43,6 +44,7 @@ func (w *writeTrap) WriteAt(p []byte, off int64) (int, error) {
 // TestOpenIsReadOnly checks that the adapter opens evidence read-only even
 // when the reader can write, and that walking and reading never writes.
 func TestOpenIsReadOnly(t *testing.T) {
+	t.Parallel()
 	var path string
 	for _, m := range fsfixture.All(t) {
 		if m.Name == "ntfs/ntfs_fsagen" {

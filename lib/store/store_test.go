@@ -15,6 +15,7 @@ import (
 )
 
 func TestProcessRevRelSkippedWhenDisabled(t *testing.T) {
+	t.Parallel()
 	db := openTestDB(t)
 
 	index := int64(0)
@@ -38,6 +39,7 @@ func TestProcessRevRelSkippedWhenDisabled(t *testing.T) {
 }
 
 func TestProcessRevRelWritesWhenEnabled(t *testing.T) {
+	t.Parallel()
 	db := openTestDB(t)
 
 	index := int64(0)

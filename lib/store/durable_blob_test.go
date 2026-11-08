@@ -36,6 +36,14 @@ func runChunkPass(t testing.TB, pass chunkPassFunc, db *badger.DB, fhash string,
 	return runPass(t, pass, ChunkPass{DB: db, ID: []byte(fhash), Source: byteReaderAt(content), Size: int64(len(content)), Quiet: true})
 }
 
+// counted writes chunks as a pass does, and counts them in calls.
+func counted(calls *atomic.Int64) materializeFunc {
+	return func(key, data []byte, db *badger.DB, c *fio.ContainerManager) ([]byte, int64, error) {
+		calls.Add(1)
+		return dbio.MaterializeChonkNode(key, data, db, c)
+	}
+}
+
 // runPass runs the chunk pass p with pass and returns its ID.
 func runPass(t testing.TB, pass chunkPassFunc, p ChunkPass) []byte {
 	t.Helper()
@@ -66,6 +74,7 @@ var fileModes = []testdb.Mode{testdb.Default, testdb.Encrypted, testdb.Quick}
 // blob a crash or a full disk left short was trusted by every later ingest
 // sharing the chunk, and the evidence could never be restored.
 func TestReingestRewritesTruncatedBlob(t *testing.T) {
+	t.Parallel()
 	for name, pass := range chunkPasses {
 		for _, m := range fileModes {
 			t.Run(name+"/"+m.Name, func(t *testing.T) {
@@ -113,6 +122,7 @@ func TestReingestRewritesTruncatedBlob(t *testing.T) {
 // content whose chunks were already stored compressed and encrypted every
 // chunk again, only for the write to find the blob present.
 func TestReingestSkipsStoredChunks(t *testing.T) {
+	t.Parallel()
 	for name, pass := range chunkPasses {
 		for _, m := range append(fileModes, testdb.Container) {
 			t.Run(name+"/"+m.Name, func(t *testing.T) {
@@ -129,15 +139,8 @@ func TestReingestSkipsStoredChunks(t *testing.T) {
 					before[p] = fi
 				}
 
-				prev := materializeChunk
-				t.Cleanup(func() { materializeChunk = prev })
 				var calls atomic.Int64
-				materializeChunk = func(key, data []byte, db *badger.DB, c *fio.ContainerManager) ([]byte, int64, error) {
-					calls.Add(1)
-					return prev(key, data, db, c)
-				}
-
-				runChunkPass(t, pass, db.DB, "second", content)
+				runPass(t, pass, ChunkPass{DB: db.DB, ID: []byte("second"), Source: byteReaderAt(content), Size: int64(len(content)), Quiet: true, materialize: counted(&calls)})
 				if n := calls.Load(); n != 0 {
 					t.Fatalf("re-ingest materialised %d chunks already stored, want 0", n)
 				}

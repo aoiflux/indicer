@@ -18,11 +18,6 @@ by patents 567877 and 556272 registered at the Indian Patent Office.
 
 ## Upgrading from an earlier release
 
-This release went through a correctness pass. Its findings, fixes and residual
-risks are in [docs/CORRECTNESS_REPORT.md](docs/CORRECTNESS_REPORT.md), and the
-dependency changes in
-[docs/DEPENDENCY_UPGRADE_REPORT.md](docs/DEPENDENCY_UPGRADE_REPORT.md).
-
 Databases written by earlier releases open without a migration step:
 - A read-only command (list, search, restore...) reads them and writes nothing.
 - The first writable command records a manifest (`dues-manifest.json`) with the
@@ -209,8 +204,23 @@ go build -o dues.exe .
 
 `build.ps1` and `build.sh` build release binaries for all six targets into
 `dist/`, with a `SHA256SUMS` file to publish beside them. DUES is pure Go, so
-one machine cross-compiles them all. [docs/TOOLCHAIN_NOTES.md](docs/TOOLCHAIN_NOTES.md)
-says how to check a download against `SHA256SUMS`.
+one machine cross-compiles them all. The builds are reproducible
+(`-trimpath`, `-buildid=`): the same Go toolchain and commit give the same
+sums.
+
+To check a download, run one of these in the folder that holds the binary and
+`SHA256SUMS`. Each prints `OK` for a match:
+
+```sh
+grep ' dues-linux-amd64$' SHA256SUMS | sha256sum -c          # Linux
+grep ' dues-darwin-arm64$' SHA256SUMS | shasum -a 256 -c     # macOS
+```
+
+```powershell
+(Get-FileHash .\dues-windows-amd64.exe -Algorithm SHA256).Hash.ToLower()
+```
+
+On Windows, compare the printed hash with the file's line in `SHA256SUMS`.
 
 Compression product specific builds:
 
@@ -589,27 +599,13 @@ See [docs/CLI_UX.md](docs/CLI_UX.md).
 - `dues server` no longer listens on every interface by default; see
   [docs/SERVER_API.md](docs/SERVER_API.md).
 
-## Architecture and design docs
+## Docs
 
 - [OPERATIONS.md](docs/OPERATIONS.md)
-- [TESTING.md](docs/TESTING.md)
-- [CORRECTNESS_REPORT.md](docs/CORRECTNESS_REPORT.md)
-- [DEPENDENCY_UPGRADE_REPORT.md](docs/DEPENDENCY_UPGRADE_REPORT.md)
-- [STORE_LLD.md](docs/STORE_LLD.md)
-- [UUID_HASH_DESIGN_DECISIONS.md](docs/UUID_HASH_DESIGN_DECISIONS.md)
-- [RESTORE_LLD.md](docs/RESTORE_LLD.md)
-- [SEARCH_LLD.md](docs/SEARCH_LLD.md)
-- [NEAR_SIMILARITY_LLD.md](docs/NEAR_SIMILARITY_LLD.md)
-- [CONTAINER_MODE_LLD.md](docs/CONTAINER_MODE_LLD.md)
-- [HIERARCHICAL_INDEX.md](docs/HIERARCHICAL_INDEX.md)
-- [ENRICHMENT_LLD.md](docs/ENRICHMENT_LLD.md)
-- [MICRO_ARTEFACT_DEEP_DIVE.md](docs/MICRO_ARTEFACT_DEEP_DIVE.md)
+- [CLI_UX.md](docs/CLI_UX.md)
 - [SERVER_API.md](docs/SERVER_API.md)
 - [COMPRESSION_ABI_REFERENCE.md](docs/COMPRESSION_ABI_REFERENCE.md)
 - [TUI_QUICKSTART.md](docs/TUI_QUICKSTART.md)
-- [TUI_IMPLEMENTATION.md](docs/TUI_IMPLEMENTATION.md)
-- [BENCHMARKING.md](docs/BENCHMARKING.md)
-- [TOOLCHAIN_NOTES.md](docs/TOOLCHAIN_NOTES.md)
 
 ## Output artefacts
 
@@ -625,5 +621,6 @@ MIT.
 
 ## Contributing
 
-Issues and pull requests are welcome. Every change must pass the verify gate;
-see [docs/TESTING.md](docs/TESTING.md).
+Issues and pull requests are welcome. Every change must pass the verify gate:
+`pwsh -NoProfile -File scripts/verify.ps1 -Long` on Windows (its Linux part
+runs in WSL), or `scripts/verify.sh` on Linux.

@@ -111,7 +111,7 @@ func (f readerFunc) ReadAt(p []byte, off int64) (int, error) { return f(p, off) 
 func TestIngestChunksSourceReadError(t *testing.T) {
 	for _, mode := range []string{cnst.StorePipelineBatch, cnst.StorePipelineStaged} {
 		t.Run(mode, func(t *testing.T) {
-			tun := cnst.DefaultTuning()
+			tun := testdb.Tuning()
 			tun.Pipeline = mode
 			db := testdb.Open(t, testdb.Default, testdb.Options{ChunkKiB: 4, Tuning: &tun})
 			if err := util.EnsureBlobPath(db.Opts().Dir); err != nil {

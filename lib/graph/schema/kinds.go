@@ -45,7 +45,7 @@ const (
 	// NodeTypeMicroArtefact, which is unaffected by the band move.
 	KindObservation NodeKind = 16
 
-	// Band C (32-127) — canonical entities, per ATTACK_PATH_GRAPH_LLD.md §2.
+	// Band C (32-127) — canonical entities.
 	KindProcess         NodeKind = 32
 	KindExecutableFile  NodeKind = 33
 	KindRegistryKey     NodeKind = 34
@@ -86,7 +86,6 @@ const (
 	// 1-15 reserved for hierarchy edges. Containment uses graphene's built-in
 	// EdgeTypeContains, which the band move did not touch.
 
-	// Per ATTACK_PATH_GRAPH_LLD.md §8.2.
 	EdgeKindEvidences       EdgeKind = 16
 	EdgeKindSameEntity      EdgeKind = 17
 	EdgeKindExecuted        EdgeKind = 18

@@ -25,9 +25,8 @@ var grapheneVersion = "graphene@" + linkedGrapheneVersion
 // changes, R retractions") rather than a silent overwrite, and what lets a
 // report answer "what did we know, and when?".
 //
-// ATTACK_PATH_GRAPH_LLD.md §16 is explicit that this is cheap to add now and
-// expensive to retrofit, because data written without it can never be
-// attributed afterwards. So it is applied by the batch itself rather than left
+// Provenance is cheap to add now and expensive to retrofit, because data
+// written without it can never be attributed afterwards. So it is applied by the batch itself rather than left
 // to each call site, where it would eventually be forgotten.
 type Producer struct {
 	// Pipeline names the producing subsystem, e.g. "enrichment".

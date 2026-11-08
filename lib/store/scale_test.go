@@ -24,7 +24,7 @@ func TestValidateFourMillionChunks(t *testing.T) {
 	testutil.LongTest(t)
 	// Low-resource mode caps badger's caches at 96 MiB, so what the heap
 	// holds beyond them is validation's.
-	tun := cnst.DefaultTuning()
+	tun := testdb.Tuning()
 	tun.LowResource = true
 	db := testdb.Open(t, testdb.Default, testdb.Options{ChunkKiB: 4, Tuning: &tun})
 	if err := util.EnsureBlobPath(db.Root); err != nil {
@@ -72,7 +72,9 @@ func TestValidateFourMillionChunks(t *testing.T) {
 	// badger's caches, capped at 96 MiB, and their bookkeeping take most of
 	// this (about 176 MiB in all on Windows); four million chunk hashes held
 	// at once would add some 400 MiB.
-	if growth := int64(peak) - int64(base); growth > 256<<20 {
+	growth := int64(peak) - int64(base)
+	t.Logf("validation grew the heap by %d MiB", growth>>20)
+	if growth > 256<<20 {
 		t.Fatalf("validation grew the heap by %d MiB", growth>>20)
 	}
 }

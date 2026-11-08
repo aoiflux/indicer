@@ -87,9 +87,8 @@ reset in the TUI is refused while other jobs run.
 once (default 1; 0 picks a number for the machine). It suits folders of many
 evidence under 256 MiB: a larger one already keeps the machine busy, so it is
 stored alone. A folder of mostly large images gains little, and was slower when
-the folder and the database shared one disk (BENCHMARKING, "One at a time
-against `--store-jobs 0`"). Copies of one content are stored one after another, and the report
-reads as a store of one at a time (STORE_LLD, Parallel folder stores).
+the folder and the database shared one disk. Copies of one content are stored
+one after another, and the report reads as a store of one at a time.
 The evidence stored at once must fit in a quarter of the free memory: a
 number that does not fit is refused before anything is stored, and 0 picks
 no more than fit. Large chunks (`--chonksize`) are what usually make them
@@ -369,8 +368,7 @@ in it. The steps of each are regions of its task:
 | `fts`, `enrich` | The full-text index and the graph |
 
 In a folder store or a reindex with `--store-jobs` above 1, a worker that
-waits until an item may start shows a `held` region
-([STORE_LLD.md](STORE_LLD.md), "Parallel folder stores").
+waits until an item may start shows a `held` region.
 
 The log records `trace START` and `trace COMPLETE` with the file's path. The
 flag is for one run: it has no config key, and the `settings` record does not

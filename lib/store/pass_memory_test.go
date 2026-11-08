@@ -48,7 +48,7 @@ func TestPassMemory(t *testing.T) {
 		t.Errorf("64 MiB chunks: PassMemory = %d chunks, want %d", got/big, want/big)
 	}
 
-	staged := cnst.DefaultTuning()
+	staged := testdb.Tuning()
 	staged.Pipeline = cnst.StorePipelineStaged
 	db.Reconfigure(t, testdb.Options{ChunkKiB: int(cs >> 10), Tuning: &staged})
 	if got, want := PassMemory(db.DB, 1<<40, 2), (ring+w+int64(queue))*cs; got != want {

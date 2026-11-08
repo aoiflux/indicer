@@ -41,7 +41,7 @@ func openDB(t *testing.T) *badger.DB {
 // strategy given.
 func openDBStrategy(t *testing.T, strategy string) *badger.DB {
 	t.Helper()
-	tun := cnst.DefaultTuning()
+	tun := testdb.Tuning()
 	tun.HashStrategy = strategy
 	return openDBWith(t, testdb.Options{ChunkKiB: 64, Tuning: &tun})
 }

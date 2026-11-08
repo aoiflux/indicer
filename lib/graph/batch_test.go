@@ -255,7 +255,7 @@ func TestBatch_UpsertDedupesWithinAndAcrossBatches(t *testing.T) {
 
 // EdgeExists matches only endpoints and type, so two relations that differ in
 // relation_type would collapse into one. The discriminators are what keep them
-// apart, per ATTACK_PATH_GRAPH_LLD.md §8.2.
+// apart.
 func TestBatch_EnsureEdgeDiscriminatesBeyondType(t *testing.T) {
 	cleanRegistry(t)
 	root := t.TempDir()

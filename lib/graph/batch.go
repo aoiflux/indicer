@@ -18,8 +18,8 @@ import (
 //
 // graphene's EdgeExists only matches on endpoints and type, which is too coarse
 // for DUES: two artefacts can be joined by more than one relation, differing in
-// relation_type and method. ATTACK_PATH_GRAPH_LLD.md §8.2 wants the 4-tuple,
-// and this is how it is enforced with the machinery that already exists.
+// relation_type and method. An edge is identified by the 4-tuple, and this is
+// how it is enforced with the machinery that already exists.
 const EdgeKeyProperty = "edge_key"
 
 // UpsertKey identifies a node by an indexed property.

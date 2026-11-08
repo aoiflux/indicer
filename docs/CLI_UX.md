@@ -389,7 +389,7 @@ The tests cover what a test can see. Before a release, look at these by hand:
   the account's own file never changes a test and the account's logs stay
   its own.
 - `internal/e2e/pty_test.go` and `pty_faultinject_test.go`: the binary on a
-  real pseudo-terminal under WSL (see [TESTING.md](TESTING.md)).
+  real pseudo-terminal under WSL (the `requirepty` build tag).
 - `tui/styles_test.go`: the TUI's styles in both themes against the same
   reference backgrounds as the palette (`internal/testutil/wcag`), its
   theme switch, and no emoji.

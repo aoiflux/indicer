@@ -9,8 +9,10 @@ package testdb
 
 import (
 	"bytes"
+	"fmt"
 	"os"
 	"path/filepath"
+	"sync"
 	"testing"
 
 	"github.com/dgraph-io/badger/v4"
@@ -21,6 +23,7 @@ import (
 	"indicer/lib/dbmeta"
 	"indicer/lib/engine"
 	"indicer/lib/util"
+	"indicer/lib/zstdx"
 )
 
 // Mode is one storage configuration a database can be written in.
@@ -55,14 +58,14 @@ func (m Mode) Key(tb testing.TB) []byte {
 }
 
 // Options are a test database's layout and tuning beyond its mode. The zero
-// value is the default layout (256 KiB chunks, BLAKE3) and DefaultTuning.
+// value is the default layout (256 KiB chunks, BLAKE3) and Tuning.
 type Options struct {
 	// ChunkKiB is the chunk size in KiB; 0 means cnst.DefaultChonkSize.
 	ChunkKiB int
 	// Hash is the chunk hash, cnst.SHA3 or cnst.BLAKE3 (the default).
 	Hash string
-	// Tuning is the tuning the database runs with; nil means
-	// cnst.DefaultTuning.
+	// Tuning is the tuning the database runs with; nil means the package's
+	// Tuning.
 	Tuning *cnst.Tuning
 }
 
@@ -93,12 +96,50 @@ func (o Options) Layout(m Mode) dbmeta.Layout {
 	return l
 }
 
+// Tuning is the tuning of a test database whose options give none:
+// cnst.DefaultTuning compressing at zstd's default level, as test databases
+// always have. The best level, the product's default, makes every store in a
+// test several times slower, more so under the race detector, and no test
+// that leaves the tuning alone checks the level.
+func Tuning() cnst.Tuning {
+	t := cnst.DefaultTuning()
+	t.CompressLevel = "default"
+	return t
+}
+
 // tuning returns the tuning the options ask for.
 func (o Options) tuning() cnst.Tuning {
 	if o.Tuning != nil {
 		return *o.Tuning
 	}
-	return cnst.DefaultTuning()
+	return Tuning()
+}
+
+// kept holds one reference to each encoder a test database has used, for
+// the rest of the test process. The last release drops an encoder and its
+// states, so without it each test database would build its encoder anew; the
+// process encoder that held one before databases had their own did the same.
+var kept = struct {
+	sync.Mutex
+	encoders map[string]*zstdx.Encoder
+}{encoders: map[string]*zstdx.Encoder{}}
+
+// keepEncoder takes the process's reference to the encoder of a database
+// with tuning t and storage s, once per level and width.
+func keepEncoder(t cnst.Tuning, s string) error {
+	level, workers := t.CompressLevel, t.EncodeWorkers(s != dbmeta.StorageFile)
+	k := fmt.Sprint(zstdx.Level(level), "/", workers)
+	kept.Lock()
+	defer kept.Unlock()
+	if kept.encoders[k] != nil {
+		return nil
+	}
+	e, err := zstdx.Acquire(level, workers)
+	if err != nil {
+		return err
+	}
+	kept.encoders[k] = e
+	return nil
 }
 
 // NewDataRoot returns a fresh, empty data root inside the test's temp dir.
@@ -167,7 +208,11 @@ func OpenAt(tb testing.TB, m Mode, root string, opts ...Options) *DB {
 // inferred, so the database is not taken to hold one chunk size only.
 func (d *DB) register() error {
 	l := d.Options.Layout(d.Mode)
-	eng, err := engine.Register(d.DB, l, d.Options.tuning())
+	t := d.Options.tuning()
+	if err := keepEncoder(t, l.Storage); err != nil {
+		return err
+	}
+	eng, err := engine.Register(d.DB, l, t)
 	if err != nil {
 		return err
 	}

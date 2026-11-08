@@ -11,6 +11,8 @@ import (
 	"indicer/internal/testutil/testdb"
 	"indicer/lib/cnst"
 	"indicer/lib/dbio"
+	"indicer/lib/dbmeta"
+	"indicer/lib/engine"
 	"indicer/lib/fio"
 	"indicer/lib/structs"
 	"indicer/lib/util"
@@ -24,12 +26,11 @@ import (
 // plus the key of its second chunk to damage.
 func validationCase(t *testing.T, m testdb.Mode) (*testdb.DB, []byte, structs.EvidenceFile, []byte) {
 	t.Helper()
-	db := testdb.Open(t, m)
-	util.SetChonkSize(4)
-	cs := int(cnst.ChonkSize)
+	db := testdb.Open(t, m, testdb.Options{ChunkKiB: 4})
+	cs := int(dbmeta.ChunkSize(db.DB))
 	content := testutil.RandomBytes(31, 4*cs+9)
 	id := runChunkPass(t, ingestChunksBatchOwner, db.DB, "evidence", content)
-	chash, err := util.GetChonkHash(content[cs:2*cs], cnst.GetHashAlgo())
+	chash, err := util.GetChonkHash(content[cs:2*cs], dbmeta.ChunkHasher(db.DB)())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -80,7 +81,7 @@ func TestValidateEvidenceLevels(t *testing.T) {
 	}{
 		{"intact", []testdb.Mode{testdb.Default, testdb.Quick, testdb.Container}, func(*testing.T, *badger.DB, []byte, []byte) {}, outcome{}},
 		{"relation missing", []testdb.Mode{testdb.Default, testdb.Container}, func(t *testing.T, db *badger.DB, fileID, _ []byte) {
-			key := util.AppendToBytesSlice(cnst.RelationNamespace, fileID, cnst.DataSeperator, cnst.ChonkSize)
+			key := util.AppendToBytesSlice(cnst.RelationNamespace, fileID, cnst.DataSeperator, dbmeta.ChunkSize(db))
 			if err := db.Update(func(txn *badger.Txn) error { return txn.Delete(key) }); err != nil {
 				t.Fatal(err)
 			}
@@ -127,7 +128,7 @@ func TestValidateEvidenceLevels(t *testing.T) {
 		// index files; one record lost is a chunk with no location.
 		{"block index record missing", []testdb.Mode{testdb.Container}, func(t *testing.T, db *badger.DB, _, ckey []byte) {
 			testdb.MoveChunkMetaToBlockIndex(t, db)
-			cnst.LegacyBlockIndex = true
+			engine.For(db).SetBlockIndex(true)
 			files, err := fio.BlockIndexFiles(dbio.KVDir(db))
 			if err != nil || len(files) == 0 {
 				t.Fatalf("block index files: %v, %v", files, err)
@@ -181,11 +182,10 @@ func TestValidateEvidenceLevels(t *testing.T) {
 // missing, so recovery would fail good evidence; at a larger one it skips
 // chunks, so repair --verify would miss damage.
 func TestValidateUsesEachEvidenceChunkSize(t *testing.T) {
-	db := testdb.Open(t, testdb.Default)
-	util.SetChonkSize(8)
+	db := testdb.Open(t, testdb.Default, testdb.Options{ChunkKiB: 8})
 	big := testutil.RandomBytes(5, 6*8192+3)
 	bigID := runChunkPass(t, ingestChunksBatchOwner, db.DB, "evidence-at-8kib", big)
-	util.SetChonkSize(4)
+	db.Reconfigure(t, testdb.Options{ChunkKiB: 4})
 	small := testutil.RandomBytes(6, 6*4096+3)
 	smallID := runChunkPass(t, ingestChunksBatchOwner, db.DB, "evidence-at-4kib", small)
 
@@ -199,13 +199,13 @@ func TestValidateUsesEachEvidenceChunkSize(t *testing.T) {
 
 	// Damage the 4 KiB evidence's second chunk, which a validation stepping
 	// at 8 KiB never reads.
-	chash, err := util.GetChonkHash(small[4096:8192], cnst.GetHashAlgo())
+	chash, err := util.GetChonkHash(small[4096:8192], dbmeta.ChunkHasher(db.DB)())
 	if err != nil {
 		t.Fatal(err)
 	}
 	path, loc := chunkFile(t, db.DB, util.AppendToBytesSlice(cnst.ChonkNamespace, chash))
 	flipByte(t, path, loc.Offset+loc.EncodedSize/2)
-	util.SetChonkSize(8)
+	db.Reconfigure(t, testdb.Options{ChunkKiB: 8})
 	if err := ValidateEvidence(t.Context(), db.DB, smallID, smallEv, ValidateContent); !errors.Is(err, ErrMaterialCorrupt) {
 		t.Errorf("4 KiB evidence with a damaged chunk, at 8 KiB: %v, want %v", err, ErrMaterialCorrupt)
 	}

@@ -163,10 +163,9 @@ func TestVerify(t *testing.T) {
 	}
 }
 
-func TestForFallsBackToGlobals(t *testing.T) {
-	prevQuick := cnst.QUICKOPT
-	t.Cleanup(func() { cnst.QUICKOPT = prevQuick })
-	cnst.QUICKOPT = false
+// TestForUnregistered: a database dbopen did not open reads its chunks with
+// the legacy sealed codec and badger's key, and writes none.
+func TestForUnregistered(t *testing.T) {
 	db, err := badger.Open(badger.DefaultOptions("").WithInMemory(true).WithLogger(nil).
 		WithEncryptionKey(blobKey).WithIndexCacheSize(1 << 20))
 	if err != nil {
@@ -174,7 +173,10 @@ func TestForFallsBackToGlobals(t *testing.T) {
 	}
 	t.Cleanup(func() { db.Close() })
 	if got := For(db).Name(); got != LegacySealed {
-		t.Fatalf("unregistered default DB uses %s, want %s", got, LegacySealed)
+		t.Fatalf("unregistered DB uses %s, want %s", got, LegacySealed)
+	}
+	if _, err := For(db).Encode(blakeKey([]byte("x")), []byte("x")); !errors.Is(err, errNoEncoder) {
+		t.Fatalf("unregistered DB encoded a chunk: %v", err)
 	}
 	c, _ := NewV2(nil, nil)
 	Register(db, c)
@@ -182,18 +184,14 @@ func TestForFallsBackToGlobals(t *testing.T) {
 		t.Fatal("registered codec not returned")
 	}
 	Unregister(db)
-	cnst.QUICKOPT = true
-	if got := For(db).Name(); got != LegacyRaw {
-		t.Fatalf("unregistered quick DB uses %s, want %s", got, LegacyRaw)
+	if got := For(db).Name(); got != LegacySealed {
+		t.Fatalf("after Unregister the DB uses %s, want %s", got, LegacySealed)
 	}
 }
 
 // Sealed tells a database whose chunks are encrypted from one whose are
 // not, whatever codec it has.
 func TestSealed(t *testing.T) {
-	prevQuick := cnst.QUICKOPT
-	t.Cleanup(func() { cnst.QUICKOPT = prevQuick })
-	cnst.QUICKOPT = false
 	db, err := badger.Open(badger.DefaultOptions("").WithInMemory(true).WithLogger(nil))
 	if err != nil {
 		t.Fatal(err)

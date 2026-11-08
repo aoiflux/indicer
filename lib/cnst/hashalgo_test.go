@@ -23,24 +23,12 @@ func TestNormalizeHashAlgo(t *testing.T) {
 	}
 }
 
-func TestSetHashAlgo(t *testing.T) {
-	original := HASHALGO
-	t.Cleanup(func() {
-		HASHALGO = original
-	})
-
-	if err := SetHashAlgo("sha3"); err != nil {
-		t.Fatalf("SetHashAlgo returned unexpected error: %v", err)
+func TestParseHashAlgo(t *testing.T) {
+	if got, err := ParseHashAlgo("sha3"); err != nil || got != SHA3 {
+		t.Fatalf("ParseHashAlgo(sha3) = %q, %v; want %q", got, err, SHA3)
 	}
-	if HASHALGO != SHA3 {
-		t.Fatalf("HASHALGO = %q, want %q", HASHALGO, SHA3)
-	}
-
-	if err := SetHashAlgo("md5"); err == nil {
-		t.Fatal("SetHashAlgo accepted an invalid algorithm")
-	}
-	if HASHALGO != SHA3 {
-		t.Fatalf("HASHALGO changed after invalid input: got %q, want %q", HASHALGO, SHA3)
+	if _, err := ParseHashAlgo("md5"); err == nil {
+		t.Fatal("ParseHashAlgo accepted an invalid algorithm")
 	}
 }
 
@@ -66,23 +54,11 @@ func TestNormalizeHashStrategy(t *testing.T) {
 	}
 }
 
-func TestSetStoreHashStrategy(t *testing.T) {
-	original := StoreHashStrategy
-	t.Cleanup(func() {
-		StoreHashStrategy = original
-	})
-
-	if err := SetStoreHashStrategy("async"); err != nil {
-		t.Fatalf("SetStoreHashStrategy returned unexpected error: %v", err)
+func TestParseHashStrategy(t *testing.T) {
+	if got, err := ParseHashStrategy("async"); err != nil || got != AsyncHashStrategy {
+		t.Fatalf("ParseHashStrategy(async) = %q, %v; want %q", got, err, AsyncHashStrategy)
 	}
-	if StoreHashStrategy != AsyncHashStrategy {
-		t.Fatalf("StoreHashStrategy = %q, want %q", StoreHashStrategy, AsyncHashStrategy)
-	}
-
-	if err := SetStoreHashStrategy("merkle"); err == nil {
-		t.Fatal("SetStoreHashStrategy accepted an invalid strategy")
-	}
-	if StoreHashStrategy != AsyncHashStrategy {
-		t.Fatalf("StoreHashStrategy changed after invalid input: got %q, want %q", StoreHashStrategy, AsyncHashStrategy)
+	if _, err := ParseHashStrategy("merkle"); err == nil {
+		t.Fatal("ParseHashStrategy accepted an invalid strategy")
 	}
 }

@@ -14,7 +14,6 @@ import (
 	"testing"
 	"time"
 
-	"indicer/internal/testutil/testdb"
 	"indicer/lib/dbopen"
 
 	"go.uber.org/zap"
@@ -26,8 +25,6 @@ const testToken = "0123456789abcdef0123456789abcdef-token"
 // openDB opens a new database the way `dues server` does.
 func openDB(t *testing.T) *dbopen.Handle {
 	t.Helper()
-	testdb.Isolate(t)
-	testdb.EnsureCodecs(t)
 	h, err := dbopen.Open(context.Background(), dbopen.Request{Path: filepath.Join(t.TempDir(), "db"), Mode: dbopen.ReadWrite})
 	if err != nil {
 		t.Fatal(err)

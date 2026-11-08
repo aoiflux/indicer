@@ -37,8 +37,6 @@ const evidenceBytes = 300 << 10
 // copies as files.
 func newRoot(t *testing.T, creds dbmeta.Credentials) string {
 	t.Helper()
-	testdb.Isolate(t)
-	testdb.EnsureCodecs(t)
 	root := testdb.NewDataRoot(t)
 	h, err := dbopen.Open(t.Context(), dbopen.Request{Path: root, Mode: dbopen.ReadWrite, Creds: creds, KDF: &fastKDF, WrittenBy: "test"})
 	if err != nil {

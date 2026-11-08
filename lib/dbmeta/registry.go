@@ -48,23 +48,19 @@ func UniformChunkSize(db *badger.DB) bool {
 }
 
 // ChunkSize returns the chunk size in bytes of the database db. A database
-// opened without dbopen, as some tests do, has no registered layout and gets
-// the process-wide setting.
+// opened without dbopen has no registered layout and gets the default.
 func ChunkSize(db *badger.DB) int64 {
 	if l, ok := LayoutFor(db); ok && l.ChunkKiB > 0 {
 		return int64(l.ChunkKiB) * cnst.KB
 	}
-	return cnst.ChonkSize
+	return cnst.DefaultChonkSize
 }
 
 // HashAlgo returns the chunk hash algorithm of db (HashBLAKE3 or HashSHA3),
-// or the process-wide setting for a database opened without dbopen.
+// or the default, HashBLAKE3, for a database opened without dbopen.
 func HashAlgo(db *badger.DB) string {
 	if l, ok := LayoutFor(db); ok && l.ChunkHash != "" {
 		return l.ChunkHash
-	}
-	if cnst.HASHALGO == cnst.SHA3 {
-		return HashSHA3
 	}
 	return HashBLAKE3
 }

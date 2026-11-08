@@ -10,7 +10,6 @@ import (
 	"indicer/internal/faultinject"
 	"indicer/internal/testutil/testdb"
 	"indicer/lib/dbio"
-	"indicer/lib/util"
 
 	"github.com/dgraph-io/badger/v4"
 )
@@ -20,8 +19,7 @@ import (
 // leaves them) is removed by the next recovery, and the evidence it
 // duplicates stays whole.
 func TestInterruptedDuplicateCleanupIsFinished(t *testing.T) {
-	db := testdb.Open(t, testdb.Default)
-	util.SetChonkSize(4)
+	db := testdb.Open(t, testdb.Default, testdb.Options{ChunkKiB: 4})
 	content := bytes.Repeat([]byte("duplicate "), 2000)
 	first := flushedEvidence(t, db.DB, "/case/x.img", content)
 	if _, err := CommitEvidence(db.DB, first); err != nil {

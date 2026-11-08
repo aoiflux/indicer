@@ -3,13 +3,12 @@ package store
 import (
 	"fmt"
 	"os"
-	"runtime"
 	"testing"
 
+	"indicer/internal/testutil/testdb"
 	"indicer/lib/cnst"
 	"indicer/lib/dbio"
 	"indicer/lib/util"
-	"indicer/lib/zstdx"
 
 	"github.com/dgraph-io/badger/v4"
 )
@@ -17,16 +16,8 @@ import (
 const revRelSyntheticAppendShards = 16
 
 func BenchmarkProcessRevRel(b *testing.B) {
-	ensureBenchmarkCodecs(b)
-
-	oldQuickOpt := cnst.QUICKOPT
-	cnst.QUICKOPT = true
-	defer func() {
-		cnst.QUICKOPT = oldQuickOpt
-	}()
-
 	b.Run("existing_same_file_noop", func(b *testing.B) {
-		db := openRevRelBenchDB(b)
+		db := openRevRelBenchDB(b, testdb.Quick)
 		defer db.Close()
 
 		index := int64(0)
@@ -56,7 +47,7 @@ func BenchmarkProcessRevRel(b *testing.B) {
 	})
 
 	b.Run("existing_new_file_write", func(b *testing.B) {
-		db := openRevRelBenchDB(b)
+		db := openRevRelBenchDB(b, testdb.Quick)
 		defer db.Close()
 
 		index := int64(0)
@@ -86,7 +77,7 @@ func BenchmarkProcessRevRel(b *testing.B) {
 	})
 
 	b.Run("synthetic_append_shard_new_file_write", func(b *testing.B) {
-		db := openRevRelBenchDB(b)
+		db := openRevRelBenchDB(b, testdb.Quick)
 		defer db.Close()
 
 		index := int64(0)
@@ -107,7 +98,7 @@ func BenchmarkProcessRevRel(b *testing.B) {
 	})
 
 	b.Run("append_collect_32_members", func(b *testing.B) {
-		db := openRevRelBenchDB(b)
+		db := openRevRelBenchDB(b, testdb.Quick)
 		defer db.Close()
 
 		index := int64(0)
@@ -138,7 +129,7 @@ func BenchmarkProcessRevRel(b *testing.B) {
 	})
 
 	b.Run("synthetic_append_shard_collect_32_members", func(b *testing.B) {
-		db := openRevRelBenchDB(b)
+		db := openRevRelBenchDB(b, testdb.Quick)
 		defer db.Close()
 
 		index := int64(0)
@@ -168,27 +159,10 @@ func BenchmarkProcessRevRel(b *testing.B) {
 	})
 }
 
-func ensureBenchmarkCodecs(b *testing.B) {
-	if cnst.ENCODER == nil {
-		encoder, err := zstdx.Acquire("best", runtime.GOMAXPROCS(0))
-		if err != nil {
-			b.Fatalf("init zstd encoder: %v", err)
-		}
-		cnst.ENCODER = encoder
-	}
-}
-
-func openRevRelBenchDB(b *testing.B) *badger.DB {
-	tempDir := b.TempDir()
-	encryptionKey := make([]byte, cnst.KeySize)
-	for i := range encryptionKey {
-		encryptionKey[i] = byte(i + 1)
-	}
-
-	db, err := dbio.ConnectDB(tempDir, encryptionKey, cnst.QUICKOPT)
-	if err != nil {
-		b.Fatalf("open badger: %v", err)
-	}
+// openRevRelBenchDB opens a benchmark database of mode m, registered with its
+// own layout, tuning and encoder, with its blob directory made.
+func openRevRelBenchDB(b *testing.B, m testdb.Mode) *badger.DB {
+	db := testdb.Open(b, m).DB
 	if err := os.MkdirAll(util.BlobPath(db.Opts().Dir), cnst.DirPerm); err != nil {
 		b.Fatalf("create blob dir: %v", err)
 	}

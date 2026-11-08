@@ -9,7 +9,6 @@ import (
 	"indicer/internal/testutil/testdb"
 	"indicer/lib/dbio"
 	"indicer/lib/structs"
-	"indicer/lib/util"
 
 	"github.com/dgraph-io/badger/v4"
 )
@@ -32,8 +31,7 @@ func setIndexState(t *testing.T, db *badger.DB, eid []byte, state structs.IndexS
 // evidence COMPLETED without entering its identity, so the same content
 // could be stored twice.
 func TestRecoveryCommitsFlushedAttempts(t *testing.T) {
-	db := testdb.Open(t, testdb.Default)
-	util.SetChonkSize(4)
+	db := testdb.Open(t, testdb.Default, testdb.Options{ChunkKiB: 4})
 	content := bytes.Repeat([]byte("recover me "), 3000)
 	first := flushedEvidence(t, db.DB, "/case/a.img", content)
 	second := flushedEvidence(t, db.DB, "/case/copy-of-a.img", content)
@@ -77,8 +75,7 @@ func TestRecoveryCommitsFlushedAttempts(t *testing.T) {
 // TestRecoveryFinishesDuplicateCleanup: a duplicate whose removal a crash cut
 // short is removed at the next writable open.
 func TestRecoveryFinishesDuplicateCleanup(t *testing.T) {
-	db := testdb.Open(t, testdb.Default)
-	util.SetChonkSize(4)
+	db := testdb.Open(t, testdb.Default, testdb.Options{ChunkKiB: 4})
 	content := bytes.Repeat([]byte("duplicate "), 2000)
 	first := flushedEvidence(t, db.DB, "/case/x.img", content)
 	if _, err := CommitEvidence(db.DB, first); err != nil {
@@ -101,8 +98,7 @@ func TestRecoveryFinishesDuplicateCleanup(t *testing.T) {
 // were stored is failed with a reason, and an index pass marked running on
 // it or on a completed evidence is marked interrupted.
 func TestRecoveryInterruptsIndexPass(t *testing.T) {
-	db := testdb.Open(t, testdb.Default)
-	util.SetChonkSize(4)
+	db := testdb.Open(t, testdb.Default, testdb.Options{ChunkKiB: 4})
 	content := bytes.Repeat([]byte("pending "), 2000)
 	pending := flushedEvidence(t, db.DB, "/case/p.img", content)
 	err := dbio.UpdateEvidence(db.DB, pending, func(_ *badger.Txn, e *structs.EvidenceFile) error {
@@ -144,8 +140,7 @@ func TestRecoveryInterruptsIndexPass(t *testing.T) {
 // FLUSHED for the next writable open. It used to validate the attempt
 // whatever the context said, so Ctrl-C waited for every chunk to be checked.
 func TestRecoveryStopsWhenCancelled(t *testing.T) {
-	db := testdb.Open(t, testdb.Default)
-	util.SetChonkSize(4)
+	db := testdb.Open(t, testdb.Default, testdb.Options{ChunkKiB: 4})
 	eid := flushedEvidence(t, db.DB, "/case/a.img", bytes.Repeat([]byte("cancel me "), 3000))
 	ctx, cancel := context.WithCancelCause(t.Context())
 	stop := errors.New("examiner pressed Ctrl-C")

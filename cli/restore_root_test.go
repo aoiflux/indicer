@@ -7,7 +7,6 @@ import (
 	"testing"
 
 	"indicer/internal/testutil"
-	"indicer/internal/testutil/testdb"
 	"indicer/lib/cnst"
 	"indicer/lib/dbio"
 	"indicer/lib/dbopen"
@@ -20,8 +19,6 @@ import (
 // well as its plain hash, and dues list shows both. A sync evidence's file
 // hash is the plain one, and restoring it by its root reported not found.
 func TestRestoreByContentRoot(t *testing.T) {
-	testdb.Isolate(t)
-	testdb.EnsureCodecs(t)
 	dir := t.TempDir()
 	opts := optsFor(filepath.Join(dir, "db"), matrixChunkKB, nil)
 	src := testutil.WriteRandomFile(t, dir, "evidence.bin", 23, 3*matrixChunkKB*1024+5)

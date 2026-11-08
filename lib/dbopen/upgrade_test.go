@@ -85,14 +85,8 @@ func TestBlockFilesKeepLegacyLookup(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	prev := cnst.LegacyBlockIndex
-	t.Cleanup(func() { cnst.LegacyBlockIndex = prev })
-	cnst.LegacyBlockIndex = false
 	h := open(t, Request{Path: root, Mode: ReadOnly})
 	if !engine.For(h.DB).BlockIndex() {
 		t.Fatal("block index files present but the lookup is off")
-	}
-	if cnst.LegacyBlockIndex {
-		t.Fatal("the open turned the global block index lookup on")
 	}
 }

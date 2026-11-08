@@ -10,6 +10,7 @@ import (
 	"indicer/internal/testutil/testdb"
 	"indicer/lib/cnst"
 	"indicer/lib/dbio"
+	"indicer/lib/dbmeta"
 	"indicer/lib/util"
 
 	"github.com/dgraph-io/badger/v4"
@@ -24,12 +25,11 @@ import (
 func TestRevrelConcurrentIngestsKeepEveryRelation(t *testing.T) {
 	for name, pass := range chunkPasses {
 		t.Run(name, func(t *testing.T) {
-			db := testdb.Open(t, testdb.Default)
-			util.SetChonkSize(4)
+			db := testdb.Open(t, testdb.Default, testdb.Options{ChunkKiB: 4})
 			if err := util.EnsureBlobPath(db.DB.Opts().Dir); err != nil {
 				t.Fatal(err)
 			}
-			cs := int(cnst.ChonkSize)
+			cs := int(dbmeta.ChunkSize(db.DB))
 			content := testutil.RandomBytes(41, 6*cs)
 
 			const ingests = 6
@@ -52,7 +52,7 @@ func TestRevrelConcurrentIngestsKeepEveryRelation(t *testing.T) {
 			}
 
 			for c := range 6 {
-				chash, err := util.GetChonkHash(content[c*cs:(c+1)*cs], cnst.GetHashAlgo())
+				chash, err := util.GetChonkHash(content[c*cs:(c+1)*cs], dbmeta.ChunkHasher(db.DB)())
 				if err != nil {
 					t.Fatal(err)
 				}
@@ -93,12 +93,11 @@ func TestRevrelConcurrentIngestsKeepEveryRelation(t *testing.T) {
 func TestChunkPassOptionsArePerPass(t *testing.T) {
 	for name, pass := range chunkPasses {
 		t.Run(name, func(t *testing.T) {
-			db := testdb.Open(t, testdb.Default)
-			util.SetChonkSize(4)
+			db := testdb.Open(t, testdb.Default, testdb.Options{ChunkKiB: 4})
 			if err := util.EnsureBlobPath(db.DB.Opts().Dir); err != nil {
 				t.Fatal(err)
 			}
-			cs := int(cnst.ChonkSize)
+			cs := int(dbmeta.ChunkSize(db.DB))
 			with, without := testutil.RandomBytes(61, 6*cs), testutil.RandomBytes(62, 6*cs)
 			var wg sync.WaitGroup
 			errs := make(chan error, 2)
@@ -124,7 +123,7 @@ func TestChunkPassOptionsArePerPass(t *testing.T) {
 				want    bool
 			}{{"with", with, true}, {"without", without, false}} {
 				for i := range 6 {
-					chash, err := util.GetChonkHash(c.content[i*cs:(i+1)*cs], cnst.GetHashAlgo())
+					chash, err := util.GetChonkHash(c.content[i*cs:(i+1)*cs], dbmeta.ChunkHasher(db.DB)())
 					if err != nil {
 						t.Fatal(err)
 					}

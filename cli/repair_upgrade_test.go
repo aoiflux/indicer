@@ -19,7 +19,6 @@ import (
 // path and the stored files.
 func legacyHierarchicalDB(t *testing.T) (string, []string) {
 	t.Helper()
-	testdb.Apply(t, testdb.Container)
 	dir := t.TempDir()
 	dbPath := filepath.Join(dir, "db")
 	opts := optsForMode(dbPath, matrixChunkKB, testdb.Container)
@@ -139,7 +138,6 @@ func TestRepairUpgradeMovesBlockIndex(t *testing.T) {
 // TestRepairUpgradeWithoutBlockIndex: on a database with no block index the
 // upgrade has nothing to do and changes nothing.
 func TestRepairUpgradeWithoutBlockIndex(t *testing.T) {
-	testdb.Apply(t, testdb.Container)
 	dbPath := filepath.Join(t.TempDir(), "db")
 	p := testutil.WriteRandomFile(t, t.TempDir(), "obj.bin", 9, 10000)
 	if err := StoreData(t.Context(), optsForMode(dbPath, matrixChunkKB, testdb.Container), p, false, true, false, false); err != nil {

@@ -11,7 +11,6 @@ import (
 	"testing"
 
 	"indicer/internal/console"
-	"indicer/internal/testutil/testdb"
 	"indicer/lib/util"
 )
 
@@ -19,8 +18,6 @@ import (
 // read-only, so on a database that has none they list without one and leave
 // none behind (CFG-7, GRA-5). They used to create graph/ in the data root.
 func TestReadCommandsCreateNoGraph(t *testing.T) {
-	testdb.Isolate(t)
-	testdb.EnsureCodecs(t)
 	_, image := fixtureNamed(t, "fat/fat12")
 	dbPath := filepath.Join(t.TempDir(), "db")
 	opts := optsFor(dbPath, matrixChunkKB, nil)
@@ -46,8 +43,6 @@ func TestReadCommandsCreateNoGraph(t *testing.T) {
 // listed, and enriched files carry what enrichment derived. It used to list
 // only the evidence the graph held.
 func TestListShowsEvidenceTheGraphLacks(t *testing.T) {
-	testdb.Isolate(t)
-	testdb.EnsureCodecs(t)
 	_, enriched := fixtureNamed(t, "fat/fat12")
 	_, plain := fixtureNamed(t, "ext/ext4")
 	dbPath := filepath.Join(t.TempDir(), "db")

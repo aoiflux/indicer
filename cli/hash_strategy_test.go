@@ -11,29 +11,28 @@ import (
 	"io"
 	"os"
 	"path/filepath"
-	"runtime"
 	"testing"
 
 	"indicer/lib/cnst"
 	"indicer/lib/dbio"
+	"indicer/lib/dbmeta"
 	"indicer/lib/engine"
 	"indicer/lib/store"
 	"indicer/lib/structs"
 	"indicer/lib/util"
-	"indicer/lib/zstdx"
 
 	"github.com/dgraph-io/badger/v4"
+	"github.com/zeebo/blake3"
 )
 
-func ensureZstdReadyForTests(t *testing.T) {
-	t.Helper()
-	if cnst.ENCODER == nil {
-		encoder, err := zstdx.Acquire("default", runtime.GOMAXPROCS(0))
-		if err != nil {
-			t.Fatalf("init zstd encoder: %v", err)
-		}
-		cnst.ENCODER = encoder
-	}
+// strategyOpts returns the options a test stores into the database at
+// dbPath with, under the hash strategy given.
+func strategyOpts(dbPath string, chunkKB int, key []byte, strategy string) DBOptions {
+	tun := cnst.DefaultTuning()
+	tun.HashStrategy = strategy
+	opts := optsFor(dbPath, chunkKB, key)
+	opts.Tuning = &tun
+	return opts
 }
 
 func collectEvidenceHashState(t *testing.T, dbPath string, key []byte, rawHash []byte) (string, []byte) {
@@ -79,7 +78,9 @@ func collectEvidenceHashState(t *testing.T, dbPath string, key []byte, rawHash [
 	return evi.FileHash, fid
 }
 
-func computeExpectedHochoHashForTest(filePath string) (string, error) {
+// computeExpectedHochoHashForTest returns the content root of the file at
+// filePath in chunks of chunkSize bytes, for a BLAKE3 database.
+func computeExpectedHochoHashForTest(filePath string, chunkSize int64) (string, error) {
 	handle, err := os.Open(filePath)
 	if err != nil {
 		return "", err
@@ -90,12 +91,12 @@ func computeExpectedHochoHashForTest(filePath string) (string, error) {
 		return "", err
 	}
 
-	hasher := cnst.GetHashAlgo(true)
-	buf := make([]byte, cnst.ChonkSize)
+	hasher := blake3.New()
+	buf := make([]byte, chunkSize)
 	for {
 		n, readErr := handle.Read(buf)
 		if n > 0 {
-			chunkHash, hashErr := util.GetChonkHash(buf[:n], cnst.GetHashAlgo(true))
+			chunkHash, hashErr := util.GetChonkHash(buf[:n], blake3.New())
 			if hashErr != nil {
 				return "", hashErr
 			}
@@ -120,13 +121,6 @@ func computeExpectedHochoHashForTest(filePath string) (string, error) {
 }
 
 func TestStoreHashStrategyEvidenceParity(t *testing.T) {
-	ensureZstdReadyForTests(t)
-
-	originalStrategy := cnst.StoreHashStrategy
-	t.Cleanup(func() {
-		cnst.StoreHashStrategy = originalStrategy
-	})
-
 	inputPath := filepath.Join(t.TempDir(), "sample.bin")
 	chunk := []byte("hash-strategy-parity")
 	data := bytes.Repeat(chunk, 8192)
@@ -139,7 +133,7 @@ func TestStoreHashStrategyEvidenceParity(t *testing.T) {
 	if err != nil {
 		t.Fatalf("open input for hash: %v", err)
 	}
-	expectedHashRaw, err := testutil.HashFile(handle, cnst.GetHashAlgo(true))
+	expectedHashRaw, err := testutil.HashFile(handle, blake3.New())
 	closeErr := handle.Close()
 	if err != nil {
 		t.Fatalf("HashFile: %v", err)
@@ -150,26 +144,19 @@ func TestStoreHashStrategyEvidenceParity(t *testing.T) {
 	expectedHash := base64.StdEncoding.EncodeToString(expectedHashRaw)
 
 	key := []byte("01234567890123456789012345678901")
-	originalChunkSize := cnst.ChonkSize
-	util.SetChonkSize(64)
-	t.Cleanup(func() {
-		cnst.ChonkSize = originalChunkSize
-	})
-	expectedHocho, err := computeExpectedHochoHashForTest(inputPath)
+	expectedHocho, err := computeExpectedHochoHashForTest(inputPath, 64*cnst.KB)
 	if err != nil {
 		t.Fatalf("computeSyncHochoHash: %v", err)
 	}
 
 	dbPathSync := filepath.Join(t.TempDir(), "db-sync")
-	cnst.StoreHashStrategy = cnst.SyncHashStrategy
-	if err := StoreData(t.Context(), optsFor(dbPathSync, 64, key), inputPath, false, true, false, false); err != nil {
+	if err := StoreData(t.Context(), strategyOpts(dbPathSync, 64, key, cnst.SyncHashStrategy), inputPath, false, true, false, false); err != nil {
 		t.Fatalf("StoreData sync: %v", err)
 	}
 	syncHash, _ := collectEvidenceHashState(t, dbPathSync, key, expectedHashRaw)
 
 	dbPathAsync := filepath.Join(t.TempDir(), "db-async")
-	cnst.StoreHashStrategy = cnst.AsyncHashStrategy
-	if err := StoreData(t.Context(), optsFor(dbPathAsync, 64, key), inputPath, false, true, false, false); err != nil {
+	if err := StoreData(t.Context(), strategyOpts(dbPathAsync, 64, key, cnst.AsyncHashStrategy), inputPath, false, true, false, false); err != nil {
 		t.Fatalf("StoreData async: %v", err)
 	}
 	asyncHash, _ := collectEvidenceHashState(t, dbPathAsync, key, expectedHashRaw)
@@ -185,8 +172,7 @@ func TestStoreHashStrategyEvidenceParity(t *testing.T) {
 	}
 
 	dbPathHocho := filepath.Join(t.TempDir(), "db-hocho")
-	cnst.StoreHashStrategy = cnst.HochoHashStrategy
-	if err := StoreData(t.Context(), optsFor(dbPathHocho, 64, key), inputPath, false, true, false, false); err != nil {
+	if err := StoreData(t.Context(), strategyOpts(dbPathHocho, 64, key, cnst.HochoHashStrategy), inputPath, false, true, false, false); err != nil {
 		t.Fatalf("StoreData hocho: %v", err)
 	}
 	hochoRaw, err := base64.StdEncoding.DecodeString(expectedHocho)
@@ -200,16 +186,6 @@ func TestStoreHashStrategyEvidenceParity(t *testing.T) {
 }
 
 func TestStoreHashStrategyKeyModelContract(t *testing.T) {
-	ensureZstdReadyForTests(t)
-
-	originalStrategy := cnst.StoreHashStrategy
-	originalChunkSize := cnst.ChonkSize
-	util.SetChonkSize(64)
-	t.Cleanup(func() {
-		cnst.StoreHashStrategy = originalStrategy
-		cnst.ChonkSize = originalChunkSize
-	})
-
 	inputPath := filepath.Join(t.TempDir(), "key-model.bin")
 	data := bytes.Repeat([]byte("key-model-contract"), 4096)
 	if err := os.WriteFile(inputPath, data, 0o600); err != nil {
@@ -220,7 +196,7 @@ func TestStoreHashStrategyKeyModelContract(t *testing.T) {
 	if err != nil {
 		t.Fatalf("open input for sync hash: %v", err)
 	}
-	syncRaw, err := testutil.HashFile(handle, cnst.GetHashAlgo(true))
+	syncRaw, err := testutil.HashFile(handle, blake3.New())
 	closeErr := handle.Close()
 	if err != nil {
 		t.Fatalf("HashFile: %v", err)
@@ -230,7 +206,7 @@ func TestStoreHashStrategyKeyModelContract(t *testing.T) {
 	}
 	syncEncoded := base64.StdEncoding.EncodeToString(syncRaw)
 
-	hochoEncoded, err := computeExpectedHochoHashForTest(inputPath)
+	hochoEncoded, err := computeExpectedHochoHashForTest(inputPath, 64*cnst.KB)
 	if err != nil {
 		t.Fatalf("computeSyncHochoHash: %v", err)
 	}
@@ -246,8 +222,7 @@ func TestStoreHashStrategyKeyModelContract(t *testing.T) {
 		strategy := strategy
 		t.Run(strategy, func(t *testing.T) {
 			dbPath := filepath.Join(t.TempDir(), "db-"+strategy)
-			cnst.StoreHashStrategy = strategy
-			if err := StoreData(t.Context(), optsFor(dbPath, 64, key), inputPath, false, true, false, false); err != nil {
+			if err := StoreData(t.Context(), strategyOpts(dbPath, 64, key, strategy), inputPath, false, true, false, false); err != nil {
 				t.Fatalf("StoreData %s: %v", strategy, err)
 			}
 
@@ -271,7 +246,7 @@ func TestStoreHashStrategyKeyModelContract(t *testing.T) {
 				t.Fatalf("evidence key unexpectedly hash-addressed for %s", strategy)
 			}
 
-			partitionHash, indexedHash := attachSyntheticPartitionAndIndexed(t, dbPath, key, evidenceID, inputPath, strategy, strategy)
+			partitionHash, indexedHash := attachSyntheticPartitionAndIndexed(t, dbPath, key, evidenceID, inputPath, strategy)
 
 			h, err := openTestDB(dbPath, key)
 			if err != nil {
@@ -327,16 +302,6 @@ func TestStoreHashStrategyKeyModelContract(t *testing.T) {
 }
 
 func TestStoreHashStrategyPartitionIndexedParityAndListVisibility(t *testing.T) {
-	ensureZstdReadyForTests(t)
-
-	originalStrategy := cnst.StoreHashStrategy
-	originalChunkSize := cnst.ChonkSize
-	util.SetChonkSize(64)
-	t.Cleanup(func() {
-		cnst.StoreHashStrategy = originalStrategy
-		cnst.ChonkSize = originalChunkSize
-	})
-
 	inputPath := filepath.Join(t.TempDir(), "sample.bin")
 	chunk := []byte("partition-indexed-hocho-coverage")
 	data := bytes.Repeat(chunk, 4096)
@@ -348,7 +313,7 @@ func TestStoreHashStrategyPartitionIndexedParityAndListVisibility(t *testing.T) 
 	if err != nil {
 		t.Fatalf("open input for hash: %v", err)
 	}
-	expectedEvidenceRaw, err := testutil.HashFile(handle, cnst.GetHashAlgo(true))
+	expectedEvidenceRaw, err := testutil.HashFile(handle, blake3.New())
 	closeErr := handle.Close()
 	if err != nil {
 		t.Fatalf("HashFile: %v", err)
@@ -360,18 +325,16 @@ func TestStoreHashStrategyPartitionIndexedParityAndListVisibility(t *testing.T) 
 	key := []byte("01234567890123456789012345678901")
 
 	dbPathSync := filepath.Join(t.TempDir(), "db-sync")
-	cnst.StoreHashStrategy = cnst.SyncHashStrategy
-	if err := StoreData(t.Context(), optsFor(dbPathSync, 64, key), inputPath, false, true, false, false); err != nil {
+	if err := StoreData(t.Context(), strategyOpts(dbPathSync, 64, key, cnst.SyncHashStrategy), inputPath, false, true, false, false); err != nil {
 		t.Fatalf("StoreData sync: %v", err)
 	}
 	_, syncFID := collectEvidenceHashState(t, dbPathSync, key, expectedEvidenceRaw)
 
 	dbPathHocho := filepath.Join(t.TempDir(), "db-hocho")
-	cnst.StoreHashStrategy = cnst.HochoHashStrategy
-	if err := StoreData(t.Context(), optsFor(dbPathHocho, 64, key), inputPath, false, true, false, false); err != nil {
+	if err := StoreData(t.Context(), strategyOpts(dbPathHocho, 64, key, cnst.HochoHashStrategy), inputPath, false, true, false, false); err != nil {
 		t.Fatalf("StoreData hocho: %v", err)
 	}
-	expectedHochoEvidence, err := computeExpectedHochoHashForTest(inputPath)
+	expectedHochoEvidence, err := computeExpectedHochoHashForTest(inputPath, 64*cnst.KB)
 	if err != nil {
 		t.Fatalf("computeSyncHochoHash: %v", err)
 	}
@@ -381,8 +344,8 @@ func TestStoreHashStrategyPartitionIndexedParityAndListVisibility(t *testing.T) 
 	}
 	_, hochoFID := collectEvidenceHashState(t, dbPathHocho, key, expectedHochoRaw)
 
-	syncPartitionHash, syncIndexedHash := attachSyntheticPartitionAndIndexed(t, dbPathSync, key, syncFID, inputPath, "sync", cnst.SyncHashStrategy)
-	hochoPartitionHash, hochoIndexedHash := attachSyntheticPartitionAndIndexed(t, dbPathHocho, key, hochoFID, inputPath, "hocho", cnst.HochoHashStrategy)
+	syncPartitionHash, syncIndexedHash := attachSyntheticPartitionAndIndexed(t, dbPathSync, key, syncFID, inputPath, "sync")
+	hochoPartitionHash, hochoIndexedHash := attachSyntheticPartitionAndIndexed(t, dbPathHocho, key, hochoFID, inputPath, "hocho")
 
 	if syncPartitionHash != hochoPartitionHash {
 		t.Fatalf("expected partition hash parity between sync and hocho, got sync=%q hocho=%q", syncPartitionHash, hochoPartitionHash)
@@ -395,12 +358,8 @@ func TestStoreHashStrategyPartitionIndexedParityAndListVisibility(t *testing.T) 
 	assertListContainsSyntheticHierarchy(t, dbPathHocho, key, hochoPartitionHash, hochoIndexedHash)
 }
 
-func attachSyntheticPartitionAndIndexed(t *testing.T, dbPath string, key []byte, evidenceID []byte, inputPath string, tag string, strategy string) (string, string) {
+func attachSyntheticPartitionAndIndexed(t *testing.T, dbPath string, key []byte, evidenceID []byte, inputPath string, tag string) (string, string) {
 	t.Helper()
-	previousStrategy := cnst.StoreHashStrategy
-	cnst.StoreHashStrategy = strategy
-	defer func() { cnst.StoreHashStrategy = previousStrategy }()
-
 	h, err := openTestDB(dbPath, key)
 	if err != nil {
 		t.Fatalf("ConnectDB: %v", err)
@@ -424,11 +383,11 @@ func attachSyntheticPartitionAndIndexed(t *testing.T, dbPath string, key []byte,
 	indexedStart := int64(64)
 	indexedSize := int64(256)
 
-	partitionRaw, err := testutil.HashRange(handle, cnst.GetHashAlgo(true), partitionStart, partitionSize)
+	partitionRaw, err := testutil.HashRange(handle, dbmeta.FileHasher(db)(), partitionStart, partitionSize)
 	if err != nil {
 		t.Fatalf("partition logical hash: %v", err)
 	}
-	indexedRaw, err := testutil.HashRange(handle, cnst.GetHashAlgo(true), indexedStart, indexedSize)
+	indexedRaw, err := testutil.HashRange(handle, dbmeta.FileHasher(db)(), indexedStart, indexedSize)
 	if err != nil {
 		t.Fatalf("indexed logical hash: %v", err)
 	}

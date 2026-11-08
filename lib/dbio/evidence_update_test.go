@@ -6,7 +6,6 @@ import (
 	"sync"
 	"testing"
 
-	"indicer/lib/cnst"
 	"indicer/lib/structs"
 
 	"github.com/dgraph-io/badger/v4"
@@ -19,8 +18,7 @@ import (
 func TestUpdateEvidenceConcurrentWritersKeepEveryChange(t *testing.T) {
 	for _, quick := range []bool{true, false} {
 		t.Run(fmt.Sprintf("quick=%v", quick), func(t *testing.T) {
-			db := openDBIOTestDB(t)
-			cnst.QUICKOPT = quick
+			db := openDBIOTestDBWith(t, quick)
 			eid := []byte("evidence-concurrent")
 			if err := CreateEvidence(db, eid, structs.NewEvidenceFile("e.dd", 0, 1, nil, "raw", "")); err != nil {
 				t.Fatal(err)

@@ -25,7 +25,8 @@ func seedFlushedEvidenceWithChunk(t testing.TB, db *badger.DB, name string, hash
 		t.Fatalf("seed flushed evidence: %v", err)
 	}
 
-	restoreIndex := util.GetDBStartOffset(evidenceFile.Start)
+	cs := dbmeta.ChunkSize(db)
+	restoreIndex := evidenceFile.Start / cs * cs
 	chunkHash := bytes.Repeat([]byte{hashSeed + 1}, 32)
 	relKey := util.AppendToBytesSlice(cnst.RelationNamespace, infile.GetHash(), cnst.DataSeperator, restoreIndex)
 	if err := dbio.SetNode(relKey, chunkHash, db); err != nil {

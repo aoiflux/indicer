@@ -8,15 +8,12 @@ import (
 	"testing"
 
 	"indicer/internal/lifecycle"
-	"indicer/internal/testutil/testdb"
 )
 
 // TestSearchCommand: the search command refuses a bad query or an existing
 // report as usage errors, and exits 2 when an object cannot be read, naming
 // it in the report.
 func TestSearchCommand(t *testing.T) {
-	testdb.Isolate(t)
-	testdb.EnsureCodecs(t)
 	_, image := fixtureNamed(t, "fat/fat12")
 	dbPath := filepath.Join(t.TempDir(), "db")
 	opts := optsFor(dbPath, matrixChunkKB, nil)

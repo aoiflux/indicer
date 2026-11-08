@@ -22,8 +22,7 @@ import (
 func TestChunkPassProgress(t *testing.T) {
 	for name, pass := range chunkPasses {
 		t.Run(name, func(t *testing.T) {
-			db := testdb.Open(t, testdb.Default)
-			util.SetChonkSize(4)
+			db := testdb.Open(t, testdb.Default, testdb.Options{ChunkKiB: 4})
 			if err := util.EnsureBlobPath(db.DB.Opts().Dir); err != nil {
 				t.Fatal(err)
 			}

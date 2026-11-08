@@ -52,10 +52,6 @@ func FTSPath(path string) string {
 	return filepath.Join(ResolveDataRoot(path), cnst.FTSDIR)
 }
 
-func SetChonkSize(chonkSize int) {
-	cnst.ChonkSize = int64(chonkSize) * cnst.KB
-}
-
 func GetChonkHash(data []byte, hasher hash.Hash) ([]byte, error) {
 	if _, err := hasher.Write(data); err != nil {
 		return nil, err
@@ -145,13 +141,6 @@ func ChunkSimHash64(data []byte) uint64 {
 	}
 
 	return sig
-}
-
-func GetDBStartOffset(startIndex int64) int64 {
-	if startIndex == 0 {
-		return 0
-	}
-	return (startIndex / cnst.ChonkSize) * cnst.ChonkSize
 }
 
 // rawEvidenceIDLen is the length of an evidence ID, a UUIDv7.

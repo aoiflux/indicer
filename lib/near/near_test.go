@@ -36,9 +36,7 @@ const cs = 4096 // chunk size of the test databases
 
 func openNearDB(t *testing.T) *testdb.DB {
 	t.Helper()
-	testdb.Isolate(t)
-	d := testdb.Open(t, testdb.Default)
-	util.SetChonkSize(cs / 1024)
+	d := testdb.Open(t, testdb.Default, testdb.Options{ChunkKiB: cs / 1024})
 	if err := util.EnsureBlobPath(d.Root); err != nil {
 		t.Fatal(err)
 	}

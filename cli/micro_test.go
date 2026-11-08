@@ -8,7 +8,6 @@ import (
 
 	"indicer/internal/console"
 	"indicer/internal/lifecycle"
-	"indicer/internal/testutil/testdb"
 	"indicer/lib/microartefact"
 
 	diskfs "github.com/diskfs/go-diskfs"
@@ -65,8 +64,6 @@ func artefactTotal(t *testing.T, dbPath string) int {
 // rather than adding to them (GRA-12), and the HTML view is not overwritten
 // unless asked.
 func TestMicroExtract(t *testing.T) {
-	testdb.Isolate(t)
-	testdb.EnsureCodecs(t)
 	image := fat32Image(t, map[string]string{
 		"/NOTES.TXT": "download from https://example.org/tool.zip\napi_key=abc123\n",
 		"/PLAIN.TXT": "nothing to see here\n",

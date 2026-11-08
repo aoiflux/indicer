@@ -7,8 +7,7 @@ import (
 )
 
 // TestSetWriteEngine: the store io engine and io-uring queue depth come from
-// SetWriteEngine, not from the process-wide cnst settings, and an engine the
-// process does not know reads as auto.
+// SetWriteEngine, and an engine the process does not know reads as auto.
 func TestSetWriteEngine(t *testing.T) {
 	prevEngine, prevDepth := writeEngine, uringDepth
 	t.Cleanup(func() { SetWriteEngine(prevEngine, prevDepth) })

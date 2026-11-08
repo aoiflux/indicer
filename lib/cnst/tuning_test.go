@@ -1,43 +1,62 @@
 package cnst
 
 import (
+	"go/ast"
+	"go/parser"
+	"go/token"
+	"path/filepath"
 	"runtime"
+	"strings"
 	"testing"
 )
 
-// startGlobals is the tuning of the process before any test changes it.
-var startGlobals = Globals()
-
-// TestDefaultTuningIsTheStart: a process given no flags runs with
-// DefaultTuning.
-func TestDefaultTuningIsTheStart(t *testing.T) {
-	if got := DefaultTuning(); got != startGlobals {
-		t.Fatalf("DefaultTuning() = %+v, the globals start as %+v", got, startGlobals)
+// TestNoMutableConfigGlobals: package cnst declares no variable but its
+// errors. Layout, tuning and encoders belong to each open database (package
+// engine) or travel in a Tuning; a process-wide setting would let one
+// database's settings reach another's (I3).
+func TestNoMutableConfigGlobals(t *testing.T) {
+	fset := token.NewFileSet()
+	files, err := filepath.Glob("*.go")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, name := range files {
+		if strings.HasSuffix(name, "_test.go") {
+			continue
+		}
+		f, err := parser.ParseFile(fset, name, nil, 0)
+		if err != nil {
+			t.Fatal(err)
+		}
+		for _, decl := range f.Decls {
+			g, ok := decl.(*ast.GenDecl)
+			if !ok || g.Tok != token.VAR {
+				continue
+			}
+			for _, spec := range g.Specs {
+				v := spec.(*ast.ValueSpec)
+				for i, id := range v.Names {
+					if !strings.HasPrefix(id.Name, "Err") || i >= len(v.Values) || !isErrorsNew(v.Values[i]) {
+						t.Errorf("%s: package variable %s; pass settings in a cnst.Tuning or keep them per database (engine.For)", fset.Position(id.Pos()), id.Name)
+					}
+				}
+			}
+		}
 	}
 }
 
-// TestGlobalsCopiesAsIs: the bridge copies every global as it is, without
-// normalizing it: ingest refuses a hash strategy it does not know, and a
-// test relies on that.
-func TestGlobalsCopiesAsIs(t *testing.T) {
-	saved := Globals()
-	t.Cleanup(func() { setGlobals(saved) })
-	want := Tuning{
-		LowResource: true, CompressLevel: "fast", HashStrategy: "no-such-strategy",
-		Pipeline: StorePipelineStaged, IOEngine: "stdlib", IOUringDepth: 7,
-		StoreWorkers: 3, StoreQueue: 5, RestoreWorkers: 11, RestoreQueue: 13, RestoreBufferMB: 17,
+// isErrorsNew reports whether e is a call errors.New(...).
+func isErrorsNew(e ast.Expr) bool {
+	call, ok := e.(*ast.CallExpr)
+	if !ok {
+		return false
 	}
-	setGlobals(want)
-	if got := Globals(); got != want {
-		t.Fatalf("Globals() = %+v, want %+v", got, want)
+	sel, ok := call.Fun.(*ast.SelectorExpr)
+	if !ok {
+		return false
 	}
-}
-
-func setGlobals(t Tuning) {
-	MEMOPT, CompressLevel, StoreHashStrategy, StorePipelineMode = t.LowResource, t.CompressLevel, t.HashStrategy, t.Pipeline
-	StoreIOEngine, StoreIOUringQueueDepth = t.IOEngine, t.IOUringDepth
-	StoreWorkerCount, StoreTaskQueueDepth = t.StoreWorkers, t.StoreQueue
-	RestoreWorkerCount, RestoreTaskQueueDepth, RestoreWriteBufferMB = t.RestoreWorkers, t.RestoreQueue, t.RestoreBufferMB
+	pkg, ok := sel.X.(*ast.Ident)
+	return ok && pkg.Name == "errors" && sel.Sel.Name == "New"
 }
 
 // TestPipelineOverrides: set workers and queues replace the machine's, and

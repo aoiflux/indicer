@@ -9,7 +9,6 @@ import (
 
 	"indicer/cli"
 	"indicer/internal/lifecycle"
-	"indicer/internal/testutil/testdb"
 	"indicer/lib/dbopen"
 )
 
@@ -17,7 +16,6 @@ import (
 // context to the exit code: a command whose context a signal cancelled exits
 // 130 (SIGINT) or 143 (SIGTERM), not 1, and leaves the database unlocked.
 func TestSignalledCommandExitsWithSignalCode(t *testing.T) {
-	testdb.Isolate(t)
 	root := filepath.Join(t.TempDir(), "db")
 	h, err := dbopen.Open(context.Background(), dbopen.Request{Path: root, Mode: dbopen.ReadWrite})
 	if err != nil {

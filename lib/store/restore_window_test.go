@@ -7,10 +7,8 @@ import (
 	"testing"
 	"time"
 
-	"indicer/internal/testutil/testdb"
 	"indicer/lib/cnst"
 	"indicer/lib/dbio"
-	"indicer/lib/util"
 )
 
 // TestRestoreReorderWindowIsBounded is the RST-5 regression. Restore writes
@@ -18,10 +16,8 @@ import (
 // their turn. Nothing limited how far reads ran ahead, so one slow chunk let
 // the parked set grow towards the whole file.
 func TestRestoreReorderWindowIsBounded(t *testing.T) {
-	testdb.Isolate(t)
-	util.SetChonkSize(4)
 	const chunks = 1500
-	l := setupRestoreBenchmarkDataset(t, chunks, 0)
+	l := setupRestoreBenchmarkDataset(t, chunks, 0, 4)
 
 	prevRead, prevNote := readRestoreSpan, notePendingChunks
 	t.Cleanup(func() { readRestoreSpan, notePendingChunks = prevRead, prevNote })
@@ -42,7 +38,7 @@ func TestRestoreReorderWindowIsBounded(t *testing.T) {
 	}
 
 	var out bytes.Buffer
-	report, err := restoreLogical(context.Background(), l, &out, RestoreOptions{}, nil, cnst.Globals())
+	report, err := restoreLogical(context.Background(), l, &out, RestoreOptions{}, nil, cnst.DefaultTuning())
 	if err != nil {
 		t.Fatalf("restore: %v", err)
 	}

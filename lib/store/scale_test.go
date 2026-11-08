@@ -9,6 +9,7 @@ import (
 	"indicer/internal/testutil/testdb"
 	"indicer/lib/cnst"
 	"indicer/lib/dbio"
+	"indicer/lib/dbmeta"
 	"indicer/lib/structs"
 	"indicer/lib/util"
 
@@ -23,15 +24,14 @@ func TestValidateFourMillionChunks(t *testing.T) {
 	testutil.LongTest(t)
 	// Low-resource mode caps badger's caches at 96 MiB, so what the heap
 	// holds beyond them is validation's.
-	testdb.Apply(t, testdb.Default)
-	cnst.MEMOPT = true
-	db := testdb.OpenAt(t, testdb.Default, testdb.NewDataRoot(t))
-	util.SetChonkSize(4)
+	tun := cnst.DefaultTuning()
+	tun.LowResource = true
+	db := testdb.Open(t, testdb.Default, testdb.Options{ChunkKiB: 4, Tuning: &tun})
 	if err := util.EnsureBlobPath(db.Root); err != nil {
 		t.Fatal(err)
 	}
 	const n = 4 << 20
-	cs := int64(cnst.ChonkSize)
+	cs := dbmeta.ChunkSize(db.DB)
 	data := testutil.RandomBytes(7, int(cs))
 	sum := blake3.Sum256(data)
 	ckey := append([]byte(cnst.ChonkNamespace), sum[:]...)

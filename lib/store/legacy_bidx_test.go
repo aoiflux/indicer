@@ -9,6 +9,8 @@ import (
 	"indicer/internal/testutil/testdb"
 	"indicer/lib/cnst"
 	"indicer/lib/dbio"
+	"indicer/lib/dbmeta"
+	"indicer/lib/engine"
 	"indicer/lib/fio"
 	"indicer/lib/util"
 
@@ -23,13 +25,12 @@ import (
 func TestReingestFindsChunksInLegacyBlockIndex(t *testing.T) {
 	for name, pass := range chunkPasses {
 		t.Run(name, func(t *testing.T) {
-			db := testdb.Open(t, testdb.Container)
-			util.SetChonkSize(4)
-			cs := int(cnst.ChonkSize)
+			db := testdb.Open(t, testdb.Container, testdb.Options{ChunkKiB: 4})
+			cs := int(dbmeta.ChunkSize(db.DB))
 			content := testutil.RandomBytes(11, 6*cs)
 			runChunkPass(t, pass, db.DB, "first", content)
 			testdb.MoveChunkMetaToBlockIndex(t, db.DB)
-			cnst.LegacyBlockIndex = true
+			engine.For(db.DB).SetBlockIndex(true)
 
 			prev := materializeChunk
 			t.Cleanup(func() { materializeChunk = prev })
@@ -45,7 +46,7 @@ func TestReingestFindsChunksInLegacyBlockIndex(t *testing.T) {
 
 			for i := range 6 {
 				chunk := content[i*cs : (i+1)*cs]
-				chash, err := util.GetChonkHash(chunk, cnst.GetHashAlgo())
+				chash, err := util.GetChonkHash(chunk, dbmeta.ChunkHasher(db.DB)())
 				if err != nil {
 					t.Fatal(err)
 				}

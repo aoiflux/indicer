@@ -9,9 +9,8 @@ import (
 
 	"indicer/internal/testutil"
 	"indicer/internal/testutil/testdb"
-	"indicer/lib/cnst"
+	"indicer/lib/dbmeta"
 	"indicer/lib/fio"
-	"indicer/lib/util"
 
 	"github.com/dgraph-io/badger/v4"
 )
@@ -29,9 +28,8 @@ func TestChunkMetaVisibleOnlyAfterSync(t *testing.T) {
 	for name, pass := range chunkPasses {
 		for _, m := range []testdb.Mode{testdb.Default, testdb.Container} {
 			t.Run(name+"/"+m.Name, func(t *testing.T) {
-				db := testdb.Open(t, m)
-				util.SetChonkSize(4)
-				content := testutil.RandomBytes(9, 40*int(cnst.ChonkSize))
+				db := testdb.Open(t, m, testdb.Options{ChunkKiB: 4})
+				content := testutil.RandomBytes(9, 40*int(dbmeta.ChunkSize(db.DB)))
 
 				var (
 					mu       sync.Mutex

@@ -13,6 +13,7 @@ import (
 	"indicer/internal/testutil/testdb"
 	"indicer/lib/cnst"
 	"indicer/lib/dbio"
+	"indicer/lib/dbmeta"
 	"indicer/lib/fio"
 	"indicer/lib/util"
 
@@ -68,9 +69,8 @@ func TestReingestRewritesTruncatedBlob(t *testing.T) {
 	for name, pass := range chunkPasses {
 		for _, m := range fileModes {
 			t.Run(name+"/"+m.Name, func(t *testing.T) {
-				db := testdb.Open(t, m)
-				util.SetChonkSize(4)
-				cs := int(cnst.ChonkSize)
+				db := testdb.Open(t, m, testdb.Options{ChunkKiB: 4})
+				cs := int(dbmeta.ChunkSize(db.DB))
 				content := testutil.RandomBytes(7, 3*cs)
 
 				runChunkPass(t, pass, db.DB, "first", content)
@@ -91,7 +91,7 @@ func TestReingestRewritesTruncatedBlob(t *testing.T) {
 				runChunkPass(t, pass, db.DB, "second", content)
 				for i := 0; i < 3; i++ {
 					chunk := content[i*cs : (i+1)*cs]
-					chash, err := util.GetChonkHash(chunk, cnst.GetHashAlgo())
+					chash, err := util.GetChonkHash(chunk, dbmeta.ChunkHasher(db.DB)())
 					if err != nil {
 						t.Fatal(err)
 					}
@@ -116,9 +116,8 @@ func TestReingestSkipsStoredChunks(t *testing.T) {
 	for name, pass := range chunkPasses {
 		for _, m := range append(fileModes, testdb.Container) {
 			t.Run(name+"/"+m.Name, func(t *testing.T) {
-				db := testdb.Open(t, m)
-				util.SetChonkSize(4)
-				content := testutil.RandomBytes(8, 3*int(cnst.ChonkSize)+17)
+				db := testdb.Open(t, m, testdb.Options{ChunkKiB: 4})
+				content := testutil.RandomBytes(8, 3*int(dbmeta.ChunkSize(db.DB))+17)
 				runChunkPass(t, pass, db.DB, "first", content)
 
 				before := map[string]os.FileInfo{}

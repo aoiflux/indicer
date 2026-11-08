@@ -1,16 +1,14 @@
 package store
 
 import (
-	"bytes"
 	"errors"
-	"runtime"
 	"testing"
 
+	"indicer/internal/testutil/testdb"
 	"indicer/lib/cnst"
 	"indicer/lib/dbio"
 	"indicer/lib/structs"
 	"indicer/lib/util"
-	"indicer/lib/zstdx"
 
 	"github.com/dgraph-io/badger/v4"
 	"github.com/google/uuid"
@@ -65,31 +63,11 @@ func TestProcessRevRelWritesWhenEnabled(t *testing.T) {
 	}
 }
 
+// openTestDB opens a quick-mode test database, registered with its own
+// layout, tuning and encoder.
 func openTestDB(t testing.TB) *badger.DB {
 	t.Helper()
-	prevQuick := cnst.QUICKOPT
-	cnst.QUICKOPT = true
-	if cnst.ENCODER == nil {
-		encoder, err := zstdx.Acquire("best", runtime.GOMAXPROCS(0))
-		if err != nil {
-			t.Fatalf("zstdx.Acquire: %v", err)
-		}
-		cnst.ENCODER = encoder
-	}
-	t.Cleanup(func() {
-		cnst.QUICKOPT = prevQuick
-	})
-
-	db, err := dbio.ConnectDB(t.TempDir(), bytes.Repeat([]byte{0}, 32), cnst.QUICKOPT)
-	if err != nil {
-		t.Fatalf("ConnectDB: %v", err)
-	}
-	t.Cleanup(func() {
-		if err := db.Close(); err != nil {
-			t.Fatalf("db.Close: %v", err)
-		}
-	})
-	return db
+	return testdb.Open(t, testdb.Quick).DB
 }
 
 // testEvidence names an evidence record a test writes by hand: a fresh ID,

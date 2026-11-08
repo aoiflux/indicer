@@ -93,7 +93,7 @@ type Request struct {
 	// it off. A read-only open never recovers (CFG-11).
 	Recover bool
 	// Tuning is how the engine runs on the database (engine.For). Nil takes
-	// the process-wide settings as they are at the open (cnst.Globals).
+	// cnst.DefaultTuning.
 	Tuning *cnst.Tuning
 }
 
@@ -115,7 +115,7 @@ type Handle struct {
 	shadow string
 	// tempDir is Request.TempDir, where a shadow goes.
 	tempDir string
-	// tuning is Request.Tuning, or the globals at the open.
+	// tuning is Request.Tuning, or cnst.DefaultTuning.
 	tuning cnst.Tuning
 }
 
@@ -183,7 +183,7 @@ func Open(ctx context.Context, req Request) (*Handle, error) {
 	if err != nil {
 		return nil, err
 	}
-	h := &Handle{Root: root, ReadOnly: req.Mode == ReadOnly, tempDir: req.TempDir, tuning: cnst.Globals()}
+	h := &Handle{Root: root, ReadOnly: req.Mode == ReadOnly, tempDir: req.TempDir, tuning: cnst.DefaultTuning()}
 	if req.Tuning != nil {
 		h.tuning = *req.Tuning
 	}

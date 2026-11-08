@@ -10,7 +10,6 @@ import (
 
 	"indicer/internal/lifecycle"
 	"indicer/internal/testutil"
-	"indicer/internal/testutil/testdb"
 	"indicer/lib/store"
 )
 
@@ -19,8 +18,6 @@ import (
 // room for its backup, moved a directory target aside, and left its temp
 // file behind when interrupted.
 func TestRestoreTargetSafety(t *testing.T) {
-	testdb.Isolate(t)
-	testdb.EnsureCodecs(t)
 	dir := t.TempDir()
 	dbPath := filepath.Join(dir, "db")
 	opts := optsFor(dbPath, matrixChunkKB, nil)

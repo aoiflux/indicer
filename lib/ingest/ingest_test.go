@@ -30,11 +30,26 @@ func TestMain(m *testing.M) {
 	os.Exit(code)
 }
 
+// openDB opens a database in 64 KiB chunks, which keep the multi-megabyte
+// cases to a few dozen blobs.
 func openDB(t *testing.T) *badger.DB {
 	t.Helper()
-	d := testdb.Open(t, testdb.Default)
-	// 64 KiB chunks keep the multi-megabyte cases to a few dozen blobs.
-	util.SetChonkSize(64)
+	return openDBWith(t, testdb.Options{ChunkKiB: 64})
+}
+
+// openDBStrategy opens a database like openDB that stores with the hash
+// strategy given.
+func openDBStrategy(t *testing.T, strategy string) *badger.DB {
+	t.Helper()
+	tun := cnst.DefaultTuning()
+	tun.HashStrategy = strategy
+	return openDBWith(t, testdb.Options{ChunkKiB: 64, Tuning: &tun})
+}
+
+// openDBWith opens a database with the options given.
+func openDBWith(t *testing.T, o testdb.Options) *badger.DB {
+	t.Helper()
+	d := testdb.Open(t, testdb.Default, o)
 	if err := util.EnsureBlobPath(d.Root); err != nil {
 		t.Fatal(err)
 	}
@@ -98,8 +113,7 @@ func TestReingestIsAnAlias(t *testing.T) {
 	for _, strategy := range []string{cnst.SyncHashStrategy, cnst.AsyncHashStrategy, cnst.HochoHashStrategy} {
 		for _, size := range []int{64 << 10, 5 << 20} {
 			t.Run(fmt.Sprintf("%s/%dKiB", strategy, size>>10), func(t *testing.T) {
-				db := openDB(t)
-				cnst.StoreHashStrategy = strategy
+				db := openDBStrategy(t, strategy)
 				dir := t.TempDir()
 				first := testutil.WriteRandomFile(t, dir, "first.bin", 1, size)
 				content, _ := os.ReadFile(first)
@@ -145,8 +159,7 @@ func TestReingestIsAnAlias(t *testing.T) {
 // that run at once each store it, and the commit makes exactly one the
 // evidence; the others become aliases and their records are removed.
 func TestConcurrentIngestsHaveOneWinner(t *testing.T) {
-	db := openDB(t)
-	cnst.StoreHashStrategy = cnst.AsyncHashStrategy
+	db := openDBStrategy(t, cnst.AsyncHashStrategy)
 	dir := t.TempDir()
 	src := testutil.WriteRandomFile(t, dir, "src.bin", 7, 300<<10)
 	content, _ := os.ReadFile(src)

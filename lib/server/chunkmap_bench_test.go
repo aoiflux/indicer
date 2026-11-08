@@ -3,6 +3,10 @@ package server
 import (
 	"context"
 	"encoding/binary"
+	"os"
+	"testing"
+
+	"indicer/internal/testutil/testdb"
 	"indicer/lib/blobcodec"
 	"indicer/lib/cnst"
 	"indicer/lib/dbio"
@@ -10,68 +14,40 @@ import (
 	"indicer/lib/fio"
 	"indicer/lib/structs"
 	"indicer/lib/util"
-	"indicer/lib/zstdx"
-	"os"
-	"runtime"
-	"sync"
-	"testing"
 
 	"github.com/dgraph-io/badger/v4"
 	"github.com/vmihailenco/msgpack/v5"
 )
 
-var benchCodecInit sync.Once
-
-func ensureBenchCodec(tb testing.TB) {
-	tb.Helper()
-	benchCodecInit.Do(func() {
-		var err error
-		cnst.ENCODER, err = zstdx.Acquire("best", runtime.GOMAXPROCS(0))
-		if err != nil {
-			tb.Fatalf("encoder init failed: %v", err)
-		}
-	})
-}
-
 func setupBenchmarkChunkMapDataset(tb testing.TB, chunks int) (structs.FileMeta, *badger.DB) {
 	tb.Helper()
-	ensureBenchCodec(tb)
 
-	dir := tb.TempDir()
-	key := make([]byte, cnst.KeySize)
-	for i := range key {
-		key[i] = byte(i + 1)
-	}
-
-	db, err := dbio.ConnectDB(dir, key, false)
-	if err != nil {
-		tb.Fatalf("connect db failed: %v", err)
-	}
-	tb.Cleanup(func() {
-		_ = db.Close()
-	})
+	// An encrypted database, opened and registered as dbopen would, so it
+	// encodes its chunks with its own codec.
+	db := testdb.Open(tb, testdb.Encrypted).DB
 
 	if err := os.MkdirAll(util.BlobPath(db.Opts().Dir), cnst.DirPerm); err != nil {
 		tb.Fatalf("create blob dir failed: %v", err)
 	}
+	chunkSize := dbmeta.ChunkSize(db)
 
 	eviHash := make([]byte, 32)
 	for i := range eviHash {
 		eviHash[i] = byte(0xA0 + (i % 16))
 	}
 
-	chunkData := make([]byte, cnst.ChonkSize)
+	chunkData := make([]byte, chunkSize)
 	for i := range chunkData {
 		chunkData[i] = byte(i % 251)
 	}
 
 	for i := 0; i < chunks; i++ {
-		restoreIndex := int64(i) * cnst.ChonkSize
+		restoreIndex := int64(i) * chunkSize
 
 		hashSeed := make([]byte, 16)
 		binary.BigEndian.PutUint64(hashSeed[:8], uint64(i+1))
 		binary.BigEndian.PutUint64(hashSeed[8:], uint64(i+7))
-		chash, err := util.GetChonkHash(hashSeed, cnst.GetHashAlgo())
+		chash, err := util.GetChonkHash(hashSeed, dbmeta.ChunkHasher(db)())
 		if err != nil {
 			tb.Fatalf("hash generation failed: %v", err)
 		}
@@ -113,7 +89,7 @@ func setupBenchmarkChunkMapDataset(tb testing.TB, chunks int) (structs.FileMeta,
 		}
 	}
 
-	ef := structs.NewEvidenceFile("benchmark", 0, int64(chunks)*cnst.ChonkSize, nil, "dd", "")
+	ef := structs.NewEvidenceFile("benchmark", 0, int64(chunks)*chunkSize, nil, "dd", "")
 	ef.Completed = true
 	if err := dbio.SetFile(util.AppendToBytesSlice(cnst.EviFileNamespace, eviHash), ef, db); err != nil {
 		tb.Fatalf("set evidence failed: %v", err)
@@ -122,7 +98,7 @@ func setupBenchmarkChunkMapDataset(tb testing.TB, chunks int) (structs.FileMeta,
 	meta := structs.FileMeta{
 		EviHash: eviHash,
 		Start:   0,
-		Size:    int64(chunks) * cnst.ChonkSize,
+		Size:    int64(chunks) * chunkSize,
 	}
 	return meta, db
 }
@@ -138,8 +114,9 @@ func BenchmarkGetChonkMap(b *testing.B) {
 
 		b.Run("start_mid_chunk/chunks_"+itoa(chunks), func(b *testing.B) {
 			meta, db := setupBenchmarkChunkMapDataset(b, chunks)
-			meta.Start = cnst.ChonkSize / 2
-			meta.Size = int64(chunks)*cnst.ChonkSize - meta.Start
+			chunkSize := dbmeta.ChunkSize(db)
+			meta.Start = chunkSize / 2
+			meta.Size = int64(chunks)*chunkSize - meta.Start
 			benchChonkMapCase(b, meta, db, chunks)
 		})
 	}

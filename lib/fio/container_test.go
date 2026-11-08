@@ -3,7 +3,6 @@ package fio
 import (
 	"bytes"
 	"errors"
-	"fmt"
 	"os"
 	"path/filepath"
 	"testing"
@@ -71,32 +70,26 @@ func closeManager(t testing.TB, cm *ContainerManager) {
 // TestContainerSessionsNeverShareFile is the STO-1 regression. Container
 // names were derived from a per-manager counter starting at 0, so every
 // session appended to the same file but recorded offsets from 0, and a chunk
-// from the second session read back the first session's bytes.
+// from the second session read back the first session's bytes. Quick mode
+// once wrote containers differently; container writing no longer depends on
+// it, so one run covers both.
 func TestContainerSessionsNeverShareFile(t *testing.T) {
-	for _, quick := range []bool{false, true} {
-		t.Run(fmt.Sprintf("quick=%v", quick), func(t *testing.T) {
-			prev := cnst.QUICKOPT
-			cnst.QUICKOPT = quick
-			t.Cleanup(func() { cnst.QUICKOPT = prev })
+	dir := newContainerDB(t)
+	cm1 := NewContainerManager(dir)
+	first := writeChunks(t, cm1, 0, 5)
+	closeManager(t, cm1)
 
-			dir := newContainerDB(t)
-			cm1 := NewContainerManager(dir)
-			first := writeChunks(t, cm1, 0, 5)
-			closeManager(t, cm1)
+	cm2 := NewContainerManager(dir)
+	second := writeChunks(t, cm2, 100, 5)
+	closeManager(t, cm2)
 
-			cm2 := NewContainerManager(dir)
-			second := writeChunks(t, cm2, 100, 5)
-			closeManager(t, cm2)
-
-			if first[0].path == second[0].path {
-				t.Fatalf("both sessions wrote to %s", filepath.Base(first[0].path))
-			}
-			// STO-2: closing the second session must not remove the first
-			// session's container (quick mode compressed and replaced it).
-			assertChunksReadable(t, first)
-			assertChunksReadable(t, second)
-		})
+	if first[0].path == second[0].path {
+		t.Fatalf("both sessions wrote to %s", filepath.Base(first[0].path))
 	}
+	// STO-2: closing the second session must not remove the first
+	// session's container (quick mode compressed and replaced it).
+	assertChunksReadable(t, first)
+	assertChunksReadable(t, second)
 }
 
 // failingBackend fails the write with index failAt after storing part of it.

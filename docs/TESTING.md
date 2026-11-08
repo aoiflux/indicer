@@ -256,7 +256,7 @@ and boundaries:
 | `internal/testutil` | I/O fault injectors (`FailingReaderAt`, `ShortReaderAt`, `NewENOSPCWriter`, `ShortWriter`, `ErrCloser`, slow and blocking readers); deterministic data (`RandomBytes`, `WriteRandomFile`); `TreeHash` and `AssertNoFilesMatching`; gates (`NewDirFlag` and the mount flags `ENOSPCDir`, `LowSpaceDir`, `ReadOnlySrc` and `ReadOnlyDB`; `RequireLinuxNonRoot`; `LongTest`); memory checks (`AllocBelow`, `PeakHeap`); `FakeClock`; subprocess scenarios (`RunChildScenarios`, `StartChild`, `NotifyPoint`, `ChildNotifyFile`, `WaitForPoint`, `Kill`, `Interrupt`), which get their settings as arguments; the built binary (`BuildDues`, `BuildBinary`, `RunDues`, `StartDues`, `FaultArgs`, `IsolatedArgs`; the build functions take build tags); and `HashFile`, `HashRange` |
 | `internal/testutil/leakcheck` | `Run`, which every test package's `TestMain` calls (below) |
 | `internal/testutil/vtscreen` | A small terminal for asserting what a person would see (below) |
-| `internal/testutil/testdb` | Opening throwaway databases. `ForEachMode` runs a test once per storage mode (default, encrypted, quick, container). Every helper snapshots and restores the process-wide layout globals, so tests using it must not call `t.Parallel`. |
+| `internal/testutil/testdb` | Opening throwaway databases. `Open` and `OpenAt` take a storage mode and `Options` (chunk size, chunk hash, tuning) and register the database as `dbopen` registers a legacy one, so its settings belong to it alone; `Reconfigure` changes them while it is open. `ForEachMode` runs a test once per storage mode (default, encrypted, quick, container). |
 | `internal/faultinject` | Making the code fail at named points (see below) |
 
 `RunDues` also holds every run to the output contract

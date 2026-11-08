@@ -27,8 +27,6 @@ import (
 // with --all, and with --failed only those whose index pass failed or was
 // interrupted; repair --fix --reindex-failed does the same after recovery.
 func TestReindexCommand(t *testing.T) {
-	testdb.Isolate(t)
-	testdb.EnsureCodecs(t)
 	_, image := fixtureNamed(t, "fat/fat12")
 	dbPath := filepath.Join(t.TempDir(), "db")
 	opts := optsFor(dbPath, matrixChunkKB, nil)
@@ -116,8 +114,6 @@ func TestReindexCommand(t *testing.T) {
 // the full-text index and the graph, prints what a reindex of one at a time
 // prints, in the same order, and ends the same way for every evidence.
 func TestReindexJobsReadAsOneAtATime(t *testing.T) {
-	testdb.Isolate(t)
-	testdb.EnsureCodecs(t)
 	records := logRecordsOf(t)
 	d := testdb.Open(t, testdb.Default)
 	if err := util.EnsureBlobPath(d.Root); err != nil {

@@ -32,7 +32,7 @@ type DeepOptions struct {
 	// read-only open uses. Empty means osdirs.Temp.
 	TempDir string
 	// Tuning is how the storage engine runs on the database it opens; nil
-	// takes the process-wide settings.
+	// takes cnst.DefaultTuning.
 	Tuning *cnst.Tuning
 }
 

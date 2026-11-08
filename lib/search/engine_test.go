@@ -23,8 +23,7 @@ import (
 // evidence cross several chunk boundaries.
 func openSearchDB(t *testing.T) *badger.DB {
 	t.Helper()
-	d := testdb.Open(t, testdb.Default)
-	util.SetChonkSize(4)
+	d := testdb.Open(t, testdb.Default, testdb.Options{ChunkKiB: 4})
 	if err := util.EnsureBlobPath(d.Root); err != nil {
 		t.Fatal(err)
 	}

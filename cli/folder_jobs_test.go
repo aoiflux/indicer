@@ -96,8 +96,6 @@ func storeReport(t *testing.T, dir string, jobs int) (string, map[string]string)
 // prints what a store of one at a time prints, in the same order, and its
 // copies alias the same first copy.
 func TestFolderJobsReadAsOneAtATime(t *testing.T) {
-	testdb.Isolate(t)
-	testdb.EnsureCodecs(t)
 	dir := folderForJobs(t)
 	one, aliasesOne := storeReport(t, dir, 1)
 	four, aliasesFour := storeReport(t, dir, 4)
@@ -124,8 +122,6 @@ func TestFolderJobsReadAsOneAtATime(t *testing.T) {
 // folder order, as a store of one at a time does; a disk of the same size
 // with other content is stored.
 func TestFolderJobsAliasAcrossFormats(t *testing.T) {
-	testdb.Isolate(t)
-	testdb.EnsureCodecs(t)
 	in := filepath.Join(t.TempDir(), "in")
 	if err := os.MkdirAll(in, 0o755); err != nil {
 		t.Fatal(err)
@@ -198,8 +194,6 @@ func TestFolderJobsAliasAcrossFormats(t *testing.T) {
 // fail are listed in folder order, and the error names the first in folder
 // order, whichever failed first.
 func TestFolderJobsReportFailuresInFolderOrder(t *testing.T) {
-	testdb.Isolate(t)
-	testdb.EnsureCodecs(t)
 	in := filepath.Join(t.TempDir(), "in")
 	for i, name := range []string{"a.bin", "b-bad.bin", "c.bin", "d-bad.bin"} {
 		testutil.WriteRandomFile(t, in, name, uint64(300+i), 5000+i*97)
@@ -313,8 +307,6 @@ func checkPoolRecord(t *testing.T, r map[string]any, items, jobs int) {
 // TestFolderRecordSaysHowThePoolRan: the StoreFolder COMPLETE record counts
 // the items and, when several ran at once, how each worker spent the store.
 func TestFolderRecordSaysHowThePoolRan(t *testing.T) {
-	testdb.Isolate(t)
-	testdb.EnsureCodecs(t)
 	records := logRecordsOf(t)
 	dir := folderForJobs(t)
 	storeReport(t, dir, 1)
@@ -332,8 +324,6 @@ func TestFolderRecordSaysHowThePoolRan(t *testing.T) {
 // chunk pass never takes the credit ledger's lock; the StoreFolder ITEM
 // debug record says so, and says what badger's tree and the runtime did.
 func TestHeavyItemTakesNoCreditLock(t *testing.T) {
-	testdb.Isolate(t)
-	testdb.EnsureCodecs(t)
 	records := logRecordsAt(t, true)
 	in := filepath.Join(t.TempDir(), "in")
 	for i := range 4 {

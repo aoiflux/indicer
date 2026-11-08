@@ -22,8 +22,6 @@ import (
 // memory-mapped, so storing one failed, and a folder holding one stopped
 // there.
 func TestStoreZeroByteFile(t *testing.T) {
-	testdb.Isolate(t)
-	testdb.EnsureCodecs(t)
 	dir := t.TempDir()
 	opts := optsFor(filepath.Join(dir, "db"), matrixChunkKB, nil)
 	empty := filepath.Join(dir, "empty.bin")
@@ -48,14 +46,14 @@ func TestStoreZeroByteFile(t *testing.T) {
 // refuses to rename a file another handle holds open, so a rename after the
 // failed store shows the handle is gone.
 func TestStoreReleasesEvidenceFile(t *testing.T) {
-	testdb.Isolate(t)
-	testdb.EnsureCodecs(t)
 	dir := t.TempDir()
 	opts := optsFor(filepath.Join(dir, "db"), matrixChunkKB, nil)
 	src := testutil.WriteRandomFile(t, dir, "evidence.bin", 31, 3*matrixChunkKB*1024)
 
 	// An unknown hash strategy fails the store after the file is opened.
-	cnst.StoreHashStrategy = "no-such-strategy"
+	tun := cnst.DefaultTuning()
+	tun.HashStrategy = "no-such-strategy"
+	opts.Tuning = &tun
 	if err := StoreData(t.Context(), opts, src, false, true, false, false); err == nil {
 		t.Fatal("store with an unknown hash strategy succeeded")
 	}
@@ -68,8 +66,6 @@ func TestStoreReleasesEvidenceFile(t *testing.T) {
 // failed to store stopped the whole folder ingest, so every file after it
 // was silently left out.
 func TestStoreFolderContinuesPastErrors(t *testing.T) {
-	testdb.Isolate(t)
-	testdb.EnsureCodecs(t)
 	dir := t.TempDir()
 	in := filepath.Join(dir, "in")
 	a := testutil.WriteRandomFile(t, in, "a.bin", 41, 5000)
@@ -103,7 +99,6 @@ func TestStoreFolderContinuesPastErrors(t *testing.T) {
 // features opens the full-text index and the graph once for the whole
 // folder; each evidence opened and closed both before.
 func TestStoreFolderOpensStoresOnce(t *testing.T) {
-	testdb.Isolate(t)
 	d := testdb.Open(t, testdb.Default)
 	if err := util.EnsureBlobPath(d.Root); err != nil {
 		t.Fatal(err)
@@ -139,8 +134,6 @@ func TestStoreFolderOpensStoresOnce(t *testing.T) {
 // index does not release cleanly fails, as one whose database does not close
 // does (CFG-8), and what it stored stays stored.
 func TestStoreFailsWhenItsSessionDoesNotClose(t *testing.T) {
-	testdb.Isolate(t)
-	testdb.EnsureCodecs(t)
 	dir := t.TempDir()
 	in := filepath.Join(dir, "in")
 	if err := os.MkdirAll(in, 0o755); err != nil {

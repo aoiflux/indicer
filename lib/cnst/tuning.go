@@ -48,24 +48,6 @@ func DefaultTuning() Tuning {
 	}
 }
 
-// Globals is the tuning the process-wide settings describe, copied as they
-// are, for opens whose caller gives none.
-func Globals() Tuning {
-	return Tuning{
-		LowResource:     MEMOPT,
-		CompressLevel:   CompressLevel,
-		HashStrategy:    StoreHashStrategy,
-		Pipeline:        StorePipelineMode,
-		IOEngine:        StoreIOEngine,
-		IOUringDepth:    StoreIOUringQueueDepth,
-		StoreWorkers:    StoreWorkerCount,
-		StoreQueue:      StoreTaskQueueDepth,
-		RestoreWorkers:  RestoreWorkerCount,
-		RestoreQueue:    RestoreTaskQueueDepth,
-		RestoreBufferMB: RestoreWriteBufferMB,
-	}
-}
-
 // MaxThreads is how many goroutines work that scales with the machine runs
 // on: one in low-resource mode, otherwise two per CPU, since the work waits
 // on file writes, the database and compression.

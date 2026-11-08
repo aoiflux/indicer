@@ -15,7 +15,6 @@ import (
 
 	"indicer/internal/diskspace"
 	"indicer/internal/testutil"
-	"indicer/internal/testutil/testdb"
 	"indicer/lib/dbopen"
 	"indicer/lib/evidence"
 	"indicer/lib/store"
@@ -50,7 +49,6 @@ func TestCorpusRoundTrip(t *testing.T) {
 	}
 	scratch := corpusScratch.Require(t)
 	bin := testutil.BuildDues(t)
-	testdb.EnsureCodecs(t)
 	f, err := os.Open(list)
 	if err != nil {
 		t.Fatal(err)

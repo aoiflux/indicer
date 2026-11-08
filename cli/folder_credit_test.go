@@ -24,8 +24,6 @@ import (
 // first, print what a store of one at a time prints: the chunks they share
 // are new for the first in folder order, whichever stored them.
 func TestFolderJobsCountSharedChunksInFolderOrder(t *testing.T) {
-	testdb.Isolate(t)
-	testdb.EnsureCodecs(t)
 	in := filepath.Join(t.TempDir(), "in")
 	if err := os.MkdirAll(in, 0o755); err != nil {
 		t.Fatal(err)
@@ -74,8 +72,6 @@ func TestFolderJobsCountSharedChunksInFolderOrder(t *testing.T) {
 // content, stored first, prints what a store of one at a time prints: none
 // of it new, and the image none of it either.
 func TestFolderJobsCountWhatAnIndexStoresAfterItsEvidence(t *testing.T) {
-	testdb.Isolate(t)
-	testdb.EnsureCodecs(t)
 	in := filepath.Join(t.TempDir(), "in")
 	if err := os.MkdirAll(in, 0o755); err != nil {
 		t.Fatal(err)

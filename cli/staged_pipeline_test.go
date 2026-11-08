@@ -25,11 +25,13 @@ func TestStagedPipelineRoundTrip(t *testing.T) {
 	for _, algo := range []string{cnst.BLAKE3, cnst.SHA3} {
 		t.Run(algo, func(t *testing.T) {
 			testdb.ForEachMode(t, func(t *testing.T, m testdb.Mode) {
-				cnst.StorePipelineMode = cnst.StorePipelineStaged
+				tun := cnst.DefaultTuning()
+				tun.Pipeline = cnst.StorePipelineStaged
 				dir := t.TempDir()
 				dbPath := filepath.Join(dir, "db")
 				opts := optsForMode(dbPath, matrixChunkKB, m)
 				opts.Layout.ChunkHash = algo
+				opts.Tuning = &tun
 
 				// Chunks A B A C A, then a short tail: A repeats within the session.
 				a := testutil.RandomBytes(1, cs)

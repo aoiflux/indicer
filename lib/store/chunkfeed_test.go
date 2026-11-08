@@ -111,9 +111,9 @@ func (f readerFunc) ReadAt(p []byte, off int64) (int, error) { return f(p, off) 
 func TestIngestChunksSourceReadError(t *testing.T) {
 	for _, mode := range []string{cnst.StorePipelineBatch, cnst.StorePipelineStaged} {
 		t.Run(mode, func(t *testing.T) {
-			db := testdb.Open(t, testdb.Default)
-			util.SetChonkSize(4)
-			setPipelineMode(t, mode)
+			tun := cnst.DefaultTuning()
+			tun.Pipeline = mode
+			db := testdb.Open(t, testdb.Default, testdb.Options{ChunkKiB: 4, Tuning: &tun})
 			if err := util.EnsureBlobPath(db.Opts().Dir); err != nil {
 				t.Fatal(err)
 			}
@@ -159,8 +159,7 @@ func TestIngestChunksVerifiesEWF(t *testing.T) {
 	}
 	defer src.Image.Close()
 
-	db := testdb.Open(t, testdb.Default)
-	util.SetChonkSize(4)
+	db := testdb.Open(t, testdb.Default, testdb.Options{ChunkKiB: 4})
 	if err := util.EnsureBlobPath(db.Opts().Dir); err != nil {
 		t.Fatal(err)
 	}
@@ -199,13 +198,6 @@ func TestIngestChunksVerifiesEWF(t *testing.T) {
 	if !bytes.Equal(back, decoded) {
 		t.Fatal("stored evidence does not read back as the decoded image")
 	}
-}
-
-func setPipelineMode(t *testing.T, mode string) {
-	t.Helper()
-	prev := cnst.StorePipelineMode
-	cnst.StorePipelineMode = mode
-	t.Cleanup(func() { cnst.StorePipelineMode = prev })
 }
 
 func newEvidenceRecord(size int64) structs.EvidenceFile {

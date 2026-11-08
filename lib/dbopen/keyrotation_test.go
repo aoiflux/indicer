@@ -9,7 +9,6 @@ import (
 	"hash/crc32"
 	"os"
 	"path/filepath"
-	"runtime"
 	"strings"
 	"testing"
 	"time"
@@ -21,7 +20,6 @@ import (
 	"indicer/internal/testutil"
 	"indicer/lib/cnst"
 	"indicer/lib/dbmeta"
-	"indicer/lib/zstdx"
 )
 
 func TestMain(m *testing.M) {
@@ -35,11 +33,6 @@ const rotationPassword = "pw"
 // childOpenReadOnly opens the database at the data root args[0] read-only
 // and reads every value, as a read command does.
 func childOpenReadOnly(args []string) int {
-	var err error
-	if cnst.ENCODER, err = zstdx.Acquire("default", runtime.GOMAXPROCS(0)); err != nil {
-		fmt.Fprintln(os.Stderr, err)
-		return 1
-	}
 	h, err := Open(context.Background(), Request{Path: args[0], Mode: ReadOnly, Creds: dbmeta.Password(rotationPassword)})
 	if err != nil {
 		fmt.Fprintln(os.Stderr, err)

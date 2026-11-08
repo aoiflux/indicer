@@ -44,8 +44,7 @@ var testEID = []byte("0123456789abcdef")
 // testEID of size bytes.
 func openIndexDB(t *testing.T, size int64) *badger.DB {
 	t.Helper()
-	d := testdb.Open(t, testdb.Default)
-	util.SetChonkSize(4)
+	d := testdb.Open(t, testdb.Default, testdb.Options{ChunkKiB: 4})
 	if err := util.EnsureBlobPath(d.Root); err != nil {
 		t.Fatal(err)
 	}

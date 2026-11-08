@@ -11,6 +11,7 @@ import (
 	"indicer/internal/testutil/testdb"
 	"indicer/lib/cnst"
 	"indicer/lib/dbio"
+	"indicer/lib/dbmeta"
 	"indicer/lib/structs"
 	"indicer/lib/util"
 
@@ -32,7 +33,7 @@ func flushEvidence(t *testing.T, db *badger.DB, path string, content []byte, rev
 	}
 	rec := structs.NewEvidenceFile("evidence", 0, int64(len(content)), nil, cnst.UnknownEvidenceType, "")
 	rec.ContentModel = structs.ContentModelV2
-	rec.ChunkSize = cnst.ChonkSize
+	rec.ChunkSize = dbmeta.ChunkSize(db)
 	rec.Source = &structs.EvidenceSource{Format: structs.SourceRaw, Members: []structs.SourceMember{{Path: path, Size: int64(len(content))}}}
 	rec.Fingerprint = "fp-" + base64.StdEncoding.EncodeToString(sum(content))
 	eid, _, err := BeginAttempt(db, path, rec)
@@ -79,8 +80,7 @@ func countPrefix(t *testing.T, db *badger.DB, prefix []byte) int {
 // The second ingest of the same content becomes an alias of the first, and
 // its relations go (D1, ING-6).
 func TestCommitAliasesStoredContent(t *testing.T) {
-	db := testdb.Open(t, testdb.Default)
-	util.SetChonkSize(4)
+	db := testdb.Open(t, testdb.Default, testdb.Options{ChunkKiB: 4})
 	content := testutil.RandomBytes(11, 5*4096+7)
 
 	first := flushEvidence(t, db.DB, "/case/a.dd", content, true)
@@ -145,8 +145,7 @@ func rootOf(t *testing.T, db *badger.DB, content []byte) []byte {
 
 // Concurrent commits of the same content leave exactly one winner.
 func TestCommitConcurrentSingleWinner(t *testing.T) {
-	db := testdb.Open(t, testdb.Default)
-	util.SetChonkSize(4)
+	db := testdb.Open(t, testdb.Default, testdb.Options{ChunkKiB: 4})
 	content := testutil.RandomBytes(12, 3*4096)
 	var ids [][]byte
 	for i := range 6 {
@@ -185,8 +184,7 @@ func TestCommitConcurrentSingleWinner(t *testing.T) {
 // Evidence stored before W6 has no content root; a later ingest of the same
 // bytes still finds it by its plain hash.
 func TestCommitFindsLegacyWinner(t *testing.T) {
-	db := testdb.Open(t, testdb.Default)
-	util.SetChonkSize(4)
+	db := testdb.Open(t, testdb.Default, testdb.Options{ChunkKiB: 4})
 	content := testutil.RandomBytes(13, 2*4096+1)
 	plain := base64.StdEncoding.EncodeToString(sum(content))
 	legacy := []byte("legacy-evidence!")
@@ -208,8 +206,7 @@ func TestCommitFindsLegacyWinner(t *testing.T) {
 // Cleanup removes a duplicate's index records too: an index pass that ran
 // alongside its chunk pass wrote them before the commit decided.
 func TestCleanupDuplicateRemovesIndex(t *testing.T) {
-	db := testdb.Open(t, testdb.Default)
-	util.SetChonkSize(4)
+	db := testdb.Open(t, testdb.Default, testdb.Options{ChunkKiB: 4})
 	content := testutil.RandomBytes(14, 4096)
 	first := flushedEvidence(t, db.DB, "/a", content)
 	if _, err := CommitEvidence(db.DB, first); err != nil {

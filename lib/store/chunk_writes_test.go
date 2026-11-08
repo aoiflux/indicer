@@ -10,6 +10,8 @@ import (
 	"indicer/internal/testutil"
 	"indicer/internal/testutil/testdb"
 	"indicer/lib/cnst"
+	"indicer/lib/dbmeta"
+	"indicer/lib/engine"
 	"indicer/lib/fio"
 	"indicer/lib/util"
 
@@ -143,12 +145,11 @@ func TestPassesAtOnceStoreASharedChunkOnce(t *testing.T) {
 	for name, pass := range chunkPasses {
 		for _, m := range []testdb.Mode{testdb.Default, testdb.Container} {
 			t.Run(name+"/"+m.Name, func(t *testing.T) {
-				db := testdb.Open(t, m)
-				util.SetChonkSize(4)
+				db := testdb.Open(t, m, testdb.Options{ChunkKiB: 4})
 				if err := util.EnsureBlobPath(db.DB.Opts().Dir); err != nil {
 					t.Fatal(err)
 				}
-				cs := int(cnst.ChonkSize)
+				cs := int(dbmeta.ChunkSize(db.DB))
 				shared := testutil.RandomBytes(51, 6*cs)
 				const passes = 6
 				results := make([]ChunkResult, passes)
@@ -194,7 +195,7 @@ func TestPassesAtOnceStoreASharedChunkOnce(t *testing.T) {
 func storedChunks(t *testing.T, db *badger.DB) (n int, bytes int64) {
 	t.Helper()
 	for _, p := range blobFiles(t, db) {
-		if !cnst.CONTAINERMODE {
+		if !engine.For(db).Container() {
 			fi, err := os.Stat(p)
 			if err != nil {
 				t.Fatal(err)

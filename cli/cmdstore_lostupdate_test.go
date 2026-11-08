@@ -6,7 +6,6 @@ import (
 	"testing"
 
 	"indicer/internal/testutil/fsfixture"
-	"indicer/internal/testutil/testdb"
 	"indicer/lib/cnst"
 	"indicer/lib/dbio"
 	"indicer/lib/structs"
@@ -71,11 +70,12 @@ func TestIngestKeepsPartitionLinks(t *testing.T) {
 	m, image := fixtureNamed(t, "part/gpt_multi")
 	for _, strategy := range []string{cnst.SyncHashStrategy, cnst.AsyncHashStrategy, cnst.HochoHashStrategy} {
 		t.Run(strategy, func(t *testing.T) {
-			testdb.Isolate(t)
-			testdb.EnsureCodecs(t)
-			cnst.StoreHashStrategy = strategy
+			tun := cnst.DefaultTuning()
+			tun.HashStrategy = strategy
 			dbPath := filepath.Join(t.TempDir(), "db")
-			if err := StoreData(t.Context(), optsFor(dbPath, matrixChunkKB, nil), image, false, false, false, false); err != nil {
+			opts := optsFor(dbPath, matrixChunkKB, nil)
+			opts.Tuning = &tun
+			if err := StoreData(t.Context(), opts, image, false, false, false, false); err != nil {
 				t.Fatalf("store: %v", err)
 			}
 			eid, rec := onlyEvidence(t, dbPath)

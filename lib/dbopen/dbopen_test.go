@@ -15,7 +15,6 @@ import (
 	"indicer/internal/lifecycle"
 	"indicer/internal/testutil"
 	"indicer/internal/testutil/legacyfixture"
-	"indicer/internal/testutil/testdb"
 	"indicer/lib/blobcodec"
 	"indicer/lib/cnst"
 	"indicer/lib/dbio"
@@ -32,8 +31,6 @@ var fastKDF = dbmeta.KDFParams{Time: 1, MemoryKiB: 64, Threads: 1}
 
 func setup(t *testing.T) string {
 	t.Helper()
-	testdb.Isolate(t)
-	testdb.EnsureCodecs(t)
 	return filepath.Join(t.TempDir(), "case")
 }
 
@@ -223,15 +220,14 @@ func TestLayoutConflicts(t *testing.T) {
 	root := setup(t)
 	open(t, Request{Path: root, Mode: ReadWrite, Layout: Requested{ChunkKiB: 64}}).Close()
 
-	// Defaults adopt the database's layout, and the process-wide chunk size
-	// stays as it was.
-	cnst.ChonkSize = 256 * cnst.KB
+	// Defaults adopt the database's layout, and a database nobody registered
+	// keeps the default chunk size.
 	h := open(t, Request{Path: root, Mode: ReadOnly, Layout: Requested{ChunkKiB: 256}})
 	if got := dbmeta.ChunkSize(h.DB); got != 64*cnst.KB {
 		t.Fatalf("chunk size %d after open; want the database's 64 KiB", got)
 	}
-	if cnst.ChonkSize != 256*cnst.KB {
-		t.Fatalf("the open set the global chunk size to %d", cnst.ChonkSize)
+	if got := dbmeta.ChunkSize(nil); got != cnst.DefaultChonkSize {
+		t.Fatalf("the open set an unregistered database's chunk size to %d", got)
 	}
 	h.Close()
 

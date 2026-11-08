@@ -7,23 +7,10 @@ import (
 	"testing"
 
 	"indicer/lib/cnst"
-	"indicer/lib/util"
 )
 
 func TestStoreDataSmallFileWithIndexingAcrossHashStrategies(t *testing.T) {
-	ensureZstdReadyForTests(t)
-
-	originalStrategy := cnst.StoreHashStrategy
-	originalHochoMode := cnst.HochoMode
-	originalChunkSize := cnst.ChonkSize
-	t.Cleanup(func() {
-		cnst.StoreHashStrategy = originalStrategy
-		cnst.HochoMode = originalHochoMode
-		cnst.ChonkSize = originalChunkSize
-	})
-
 	const chunkKB = 256
-	util.SetChonkSize(chunkKB)
 
 	inputPath := filepath.Join(t.TempDir(), "tiny.bin")
 	if err := os.WriteFile(inputPath, bytes.Repeat([]byte("tiny-file-race-check"), 32), 0o600); err != nil {
@@ -35,10 +22,12 @@ func TestStoreDataSmallFileWithIndexingAcrossHashStrategies(t *testing.T) {
 	for _, strategy := range strategies {
 		strategy := strategy
 		t.Run(strategy, func(t *testing.T) {
-			cnst.StoreHashStrategy = strategy
-			cnst.HochoMode = cnst.HochoModeBaseline
+			tun := cnst.DefaultTuning()
+			tun.HashStrategy = strategy
 			dbPath := filepath.Join(t.TempDir(), "db-"+strategy)
-			if err := StoreData(t.Context(), optsFor(dbPath, chunkKB, key), inputPath, false, false, false, false); err != nil {
+			opts := optsFor(dbPath, chunkKB, key)
+			opts.Tuning = &tun
+			if err := StoreData(t.Context(), opts, inputPath, false, false, false, false); err != nil {
 				t.Fatalf("StoreData %s small file: %v", strategy, err)
 			}
 		})

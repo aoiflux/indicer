@@ -6,8 +6,7 @@ import (
 
 	"indicer/internal/testutil"
 	"indicer/internal/testutil/testdb"
-	"indicer/lib/cnst"
-	"indicer/lib/util"
+	"indicer/lib/dbmeta"
 )
 
 // TestStatsWithReverseRelations (STO-24): statistics of a database stored
@@ -15,9 +14,8 @@ import (
 // with "invalid reverse-relation append key": the keys written since W3 have
 // three parts, not four.
 func TestStatsWithReverseRelations(t *testing.T) {
-	db := testdb.Open(t, testdb.Default)
-	util.SetChonkSize(4)
-	cs := int(cnst.ChonkSize)
+	db := testdb.Open(t, testdb.Default, testdb.Options{ChunkKiB: 4})
+	cs := int(dbmeta.ChunkSize(db.DB))
 	a := testutil.RandomBytes(51, 6*cs)
 	b := append(append([]byte{}, a[:3*cs]...), testutil.RandomBytes(52, 3*cs)...)
 	for id, content := range map[string][]byte{"a": a, "b": b} {

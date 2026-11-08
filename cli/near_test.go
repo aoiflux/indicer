@@ -7,15 +7,12 @@ import (
 	"testing"
 
 	"indicer/internal/lifecycle"
-	"indicer/internal/testutil/testdb"
 )
 
 // TestNearCommand (SRC-12): near on evidence stored without reverse
 // relations fails with the command that adds them; repair --fix --revrel
 // adds them, and near then runs; an existing report is a usage error.
 func TestNearCommand(t *testing.T) {
-	testdb.Isolate(t)
-	testdb.EnsureCodecs(t)
 	_, image := fixtureNamed(t, "fat/fat12")
 	dbPath := filepath.Join(t.TempDir(), "db")
 	opts := optsFor(dbPath, matrixChunkKB, nil)

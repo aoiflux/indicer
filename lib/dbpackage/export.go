@@ -56,7 +56,7 @@ type ExportOptions struct {
 	// TempDir is --temp-dir, for a read-only open of write-protected media.
 	TempDir string
 	// Tuning is how the storage engine runs on the database it opens; nil
-	// takes the process-wide settings.
+	// takes cnst.DefaultTuning.
 	Tuning *cnst.Tuning
 	// Output is the package's path. Empty means DefaultName in the current
 	// directory.

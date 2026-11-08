@@ -11,7 +11,6 @@ import (
 	"indicer/internal/testutil"
 	"indicer/internal/testutil/testdb"
 	"indicer/lib/cnst"
-	"indicer/lib/util"
 
 	"github.com/zeebo/blake3"
 )
@@ -29,7 +28,6 @@ func TestMatrixStoreRestoreRoundTrip(t *testing.T) {
 	testdb.ForEachMode(t, func(t *testing.T, m testdb.Mode) {
 		dir := t.TempDir()
 		dbPath := filepath.Join(dir, "db")
-		util.SetChonkSize(matrixChunkKB)
 
 		type stored struct {
 			path, hash string

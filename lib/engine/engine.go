@@ -7,6 +7,7 @@
 package engine
 
 import (
+	"runtime"
 	"sync"
 	"sync/atomic"
 
@@ -20,7 +21,7 @@ import (
 // Engine is one open database's settings. It is safe for concurrent use.
 type Engine struct {
 	// registered is false for the engine of a database dbopen did not open,
-	// which answers from the process-wide settings.
+	// which answers with the defaults.
 	registered bool
 	tuning     cnst.Tuning
 	layout     atomic.Pointer[dbmeta.Layout]
@@ -30,10 +31,15 @@ type Engine struct {
 
 var engines sync.Map // *badger.DB -> *Engine
 
-// unregistered answers for every database dbopen did not open, as some tests
-// and tools open them, from the process-wide settings as they are at each
-// call.
+// unregistered answers for every database nothing registered, with the
+// default layout and tuning (a 256 KiB file layout, cnst.DefaultTuning).
 var unregistered = &Engine{}
+
+// defaultEncoder compresses for unregistered databases, at the default level.
+// It is acquired once and never released.
+var defaultEncoder = sync.OnceValues(func() (*zstdx.Encoder, error) {
+	return zstdx.Acquire(cnst.DefaultTuning().CompressLevel, runtime.GOMAXPROCS(0))
+})
 
 // Register records the layout l and tuning t of the database db, which
 // dbopen has just opened, acquires its encoder, and returns its engine. The
@@ -62,7 +68,7 @@ func Unregister(db *badger.DB) {
 }
 
 // For returns db's engine. A database dbopen did not open gets one that
-// answers from the process-wide settings.
+// answers with the defaults.
 func For(db *badger.DB) *Engine {
 	if e, ok := engines.Load(db); ok {
 		return e.(*Engine)
@@ -91,7 +97,7 @@ func (e *Engine) SetLayout(l dbmeta.Layout) {
 // Tuning returns the tuning the database was opened with.
 func (e *Engine) Tuning() cnst.Tuning {
 	if !e.registered {
-		return cnst.Globals()
+		return cnst.DefaultTuning()
 	}
 	return e.tuning
 }
@@ -99,7 +105,7 @@ func (e *Engine) Tuning() cnst.Tuning {
 // Container reports whether the database packs chunks into container files.
 func (e *Engine) Container() bool {
 	if !e.registered {
-		return cnst.CONTAINERMODE
+		return false
 	}
 	return e.layout.Load().Storage != dbmeta.StorageFile
 }
@@ -108,16 +114,16 @@ func (e *Engine) Container() bool {
 // block index of the retired hierarchical mode (D9).
 func (e *Engine) BlockIndex() bool {
 	if !e.registered {
-		return cnst.LegacyBlockIndex
+		return false
 	}
 	return e.blockIndex.Load()
 }
 
 // SetBlockIndex turns the block index lookup on or off: on while block index
-// files remain beside the database, off once repair deletes them.
+// files remain beside the database, off once repair deletes them. A
+// database dbopen did not open keeps none.
 func (e *Engine) SetBlockIndex(on bool) {
 	if !e.registered {
-		cnst.LegacyBlockIndex = on
 		return
 	}
 	e.blockIndex.Store(on)
@@ -127,7 +133,7 @@ func (e *Engine) SetBlockIndex(on bool) {
 // have pending (cnst.Tuning.MaxBatchCount, for its chunk size).
 func (e *Engine) MaxBatchCount() int {
 	if !e.registered {
-		return cnst.Globals().MaxBatchCount(cnst.ChonkSize)
+		return cnst.DefaultTuning().MaxBatchCount(cnst.DefaultChonkSize)
 	}
 	return e.tuning.MaxBatchCount(int64(e.layout.Load().ChunkKiB) * cnst.KB)
 }
@@ -136,7 +142,7 @@ func (e *Engine) MaxBatchCount() int {
 // as legacy quick mode did, rather than zstd-compressed.
 func (e *Engine) RawValues() bool {
 	if !e.registered {
-		return cnst.QUICKOPT
+		return false
 	}
 	return e.layout.Load().ValueEncoding == dbmeta.EncodingRaw
 }
@@ -145,7 +151,11 @@ func (e *Engine) RawValues() bool {
 // compresses chunks with.
 func (e *Engine) Encoder() *zstdx.Encoder {
 	if !e.registered {
-		return cnst.ENCODER
+		enc, err := defaultEncoder()
+		if err != nil {
+			panic("engine: the default encoder: " + err.Error())
+		}
+		return enc
 	}
 	return e.enc
 }

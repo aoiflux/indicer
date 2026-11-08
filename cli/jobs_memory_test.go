@@ -88,7 +88,6 @@ func twoChunkFolder(t *testing.T, db *testdb.DB, n int) (string, int64) {
 // in memory are refused before anything is stored; jobs chosen for this
 // machine come down to what fits, and each evidence gets their share.
 func TestStoreFolderJobsFitMemory(t *testing.T) {
-	testdb.Isolate(t)
 	d := testdb.Open(t, testdb.Default)
 	in, size := twoChunkFolder(t, d, 4)
 	// Two fit; three do not. Each holds its pass and one for an object.
@@ -122,7 +121,6 @@ func TestStoreFolderJobsFitMemory(t *testing.T) {
 // TestHeavyEvidenceRunsWithEveryWorker: beside others, an evidence's chunk
 // passes get a share of the workers; a heavy one runs alone, with them all.
 func TestHeavyEvidenceRunsWithEveryWorker(t *testing.T) {
-	testdb.Isolate(t)
 	withJobsBudget(t, 1<<50)
 	d := testdb.Open(t, testdb.Default)
 	if innerWorkers(engine.For(d.DB), 4) == 0 {

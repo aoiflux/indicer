@@ -7,7 +7,6 @@ import (
 	"indicer/lib/cnst"
 	"indicer/lib/dbmeta"
 	"indicer/lib/engine"
-	"indicer/lib/util"
 )
 
 // TestPassMemory: a chunk pass holds its feed ring, which a small source
@@ -43,16 +42,15 @@ func TestPassMemory(t *testing.T) {
 
 	// 64 MiB chunks: a ring of four slots, so no more than four workers are
 	// busy, however many there are.
-	util.SetChonkSize(64 << 10)
+	db.Reconfigure(t, testdb.Options{ChunkKiB: 64 << 10})
 	big := dbmeta.ChunkSize(db.DB)
 	if got, want := PassMemory(db.DB, 1<<40, 0), (4+min(int64(workers), 4))*big; got != want {
 		t.Errorf("64 MiB chunks: PassMemory = %d chunks, want %d", got/big, want/big)
 	}
-	util.SetChonkSize(int(cs >> 10))
 
-	prev := cnst.StorePipelineMode
-	t.Cleanup(func() { cnst.StorePipelineMode = prev })
-	cnst.StorePipelineMode = cnst.StorePipelineStaged
+	staged := cnst.DefaultTuning()
+	staged.Pipeline = cnst.StorePipelineStaged
+	db.Reconfigure(t, testdb.Options{ChunkKiB: int(cs >> 10), Tuning: &staged})
 	if got, want := PassMemory(db.DB, 1<<40, 2), (ring+w+int64(queue))*cs; got != want {
 		t.Errorf("staged: PassMemory = %d chunks, want %d", got/cs, want/cs)
 	}

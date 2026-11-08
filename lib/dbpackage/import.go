@@ -48,7 +48,7 @@ type ImportOptions struct {
 	// TempDir is --temp-dir, for the read-only open that checks it.
 	TempDir string
 	// Tuning is how the storage engine runs on the database it opens; nil
-	// takes the process-wide settings.
+	// takes cnst.DefaultTuning.
 	Tuning *cnst.Tuning
 }
 

@@ -37,8 +37,7 @@ func TestMain(m *testing.M) {
 // storeFixture stores a fixture, with the full-text index when withFTS.
 func storeFixture(t *testing.T, name string, withFTS bool) (*testdb.DB, []byte) {
 	t.Helper()
-	d := testdb.Open(t, testdb.Default)
-	util.SetChonkSize(64)
+	d := testdb.Open(t, testdb.Default, testdb.Options{ChunkKiB: 64})
 	if err := util.EnsureBlobPath(d.Root); err != nil {
 		t.Fatal(err)
 	}

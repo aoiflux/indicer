@@ -111,8 +111,8 @@ Code given only a `*badger.DB` reads the layout through registries that
 `dbopen` fills at open:
 
 - `dbmeta.RegisterManifest`: `dbmeta.ChunkSize`, `HashAlgo`, `ChunkHasher`,
-  `FileHasher` and `UniformChunkSize` read it. A database opened without
-  `dbopen` (some tests) falls back to the process-wide settings.
+  `FileHasher` and `UniformChunkSize` read it. A database nothing
+  registered gets the defaults: 256 KiB chunks and BLAKE3.
 - `blobcodec.Register`: `blobcodec.For` returns the database's codec, which
   compresses with the database's encoder.
 - `dbio.RegisterKVDir`: `dbio.KVDir` returns the real `kvdb` directory when
@@ -129,19 +129,20 @@ Code given only a `*badger.DB` reads the layout through registries that
   pipeline, worker and queue counts) is `Request.Tuning`. The dues command
   passes the one its flags and config file give: `applyRuntimeConfig`
   returns it and sets nothing process-wide. A caller that gives none (the
-  compression product, some tests) gets the process-wide settings as they
-  are at the open (`cnst.Globals`). `SetStorage` replaces the layout in place, so code that holds the engine
-  sees `repair --upgrade`'s change. A database opened without `dbopen` gets
-  an engine that answers from the process-wide settings at each call,
-  `cnst.QUICKOPT` and the process encoder `cnst.ENCODER` among them.
+  compression product) gets `cnst.DefaultTuning`. `SetStorage` replaces the
+  layout in place, so code that holds the engine sees `repair --upgrade`'s
+  change. A database nothing registered gets an engine with the defaults:
+  a 256 KiB file layout, `cnst.DefaultTuning`, no block index and a shared
+  default encoder. Its blob codec reads chunks but writes none. Tests open
+  their databases through `internal/testutil/testdb`, which registers each
+  one as `dbopen` registers a legacy database.
 
-Opening a database sets no process-wide global, and neither does the dues
-command's setup. The store io engine is the one process setting left: the
-write backend is chosen once, so the command sets it before any database
-writes (`fio.SetWriteEngine`). The guard test
-`TestRewrittenFilesAvoidLayoutGlobals` fails when a listed file reads or sets
-a layout or tuning global, the process encoder, `cnst.Globals` or one of the
-getters built on it.
+Package `cnst` holds no layout or tuning global, so opening a database sets
+none and the dues command's setup sets none. The store io engine is the one
+process setting left: the write backend is chosen once, so the command sets
+it before any database writes (`fio.SetWriteEngine`). The guard test
+`TestNoMutableConfigGlobals` fails when `cnst` declares a package variable
+other than an error.
 
 ## Opening a database (`lib/dbopen`)
 

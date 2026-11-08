@@ -10,7 +10,6 @@ import (
 	"strings"
 	"testing"
 
-	"indicer/internal/testutil/testdb"
 	"indicer/lib/dbopen"
 )
 
@@ -39,8 +38,6 @@ func FuzzOriginCheck(f *testing.F) {
 // did not expect: each gets a 2xx or 4xx answer, or 507 for space, never a
 // panic or another 5xx.
 func FuzzUploadRequests(f *testing.F) {
-	testdb.Isolate(f)
-	testdb.EnsureCodecs(f)
 	h, err := dbopen.Open(context.Background(), dbopen.Request{Path: filepath.Join(f.TempDir(), "db"), Mode: dbopen.ReadWrite})
 	if err != nil {
 		f.Fatal(err)

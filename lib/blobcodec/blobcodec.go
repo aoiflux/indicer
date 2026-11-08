@@ -243,15 +243,12 @@ func Sealed(db *badger.DB) bool {
 	return false
 }
 
-// For returns db's codec. A database dbopen did not open gets the legacy codec
-// the globals imply: raw in quick mode, otherwise sealed with badger's key
-// and compressed by the process encoder.
+// For returns db's codec. A database dbopen did not open gets the legacy
+// sealed codec with badger's key, which reads its chunks but writes none
+// (errNoEncoder).
 func For(db *badger.DB) Codec {
 	if c, ok := registry.Load(db); ok {
 		return c.(Codec)
 	}
-	if cnst.QUICKOPT {
-		return legacyRaw{}
-	}
-	return legacySealed{key: db.Opts().EncryptionKey, enc: cnst.ENCODER}
+	return legacySealed{key: db.Opts().EncryptionKey}
 }

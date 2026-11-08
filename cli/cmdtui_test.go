@@ -15,7 +15,6 @@ import (
 	"indicer/internal/console"
 	"indicer/internal/lifecycle"
 	"indicer/internal/testutil"
-	"indicer/internal/testutil/testdb"
 	"indicer/internal/ui"
 	"indicer/lib/cnst"
 	"indicer/lib/dbio"
@@ -55,8 +54,6 @@ func writeFile(t *testing.T, path string, data []byte) string {
 // list with a cap and the total, and never replace a restore target without
 // being told to.
 func TestTUIActions(t *testing.T) {
-	testdb.Isolate(t)
-	testdb.EnsureCodecs(t)
 	t.Chdir(t.TempDir()) // search and near write their reports here
 	dir := t.TempDir()
 	first := writeFile(t, filepath.Join(dir, "first.bin"), bytes.Repeat([]byte("needle in first "), 4096))
@@ -154,8 +151,6 @@ func TestTUIActions(t *testing.T) {
 // the full-text index and the graph are built. The TUI used to store with
 // none of them, so its own NeAR could not search what it had stored.
 func TestTUIStoreOptions(t *testing.T) {
-	testdb.Isolate(t)
-	testdb.EnsureCodecs(t)
 	t.Chdir(t.TempDir()) // near writes its report here
 	cs := matrixChunkKB << 10
 	content := testutil.RandomBytes(71, 8*cs)
@@ -334,8 +329,6 @@ func replaceRunTUI(t *testing.T, fn func(context.Context, tui.Config) error) {
 // restored after; the database is closed, so it opens again. The TUI gets
 // --theme.
 func TestTUICmdClosesTheDatabase(t *testing.T) {
-	testdb.Isolate(t)
-	testdb.EnsureCodecs(t)
 	t.Cleanup(console.Reset)
 	t.Cleanup(ui.SetForTest(ui.Mode{Theme: ui.ThemeLight}))
 	dbPath := filepath.Join(t.TempDir(), "db")
@@ -368,8 +361,6 @@ func TestTUICmdClosesTheDatabase(t *testing.T) {
 // TestTUICmdLeavesTheDatabaseToAStuckJob (TUI-3): when a job did not stop,
 // TUICmd returns the error and does not close the database under it.
 func TestTUICmdLeavesTheDatabaseToAStuckJob(t *testing.T) {
-	testdb.Isolate(t)
-	testdb.EnsureCodecs(t)
 	t.Cleanup(console.Reset)
 	dbPath := filepath.Join(t.TempDir(), "db")
 	var left *dbopen.Handle

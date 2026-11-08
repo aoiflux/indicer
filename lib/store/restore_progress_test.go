@@ -11,17 +11,15 @@ import (
 	"indicer/internal/progress"
 	"indicer/internal/testutil"
 	"indicer/internal/testutil/testdb"
-	"indicer/lib/util"
 )
 
 // TestRestoreProgress: a restore counts the bytes it writes on a "restore"
 // phase and a "restored" tally; one stopped by a signal ends interrupted,
 // short of its total.
 func TestRestoreProgress(t *testing.T) {
-	db := testdb.Open(t, testdb.Default)
-	util.SetChonkSize(4)
+	db := testdb.Open(t, testdb.Default, testdb.Options{ChunkKiB: 4})
 	content := testutil.RandomBytes(21, 9*4096+11)
-	rid := seedCompletedEvidence(t, db.DB, "restore-progress", content, plainHash(content))
+	rid := seedCompletedEvidence(t, db.DB, "restore-progress", content, plainHash(db.DB, content))
 	id := base64.StdEncoding.EncodeToString(rid)
 
 	r := progress.New(t.Context(), nil)

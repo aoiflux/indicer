@@ -1,14 +1,8 @@
 package cnst
 
 import (
-	"crypto/sha3"
 	"errors"
-	"hash"
 	"strings"
-
-	"indicer/lib/zstdx"
-
-	"github.com/zeebo/blake3"
 )
 
 const (
@@ -58,29 +52,6 @@ const (
 	DefaultChonkSize        = 256 * KB
 	KeySize                 = 32
 )
-
-var HASHALGO = BLAKE3
-var ChonkSize = DefaultChonkSize
-var MEMOPT bool
-var QUICKOPT bool
-var CONTAINERMODE bool
-
-// LegacyBlockIndex is set for a database written in the retired hierarchical
-// mode (D9): chunk locations not in C||| are looked up in its block index.
-// A database dbopen opened reads its own flag (engine.Engine.BlockIndex); this
-// one mirrors the last open, and answers for databases opened without dbopen.
-var LegacyBlockIndex bool
-var CompressLevel = "best" // per-chunk zstd ingest level: fast | default | best
-var StoreHashStrategy = SyncHashStrategy
-var HochoMode = HochoModeBaseline
-var StorePipelineMode = StorePipelineBatch
-var StoreIOEngine = StoreIOEngineAuto
-var StoreIOUringQueueDepth = 0 // io-uring SQ/CQ depth (0 = auto)
-var StoreWorkerCount = 0
-var StoreTaskQueueDepth = 0
-var RestoreWorkerCount = 0
-var RestoreTaskQueueDepth = 0
-var RestoreWriteBufferMB = 0
 
 const (
 	EviFileNamespace                = "E|||:"
@@ -254,11 +225,6 @@ const (
 
 const IgnoreVar int64 = -1
 
-// ENCODER compresses record values and chunks of a database dbopen did not
-// open, as some tests do. Each open database has its own (engine.For), and
-// no command sets this one.
-var ENCODER *zstdx.Encoder
-
 func NormalizeHashAlgo(algo string) string {
 	switch strings.ToLower(strings.TrimSpace(algo)) {
 	case SHA3:
@@ -278,15 +244,6 @@ func ParseHashAlgo(algo string) (string, error) {
 		return "", errors.New("invalid hash algorithm: must be sha3 or blake3")
 	}
 	return normalized, nil
-}
-
-func SetHashAlgo(algo string) error {
-	normalized, err := ParseHashAlgo(algo)
-	if err != nil {
-		return err
-	}
-	HASHALGO = normalized
-	return nil
 }
 
 func NormalizeHashStrategy(strategy string) string {
@@ -312,15 +269,6 @@ func ParseHashStrategy(strategy string) (string, error) {
 	return normalized, nil
 }
 
-func SetStoreHashStrategy(strategy string) error {
-	normalized, err := ParseHashStrategy(strategy)
-	if err != nil {
-		return err
-	}
-	StoreHashStrategy = normalized
-	return nil
-}
-
 func NormalizeStorePipeline(mode string) string {
 	switch strings.ToLower(strings.TrimSpace(mode)) {
 	case StorePipelineBatch, "":
@@ -340,15 +288,6 @@ func ParseStorePipeline(mode string) (string, error) {
 		return "", errors.New("invalid store pipeline: must be batch-owner or staged")
 	}
 	return normalized, nil
-}
-
-func SetStorePipeline(mode string) error {
-	normalized, err := ParseStorePipeline(mode)
-	if err != nil {
-		return err
-	}
-	StorePipelineMode = normalized
-	return nil
 }
 
 func NormalizeStoreIOEngine(engine string) string {
@@ -374,15 +313,6 @@ func ParseStoreIOEngine(engine string) (string, error) {
 	return normalized, nil
 }
 
-func SetStoreIOEngine(engine string) error {
-	normalized, err := ParseStoreIOEngine(engine)
-	if err != nil {
-		return err
-	}
-	StoreIOEngine = normalized
-	return nil
-}
-
 // CheckIOUringQueueDepth refuses a negative io-uring queue depth; 0 is auto.
 func CheckIOUringQueueDepth(depth int) error {
 	if depth < 0 {
@@ -390,61 +320,6 @@ func CheckIOUringQueueDepth(depth int) error {
 	}
 	return nil
 }
-
-func SetStoreIOUringQueueDepth(depth int) error {
-	if err := CheckIOUringQueueDepth(depth); err != nil {
-		return err
-	}
-	StoreIOUringQueueDepth = depth
-	return nil
-}
-
-// GetStoreIOUringQueueDepth is Globals().IOUringQueueDepth().
-func GetStoreIOUringQueueDepth() int { return Globals().IOUringQueueDepth() }
-
-func NormalizeHochoMode(mode string) string {
-	switch strings.ToLower(strings.TrimSpace(mode)) {
-	case HochoModeReuse:
-		return HochoModeReuse
-	case HochoModeBaseline, "":
-		return HochoModeBaseline
-	case HochoModePostDedup:
-		return HochoModePostDedup
-	default:
-		return ""
-	}
-}
-
-func SetHochoMode(mode string) error {
-	normalized := NormalizeHochoMode(mode)
-	if normalized == "" {
-		return errors.New("invalid hocho mode: must be baseline, reuse, or postdedup")
-	}
-	HochoMode = normalized
-	return nil
-}
-
-func GetHashAlgo(bigFile ...bool) hash.Hash {
-	flag := false
-	if len(bigFile) > 0 {
-		flag = bigFile[0]
-	}
-
-	switch HASHALGO {
-	case SHA3:
-		if flag {
-			return sha3.New256()
-		}
-		return sha3.New512()
-	case BLAKE3:
-		return blake3.New()
-	}
-
-	return blake3.New()
-}
-
-// GetMaxThreadCount is Globals().MaxThreads().
-func GetMaxThreadCount() int { return Globals().MaxThreads() }
 
 // DefaultStoreTuning returns the batch-owner ingest pipeline's worker count
 // and task queue depth for a machine with cpus CPUs, before any override.
@@ -468,11 +343,6 @@ func DefaultStoreTuning(cpus int, memOpt, containerMode bool) (int, int) {
 	return workers, queueDepth
 }
 
-// GetStorePipelineTuning is Globals().StorePipeline(containerMode).
-func GetStorePipelineTuning(containerMode bool) (int, int) {
-	return Globals().StorePipeline(containerMode)
-}
-
 // DefaultRestoreTuning returns restore's worker count and queue depth for a
 // machine with cpus CPUs, before any override. Restore is read/decode heavy,
 // so defaults are moderately parallel and bounded.
@@ -489,12 +359,6 @@ func DefaultRestoreTuning(cpus int, memOpt bool) (int, int) {
 	}
 	return workers, workers * 4
 }
-
-// GetRestorePipelineTuning is Globals().RestorePipeline().
-func GetRestorePipelineTuning() (int, int) { return Globals().RestorePipeline() }
-
-// GetRestoreWriteBufferSize is Globals().RestoreWriteBuffer().
-func GetRestoreWriteBufferSize() int { return Globals().RestoreWriteBuffer() }
 
 // MaxPendingBatchTxns bounds a write batch's pending transactions: each one
 // holds a transaction's worth of memory until it commits.

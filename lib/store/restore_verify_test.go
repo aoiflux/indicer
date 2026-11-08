@@ -15,6 +15,7 @@ import (
 	"indicer/lib/blobcodec"
 	"indicer/lib/cnst"
 	"indicer/lib/dbio"
+	"indicer/lib/dbmeta"
 	"indicer/lib/structs"
 	"indicer/lib/util"
 
@@ -56,18 +57,19 @@ func restoreBytes(t *testing.T, db *badger.DB, rhash string, opts RestoreOptions
 	return out.Bytes(), report, err
 }
 
-func plainHash(data []byte) string {
-	h := cnst.GetHashAlgo(true)
+// plainHash is the file hash of data with db's hash.
+func plainHash(db *badger.DB, data []byte) string {
+	h := dbmeta.FileHasher(db)()
 	h.Write(data)
 	return base64.StdEncoding.EncodeToString(h.Sum(nil))
 }
 
-// evidenceHocho is the hocho evidence hash as ingest computes it: the file
-// hash over each chunk hash, length first.
-func evidenceHocho(content []byte, cs int64) string {
-	h := cnst.GetHashAlgo(true)
+// evidenceHocho is the hocho evidence hash as ingest computes it in db: the
+// file hash over each chunk hash, length first.
+func evidenceHocho(db *badger.DB, content []byte, cs int64) string {
+	h := dbmeta.FileHasher(db)()
 	for off := int64(0); off < int64(len(content)); off += cs {
-		ch := cnst.GetHashAlgo()
+		ch := dbmeta.ChunkHasher(db)()
 		ch.Write(content[off:min(int64(len(content)), off+cs)])
 		sum := ch.Sum(nil)
 		var n [4]byte
@@ -84,16 +86,15 @@ func evidenceHocho(content []byte, cs int64) string {
 // evidence matching the current setting restored. The chunk size of each
 // evidence now comes from its own relations.
 func TestRestoreUsesEachEvidenceChunkSize(t *testing.T) {
-	db := testdb.Open(t, testdb.Default)
+	db := testdb.Open(t, testdb.Default, testdb.Options{ChunkKiB: 4})
 
-	util.SetChonkSize(4)
 	a := testutil.RandomBytes(1, 5*4096+7)
-	ridA := seedCompletedEvidence(t, db.DB, "evidence-at-4kib", a, plainHash(a))
+	ridA := seedCompletedEvidence(t, db.DB, "evidence-at-4kib", a, plainHash(db.DB, a))
 	pA := seedPartition(t, db.DB, ridA, "part-a", 3*4096-10, 100, "")
 
-	util.SetChonkSize(8)
+	db.Reconfigure(t, testdb.Options{ChunkKiB: 8})
 	b := testutil.RandomBytes(2, 3*8192+5)
-	ridB := seedCompletedEvidence(t, db.DB, "evidence-at-8kib", b, plainHash(b))
+	ridB := seedCompletedEvidence(t, db.DB, "evidence-at-8kib", b, plainHash(db.DB, b))
 
 	for _, c := range []struct {
 		name, hash string
@@ -156,8 +157,7 @@ func swapChunkBlobs(t *testing.T, db *badger.DB, rid []byte, x, y int64) {
 func TestRestoreRejectsSubstitutedChunk(t *testing.T) {
 	for _, m := range fileModes {
 		t.Run(m.Name, func(t *testing.T) {
-			db := testdb.Open(t, m)
-			util.SetChonkSize(4)
+			db := testdb.Open(t, m, testdb.Options{ChunkKiB: 4})
 			content := testutil.RandomBytes(3, 3*4096)
 			rid := seedCompletedEvidence(t, db.DB, "substituted", content, "")
 			swapChunkBlobs(t, db.DB, rid, 0, 4096)
@@ -205,11 +205,7 @@ func TestRestoreRejectsSubstitutedChunk(t *testing.T) {
 func TestRestoreVerifiesRecordedHash(t *testing.T) {
 	for _, algo := range []string{cnst.BLAKE3, cnst.SHA3} {
 		t.Run(algo, func(t *testing.T) {
-			db := testdb.Open(t, testdb.Default)
-			if err := cnst.SetHashAlgo(algo); err != nil {
-				t.Fatal(err)
-			}
-			util.SetChonkSize(4)
+			db := testdb.Open(t, testdb.Default, testdb.Options{ChunkKiB: 4, Hash: algo})
 			cs := int64(4096)
 			content := testutil.RandomBytes(4, int(4*cs+123))
 			other := testutil.RandomBytes(5, 10)
@@ -220,10 +216,10 @@ func TestRestoreVerifiesRecordedHash(t *testing.T) {
 				want     DigestStatus
 				wantErr  error
 			}{
-				{"plain", plainHash(content), DigestVerified, nil},
-				{"hocho", evidenceHocho(content, cs), DigestVerified, nil},
+				{"plain", plainHash(db.DB, content), DigestVerified, nil},
+				{"hocho", evidenceHocho(db.DB, content, cs), DigestVerified, nil},
 				{"none recorded", "", DigestUnavailable, nil},
-				{"wrong", plainHash(other), "", ErrDigestMismatch},
+				{"wrong", plainHash(db.DB, other), "", ErrDigestMismatch},
 			}
 			for i, c := range cases {
 				rid := seedCompletedEvidence(t, db.DB, "verify-"+string(rune('a'+i)), content, c.fileHash)
@@ -254,7 +250,7 @@ func TestRestoreVerifiesRecordedHash(t *testing.T) {
 				t.Fatalf("hocho with edges: %v", err)
 			}
 			for _, p := range []struct{ name, fileHash string }{
-				{"p-plain", plainHash(content[start : start+size])},
+				{"p-plain", plainHash(db.DB, content[start:start+size])},
 				{"p-hocho", base64.StdEncoding.EncodeToString(edges)},
 			} {
 				rhash := seedPartition(t, db.DB, rid, p.name, start, size, p.fileHash)
@@ -268,7 +264,7 @@ func TestRestoreVerifiesRecordedHash(t *testing.T) {
 			}
 
 			// Chunk-level verification skips the whole-object hash.
-			rhash := base64.StdEncoding.EncodeToString(seedCompletedEvidence(t, db.DB, "verify-chunks-only", content, plainHash(other)))
+			rhash := base64.StdEncoding.EncodeToString(seedCompletedEvidence(t, db.DB, "verify-chunks-only", content, plainHash(db.DB, other)))
 			if _, report, err := restoreBytes(t, db.DB, rhash, RestoreOptions{Verify: VerifyChunks}); err != nil || report.Digest != DigestSkipped {
 				t.Fatalf("chunk-level restore: digest=%q err=%v", report.Digest, err)
 			}
@@ -279,8 +275,7 @@ func TestRestoreVerifiesRecordedHash(t *testing.T) {
 // TestLogicalReadAt reads evidence and partitions at arbitrary offsets
 // through the logical reader.
 func TestLogicalReadAt(t *testing.T) {
-	db := testdb.Open(t, testdb.Default)
-	util.SetChonkSize(4)
+	db := testdb.Open(t, testdb.Default, testdb.Options{ChunkKiB: 4})
 	cs := int64(4096)
 	content := testutil.RandomBytes(6, int(5*cs+77))
 	rid := seedCompletedEvidence(t, db.DB, "read-at", content, "")

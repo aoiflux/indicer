@@ -6,6 +6,7 @@ import (
 
 	"indicer/lib/cnst"
 	"indicer/lib/dbio"
+	"indicer/lib/dbmeta"
 	"indicer/lib/util"
 
 	"github.com/dgraph-io/badger/v4"
@@ -22,14 +23,14 @@ func legacyHochoWithEdges(fileID []byte, start, size int64, content []byte, db *
 	if size <= 0 || start < 0 || end > int64(len(content)) {
 		return nil, fmt.Errorf("range %d+%d outside %d bytes", start, size, len(content))
 	}
-	hasher := cnst.GetHashAlgo(true)
+	hasher := dbmeta.FileHasher(db)()
 	entry := func(h []byte) {
 		var n [4]byte
 		binary.BigEndian.PutUint32(n[:], uint32(len(h)))
 		hasher.Write(n[:])
 		hasher.Write(h)
 	}
-	cs := cnst.ChonkSize
+	cs := dbmeta.ChunkSize(db)
 	for chunk := start / cs * cs; chunk < end; chunk += cs {
 		lo, hi := max(start, chunk), min(end, chunk+cs)
 		if lo == chunk && hi == chunk+cs {
@@ -40,7 +41,7 @@ func legacyHochoWithEdges(fileID []byte, start, size int64, content []byte, db *
 			entry(h)
 			continue
 		}
-		h, err := util.GetChonkHash(content[lo:hi], cnst.GetHashAlgo(true))
+		h, err := util.GetChonkHash(content[lo:hi], dbmeta.FileHasher(db)())
 		if err != nil {
 			return nil, err
 		}

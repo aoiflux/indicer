@@ -51,10 +51,7 @@ func TestIngestReportsItsPhases(t *testing.T) {
 }
 
 func TestIngestSkippedIndexAndIdentify(t *testing.T) {
-	db := openDB(t)
-	prev := cnst.StoreHashStrategy
-	cnst.StoreHashStrategy = cnst.SyncHashStrategy
-	t.Cleanup(func() { cnst.StoreHashStrategy = prev })
+	db := openDBStrategy(t, cnst.SyncHashStrategy)
 
 	r := progress.New(t.Context(), nil)
 	ctx := progress.With(t.Context(), r)
@@ -110,10 +107,7 @@ func TestIngestPlansItsSteps(t *testing.T) {
 		cnst.AsyncHashStrategy: "[store index full-text]",
 	} {
 		t.Run(strategy, func(t *testing.T) {
-			db := openDB(t)
-			prev := cnst.StoreHashStrategy
-			cnst.StoreHashStrategy = strategy
-			t.Cleanup(func() { cnst.StoreHashStrategy = prev })
+			db := openDBStrategy(t, strategy)
 			r := progress.New(t.Context(), nil)
 			if _, err := Run(progress.With(t.Context(), r), db, Request{Path: fixture(t, "fat/fat16"), Decode: true, FTS: true}); err != nil {
 				t.Fatal(err)
@@ -135,10 +129,7 @@ func TestIngestPlansItsSteps(t *testing.T) {
 // TestIngestAliasDropsItsPlan: content already stored ends after identify,
 // leaving none of the planned steps behind as "not run".
 func TestIngestAliasDropsItsPlan(t *testing.T) {
-	db := openDB(t)
-	prev := cnst.StoreHashStrategy
-	cnst.StoreHashStrategy = cnst.SyncHashStrategy
-	t.Cleanup(func() { cnst.StoreHashStrategy = prev })
+	db := openDBStrategy(t, cnst.SyncHashStrategy)
 	path := testutil.WriteRandomFile(t, t.TempDir(), "a.bin", 5, 256<<10)
 	if _, err := Run(t.Context(), db, Request{Path: path, Decode: true, Quiet: true}); err != nil {
 		t.Fatal(err)

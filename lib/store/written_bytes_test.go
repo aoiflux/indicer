@@ -6,7 +6,7 @@ import (
 
 	"indicer/internal/testutil"
 	"indicer/internal/testutil/testdb"
-	"indicer/lib/cnst"
+	"indicer/lib/dbmeta"
 	"indicer/lib/util"
 )
 
@@ -17,9 +17,8 @@ func TestWrittenBytesAreTheBlobs(t *testing.T) {
 	for name, pass := range chunkPasses {
 		for _, m := range fileModes {
 			t.Run(name+"/"+m.Name, func(t *testing.T) {
-				db := testdb.Open(t, m)
-				util.SetChonkSize(4)
-				cs := int(cnst.ChonkSize)
+				db := testdb.Open(t, m, testdb.Options{ChunkKiB: 4})
+				cs := int(dbmeta.ChunkSize(db.DB))
 				unique := testutil.RandomBytes(9, 3*cs)
 				// The first chunk again, then zeros, which compress well.
 				content := append(append(append([]byte{}, unique...), unique[:cs]...), make([]byte, cs)...)

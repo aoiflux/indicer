@@ -25,7 +25,7 @@ type DBOptions struct {
 	// TempDir is --temp-dir; empty means osdirs.Temp.
 	TempDir string
 	// Tuning is how the storage engine runs on the databases the command
-	// opens; nil takes the process-wide settings.
+	// opens; nil takes cnst.DefaultTuning.
 	Tuning *cnst.Tuning
 }
 

@@ -13,7 +13,6 @@ import (
 	"time"
 
 	"indicer/internal/testutil"
-	"indicer/lib/cnst"
 )
 
 func TestMain(m *testing.M) {
@@ -24,8 +23,7 @@ func TestMain(m *testing.M) {
 
 // childArchiveMemory creates and extracts an archive in the directory
 // args[0] with GOMAXPROCS set to args[1], as a library host would, then
-// reports the live heap after a collection and whether a process encoder is
-// left behind.
+// reports the live heap after a collection.
 func childArchiveMemory(args []string) int {
 	procs, err := strconv.Atoi(args[1])
 	if err != nil {
@@ -66,7 +64,7 @@ func childArchiveMemory(args []string) int {
 	runtime.GC()
 	var m runtime.MemStats
 	runtime.ReadMemStats(&m)
-	fmt.Printf("live=%d encoder=%t\n", m.HeapAlloc, cnst.ENCODER != nil)
+	fmt.Printf("live=%d\n", m.HeapAlloc)
 	return 0
 }
 
@@ -85,16 +83,13 @@ func TestArchiveOperationsReleaseEncoders(t *testing.T) {
 	if i < 0 {
 		t.Fatalf("no report from the child:\n%s", out)
 	}
-	var liveText, encoder string
-	if _, err := fmt.Sscanf(out[i:], "live=%s encoder=%s", &liveText, &encoder); err != nil {
+	var liveText string
+	if _, err := fmt.Sscanf(out[i:], "live=%s", &liveText); err != nil {
 		t.Fatalf("report %q: %v", out[i:], err)
 	}
 	live, err := strconv.ParseUint(liveText, 10, 64)
 	if err != nil {
 		t.Fatal(err)
-	}
-	if encoder != "false" {
-		t.Errorf("the operation left a process encoder behind")
 	}
 	const limit = 128 << 20
 	if live > limit {

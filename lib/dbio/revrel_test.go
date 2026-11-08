@@ -2,13 +2,14 @@ package dbio
 
 import (
 	"encoding/base64"
-	"runtime"
 	"strconv"
 	"testing"
 
+	"indicer/lib/blobcodec"
 	"indicer/lib/cnst"
+	"indicer/lib/dbmeta"
+	"indicer/lib/engine"
 	"indicer/lib/util"
-	"indicer/lib/zstdx"
 
 	"github.com/dgraph-io/badger/v4"
 	"github.com/vmihailenco/msgpack/v5"
@@ -16,26 +17,46 @@ import (
 
 func openDBIOTestDB(t testing.TB) *badger.DB {
 	t.Helper()
+	return openDBIOTestDBWith(t, true)
+}
 
-	if cnst.ENCODER == nil {
-		encoder, err := zstdx.Acquire("best", runtime.GOMAXPROCS(0))
-		if err != nil {
-			t.Fatalf("zstdx.Acquire: %v", err)
-		}
-		cnst.ENCODER = encoder
-	}
-
-	prevQuick := cnst.QUICKOPT
-	cnst.QUICKOPT = true
-	t.Cleanup(func() {
-		cnst.QUICKOPT = prevQuick
-	})
+// openDBIOTestDBWith opens a throwaway database and registers it with the
+// default layout, as dbopen would. With rawValues it stores record values
+// and chunks as they are, as a quick-mode database does; otherwise it
+// compresses them with its own encoder.
+func openDBIOTestDBWith(t testing.TB, rawValues bool) *badger.DB {
+	t.Helper()
 
 	db, err := badger.Open(badger.DefaultOptions(t.TempDir()).WithLogger(nil))
 	if err != nil {
 		t.Fatalf("badger.Open: %v", err)
 	}
+	l := dbmeta.Layout{
+		ChunkKiB:          int(cnst.DefaultChonkSize / cnst.KB),
+		ChunkHash:         dbmeta.HashBLAKE3,
+		Storage:           dbmeta.StorageFile,
+		BlobEncoding:      blobcodec.LegacySealed,
+		ValueEncoding:     dbmeta.EncodingZstd,
+		BadgerCompression: dbmeta.EncodingZstd,
+	}
+	if rawValues {
+		l.BlobEncoding = blobcodec.LegacyRaw
+		l.ValueEncoding = dbmeta.EncodingRaw
+		l.BadgerCompression = dbmeta.EncodingSnappy
+	}
+	eng, err := engine.Register(db, l, cnst.DefaultTuning())
+	if err != nil {
+		_ = db.Close()
+		t.Fatalf("engine.Register: %v", err)
+	}
+	codec := blobcodec.NewLegacyRaw()
+	if !rawValues {
+		codec = blobcodec.NewLegacySealed(nil, eng.Encoder())
+	}
+	blobcodec.Register(db, codec)
 	t.Cleanup(func() {
+		blobcodec.Unregister(db)
+		engine.Unregister(db)
 		if err := db.Close(); err != nil {
 			t.Fatalf("db.Close: %v", err)
 		}

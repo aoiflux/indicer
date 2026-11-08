@@ -2,6 +2,7 @@ package dbopen
 
 import (
 	"bytes"
+	"path/filepath"
 	"testing"
 
 	"indicer/internal/testutil/legacyfixture"
@@ -38,16 +39,20 @@ func TestOpenRegistersEngine(t *testing.T) {
 	}
 }
 
-// TestOpenTakesGlobalTuning: an open given no tuning takes the process-wide
-// settings as they are when it opens, and keeps them.
-func TestOpenTakesGlobalTuning(t *testing.T) {
+// TestOpenTakesDefaultTuning: an open given no tuning runs with
+// cnst.DefaultTuning, whatever tuning another open database was given.
+func TestOpenTakesDefaultTuning(t *testing.T) {
 	root := setup(t)
-	cnst.StoreHashStrategy = cnst.HochoHashStrategy
+	tun := cnst.DefaultTuning()
+	tun.HashStrategy = cnst.AsyncHashStrategy
+	other := open(t, Request{Path: filepath.Join(t.TempDir(), "other"), Mode: ReadWrite, Tuning: &tun})
 	h := open(t, Request{Path: root, Mode: ReadWrite})
-	want := cnst.Globals()
-	cnst.StoreHashStrategy = cnst.SyncHashStrategy
+	want := cnst.DefaultTuning()
 	if got := engine.For(h.DB).Tuning(); got != want {
-		t.Fatalf("tuning %+v, want the globals at the open %+v", got, want)
+		t.Fatalf("tuning %+v, want the defaults %+v", got, want)
+	}
+	if got := engine.For(other.DB).Tuning(); got != tun {
+		t.Fatalf("the other database's tuning %+v, want the one it was opened with %+v", got, tun)
 	}
 }
 
@@ -56,9 +61,6 @@ func TestOpenTakesGlobalTuning(t *testing.T) {
 func TestOpenNeedsNoProcessEncoder(t *testing.T) {
 	root := setup(t)
 	h := open(t, Request{Path: root, Mode: ReadWrite})
-	prev := cnst.ENCODER
-	t.Cleanup(func() { cnst.ENCODER = prev })
-	cnst.ENCODER = nil
 	if engine.For(h.DB).Encoder() == nil {
 		t.Fatal("an open database has no encoder")
 	}
@@ -76,7 +78,7 @@ func TestOpenNeedsNoProcessEncoder(t *testing.T) {
 
 // TestDatabasesKeepTheirValueEncodings: a legacy quick database stores its
 // record values raw and a new one compresses them, both open at once in one
-// process and whatever quick mode the globals say (I3).
+// process (I3).
 func TestDatabasesKeepTheirValueEncodings(t *testing.T) {
 	root := setup(t)
 	var quick legacyfixture.Fixture
@@ -91,34 +93,31 @@ func TestDatabasesKeepTheirValueEncodings(t *testing.T) {
 	fresh := open(t, Request{Path: root, Mode: ReadWrite})
 	legacy := open(t, Request{Path: legacyfixture.Extract(t, quick), Mode: ReadWrite, Creds: dbmeta.NoPassword()})
 	key, val := []byte("test-record"), bytes.Repeat([]byte("value "), 64)
-	for _, global := range []bool{true, false} {
-		cnst.QUICKOPT = global
-		for _, c := range []struct {
-			name string
-			db   *badger.DB
-			raw  bool
-		}{{"new", fresh.DB, false}, {"quick", legacy.DB, true}} {
-			if err := dbio.SetNode(key, val, c.db); err != nil {
-				t.Fatal(err)
-			}
-			var stored []byte
-			err := c.db.View(func(txn *badger.Txn) error {
-				item, err := txn.Get(key)
-				if err != nil {
-					return err
-				}
-				stored, err = item.ValueCopy(nil)
-				return err
-			})
+	for _, c := range []struct {
+		name string
+		db   *badger.DB
+		raw  bool
+	}{{"new", fresh.DB, false}, {"quick", legacy.DB, true}} {
+		if err := dbio.SetNode(key, val, c.db); err != nil {
+			t.Fatal(err)
+		}
+		var stored []byte
+		err := c.db.View(func(txn *badger.Txn) error {
+			item, err := txn.Get(key)
 			if err != nil {
-				t.Fatal(err)
+				return err
 			}
-			if raw := bytes.Equal(stored, val); raw != c.raw {
-				t.Fatalf("global quick %v: %s database stored raw=%v, want %v", global, c.name, raw, c.raw)
-			}
-			if got, err := zstdx.DecodeAll(stored, nil); !c.raw && (err != nil || !bytes.Equal(got, val)) {
-				t.Fatalf("global quick %v: %s database value does not decode: %v", global, c.name, err)
-			}
+			stored, err = item.ValueCopy(nil)
+			return err
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if raw := bytes.Equal(stored, val); raw != c.raw {
+			t.Fatalf("%s database stored raw=%v, want %v", c.name, raw, c.raw)
+		}
+		if got, err := zstdx.DecodeAll(stored, nil); !c.raw && (err != nil || !bytes.Equal(got, val)) {
+			t.Fatalf("%s database value does not decode: %v", c.name, err)
 		}
 	}
 }

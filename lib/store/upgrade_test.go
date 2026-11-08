@@ -11,6 +11,8 @@ import (
 	"indicer/internal/testutil/testdb"
 	"indicer/lib/cnst"
 	"indicer/lib/dbio"
+	"indicer/lib/dbmeta"
+	"indicer/lib/engine"
 	"indicer/lib/util"
 
 	"github.com/dgraph-io/badger/v4"
@@ -21,17 +23,16 @@ import (
 // hierarchical mode holds them. It returns the database and the chunk keys.
 func legacyBlockIndexDB(t *testing.T, chunks int) (*testdb.DB, []byte, [][]byte) {
 	t.Helper()
-	db := testdb.Open(t, testdb.Container)
-	util.SetChonkSize(4)
-	cs := int(cnst.ChonkSize)
+	db := testdb.Open(t, testdb.Container, testdb.Options{ChunkKiB: 4})
+	cs := int(dbmeta.ChunkSize(db.DB))
 	content := testutil.RandomBytes(21, chunks*cs)
 	runChunkPass(t, ingestChunksBatchOwner, db.DB, "legacy", content)
 	testdb.MoveChunkMetaToBlockIndex(t, db.DB)
-	cnst.LegacyBlockIndex = true
+	engine.For(db.DB).SetBlockIndex(true)
 
 	var keys [][]byte
 	for i := range chunks {
-		chash, err := util.GetChonkHash(content[i*cs:(i+1)*cs], cnst.GetHashAlgo())
+		chash, err := util.GetChonkHash(content[i*cs:(i+1)*cs], dbmeta.ChunkHasher(db.DB)())
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -44,9 +45,9 @@ func legacyBlockIndexDB(t *testing.T, chunks int) (*testdb.DB, []byte, [][]byte)
 // back without the block index.
 func assertChunksInBadger(t *testing.T, db *badger.DB, content []byte, keys [][]byte) {
 	t.Helper()
-	cnst.LegacyBlockIndex = false
-	defer func() { cnst.LegacyBlockIndex = true }()
-	cs := int(cnst.ChonkSize)
+	engine.For(db).SetBlockIndex(false)
+	defer engine.For(db).SetBlockIndex(true)
+	cs := int(dbmeta.ChunkSize(db))
 	for i, k := range keys {
 		got, err := dbio.GetChonkNode(k, db)
 		if err != nil {
@@ -112,7 +113,7 @@ func TestUpgradeBlockIndexKeepsDamagedRecords(t *testing.T) {
 		t.Fatalf("damaged chunk got C||| metadata: %v", err)
 	}
 	healthy := append(append([][]byte{}, keys[:2]...), keys[3:]...)
-	cs := int(cnst.ChonkSize)
+	cs := int(dbmeta.ChunkSize(db.DB))
 	healthyContent := append(append([]byte{}, content[:2*cs]...), content[3*cs:]...)
 	assertChunksInBadger(t, db.DB, healthyContent, healthy)
 }

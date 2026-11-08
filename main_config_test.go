@@ -3,11 +3,11 @@ package main
 import (
 	"errors"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 
 	"indicer/internal/lifecycle"
-	"indicer/internal/testutil/testdb"
 	"indicer/lib/cnst"
 	"indicer/lib/dbopen"
 )
@@ -27,7 +27,6 @@ func configure(t *testing.T, args ...string) (pipelineTuning, error) {
 // --dbpath, as run does.
 func configureOn(t *testing.T, args ...string) (pipelineTuning, error) {
 	t.Helper()
-	testdb.Isolate(t)
 	cliDef := newCLIDefinition()
 	parsed, err := cliDef.app.Parse(args)
 	if err != nil {
@@ -194,26 +193,26 @@ func TestConfigStoreTuningOverrides(t *testing.T) {
 }
 
 // TestConfigSetsNoGlobals: the settings come back in the tuning and the
-// requested layout, and nothing process-wide changes, so two databases in
-// one process keep their own (I3).
+// requested layout, and nothing is left behind for the next configuration,
+// so two databases in one process keep their own (I3).
 func TestConfigSetsNoGlobals(t *testing.T) {
-	type layoutGlobals struct {
-		chunk                      int64
-		hash                       string
-		low, quick, container, bix bool
+	plain := func() pipelineTuning {
+		t.Helper()
+		tuning, err := configure(t, "store", "x")
+		if err != nil {
+			t.Fatal(err)
+		}
+		return tuning
 	}
-	read := func() (cnst.Tuning, layoutGlobals) {
-		return cnst.Globals(), layoutGlobals{cnst.ChonkSize, cnst.HASHALGO, cnst.MEMOPT, cnst.QUICKOPT, cnst.CONTAINERMODE, cnst.LegacyBlockIndex}
-	}
-	wantTuning, wantLayout := read()
+	want := plain()
 	tuning, err := configure(t, "--preset", "low-resource", "--quick", "-z", "fast", "--container", "store",
 		"--hash-algo", "sha3", "--hash-strategy", "async", "--pipeline", "staged", "--io-engine", "stdlib",
 		"--io-uring-queue-depth", "64", "-w", "3", "-W", "9", "x")
 	if err != nil {
 		t.Fatal(err)
 	}
-	if gotTuning, gotLayout := read(); gotTuning != wantTuning || gotLayout != wantLayout {
-		t.Fatalf("the globals changed: tuning %+v, layout %+v; were %+v, %+v", gotTuning, gotLayout, wantTuning, wantLayout)
+	if got := plain(); got.engine != want.engine || !reflect.DeepEqual(got.layout, want.layout) {
+		t.Fatalf("a configuration changed the next: tuning %+v, layout %+v; were %+v, %+v", got.engine, got.layout, want.engine, want.layout)
 	}
 	e := tuning.engine
 	if !e.LowResource || e.CompressLevel != "fast" || e.HashStrategy != cnst.AsyncHashStrategy || e.Pipeline != cnst.StorePipelineStaged ||
@@ -230,7 +229,6 @@ func TestConfigSetsNoGlobals(t *testing.T) {
 // workers and a queue of 4096 hold 1 GiB of 256 KiB chunks, and 256 GiB of
 // this database's 64 MiB ones.
 func TestConfigFitsTheDatabasesChunks(t *testing.T) {
-	testdb.Isolate(t)
 	root := filepath.Join(t.TempDir(), "db")
 	h, err := dbopen.Open(t.Context(), dbopen.Request{Path: root, Mode: dbopen.ReadWrite, Layout: dbopen.Requested{ChunkKiB: 65536}})
 	if err != nil {

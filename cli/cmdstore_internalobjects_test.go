@@ -5,7 +5,6 @@ import (
 	"path/filepath"
 	"testing"
 
-	"indicer/internal/testutil/testdb"
 	"indicer/lib/structs"
 )
 
@@ -42,8 +41,6 @@ func TestStoreRecordsIndexState(t *testing.T) {
 		{"decoded and indexed", e01, StoreOptions{Decode: true}, structs.IndexComplete, "", structs.SourceEWF, 0},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			testdb.Isolate(t)
-			testdb.EnsureCodecs(t)
 			dbPath := filepath.Join(t.TempDir(), "db")
 			if err := StoreDataWithOptions(t.Context(), optsFor(dbPath, matrixChunkKB, nil), tc.path, tc.opts); err != nil {
 				t.Fatalf("store: %v", err)

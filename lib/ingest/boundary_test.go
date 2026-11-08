@@ -10,9 +10,9 @@ import (
 	"testing"
 
 	"indicer/internal/testutil"
+	"indicer/internal/testutil/testdb"
 	"indicer/lib/dbio"
 	"indicer/lib/store"
-	"indicer/lib/util"
 
 	"github.com/dgraph-io/badger/v4"
 )
@@ -28,8 +28,7 @@ func TestChunkBoundaryMatrix(t *testing.T) {
 			if kib >= 65536 {
 				testutil.LongTest(t)
 			}
-			db := openDB(t)
-			util.SetChonkSize(kib)
+			db := openDBWith(t, testdb.Options{ChunkKiB: kib})
 			cs := kib << 10
 			dir := t.TempDir()
 			for i, size := range []int{0, 1, cs - 1, cs, cs + 1, 3*cs - 7, 3 * cs, 3*cs + 7} {

@@ -11,6 +11,7 @@ import (
 	"indicer/internal/testutil/testdb"
 	"indicer/lib/cnst"
 	"indicer/lib/dbio"
+	"indicer/lib/dbmeta"
 	"indicer/lib/util"
 )
 
@@ -21,9 +22,9 @@ func BenchmarkRestoreDataPath(b *testing.B) {
 		start  int64
 	}{
 		{name: "start_zero/chunks_16", chunks: 16, start: 0},
-		{name: "start_mid/chunks_16", chunks: 16, start: cnst.ChonkSize / 2},
+		{name: "start_mid/chunks_16", chunks: 16, start: cnst.DefaultChonkSize / 2},
 		{name: "start_zero/chunks_64", chunks: 64, start: 0},
-		{name: "start_mid/chunks_64", chunks: 64, start: cnst.ChonkSize / 2},
+		{name: "start_mid/chunks_64", chunks: 64, start: cnst.DefaultChonkSize / 2},
 	}
 
 	// Restore's progress bar would land on the benchmark's result lines,
@@ -32,12 +33,12 @@ func BenchmarkRestoreDataPath(b *testing.B) {
 
 	for _, bm := range benchmarks {
 		b.Run(bm.name, func(b *testing.B) {
-			l := setupRestoreBenchmarkDataset(b, bm.chunks, bm.start)
+			l := setupRestoreBenchmarkDataset(b, bm.chunks, bm.start, 0)
 
 			b.ReportAllocs()
 			b.ResetTimer()
 			for i := 0; i < b.N; i++ {
-				report, err := restoreLogical(context.Background(), l, io.Discard, RestoreOptions{}, nil, cnst.Globals())
+				report, err := restoreLogical(context.Background(), l, io.Discard, RestoreOptions{}, nil, cnst.DefaultTuning())
 				if err != nil {
 					b.Fatalf("restore: %v", err)
 				}
@@ -50,13 +51,14 @@ func BenchmarkRestoreDataPath(b *testing.B) {
 }
 
 // setupRestoreBenchmarkDataset stores chunks distinct chunks as an evidence
-// and returns a reader for it, or, when start is inside it, for the
-// partition from start to its end.
-func setupRestoreBenchmarkDataset(tb testing.TB, chunks int, start int64) *dbio.Logical {
+// in a database of chunkKiB KiB chunks (0 for the default size) and returns
+// a reader for it, or, when start is inside it, for the partition from start
+// to its end.
+func setupRestoreBenchmarkDataset(tb testing.TB, chunks int, start int64, chunkKiB int) *dbio.Logical {
 	tb.Helper()
-	db := testdb.Open(tb, testdb.Default)
+	db := testdb.Open(tb, testdb.Default, testdb.Options{ChunkKiB: chunkKiB})
 
-	cs := cnst.ChonkSize
+	cs := dbmeta.ChunkSize(db.DB)
 	content := make([]byte, int64(chunks)*cs)
 	for i := range content {
 		content[i] = byte(i % 251)

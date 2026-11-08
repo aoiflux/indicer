@@ -10,7 +10,6 @@ import (
 
 	"indicer/internal/console"
 	"indicer/internal/testutil"
-	"indicer/internal/testutil/testdb"
 )
 
 // repairSections are the document's keys that only some runs have.
@@ -54,8 +53,6 @@ func section(t *testing.T, doc map[string]json.RawMessage, key string, v any) {
 // document: the recovery report with today's fields, and a section for each
 // step a flag ran, none for the others. The steps' own lines go to stderr.
 func TestRepairDocument(t *testing.T) {
-	testdb.Isolate(t)
-	testdb.EnsureCodecs(t)
 	dir := t.TempDir()
 	dbPath := filepath.Join(dir, "db")
 	opts := optsFor(dbPath, matrixChunkKB, nil)

@@ -1,26 +1,26 @@
 // Package testdb opens throwaway DUES databases for tests and runs a test
 // once per storage mode.
 //
-// DUES keeps its storage layout in process globals (package cnst). Every
-// helper here snapshots those globals and restores them when the test ends,
-// so a test that changes the chunk size or mode cannot leak it into the next.
-// Because the globals are process-wide, tests using this package must not
-// call t.Parallel.
+// A test database is opened without dbopen, as a legacy database (one with
+// no manifest) would be, and registered the way dbopen registers one: its
+// layout, tuning, encoder and blob codec belong to it alone (package
+// engine), so nothing a test chooses for one database reaches another.
 package testdb
 
 import (
 	"bytes"
 	"os"
 	"path/filepath"
-	"runtime"
 	"testing"
 
 	"github.com/dgraph-io/badger/v4"
 
+	"indicer/lib/blobcodec"
 	"indicer/lib/cnst"
 	"indicer/lib/dbio"
+	"indicer/lib/dbmeta"
+	"indicer/lib/engine"
 	"indicer/lib/util"
-	"indicer/lib/zstdx"
 )
 
 // Mode is one storage configuration a database can be written in.
@@ -54,90 +54,51 @@ func (m Mode) Key(tb testing.TB) []byte {
 	return key
 }
 
-// Globals is a snapshot of every mutable layout and tuning global in cnst.
-type Globals struct {
-	HashAlgo, CompressLevel, StoreHashStrategy, HochoMode string
-	StorePipelineMode, StoreIOEngine                      string
-	ChonkSize                                             int64
-	MemOpt, QuickOpt, ContainerMode, LegacyBlockIndex     bool
-	StoreIOUringQueueDepth, StoreWorkerCount              int
-	StoreTaskQueueDepth, RestoreWorkerCount               int
-	RestoreTaskQueueDepth                                 int
-	RestoreWriteBufferMB                                  int
+// Options are a test database's layout and tuning beyond its mode. The zero
+// value is the default layout (256 KiB chunks, BLAKE3) and DefaultTuning.
+type Options struct {
+	// ChunkKiB is the chunk size in KiB; 0 means cnst.DefaultChonkSize.
+	ChunkKiB int
+	// Hash is the chunk hash, cnst.SHA3 or cnst.BLAKE3 (the default).
+	Hash string
+	// Tuning is the tuning the database runs with; nil means
+	// cnst.DefaultTuning.
+	Tuning *cnst.Tuning
 }
 
-// Snapshot captures the current globals.
-func Snapshot() Globals {
-	return Globals{
-		HashAlgo:               cnst.HASHALGO,
-		CompressLevel:          cnst.CompressLevel,
-		StoreHashStrategy:      cnst.StoreHashStrategy,
-		HochoMode:              cnst.HochoMode,
-		StorePipelineMode:      cnst.StorePipelineMode,
-		StoreIOEngine:          cnst.StoreIOEngine,
-		ChonkSize:              cnst.ChonkSize,
-		MemOpt:                 cnst.MEMOPT,
-		QuickOpt:               cnst.QUICKOPT,
-		ContainerMode:          cnst.CONTAINERMODE,
-		LegacyBlockIndex:       cnst.LegacyBlockIndex,
-		StoreIOUringQueueDepth: cnst.StoreIOUringQueueDepth,
-		StoreWorkerCount:       cnst.StoreWorkerCount,
-		StoreTaskQueueDepth:    cnst.StoreTaskQueueDepth,
-		RestoreWorkerCount:     cnst.RestoreWorkerCount,
-		RestoreTaskQueueDepth:  cnst.RestoreTaskQueueDepth,
-		RestoreWriteBufferMB:   cnst.RestoreWriteBufferMB,
+// Layout returns the layout a database of mode m with these options has.
+func (o Options) Layout(m Mode) dbmeta.Layout {
+	l := dbmeta.Layout{
+		ChunkKiB:          int(cnst.DefaultChonkSize / cnst.KB),
+		ChunkHash:         dbmeta.HashBLAKE3,
+		Storage:           dbmeta.StorageFile,
+		BlobEncoding:      blobcodec.LegacySealed,
+		ValueEncoding:     dbmeta.EncodingZstd,
+		BadgerCompression: dbmeta.EncodingZstd,
 	}
-}
-
-// Restore puts the snapshot back.
-func (g Globals) Restore() {
-	cnst.HASHALGO = g.HashAlgo
-	cnst.CompressLevel = g.CompressLevel
-	cnst.StoreHashStrategy = g.StoreHashStrategy
-	cnst.HochoMode = g.HochoMode
-	cnst.StorePipelineMode = g.StorePipelineMode
-	cnst.StoreIOEngine = g.StoreIOEngine
-	cnst.ChonkSize = g.ChonkSize
-	cnst.MEMOPT = g.MemOpt
-	cnst.QUICKOPT = g.QuickOpt
-	cnst.CONTAINERMODE = g.ContainerMode
-	cnst.LegacyBlockIndex = g.LegacyBlockIndex
-	cnst.StoreIOUringQueueDepth = g.StoreIOUringQueueDepth
-	cnst.StoreWorkerCount = g.StoreWorkerCount
-	cnst.StoreTaskQueueDepth = g.StoreTaskQueueDepth
-	cnst.RestoreWorkerCount = g.RestoreWorkerCount
-	cnst.RestoreTaskQueueDepth = g.RestoreTaskQueueDepth
-	cnst.RestoreWriteBufferMB = g.RestoreWriteBufferMB
-}
-
-// Isolate snapshots the globals now and restores them when the test ends.
-func Isolate(tb testing.TB) {
-	tb.Helper()
-	g := Snapshot()
-	tb.Cleanup(g.Restore)
-}
-
-// EnsureCodecs initialises the process-wide zstd encoder and decoder the
-// storage code expects, if nothing has yet.
-func EnsureCodecs(tb testing.TB) {
-	tb.Helper()
-	if cnst.ENCODER == nil {
-		e, err := zstdx.Acquire("default", runtime.GOMAXPROCS(0))
-		if err != nil {
-			tb.Fatalf("zstdx.Acquire: %v", err)
-		}
-		cnst.ENCODER = e
+	if o.ChunkKiB > 0 {
+		l.ChunkKiB = o.ChunkKiB
 	}
+	if cnst.NormalizeHashAlgo(o.Hash) == cnst.SHA3 {
+		l.ChunkHash = dbmeta.HashSHA3
+	}
+	if m.Container {
+		l.Storage = dbmeta.StorageContainer
+	}
+	if m.Quick {
+		l.BlobEncoding = blobcodec.LegacyRaw
+		l.ValueEncoding = dbmeta.EncodingRaw
+		l.BadgerCompression = dbmeta.EncodingSnappy
+	}
+	return l
 }
 
-// Apply isolates the globals and sets them for mode m.
-func Apply(tb testing.TB, m Mode) {
-	tb.Helper()
-	Isolate(tb)
-	EnsureCodecs(tb)
-	cnst.QUICKOPT = m.Quick
-	cnst.CONTAINERMODE = m.Container
-	cnst.LegacyBlockIndex = false
+// tuning returns the tuning the options ask for.
+func (o Options) tuning() cnst.Tuning {
+	if o.Tuning != nil {
+		return *o.Tuning
+	}
+	return cnst.DefaultTuning()
 }
 
 // NewDataRoot returns a fresh, empty data root inside the test's temp dir.
@@ -153,32 +114,45 @@ func NewDataRoot(tb testing.TB) string {
 // DB is an open test database.
 type DB struct {
 	*badger.DB
-	Root string
-	Mode Mode
-	Key  []byte
+	Root    string
+	Mode    Mode
+	Key     []byte
+	Options Options
 }
 
-// Open applies mode m and opens a new database in a fresh data root. The
-// database is closed when the test ends; a close error fails the test.
-func Open(tb testing.TB, m Mode) *DB {
+// Open opens a new database of mode m in a fresh data root, with the
+// options given (at most one). The database is closed when the test ends; a
+// close error fails the test.
+func Open(tb testing.TB, m Mode, opts ...Options) *DB {
 	tb.Helper()
-	Apply(tb, m)
-	root := NewDataRoot(tb)
-	return OpenAt(tb, m, root)
+	return OpenAt(tb, m, NewDataRoot(tb), opts...)
 }
 
-// OpenAt opens (or creates) the database at root in mode m, without changing
-// the globals; call Apply first.
-func OpenAt(tb testing.TB, m Mode, root string) *DB {
+// OpenAt opens (or creates) the database at root in mode m, with the options
+// given (at most one).
+func OpenAt(tb testing.TB, m Mode, root string, opts ...Options) *DB {
 	tb.Helper()
+	var o Options
+	switch len(opts) {
+	case 0:
+	case 1:
+		o = opts[0]
+	default:
+		tb.Fatalf("testdb: %d Options, want at most one", len(opts))
+	}
 	key := m.Key(tb)
-	db, err := dbio.ConnectDB(root, key, m.Quick)
+	db, err := dbio.ConnectDBTuned(root, key, m.Quick, o.tuning())
 	if err != nil {
 		tb.Fatalf("ConnectDB(%s, mode %s): %v", root, m.Name, err)
 	}
-	d := &DB{DB: db, Root: root, Mode: m, Key: key}
+	d := &DB{DB: db, Root: root, Mode: m, Key: key, Options: o}
+	if err := d.register(); err != nil {
+		_ = db.Close()
+		tb.Fatalf("registering test database: %v", err)
+	}
 	tb.Cleanup(func() {
 		if d.IsClosed() {
+			unregister(db)
 			return
 		}
 		if err := d.Close(); err != nil {
@@ -188,26 +162,64 @@ func OpenAt(tb testing.TB, m Mode, root string) *DB {
 	return d
 }
 
-// Reopen closes the database and opens it again in the same mode, as a
-// restarted process would.
+// register records the database's layout, tuning, encoder and blob codec,
+// as dbopen does for a legacy database it opens. Its layout counts as
+// inferred, so the database is not taken to hold one chunk size only.
+func (d *DB) register() error {
+	l := d.Options.Layout(d.Mode)
+	eng, err := engine.Register(d.DB, l, d.Options.tuning())
+	if err != nil {
+		return err
+	}
+	codec := blobcodec.NewLegacyRaw()
+	if !d.Mode.Quick {
+		codec = blobcodec.NewLegacySealed(d.DB.Opts().EncryptionKey, eng.Encoder())
+	}
+	blobcodec.Register(d.DB, codec)
+	dbmeta.RegisterManifest(d.DB, dbmeta.Manifest{Layout: l, Inferred: &dbmeta.Inference{Notes: []string{"testdb"}}})
+	return nil
+}
+
+func unregister(db *badger.DB) {
+	blobcodec.Unregister(db)
+	dbmeta.UnregisterLayout(db)
+	engine.Unregister(db)
+}
+
+// Reconfigure changes the database's options while it is open, as a test
+// that stores with one chunk size or tuning and then another does.
+func (d *DB) Reconfigure(tb testing.TB, o Options) {
+	tb.Helper()
+	d.Options = o
+	if err := d.register(); err != nil {
+		tb.Fatalf("reconfiguring test database: %v", err)
+	}
+}
+
+// Close forgets the database's registration and closes it.
+func (d *DB) Close() error {
+	unregister(d.DB)
+	return d.DB.Close()
+}
+
+// Reopen closes the database and opens it again with the same mode and
+// options, as a restarted process would.
 func (d *DB) Reopen(tb testing.TB) *DB {
 	tb.Helper()
 	if err := d.Close(); err != nil {
 		tb.Fatalf("close before reopen: %v", err)
 	}
-	return OpenAt(tb, d.Mode, d.Root)
+	return OpenAt(tb, d.Mode, d.Root, d.Options)
 }
 
 // ZeroKey is the 32-byte all-zero key some existing tests use.
 func ZeroKey() []byte { return bytes.Repeat([]byte{0}, 32) }
 
-// ForEachMode runs fn once per mode in Modes, each as a subtest with the
-// globals set for that mode and restored afterwards.
+// ForEachMode runs fn once per mode in Modes, each as a subtest.
 func ForEachMode(t *testing.T, fn func(t *testing.T, m Mode)) {
 	t.Helper()
 	for _, m := range Modes {
 		t.Run(m.Name, func(t *testing.T) {
-			Apply(t, m)
 			fn(t, m)
 		})
 	}

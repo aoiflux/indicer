@@ -8,7 +8,6 @@ import (
 
 	"indicer/internal/progress"
 	"indicer/internal/testutil"
-	"indicer/internal/testutil/testdb"
 	"indicer/lib/ingest"
 	"indicer/lib/store"
 )
@@ -18,8 +17,6 @@ import (
 // store under it, and the value-log compaction. The items weigh their size,
 // so the overall bar moves with the bytes.
 func TestStoreFolderProgress(t *testing.T) {
-	testdb.Isolate(t)
-	testdb.EnsureCodecs(t)
 	dir := t.TempDir()
 	src := filepath.Join(dir, "case")
 	for i, name := range []string{"a.bin", "b.bin", "c.bin"} {

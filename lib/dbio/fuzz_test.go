@@ -3,7 +3,6 @@ package dbio_test
 import (
 	"testing"
 
-	"indicer/internal/testutil/testdb"
 	"indicer/lib/dbio"
 	"indicer/lib/structs"
 
@@ -14,7 +13,6 @@ import (
 // record, and reads the record helpers over what decodes: an error, never a
 // panic.
 func FuzzDecodeRecord(f *testing.F) {
-	testdb.EnsureCodecs(f)
 	ev := structs.NewEvidenceFile("case.img", 0, 4096, map[string]structs.InternalOffset{"cA==": {Start: 0, End: 4095}}, "raw", "aGFzaA==")
 	ix := structs.NewIndexedFile("YQ==|||/a.txt", 0, 10, "txt", false, "aGFzaA==")
 	ix.Path = "/a.txt"

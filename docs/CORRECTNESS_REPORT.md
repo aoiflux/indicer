@@ -93,7 +93,7 @@ marked with the workstream that found it, for example "(W12)".
 
 | ID | Sev | Defect and where | Class | Fix | Regression test | Status |
 |---|---|---|---|---|---|---|
-| CFG-1 | HIGH | Layout settings (`-c`, `-x`, `-i`, `-g`, hash strategy, revrel, simhash, quick) were process globals, never persisted. A mismatched `-c` made recovery fail good evidence and restore write wrong output (`cli/common.go`, `filestruct.go`). | config | W2: manifest fixes the layout at creation; a conflicting flag exits 2. W4: per-evidence chunk size. W13: validation too (STO-26). | `TestLayoutConflicts`, `TestRestoreUsesEachEvidenceChunkSize`, `TestValidateUsesEachEvidenceChunkSize`, `TestRewrittenFilesAvoidLayoutGlobals` | Fixed |
+| CFG-1 | HIGH | Layout settings (`-c`, `-x`, `-i`, `-g`, hash strategy, revrel, simhash, quick) were process globals, never persisted. A mismatched `-c` made recovery fail good evidence and restore write wrong output (`cli/common.go`, `filestruct.go`). | config | W2: manifest fixes the layout at creation; a conflicting flag exits 2. W4: per-evidence chunk size. W13: validation too (STO-26). | `TestLayoutConflicts`, `TestRestoreUsesEachEvidenceChunkSize`, `TestValidateUsesEachEvidenceChunkSize`, `TestNoMutableConfigGlobals` | Fixed |
 | CFG-2 | HIGH | Quick mode dropped the encryption key and value compression: `--preset quick --password` stored plaintext (`dbio.go`). | config | W2: quick mode only turns off table compression; encryption comes from the manifest. | `TestQuickNeverDropsEncryption` | Fixed |
 | CFG-3 | MED | The key was an unsalted single SHA3 of the password; the empty password gave a constant, public key (`util.go`). | trust | W2: Argon2id with a per-database salt, HKDF subkeys and a key check; no password means an unencrypted database with a notice (D8). | `TestKeys`, `TestCreateEncrypted`, `TestCreateUnencrypted` | Fixed; legacy SHA3 databases stay readable (residual) |
 | CFG-4 | HIGH | `--low` and the low-resource preset set `NumCompactors=1`, so badger refused to open any database (`dbio.go`). | config | W2: `clamp(threads, 2, 8)`. | `TestConnectDBLowResourceMode` | Fixed |
@@ -393,18 +393,17 @@ a flag that changed several of these at once, encryption among them.
 - `internal/appconfig.Resolve` validates every flag in one pure function.
 
 **What keeps it fixed.**
-- `TestRewrittenFilesAvoidLayoutGlobals` fails when a rewritten file reads the
-  layout globals.
+- `TestNoMutableConfigGlobals` fails when package `cnst` declares a variable
+  other than an error, so no layout or tuning global can return.
 - `TestLayoutConflicts` covers contradicting flags, and `FuzzResolve` the
   configuration.
 
-**What is left.** The globals still exist, for databases opened without
-`dbopen` and for opens that pass no tuning, but nothing sets them any more:
-opening a database writes none, and the command-line setup returns a
-`cnst.Tuning` instead of writing them. The storage code reads each database's
-layout, tuning and encoder through `engine.For`, and the record and chunk
-encoders write each database's own value encoding. The FFI runs
-storage-engine operations at once (FFI-2).
+**What is left.** Nothing of the class. Pass 7 deleted the globals: the
+command-line setup returns a `cnst.Tuning`, each open database keeps its own
+layout, tuning and encoder (`engine.For`), and a database opened without
+`dbopen` gets the defaults. Tests register their databases through
+`internal/testutil/testdb`. The FFI runs storage-engine operations at once
+(FFI-2).
 
 ### concurrency: goroutines, channels and timeouts instead of structured concurrency
 
@@ -625,7 +624,7 @@ Findings: CFG-10, CFG-19, CFG-20, STO-18, ING-17, PAR-30, GRA-9, GRA-11, GRA-13,
 |---|---|---|
 | I1 | No chunk location record (or legacy block-index record) becomes visible before its blob or container bytes are synced. | `TestChunkMetaVisibleOnlyAfterSync` (both pipelines, file and container mode); the kill points before and after the barrier (`TestCrashDuringIngest`). |
 | I2 | FLUSHED means every relation and chunk location is durable. COMPLETED means FLUSHED, plus this evidence won the content-identity commit, plus its lookup keys are written. | `TestRecoveryCompletesFlushedEvidenceInEveryMode`, `TestRecoveryFailsFlushedEvidenceWithDamagedMaterial`, `TestRecoveryCommitsFlushedAttempts`, the crash suite. |
-| I3 | Layout comes only from the manifest or the evidence record, never from a runtime flag on a read path. | `TestRewrittenFilesAvoidLayoutGlobals`, `TestLayoutConflicts`, `TestRestoreUsesEachEvidenceChunkSize`, `TestValidateUsesEachEvidenceChunkSize`. Older code still reads globals set from the manifest at open (residual). |
+| I3 | Layout comes only from the manifest or the evidence record, never from a runtime flag on a read path. | `TestNoMutableConfigGlobals`, `TestLayoutConflicts`, `TestRestoreUsesEachEvidenceChunkSize`, `TestValidateUsesEachEvidenceChunkSize`. |
 | I4 | Every content read is verified against its chunk hash unless verification is turned off. Chunks written by this release are verified even then, because the v2 codec checks as it decodes. | `TestRestoreRejectsSubstitutedChunk`, `TestV2RejectsDamage`, `TestV2RejectsMisplacedPayload`, `TestLogicalReadAt`. |
 | I5 | Every evidence state change is one read-modify-write transaction, retried on conflict. | `TestEvidenceWritesUseUpdateEvidence` (a guard over the source), `TestUpdateEvidenceConcurrentWritersKeepEveryChange`. |
 | I6 | One ingest has exactly one terminal outcome (stored, aliased or failed), and no goroutine outlives it. | `TestConcurrentIngestsHaveOneWinner`, `TestStorageFailureResumes`, `TestIndexFailureKeepsStorage`, the interrupt suite. No general goroutine-leak check runs: `testutil.NoLeakedGoroutines` exists, but only its own test uses it (residual). |
@@ -663,7 +662,7 @@ file's path, size, SHA-256, kind and flags.
 | Scale | Chunk sizes from 4 KiB to 64 MiB against file sizes around chunk boundaries (`TestChunkBoundaryMatrix`); 1M partition members (`TestMillionPartitionMembers`); 200,000 members of one hash (`TestPopularHashLookup`); 4M-chunk validation (`TestValidateFourMillionChunks`); a 10,000-file folder with an E01 set (`TestFolderOfTenThousandFiles`). |
 | Back-compat | Every legacy database opens read-only and changes nothing (`TestLegacyReadsChangeNothing`), takes new evidence in its own encoding (`TestStoreIntoLegacyDatabase`), restores (`TestLegacyRestore`), searches and runs near (`TestLegacySearchAndNear`). |
 | Concurrency | Parallel read processes and refused second writers (`TestConcurrentProcesses`); concurrent uploads (`TestConcurrentUploads`); concurrent ingests of one content (`TestConcurrentIngestsHaveOneWinner`); concurrent archive operations (`TestConcurrentArchiveOperations`); `-race` over every package. |
-| Guards over the source | Layout globals (`TestRewrittenFilesAvoidLayoutGlobals`), evidence writes (`TestEvidenceWritesUseUpdateEvidence`), terminal writes outside `main` (`TestNoTerminalWritesOutsideMain`), msgpack decodes (`TestDecodesGoThroughMsgpackx`), fault points (`TestEveryPointIsWired`), unbounded cluster lists (`TestNoUnboundedClusterLists`), help for every command (`TestEveryCommandHasHelp`). |
+| Guards over the source | Layout globals (`TestNoMutableConfigGlobals`), evidence writes (`TestEvidenceWritesUseUpdateEvidence`), terminal writes outside `main` (`TestNoTerminalWritesOutsideMain`), msgpack decodes (`TestDecodesGoThroughMsgpackx`), fault points (`TestEveryPointIsWired`), unbounded cluster lists (`TestNoUnboundedClusterLists`), help for every command (`TestEveryCommandHasHelp`). |
 | Real corpus | 55 images in `E:\dataset` and `E:\hyper\vhd`: raw and E01 disks, synthetic FAT and HFS sets, VHDX bases and Hyper-V snapshot chains up to eight deep. W12 compared parse manifests from the W5 build and the W12 build: 2,833,128 file entries, no difference. Upstream adoption: 53 images identical; two snapshot leaves differ only in their WOF streams, which are now indexed. Store, then restore with full verification: 42 raw images against their own SHA-256, jean.e01 against its embedded MD5 and SHA-1, and the six VHDX bases and two snapshot leaves against their ingest hashes. The decoded streams of all five snapshot leaves hash the same before and after the upstream adoption. |
 
 ## Performance

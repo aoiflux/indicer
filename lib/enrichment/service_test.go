@@ -5,7 +5,6 @@ import (
 	"errors"
 	"indicer/internal/progress"
 	"path/filepath"
-	"runtime"
 	"testing"
 
 	"github.com/dgraph-io/badger/v4"
@@ -15,12 +14,9 @@ import (
 	duesgraph "indicer/lib/graph"
 	"indicer/lib/structs"
 	"indicer/lib/util"
-	"indicer/lib/zstdx"
 )
 
 func TestEnrichAllCreatesFileNodesAtAllLevels(t *testing.T) {
-	ensureCompressionCodecs(t)
-
 	root := t.TempDir()
 	dbPath := filepath.Join(root, "badger")
 	db, err := badger.Open(badger.DefaultOptions(dbPath).WithLogger(nil))
@@ -158,17 +154,5 @@ func TestEnrichAllCreatesFileNodesAtAllLevels(t *testing.T) {
 	}
 	if len(indexedLevelHits) != 1 {
 		t.Fatalf("expected 1 indexed_file FILE node, got %d", len(indexedLevelHits))
-	}
-}
-
-func ensureCompressionCodecs(t *testing.T) {
-	t.Helper()
-
-	if cnst.ENCODER == nil {
-		encoder, err := zstdx.Acquire("best", runtime.GOMAXPROCS(0))
-		if err != nil {
-			t.Fatalf("zstdx.Acquire: %v", err)
-		}
-		cnst.ENCODER = encoder
 	}
 }

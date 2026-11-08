@@ -15,7 +15,6 @@ import (
 // TestMain that runs them through Run, so a new test package cannot skip the
 // check.
 func TestEveryTestPackageChecksForLeaks(t *testing.T) {
-	t.Parallel()
 	root, err := filepath.Abs(filepath.Join("..", "..", ".."))
 	if err != nil {
 		t.Fatal(err)

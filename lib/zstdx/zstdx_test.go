@@ -159,7 +159,6 @@ func TestAcquireSharesAndDrops(t *testing.T) {
 // TestAcquireConcurrent: users that come and go at once each get a working
 // encoder, and none is left when they are all done.
 func TestAcquireConcurrent(t *testing.T) {
-	t.Parallel()
 	var wg sync.WaitGroup
 	errs := make(chan error, 32)
 	for i := range 32 {

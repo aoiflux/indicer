@@ -102,8 +102,13 @@ func TestPassesClaimTheChunksTheyStore(t *testing.T) {
 	}
 	third.leave(&err)
 	second.leave(&err)
-	if err != nil || len(chunkWriters) != 0 {
-		t.Fatalf("after both passes left: %v, %d writers open", err, len(chunkWriters))
+	// Only this database's writer: tests running beside this one hold their
+	// own.
+	chunkWritersMu.Lock()
+	_, open := chunkWriters[db.DB]
+	chunkWritersMu.Unlock()
+	if err != nil || open {
+		t.Fatalf("after both passes left: %v, writer still open %v", err, open)
 	}
 }
 

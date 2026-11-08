@@ -194,11 +194,12 @@ type cliDefinition struct {
 	faults   faultFlags
 }
 
+// kingpin reads an argument "@FILE" as the arguments in FILE. That would
+// store "@ev.bin" as whatever ev.bin lists, and be a second, hidden config
+// file. Set once, before any parse: every parse reads it.
+func init() { kingpin.EnableFileExpansion = false }
+
 func newCLIDefinition() cliDefinition {
-	// kingpin reads an argument "@FILE" as the arguments in FILE. That
-	// would store "@ev.bin" as whatever ev.bin lists, and be a second,
-	// hidden config file.
-	kingpin.EnableFileExpansion = false
 	app := kingpin.New("DUES", "Deduplicated Unified Evidence Store")
 	// --version is DUES's own flag. kingpin's printed a block on stderr and,
 	// with no command, went on to print its whole usage.

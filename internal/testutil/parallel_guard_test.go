@@ -15,14 +15,16 @@ import (
 // The module's import path, which its packages' paths start with.
 const modulePath = "indicer"
 
-// serialPackages own process-wide state their tests change, so none of their
-// tests runs in parallel.
+// serialPackages own process-wide state their tests change, or measure the
+// whole process (leakcheck counts every goroutine), so none of their tests
+// runs in parallel.
 var serialPackages = map[string]bool{
-	"indicer/internal/ui":        true,
-	"indicer/internal/console":   true,
-	"indicer/internal/crash":     true,
-	"indicer/internal/lifecycle": true,
-	"indicer/lib/logging":        true,
+	"indicer/internal/ui":                 true,
+	"indicer/internal/console":            true,
+	"indicer/internal/crash":              true,
+	"indicer/internal/lifecycle":          true,
+	"indicer/internal/testutil/leakcheck": true,
+	"indicer/lib/logging":                 true,
 }
 
 // processCalls change or measure what the whole process shares, by import
@@ -106,12 +108,19 @@ func TestParallelTestsShareNoProcessState(t *testing.T) {
 func TestParallelGuardSeesSeams(t *testing.T) {
 	t.Parallel()
 	const prod = `package p
-import "sync/atomic"
+import (
+	"sync/atomic"
+	"github.com/alecthomas/kingpin/v2"
+)
 var seam = func() {}
 var current atomic.Pointer[int]
+var registry = map[string]int{}
+var table = map[string]int{"a": 1}
 func Set(v *int) { current.Store(v) }
 func Wrap() { Set(nil) }
 func Read() *int { return current.Load() }
+func Add(k string) { registry[k]++ }
+func Flags() { kingpin.EnableFileExpansion = false }
 `
 	cases := map[string]string{
 		"assigns":       `func TestX(t *testing.T) { t.Parallel(); seam = nil }`,
@@ -125,6 +134,8 @@ func Read() *int { return current.Load() }
 		"faults":        `func TestX(t *testing.T) { t.Parallel(); faultinject.Set("x", "y") }`,
 		"as value":      `func TestX(t *testing.T) { t.Parallel(); t.Cleanup(Wrap) }`,
 		"delete":        `var reg = map[string]int{}; func TestX(t *testing.T) { t.Parallel(); delete(reg, "a") }`,
+		"other package": `func TestX(t *testing.T) { t.Parallel(); Flags() }`,
+		"counts":        `func TestX(t *testing.T) { t.Parallel(); _ = len(registry) }`,
 	}
 	for name, src := range cases {
 		m := parseModule(t, prod, testFile(src))
@@ -136,11 +147,23 @@ func Read() *int { return current.Load() }
 		`func TestX(t *testing.T) { t.Parallel(); _ = Read(); local := 1; local++ }`,
 		`func TestX(t *testing.T) { seam = nil }`,
 		`func TestX(t *testing.T) { t.Parallel(); seam := 1; seam++ }`,
+		`func TestX(t *testing.T) { t.Parallel(); _ = len(table) }`,
 	}
 	for _, src := range safe {
 		m := parseModule(t, prod, testFile(src))
 		if bad := m.unsafeParallelTests(); len(bad) != 0 {
 			t.Errorf("%s: guard reported %v, want nothing", src, bad)
+		}
+	}
+	for path, want := range map[string]string{
+		"os":                               "os",
+		"github.com/alecthomas/kingpin/v2": "kingpin",
+		"gopkg.in/yaml.v3":                 "yaml",
+		"github.com/mattn/go-runewidth":    "runewidth",
+		"indicer/lib/v2store":              "v2store",
+	} {
+		if got := importName(path); got != want {
+			t.Errorf("importName(%q) = %q, want %q", path, got, want)
 		}
 	}
 }
@@ -182,6 +205,9 @@ type goPackage struct {
 	// writers are the package's functions that write process state, and
 	// why.
 	writers map[string]string
+	// mutated are the package variables its functions and methods write
+	// after init.
+	mutated map[string]bool
 }
 
 func newModule() *module {
@@ -228,7 +254,7 @@ func loadModule(root string) (*module, error) {
 func (m *module) add(ip, name string, f *ast.File) {
 	p := m.pkgs[ip]
 	if p == nil {
-		p = &goPackage{path: ip, names: map[*ast.File]string{}, vars: map[string]bool{}, writers: map[string]string{}}
+		p = &goPackage{path: ip, names: map[*ast.File]string{}, vars: map[string]bool{}, writers: map[string]string{}, mutated: map[string]bool{}}
 		m.pkgs[ip] = p
 	}
 	p.names[f] = name
@@ -269,7 +295,14 @@ func (m *module) findWriters() {
 			imports := importNames(f)
 			for _, decl := range f.Decls {
 				fd, ok := decl.(*ast.FuncDecl)
-				if !ok || fd.Body == nil || fd.Recv != nil || fd.Name.Name == "init" {
+				if !ok || fd.Body == nil || fd.Name.Name == "init" {
+					continue
+				}
+				m.eachWrite(fd.Body, p.vars, imports, false, func(_, name string) bool {
+					p.mutated[name] = true
+					return true
+				})
+				if fd.Recv != nil {
 					continue
 				}
 				key := ip + "." + fd.Name.Name
@@ -401,6 +434,9 @@ func (tf testFuncs) parallel() []parallelTest {
 			if why == "" {
 				why = tf.m.processCall(fd.Body, imports, tf.own)
 			}
+			if why == "" {
+				why = tf.m.counts(fd.Body, tf.own)
+			}
 			if direct[name] == "" {
 				direct[name] = why
 			}
@@ -451,15 +487,31 @@ func (tf testFuncs) parallel() []parallelTest {
 // code a sync.Once's function is left out: it writes once, for everyone.
 func (m *module) writes(body *ast.BlockStmt, vars map[string]bool, imports map[string]string, production bool) string {
 	why := ""
+	m.eachWrite(body, vars, imports, production, func(w, _ string) bool {
+		why = w
+		return false
+	})
+	return why
+}
+
+// eachWrite calls visit with how body writes a package variable, and the
+// variable, for each write until visit returns false.
+func (m *module) eachWrite(body *ast.BlockStmt, vars map[string]bool, imports map[string]string, production bool, visit func(why, name string) bool) {
+	more := true
+	found := func(why, name string) {
+		if more {
+			more = visit(why, name)
+		}
+	}
 	ast.Inspect(body, func(n ast.Node) bool {
-		if why != "" {
+		if !more {
 			return false
 		}
 		switch x := n.(type) {
 		case *ast.CallExpr:
 			if id, ok := x.Fun.(*ast.Ident); ok && id.Obj == nil && (id.Name == "delete" || id.Name == "clear") && len(x.Args) > 0 {
 				if w := m.written(x.Args[0], vars, imports); w != "" {
-					why = "calls " + id.Name + " on " + w
+					found("calls "+id.Name+" on "+w, w)
 				}
 			}
 			if sel, ok := x.Fun.(*ast.SelectorExpr); ok {
@@ -468,7 +520,7 @@ func (m *module) writes(body *ast.BlockStmt, vars map[string]bool, imports map[s
 				}
 				if mutators[sel.Sel.Name] {
 					if w := m.written(sel.X, vars, imports); w != "" {
-						why = "calls " + w + "." + sel.Sel.Name
+						found("calls "+w+"."+sel.Sel.Name, w)
 					}
 				}
 			}
@@ -478,12 +530,32 @@ func (m *module) writes(body *ast.BlockStmt, vars map[string]bool, imports map[s
 			}
 			for _, l := range x.Lhs {
 				if w := m.written(l, vars, imports); w != "" {
-					why = "writes " + w
+					found("writes "+w, w)
 				}
 			}
 		case *ast.IncDecStmt:
 			if w := m.written(x.X, vars, imports); w != "" {
-				why = "writes " + w
+				found("writes "+w, w)
+			}
+		}
+		return more
+	})
+}
+
+// counts reports which variable of the package under test, of those its
+// code changes, body takes the length of, or "": a test that counts a
+// registry counts what the tests beside it hold too.
+func (m *module) counts(body *ast.BlockStmt, own *goPackage) string {
+	if own == nil {
+		return ""
+	}
+	why := ""
+	ast.Inspect(body, func(n ast.Node) bool {
+		if c, ok := n.(*ast.CallExpr); ok && why == "" && len(c.Args) == 1 {
+			if id, ok := c.Fun.(*ast.Ident); ok && id.Obj == nil && id.Name == "len" {
+				if v, ok := c.Args[0].(*ast.Ident); ok && own.mutated[v.Name] && m.packageVar(v, own.vars) {
+					why = "counts " + v.Name
+				}
 			}
 		}
 		return why == ""
@@ -588,13 +660,40 @@ func importNames(f *ast.File) map[string]string {
 		if err != nil {
 			continue
 		}
-		name := path[strings.LastIndex(path, "/")+1:]
+		name := importName(path)
 		if s.Name != nil {
 			name = s.Name.Name
 		}
 		names[name] = path
 	}
 	return names
+}
+
+// importName is the name a package imported from path goes by when the
+// import gives none: its last element, less a major version ("kingpin/v2",
+// "yaml.v3") and a "go-" prefix.
+func importName(path string) string {
+	elems := strings.Split(path, "/")
+	name := elems[len(elems)-1]
+	if len(elems) > 1 && majorVersion(name) {
+		name = elems[len(elems)-2]
+	}
+	if i := strings.Index(name, ".v"); i > 0 && majorVersion(name[i+1:]) {
+		name = name[:i]
+	}
+	return strings.TrimPrefix(name, "go-")
+}
+
+func majorVersion(s string) bool {
+	if len(s) < 2 || s[0] != 'v' {
+		return false
+	}
+	for _, r := range s[1:] {
+		if r < '0' || r > '9' {
+			return false
+		}
+	}
+	return true
 }
 
 // isTest reports whether fd is a top-level test: TestXxx(t *testing.T).

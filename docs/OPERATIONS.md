@@ -16,7 +16,7 @@ given. A data root holds:
 | `dues-manifest.json` | The database's layout and encryption settings, in plain JSON with no secrets. Written atomically. |
 | `kvdb/` | The badger database: every record, chunk location and relation. It also holds `DUES-MANIFEST.mirror.json`, a copy of the manifest. |
 | `blob/` | Chunk blobs (file mode) or container files (container mode). Older hierarchical databases also have `blob/blocks/*.bidx`. |
-| `graph/` | The graph store for enrichment and micro-artefacts, when either has run |
+| `graph/` | The graph store for enrichment and micro-artefacts, when either has run: the image `graphene.csr`, the log written since `graphene.wal`, the logs earlier compactions retired `graphene.NNNNNN.wal`, and the schema marker `dues.schema.json` (see Graph compaction) |
 | `fts/` | The full-text index, when one was built |
 | `uploads/` | Part files of server uploads in progress |
 | `.dues.lock` | The root lock (see below) |
@@ -392,6 +392,46 @@ write-protected media, and on a data root the user may only read:
 Write commands on read-only media fail with an error saying the media is
 read-only, and change nothing.
 
+## Graph compaction
+
+The graph store is an image and a log. Every open loads the image and replays
+the log written since, so enrichment and micro extraction make each open
+slower and need more memory, until a compaction folds the log into a new
+image. An open warns when the log passes 1 GiB or 5 million records.
+
+`dues graph compact` compacts the graph:
+- It holds the database writable, so no other DUES command writes meanwhile.
+  Stop `dues server` first: it holds the database open.
+- It refuses to start, and changes nothing, when the volume cannot take the
+  new image beside the old one and the log (plus 64 MiB), or when the machine
+  has less free memory than twice what the graph holds now.
+- Node and edge IDs do not change.
+- The log is kept as `graphene.NNNNNN.wal`, with each commit's actor, time
+  and signature, which the image does not hold. Each segment records the
+  hash of the one before it.
+- Ctrl-C while the image is built leaves the store as it was. A crash at any
+  point leaves a store that opens; a half-written image (`graphene.csr.tmp`)
+  is ignored and replaced by the next compaction.
+
+`dues graph status` describes the store from its files, replaying nothing and
+writing nothing: the schema, the image and its node and edge counts, the
+log's records and commits and how many are signed, and the segments. It fails
+when the segments' hash chain is broken, or when the store was compacted and
+its image is gone.
+
+A store whose image is gone is refused by every open: its log holds only what
+came after the compaction, and replaying it alone would hand out node IDs
+again. The graph is derived from the database, so move `graph/` aside and run
+`dues enrich` or `dues micro extract` to build it again.
+
+Every new graph store gets an empty image when it is made. DUES v0.39 and
+older link a graphene that reads this release's log as an empty graph and
+appends to it; they refuse the image instead, so they fail loudly rather than
+misread the store.
+
+To back up the graph, copy `graph/` whole while no DUES command runs, or use
+`dues package export`. The image, the log and the segments belong together.
+
 ## Disk space
 
 DUES keeps 128 MiB free on the volume that holds the database:
@@ -406,6 +446,9 @@ files. On Linux, when the disk cannot back a mapped page, the kernel kills the
 process (SIGBUS), and no error handling can run. A compaction of a very large
 database can write more than the reserve, and another program can fill the
 disk meanwhile, so keep well more than 128 MiB free.
+
+`dues graph compact` checks the volume itself before it starts (see Graph
+compaction).
 
 A store that runs out of space fails and leaves the database whole. Earlier
 evidence still restores, and storing the file again after making space resumes

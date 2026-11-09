@@ -220,14 +220,14 @@ func TestSlowOpenDoesNotBlockOtherStores(t *testing.T) {
 	entered, proceed := make(chan struct{}), make(chan struct{})
 	var opens atomic.Int32
 	orig := openStore
-	openStore = func(dir string, readOnly bool) (*graphenedb.Graph, error) {
+	openStore = func(dir string, readOnly bool, metrics graphstore.Metrics) (*graphenedb.Graph, error) {
 		if key, _ := registryKey(dir); key == slowKey {
 			if opens.Add(1) == 1 {
 				close(entered)
 			}
 			<-proceed
 		}
-		return orig(dir, readOnly)
+		return orig(dir, readOnly, metrics)
 	}
 	t.Cleanup(func() { openStore = orig })
 
@@ -440,22 +440,6 @@ func TestStampsNameLinkedGraphene(t *testing.T) {
 	}
 	if got := DefaultProducer.String(); !strings.HasSuffix(got, "graphene@"+version) {
 		t.Errorf("producer stamp %q does not name graphene@%s", got, version)
-	}
-}
-
-// D6: the store stays WAL-only, so an older binary can still read it.
-func TestStoreIsNeverCompacted(t *testing.T) {
-	cleanRegistry(t)
-	root := storeWithNode(t)
-	h, err := Open(root)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := h.Release(); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := os.Stat(filepath.Join(util.GraphPath(root), "graphene.csr")); !errors.Is(err, fs.ErrNotExist) {
-		t.Fatalf("graphene.csr exists (%v); the store must stay WAL-only", err)
 	}
 }
 

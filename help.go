@@ -255,6 +255,21 @@ func printHelpForPath(path []string) {
 		return
 	}
 
+	if path[0] == cmdGraph {
+		if len(path) > 1 {
+			switch path[1] {
+			case cmdGraphCompact:
+				printGraphCompactHelp()
+				return
+			case cmdGraphStatus:
+				printGraphStatusHelp()
+				return
+			}
+		}
+		printGraphHelp()
+		return
+	}
+
 	if path[0] == cnst.CmdMicro {
 		if len(path) > 1 {
 			switch path[1] {
@@ -389,6 +404,7 @@ func printRootHelp() {
 	fmt.Fprintf(helpOut, "  %s %s\n", cmd(pad(cnst.CmdRepair, 20)), "Inspect, finish, verify or upgrade the database")
 	fmt.Fprintf(helpOut, "  %s %s\n", cmd(pad(cmdReindex, 20)), "Rebuild the index of stored evidence")
 	fmt.Fprintf(helpOut, "  %s %s\n", cmd(pad(cmdPackage, 20)), "Export the database as a package; inspect, verify or import one")
+	fmt.Fprintf(helpOut, "  %s %s\n", cmd(pad(cmdGraph, 20)), "Compact the graph store, or describe it")
 
 	printHelpSection("Exit Codes")
 	fmt.Fprintln(helpOut, "  0 success; 1 failure; 2 usage error, or done with a warning (for example an")
@@ -616,6 +632,55 @@ func printReindexHelp() {
 		"dues reindex <id> --source ./evidence.E01",
 		"dues reindex --all --fts --dbpath ./caseA",
 		"dues reindex --all --store-jobs 4",
+	)
+}
+
+func printGraphHelp() {
+	printHelpHeader(cmdGraph)
+	fmt.Fprintln(helpOut, "Usage: dues graph <compact|status> [global options]")
+	fmt.Fprintln(helpOut, "The graph store is an image and a log: every open loads the image and replays")
+	fmt.Fprintln(helpOut, "the log written since. Enrichment and micro extraction add to the log, so")
+	fmt.Fprintln(helpOut, "opens grow slower until a compaction folds the log into the image.")
+	fmt.Fprintln(helpOut)
+	fmt.Fprintln(helpOut, "  graph compact  Fold the log into the image")
+	fmt.Fprintln(helpOut, "  graph status   Describe the store from its files")
+	fmt.Fprintln(helpOut)
+	fmt.Fprintln(helpOut, "Try: dues help graph compact")
+	printExamples(
+		"dues graph status --dbpath ./caseA",
+		"dues graph compact --dbpath ./caseA",
+	)
+}
+
+func printGraphCompactHelp() {
+	printHelpHeader("graph compact")
+	fmt.Fprintln(helpOut, "Usage: dues graph compact [global options]")
+	fmt.Fprintln(helpOut, "Folds the graph's log into its image, so the next open loads the image instead")
+	fmt.Fprintln(helpOut, "of replaying the log. Node and edge IDs do not change. The log is kept beside")
+	fmt.Fprintln(helpOut, "the image as a numbered segment, with each commit's actor, time and signature,")
+	fmt.Fprintln(helpOut, "and the segments are chained by hash; dues graph status checks the chain.")
+	fmt.Fprintln(helpOut, "It holds the database writable, so no other DUES command writes meanwhile, and")
+	fmt.Fprintln(helpOut, "refuses to start when the volume cannot take the new image beside the old one")
+	fmt.Fprintln(helpOut, "or the machine has too little free memory to build it. Ctrl-C while the image")
+	fmt.Fprintln(helpOut, "is built leaves the store as it was. Stop dues server first: it holds the")
+	fmt.Fprintln(helpOut, "database open. DUES v0.39 and older cannot open a store this release made.")
+	printExamples(
+		"dues graph compact --dbpath ./caseA",
+		"dues graph compact --password-file ./pw --dbpath ./caseB",
+	)
+}
+
+func printGraphStatusHelp() {
+	printHelpHeader("graph status")
+	fmt.Fprintln(helpOut, "Usage: dues graph status [global options]")
+	fmt.Fprintln(helpOut, "Describes the graph store from its files, replaying nothing and writing")
+	fmt.Fprintln(helpOut, "nothing: its schema, the image and what it holds, the log's size, records and")
+	fmt.Fprintln(helpOut, "commits, and how many of them are signed, then the retired segments and")
+	fmt.Fprintln(helpOut, "whether their hash chain holds. A broken chain, or an image the store needs")
+	fmt.Fprintln(helpOut, "and does not have, fails the command. It waits for no reader; a command")
+	fmt.Fprintln(helpOut, "writing the graph makes it fail at once.")
+	printExamples(
+		"dues graph status --dbpath ./caseA",
 	)
 }
 

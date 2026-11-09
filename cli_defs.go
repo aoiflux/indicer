@@ -32,6 +32,13 @@ const (
 	cmdPackageImport  = "import"
 )
 
+// The graph command and its subcommands.
+const (
+	cmdGraph        = "graph"
+	cmdGraphCompact = "compact"
+	cmdGraphStatus  = "status"
+)
+
 // The hidden commands: not in help or completion, documented only as
 // extras. They run under --no-fun too, because they are asked for by name;
 // --no-fun only stops the surprises and mew's animation.
@@ -180,6 +187,9 @@ type cliCommands struct {
 	pkgInspect   *kingpin.CmdClause
 	pkgVerify    *kingpin.CmdClause
 	pkgImport    *kingpin.CmdClause
+	graph        *kingpin.CmdClause
+	graphCompact *kingpin.CmdClause
+	graphStatus  *kingpin.CmdClause
 
 	// The hidden extras; see docs/CLI_UX.md.
 	coffee  *kingpin.CmdClause
@@ -356,6 +366,10 @@ func newCLIDefinition() cliDefinition {
 	flags.pkgVerifyDeep = commands.pkgVerify.Flag("deep", "Also copy the database into --temp-dir, open it read-only and read every evidence back against its chunk hashes").Default("false").Bool()
 	commands.pkgImport = commands.pkg.Command(cmdPackageImport, "Make a new database, at --dbpath, from a package")
 	flags.pkgImportPath = commands.pkgImport.Arg("package", "The package, or a part or the sidecar of a split one").Required().String()
+
+	commands.graph = app.Command(cmdGraph, "Compact the graph store, or describe it")
+	commands.graphCompact = commands.graph.Command(cmdGraphCompact, "Fold the graph's log into its image, keeping the log as a segment")
+	commands.graphStatus = commands.graph.Command(cmdGraphStatus, "Describe the graph store from its files: image, log, segments")
 
 	commands.reset = app.Command(cnst.CmdReset, "Delete the database").Alias(cnst.CmdPurge).Alias(cnst.CmdDelete).Alias(cnst.CmdDestroy)
 	commands.coffee = app.Command(cmdCoffee, "").Hidden()

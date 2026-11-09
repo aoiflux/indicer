@@ -68,6 +68,12 @@ const (
 	EnrichMid   = "enrich.mid"
 	MicroMid    = "micro.mid"
 	RecoveryMid = "recovery.mid"
+	// Points in a graph compaction: once graphene has pinned the store, built
+	// the image and installed it, and before the marker records it.
+	GraphCompactPinned    = "graph.compact.pinned"
+	GraphCompactBuilt     = "graph.compact.built"
+	GraphCompactCommitted = "graph.compact.committed"
+	GraphMarkerImage      = "graph.marker.image"
 	// SelfTest is used only by this package's tests.
 	SelfTest = "faultinject.selftest"
 )
@@ -93,6 +99,10 @@ var known = map[string]bool{
 	EnrichMid:                 true,
 	MicroMid:                  true,
 	RecoveryMid:               true,
+	GraphCompactPinned:        true,
+	GraphCompactBuilt:         true,
+	GraphCompactCommitted:     true,
+	GraphMarkerImage:          true,
 	SelfTest:                  true,
 }
 

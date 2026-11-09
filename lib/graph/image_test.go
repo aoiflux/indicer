@@ -15,13 +15,41 @@ import (
 
 	graphenedb "github.com/aoiflux/graphene"
 	graphenedisk "github.com/aoiflux/graphene/disk"
+	graphstore "github.com/aoiflux/graphene/store"
 )
 
-// compactedStore makes a store holding one node and compacts it through a
-// handle, so with the handle's own options, and returns the data root.
+// logOnlyStore makes a store holding one node and no image, as builds
+// before the stub image left them, and returns the data root. graphene
+// writes the node; a writable open then writes the marker, and leaves the
+// store without an image because it is not empty.
+func logOnlyStore(t *testing.T) string {
+	t.Helper()
+	root := t.TempDir()
+	g, err := graphenedb.OpenWithOptions(util.GraphPath(root), storeOptions(false))
+	if err != nil {
+		t.Fatal(err)
+	}
+	tx := g.Begin()
+	tx.AddNode(&graphstore.Node{Labels: []graphstore.NodeType{graphstore.NodeTypeTag}})
+	if err := tx.Commit(); err != nil {
+		t.Fatal(err)
+	}
+	if err := g.Close(); err != nil {
+		t.Fatal(err)
+	}
+	reopen(t, root)
+	if _, err := os.Stat(filepath.Join(util.GraphPath(root), ImageFileName)); !os.IsNotExist(err) {
+		t.Fatalf("a store holding a node was given an image (%v)", err)
+	}
+	return root
+}
+
+// compactedStore makes a log-only store holding one node and compacts it
+// through a handle, so with the handle's own options, and returns the data
+// root.
 func compactedStore(t *testing.T) string {
 	t.Helper()
-	root := storeWithNode(t)
+	root := logOnlyStore(t)
 	h, err := Open(root)
 	if err != nil {
 		t.Fatal(err)
@@ -147,7 +175,7 @@ func TestMissingImageRefused(t *testing.T) {
 			return root
 		}, true},
 		{"marker", func(t *testing.T) string {
-			root := storeWithNode(t)
+			root := logOnlyStore(t)
 			dir := util.GraphPath(root)
 			m, _, err := schema.ReadMarker(dir)
 			if err != nil {
@@ -167,13 +195,13 @@ func TestMissingImageRefused(t *testing.T) {
 			return root
 		}, true},
 		{"segment", func(t *testing.T) string {
-			root := storeWithNode(t)
+			root := logOnlyStore(t)
 			if err := os.WriteFile(filepath.Join(util.GraphPath(root), "graphene.000003.wal"), nil, 0o644); err != nil {
 				t.Fatal(err)
 			}
 			return root
 		}, true},
-		{"none", storeWithNode, false},
+		{"none", logOnlyStore, false},
 	} {
 		t.Run(c.name, func(t *testing.T) {
 			root := c.make(t)
@@ -285,7 +313,7 @@ func TestV2MarkerIsRestampedV3(t *testing.T) {
 	}
 	reopen(t, root)
 	got, _, _ = schema.ReadMarker(dir)
-	if got.Image == nil || got.MigratedFrom == nil || *got.MigratedFrom != 2 {
+	if got.Image == nil || got.Image.Nodes != 1 || got.MigratedFrom == nil || *got.MigratedFrom != 2 {
 		t.Fatalf("after recording the image: image %+v, migrated from %v", got.Image, got.MigratedFrom)
 	}
 }
@@ -347,8 +375,8 @@ func TestStoreOptionsAreGraphenes(t *testing.T) {
 		}
 		return n
 	}
-	ours := count(func(d string) (*graphenedb.Graph, error) { return openStore(d, false) })
-	oursRO := count(func(d string) (*graphenedb.Graph, error) { return openStore(d, true) })
+	ours := count(func(d string) (*graphenedb.Graph, error) { return openStore(d, false, nil) })
+	oursRO := count(func(d string) (*graphenedb.Graph, error) { return openStore(d, true, nil) })
 	theirs := count(graphenedb.Open)
 	theirsRO := count(graphenedb.OpenReadOnly)
 	if ours != theirs || oursRO != theirsRO || ours != oursRO || ours == 0 {

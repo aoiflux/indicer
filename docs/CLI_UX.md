@@ -156,7 +156,7 @@ under its description, never breaking inside a bracketed option.
 ## Progress
 
 Long operations (store, restore, reindex, enrich, NeAR, micro extract,
-search, package export and verify, and repair with `--verify`, `--upgrade` or `--fix`) show their
+search, package export and verify, graph compact, and repair with `--verify`, `--upgrade` or `--fix`) show their
 progress.
 
 ### On a terminal

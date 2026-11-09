@@ -47,6 +47,10 @@ type Handle struct {
 	// replayWarning is set when the store's log makes every open slow.
 	replayWarning string
 
+	// stages carries a compaction's stages to its progress line. Only a handle
+	// opened with OpenOptions.Stages has one.
+	stages *stageSink
+
 	// schema resolves DUES kinds to the raw type values this particular store
 	// uses, which differ between a store written by graphene v0.1.3 and one
 	// written by v0.4.0.
@@ -113,6 +117,12 @@ type OpenOptions struct {
 	// commands can run against one store at once. A missing store is
 	// ErrNoGraph.
 	ReadOnly bool
+
+	// Stages has graphene report a compaction's stages, so Compact can show
+	// them. graphene then reads the clock around every query and commit, so
+	// only dues graph compact asks for it. It is ignored on a read-only open
+	// and on a handle this process already holds.
+	Stages bool
 }
 
 var (
@@ -132,8 +142,13 @@ var (
 // for writing even to share it, so on media nothing can be written to the
 // shared open fails; the store is then read without a process lock, which is
 // safe there because no writer can exist (CFG-12).
-var openStore = func(dir string, readOnly bool) (*graphenedb.Graph, error) {
+//
+// metrics, when not nil, receives what the store does.
+var openStore = func(dir string, readOnly bool, metrics graphstore.Metrics) (*graphenedb.Graph, error) {
 	opts := storeOptions(readOnly)
+	if metrics != nil {
+		opts.Metrics = metrics
+	}
 	g, err := graphenedb.OpenWithOptions(dir, opts)
 	if err != nil && readOnly && isReadOnlyMedia(err) {
 		opts.LiveReader = true
@@ -264,13 +279,26 @@ func openHandle(dir, key string, opts OpenOptions) (*Handle, error) {
 		console.Errorln("warning: " + warning)
 	}
 
-	store, err := openStore(dir, opts.ReadOnly)
+	var stages *stageSink
+	var metrics graphstore.Metrics
+	if opts.Stages && !opts.ReadOnly {
+		stages = &stageSink{}
+		metrics = stages
+	}
+	store, err := openStore(dir, opts.ReadOnly, metrics)
 	if err != nil {
 		_ = lock.release()
 		if errors.Is(err, graphenedisk.ErrStoreLocked) {
 			return nil, &ErrGraphLocked{Dir: dir, Holder: readLockInfo(dir), err: err}
 		}
 		return nil, fmt.Errorf("graph: open %s: %w", dir, err)
+	}
+	if !opts.ReadOnly {
+		if err := stubImage(dir, store); err != nil {
+			_ = store.Close()
+			_ = lock.release()
+			return nil, err
+		}
 	}
 
 	vocabulary, kinds, err := resolveSchema(dir, store, opts.ReadOnly)
@@ -298,14 +326,42 @@ func openHandle(dir, key string, opts OpenOptions) (*Handle, error) {
 		lock:          lock,
 		readOnly:      opts.ReadOnly,
 		replayWarning: warning,
+		stages:        stages,
 		schema:        kinds,
 		vocabulary:    vocabulary,
 		refs:          1,
 	}, nil
 }
 
-// The store is never compacted (D6), so every open replays its whole log.
-// Past these sizes that is slow enough, and needs enough memory, to say so.
+// stubImage gives an empty store an empty image. graphene v0.1, which DUES
+// v0.39 and older link, reads this release's log as an empty graph and
+// appends to it in its own format; it refuses any image but its own version,
+// so a store with this one fails loudly there instead of being misread.
+// A store that holds anything, or already has an image, is left alone: its
+// image comes from dues graph compact.
+func stubImage(dir string, store *graphenedb.Graph) error {
+	if _, err := os.Stat(filepath.Join(dir, ImageFileName)); !errors.Is(err, fs.ErrNotExist) {
+		return nil
+	}
+	nodes, err := store.NodeCount()
+	if err != nil {
+		return fmt.Errorf("graph: count nodes in %s: %w", dir, err)
+	}
+	edges, err := store.EdgeCount()
+	if err != nil {
+		return fmt.Errorf("graph: count edges in %s: %w", dir, err)
+	}
+	if nodes != 0 || edges != 0 {
+		return nil
+	}
+	if err := store.Compact(); err != nil {
+		return fmt.Errorf("graph: write the first image in %s: %w", dir, err)
+	}
+	return nil
+}
+
+// Every open replays the log written since the last compaction. Past these
+// sizes that is slow enough, and needs enough memory, to say so.
 var (
 	replayWarnBytes   int64 = 1 << 30
 	replayWarnRecords int64 = 5_000_000
@@ -325,7 +381,7 @@ func replayWarningFor(dir string) string {
 		return ""
 	}
 	size := info.Size()
-	const advice = "; DUES never compacts the graph, so older releases can still read it"
+	const advice = "; dues graph compact folds it into the image"
 	if size >= replayWarnBytes {
 		return fmt.Sprintf("the graph store at %s replays %d MiB of log at every open, "+
 			"which is slow and needs memory in proportion%s", dir, size>>20, advice)

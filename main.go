@@ -537,6 +537,14 @@ func buildCommandHandlers(cliDef cliDefinition, dbOpts cli.DBOptions, tuning pip
 			logging.GetLogger().Info("Command: package import", zap.String("package", *cliDef.flags.pkgImportPath), zap.String("dbpath", *cliDef.flags.dbpath))
 			return cli.PackageImport(ctx, dbOpts, *cliDef.flags.pkgImportPath)
 		},
+		cliDef.commands.graphCompact.FullCommand(): func(ctx context.Context) error {
+			logging.GetLogger().Info("Command: graph compact", zap.String("dbpath", *cliDef.flags.dbpath))
+			return cli.GraphCompact(ctx, dbOpts)
+		},
+		cliDef.commands.graphStatus.FullCommand(): func(ctx context.Context) error {
+			logging.GetLogger().Info("Command: graph status", zap.String("dbpath", *cliDef.flags.dbpath))
+			return cli.GraphStatus(ctx, dbOpts)
+		},
 		cliDef.commands.reset.FullCommand(): func(ctx context.Context) error {
 			logging.GetLogger().Info("Command: reset", zap.String("dbpath", *cliDef.flags.dbpath))
 			return cli.ResetData(*cliDef.flags.dbpath, *cliDef.flags.resetYes)

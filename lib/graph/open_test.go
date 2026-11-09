@@ -220,14 +220,14 @@ func TestSlowOpenDoesNotBlockOtherStores(t *testing.T) {
 	entered, proceed := make(chan struct{}), make(chan struct{})
 	var opens atomic.Int32
 	orig := openStore
-	openStore = func(dir string, readOnly bool, metrics graphstore.Metrics) (*graphenedb.Graph, error) {
+	openStore = func(dir string, opts graphenedisk.Options) (*graphenedb.Graph, error) {
 		if key, _ := registryKey(dir); key == slowKey {
 			if opens.Add(1) == 1 {
 				close(entered)
 			}
 			<-proceed
 		}
-		return orig(dir, readOnly, metrics)
+		return orig(dir, opts)
 	}
 	t.Cleanup(func() { openStore = orig })
 

@@ -46,6 +46,24 @@ const (
 	cmdGraphStatus  = "status"
 )
 
+// The actor command and its subcommands.
+const (
+	cmdActor             = "actor"
+	cmdActorCreate       = "create"
+	cmdActorList         = "list"
+	cmdActorExportPublic = "export-public"
+	cmdActorRotate       = "rotate"
+	cmdActorRevoke       = "revoke"
+)
+
+// Who signs a writable command's graph commits, and the passphrase of that
+// actor's key, which comes from a file or stdin only, as the password does.
+const (
+	flagActor                 = "actor"
+	flagActorKeyPasswordFile  = "actor-key-password-file"
+	flagActorKeyPasswordStdin = "actor-key-password-stdin"
+)
+
 // The hidden commands: not in help or completion, documented only as
 // extras. They run under --no-fun too, because they are asked for by name;
 // --no-fun only stops the surprises and mew's animation.
@@ -65,6 +83,9 @@ type cliFlags struct {
 	pwd               *string
 	pwdFile           *string
 	pwdStdin          *bool
+	actor             *string
+	actorPwdFile      *string
+	actorPwdStdin     *bool
 	chonkSize         *int
 	preset            *string
 	quickMode         *bool
@@ -168,6 +189,16 @@ type cliFlags struct {
 	pkgVerifyPath     *string
 	pkgVerifyDeep     *bool
 	pkgImportPath     *string
+
+	graphRequireSigned *bool
+
+	actorCreateName   *string
+	actorExportName   *string
+	actorExportOut    *string
+	actorExportForce  *bool
+	actorRotateName   *string
+	actorRevokeKey    *string
+	actorRevokeReason *string
 }
 
 type cliCommands struct {
@@ -198,6 +229,12 @@ type cliCommands struct {
 	graph        *kingpin.CmdClause
 	graphCompact *kingpin.CmdClause
 	graphStatus  *kingpin.CmdClause
+	actor        *kingpin.CmdClause
+	actorCreate  *kingpin.CmdClause
+	actorList    *kingpin.CmdClause
+	actorExport  *kingpin.CmdClause
+	actorRotate  *kingpin.CmdClause
+	actorRevoke  *kingpin.CmdClause
 
 	// The hidden extras; see docs/CLI_UX.md.
 	coffee  *kingpin.CmdClause
@@ -245,6 +282,9 @@ func newCLIDefinition() cliDefinition {
 	flags.pwd = app.Flag(cnst.FlagPassword, "Removed: use --password-file or --password-stdin").Short(cnst.FlagPasswordShort).Hidden().String()
 	flags.pwdFile = app.Flag(flagPasswordFile, "Read the database password from the first line of this file").String()
 	flags.pwdStdin = app.Flag(flagPasswordStdin, "Read the database password from the first line of standard input").Bool()
+	flags.actor = app.Flag(flagActor, "Sign the graph commits of a command that writes them as this actor, not the database's own").PlaceHolder("NAME").String()
+	flags.actorPwdFile = app.Flag(flagActorKeyPasswordFile, "Read the passphrase of the actor's key from the first line of this file").PlaceHolder("FILE").String()
+	flags.actorPwdStdin = app.Flag(flagActorKeyPasswordStdin, "Read the passphrase of the actor's key from the first line of standard input").Bool()
 	flags.chonkSize = app.Flag(cnst.FlagChonkSize, "Custom chunk size(KB) to be used for dedup").Short(cnst.FlagChonkSizeShort).Default("256").Int()
 	flags.preset = app.Flag(cnst.FlagPreset, "Apply convenience preset [quick|performance|low-resource] (explicit flags override preset)").Short(cnst.FlagPresetShort).Default("").String()
 	flags.quickMode = app.Flag(cnst.FlagQuickMode, "Convenience preset: equivalent to --preset quick").Short(cnst.FlagQuickModeShort).Default("false").Bool()
@@ -379,7 +419,22 @@ func newCLIDefinition() cliDefinition {
 
 	commands.graph = app.Command(cmdGraph, "Compact the graph store, or describe it")
 	commands.graphCompact = commands.graph.Command(cmdGraphCompact, "Fold the graph's log into its image, keeping the log as a segment")
+	flags.graphRequireSigned = commands.graphCompact.Flag("require-signed", "From now on, refuse any commit that is not signed by a key of the keyring").Default("false").Bool()
 	commands.graphStatus = commands.graph.Command(cmdGraphStatus, "Describe the graph store from its files: image, log, segments")
+
+	commands.actor = app.Command(cmdActor, "Manage the actors that sign graph commits and packages")
+	commands.actorCreate = commands.actor.Command(cmdActorCreate, "Make an actor, with a key its passphrase protects")
+	flags.actorCreateName = commands.actorCreate.Arg("name", "The actor's name").Required().String()
+	commands.actorList = commands.actor.Command(cmdActorList, "List every key of the keyring")
+	commands.actorExport = commands.actor.Command(cmdActorExportPublic, "Write an actor's current public key, to keep outside the data root")
+	flags.actorExportName = commands.actorExport.Arg("name", "The actor's name").Required().String()
+	flags.actorExportOut = commands.actorExport.Flag("out", "Write the key to this path (default: standard output)").String()
+	flags.actorExportForce = commands.actorExport.Flag("force", "Replace the path if it already exists").Default("false").Bool()
+	commands.actorRotate = commands.actor.Command(cmdActorRotate, "Give an actor a new key, keeping the old one for what it signed")
+	flags.actorRotateName = commands.actorRotate.Arg("name", "The actor's name").Required().String()
+	commands.actorRevoke = commands.actor.Command(cmdActorRevoke, "Stop a key from signing; what it signed still verifies")
+	flags.actorRevokeKey = commands.actorRevoke.Arg("key-id", "The key's ID, as dues actor list shows it").Required().String()
+	flags.actorRevokeReason = commands.actorRevoke.Flag("reason", "Why the key is revoked, kept in the keyring").String()
 
 	commands.reset = app.Command(cnst.CmdReset, "Delete the database").Alias(cnst.CmdPurge).Alias(cnst.CmdDelete).Alias(cnst.CmdDestroy)
 	commands.coffee = app.Command(cmdCoffee, "").Hidden()

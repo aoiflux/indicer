@@ -21,6 +21,7 @@ import (
 	"indicer/internal/testutil/testdb"
 	"indicer/lib/dbmeta"
 	"indicer/lib/dbopen"
+	"indicer/lib/graph/signer"
 	"indicer/lib/ingest"
 	"indicer/lib/util"
 )
@@ -62,6 +63,9 @@ func newRoot(t *testing.T, creds dbmeta.Credentials) string {
 		"fts/store/root.bolt":                "bolt",
 		"uploads/a.part":                     "part",
 		".dues-manifest.json.dues-tmp-12345": "temp",
+		"dues.keys/keyring.json":             `{"version":1,"keys":[]}`,
+		"dues.keys/actors.json":              `{"version":1,"actors":[]}`,
+		"dues.keys/actors/" + testKeyFile:    "a private key",
 	} {
 		p := filepath.Join(root, filepath.FromSlash(name))
 		if err := os.MkdirAll(filepath.Dir(p), 0o700); err != nil {
@@ -76,6 +80,9 @@ func newRoot(t *testing.T, creds dbmeta.Credentials) string {
 	}
 	return root
 }
+
+// testKeyFile is the name of an actor's key file, as the keystore names one.
+const testKeyFile = "0000000000000001-0000000000000002" + signer.KeyFileExt
 
 func export(t *testing.T, opts ExportOptions) ExportResult {
 	t.Helper()
@@ -109,7 +116,7 @@ func TestExportCopiesTheRoot(t *testing.T) {
 	res := export(t, ExportOptions{Path: root})
 	m := res.Manifest
 	got := paths(m)
-	for _, want := range []string{dbmeta.ManifestName, "kvdb/MANIFEST", "kvdb/" + dbmeta.MirrorName, "graph/graphene.wal", "graph/dues.schema.json", "fts/store/root.bolt"} {
+	for _, want := range []string{dbmeta.ManifestName, "kvdb/MANIFEST", "kvdb/" + dbmeta.MirrorName, "graph/graphene.wal", "graph/dues.schema.json", "fts/store/root.bolt", "dues.keys/keyring.json", "dues.keys/actors.json"} {
 		if !slices.Contains(got, want) {
 			t.Errorf("the package lacks %s", want)
 		}
@@ -117,7 +124,7 @@ func TestExportCopiesTheRoot(t *testing.T) {
 	if !slices.ContainsFunc(got, func(p string) bool { return strings.HasPrefix(p, "blob/") }) {
 		t.Error("the package holds no blob")
 	}
-	for _, left := range []string{dbopen.LockName, "kvdb/LOCK", "graph/dues.lock", "graph/dues.lock.1-ab.info", "graph/graphene.lock", "graph/graphene.csr.tmp", "uploads/a.part", ".dues-manifest.json.dues-tmp-12345"} {
+	for _, left := range []string{dbopen.LockName, "kvdb/LOCK", "graph/dues.lock", "graph/dues.lock.1-ab.info", "graph/graphene.lock", "graph/graphene.csr.tmp", "uploads/a.part", ".dues-manifest.json.dues-tmp-12345", "dues.keys/actors/" + testKeyFile} {
 		if slices.Contains(got, left) {
 			t.Errorf("the package holds %s", left)
 		}
@@ -158,6 +165,10 @@ func TestExportCopiesTheRoot(t *testing.T) {
 		if strings.HasPrefix(f, "fts/") || strings.HasPrefix(f, "graph/") {
 			t.Errorf("--without-derived kept %s", f)
 		}
+	}
+	// The keyring is not derived: it checks what the database signed.
+	if !slices.Contains(paths(bare.Manifest), "dues.keys/keyring.json") {
+		t.Error("--without-derived left out the keyring")
 	}
 	if bare.Manifest.Database.Components != nil {
 		t.Errorf("--without-derived recorded components %v", bare.Manifest.Database.Components)

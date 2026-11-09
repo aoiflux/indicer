@@ -351,10 +351,12 @@ func TestCrashDuringReset(t *testing.T) {
 			// What is left takes new evidence.
 			l.must("store", l.files[0])
 			l.checkStored(l.list())
+			// A reset keeps the keystore, whose keys are custody records: the
+			// graph writes made the database actor.
 			l.must("reset", "--yes")
-			if _, err := os.Stat(l.root); err == nil {
-				entries, _ := os.ReadDir(l.root)
-				t.Fatalf("the data root survived a reset: %v", entries)
+			entries, _ := os.ReadDir(l.root)
+			if len(entries) != 1 || entries[0].Name() != "dues.keys" {
+				t.Fatalf("a reset left %v; want the keystore dues.keys alone", entries)
 			}
 		})
 	}

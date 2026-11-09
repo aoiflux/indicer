@@ -39,7 +39,7 @@ func TestSignalledCommandExitsWithSignalCode(t *testing.T) {
 		}
 		ctx, cancel := context.WithCancelCause(context.Background())
 		cancel(&lifecycle.SignalError{Signal: c.sig})
-		err = executeCommand(ctx, parsed, cliDef, cli.DBOptions{Path: root, Layout: tuning.layout}, tuning, sources{}, runConfig{})
+		err = executeCommand(ctx, parsed, cliDef, cli.DBOptions{Path: root, Layout: tuning.layout}, tuning, sources{}, runConfig{}, nil)
 		if got := lifecycle.ExitCode(err); got != c.code {
 			t.Errorf("%v: exit %d (%v), want %d", c.sig, got, err, c.code)
 		}

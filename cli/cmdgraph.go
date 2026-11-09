@@ -11,14 +11,17 @@ import (
 	"indicer/internal/ui"
 	"indicer/lib/dbopen"
 	"indicer/lib/graph"
+	"indicer/lib/graph/signer"
 	"indicer/lib/logging"
 
 	"go.uber.org/zap"
 )
 
 // GraphCompact folds the graph's log into its image. It holds the database
-// writable, so no other DUES command writes meanwhile.
-func GraphCompact(ctx context.Context, opts DBOptions) (err error) {
+// writable, so no other DUES command writes meanwhile. With requireSigned,
+// every later open of the store refuses a commit no key of the keyring
+// signed.
+func GraphCompact(ctx context.Context, opts DBOptions, requireSigned bool) (err error) {
 	h, err := Common(ctx, opts, dbopen.ReadWrite, true)
 	if err != nil {
 		return err
@@ -53,7 +56,30 @@ func GraphCompact(ctx context.Context, opts DBOptions) (err error) {
 	if rep.Segment != "" {
 		fmt.Fprintf(w, "  the log is kept as %s\n", rep.Segment)
 	}
+	if a := g.Actor(); !a.Unattributed() {
+		fmt.Fprintf(w, "  the image is attested by actor %q, key %s\n", a.Name, signer.FormatID(a.KeyID))
+	}
+	if requireSigned {
+		if err := graph.RequireSigned(g); err != nil {
+			return err
+		}
+		logging.GetLogger().Info("GraphCompact REQUIRE_SIGNED", zap.String("dir", rep.Dir))
+		fmt.Fprintln(w, "  every commit must be signed from now on")
+	}
 	return nil
+}
+
+// actorNamed names the actor with ID id from root's keyring, or by its ID
+// when the keyring does not hold it.
+func actorNamed(root string, id uint64) string {
+	if ring, err := signer.NewKeystore(root).Keyring(); err == nil {
+		for _, e := range ring.Entries() {
+			if e.ActorID == id {
+				return fmt.Sprintf("actor %q", e.Actor)
+			}
+		}
+	}
+	return "actor " + signer.FormatID(id)
 }
 
 // GraphStatus describes the graph store from its files, opening nothing.
@@ -88,6 +114,9 @@ func GraphStatus(ctx context.Context, opts DBOptions) (err error) {
 		fmt.Fprintln(w)
 		if img.HasSnapshotRoots {
 			fmt.Fprintf(w, "  root       %s\n", hex.EncodeToString(img.SnapshotRoot[:]))
+		}
+		if img.HasAttestation {
+			fmt.Fprintf(w, "  attested   by %s, key %s\n", actorNamed(h.Root, img.AttestActorID), signer.FormatID(img.AttestKeyID))
 		}
 		if st.Marker != nil && st.Marker.Image == nil {
 			fmt.Fprintln(w, "  note       the marker does not record the image yet; the next writable open records it")

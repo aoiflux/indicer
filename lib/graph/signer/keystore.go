@@ -48,6 +48,9 @@ const (
 	keyringName = "keyring.json"
 	actorsName  = "actors.json"
 	keysDirName = "actors"
+	// KeyFileExt ends the name of every key file, which holds a private key:
+	// what copies a data root elsewhere leaves these out.
+	KeyFileExt = ".key"
 	// keyPerm keeps a key file to its owner; it is all that protects an
 	// unprotected key. On Windows the file inherits the folder's access list.
 	keyPerm = 0o600
@@ -70,7 +73,7 @@ func (k *Keystore) actorsPath() string  { return filepath.Join(k.dir, actorsName
 
 // KeyPath is where the key file of key keyID of actor actorID lives.
 func (k *Keystore) KeyPath(actorID, keyID uint64) string {
-	return filepath.Join(k.dir, keysDirName, FormatID(actorID)+"-"+FormatID(keyID)+".key")
+	return filepath.Join(k.dir, keysDirName, FormatID(actorID)+"-"+FormatID(keyID)+KeyFileExt)
 }
 
 // Keyring reads the keyring; a keystore without one has an empty keyring.

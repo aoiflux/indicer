@@ -38,6 +38,7 @@ import (
 	"indicer/lib/fsx"
 	"indicer/lib/graph"
 	"indicer/lib/graph/schema"
+	"indicer/lib/graph/signer"
 	"indicer/lib/structs"
 
 	"github.com/dgraph-io/badger/v4"
@@ -342,6 +343,10 @@ func skip(rel string, dir, withoutDerived bool) bool {
 	case rel == dbopen.LockName, rel == cnst.KVDBDIR+"/LOCK", fsx.IsTempName(base):
 		return true
 	case top == cnst.GRAPHDIR && (graph.IsLockFile(base) || graph.IsScratchFile(base)):
+		return true
+	case top == cnst.KEYSDIR && strings.HasSuffix(base, signer.KeyFileExt):
+		// An actor's private key never leaves its data root; the public
+		// keyring, which checks what it signed, goes with the package.
 		return true
 	}
 	return false

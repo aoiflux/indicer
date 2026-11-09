@@ -44,6 +44,10 @@ type Handle struct {
 	lock     *fileLock
 	readOnly bool
 
+	// actor signs this handle's commits; zero when they are not signed
+	// (SignWith).
+	actor ActorRef
+
 	// replayWarning is set when the store's log makes every open slow.
 	replayWarning string
 
@@ -143,14 +147,10 @@ var (
 // shared open fails; the store is then read without a process lock, which is
 // safe there because no writer can exist (CFG-12).
 //
-// metrics, when not nil, receives what the store does.
-var openStore = func(dir string, readOnly bool, metrics graphstore.Metrics) (*graphenedb.Graph, error) {
-	opts := storeOptions(readOnly)
-	if metrics != nil {
-		opts.Metrics = metrics
-	}
+// opts are storeOptions with the open's signing and metrics added.
+var openStore = func(dir string, opts graphenedisk.Options) (*graphenedb.Graph, error) {
 	g, err := graphenedb.OpenWithOptions(dir, opts)
-	if err != nil && readOnly && isReadOnlyMedia(err) {
+	if err != nil && opts.ReadOnly && isReadOnlyMedia(err) {
 		opts.LiveReader = true
 		return graphenedb.OpenWithOptions(dir, opts)
 	}
@@ -279,13 +279,19 @@ func openHandle(dir, key string, opts OpenOptions) (*Handle, error) {
 		console.Errorln("warning: " + warning)
 	}
 
+	signs, err := prepareSigning(dir, key, opts.ReadOnly)
+	if err != nil {
+		_ = lock.release()
+		return nil, err
+	}
+	storeOpts := storeOptions(opts.ReadOnly)
+	signs.apply(&storeOpts)
 	var stages *stageSink
-	var metrics graphstore.Metrics
 	if opts.Stages && !opts.ReadOnly {
 		stages = &stageSink{}
-		metrics = stages
+		storeOpts.Metrics = stages
 	}
-	store, err := openStore(dir, opts.ReadOnly, metrics)
+	store, err := openStore(dir, storeOpts)
 	if err != nil {
 		_ = lock.release()
 		if errors.Is(err, graphenedisk.ErrStoreLocked) {
@@ -293,6 +299,7 @@ func openHandle(dir, key string, opts OpenOptions) (*Handle, error) {
 		}
 		return nil, fmt.Errorf("graph: open %s: %w", dir, err)
 	}
+	signs.warnUnknown(dir)
 	if !opts.ReadOnly {
 		if err := stubImage(dir, store); err != nil {
 			_ = store.Close()
@@ -325,6 +332,7 @@ func openHandle(dir, key string, opts OpenOptions) (*Handle, error) {
 		graph:         store,
 		lock:          lock,
 		readOnly:      opts.ReadOnly,
+		actor:         signs.actor,
 		replayWarning: warning,
 		stages:        stages,
 		schema:        kinds,

@@ -32,6 +32,9 @@ type DBOptions struct {
 	// AutoCompact, a writable open has the last of them compact a log that
 	// has grown past the threshold. A nil Ctx takes the command's.
 	Graph graph.Config
+	// Actor signs the graph commits of a writable open (--actor); nil is
+	// the database's own actor.
+	Actor *dbopen.Actor
 }
 
 // LegacyKeyOptions builds DBOptions from the old (chunk size, path, key)
@@ -49,7 +52,7 @@ func LegacyKeyOptions(chonkSize int, dbpath string, key []byte) DBOptions {
 // Request is the open opts describe. The caller sets its mode, and whether a
 // writable open recovers the ingests a crash left incomplete.
 func (o DBOptions) Request() dbopen.Request {
-	return dbopen.Request{Path: o.Path, Creds: o.Creds, Layout: o.Layout, WrittenBy: "dues", TempDir: o.TempDir, Tuning: o.Tuning}
+	return dbopen.Request{Path: o.Path, Creds: o.Creds, Layout: o.Layout, WrittenBy: "dues", TempDir: o.TempDir, Tuning: o.Tuning, Actor: o.Actor}
 }
 
 // Common opens the database for a command and prints the open's notices. A

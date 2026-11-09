@@ -193,6 +193,7 @@ func TestConfigValidate(t *testing.T) {
 	"color": "never", "plain": true, "ci": false, "no-fun": true, "theme": "dark", "taskbar": true,
 	"log-dir": ` + abs + `, "temp-dir": ` + abs + `, "debug": true, "dbpath": ` + abs + `, "password-file": ` + abs + `,
 	"preset": "low-resource", "compress-level": "fast", "low": true, "graph-compact": "never",
+	"actor": "Jane Doe", "actor-key-password-file": ` + abs + `,
 	"store": {"pipeline": "staged", "hash-strategy": "async", "io-engine": "stdlib", "io-uring-queue-depth": 0, "store-workers": 4, "store-queue": 8},
 	"restore": {"restore-workers": 2, "restore-queue": 4, "restore-buffer-mb": 64},
 	"server": {"listen": ["127.0.0.1:0", "[::1]:9"], "token-file": ` + abs + `, "cors-origin": ["https://ui.example.org"]}
@@ -209,6 +210,9 @@ func TestConfigValidate(t *testing.T) {
 		{`{"temp-dir": ""}`, "temp-dir", "is not an absolute path"},
 		{`{"dbpath": "~/cases"}`, "dbpath", "is not an absolute path"},
 		{`{"password-file": "pw.txt"}`, "password-file", "is not an absolute path"},
+		{`{"actor": "database"}`, "actor", "the database's own actor"},
+		{`{"actor": " "}`, "actor", "cannot be empty"},
+		{`{"actor-key-password-file": "jane.pass"}`, "actor-key-password-file", "is not an absolute path"},
 		{`{"preset": "turbo"}`, "preset", "use quick, performance or low-resource"},
 		{`{"preset": ""}`, "preset", "unknown value"},
 		{`{"compress-level": "max"}`, "compress-level", "use fast, default or best"},

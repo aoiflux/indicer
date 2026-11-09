@@ -375,8 +375,8 @@ func TestStoreOptionsAreGraphenes(t *testing.T) {
 		}
 		return n
 	}
-	ours := count(func(d string) (*graphenedb.Graph, error) { return openStore(d, false, nil) })
-	oursRO := count(func(d string) (*graphenedb.Graph, error) { return openStore(d, true, nil) })
+	ours := count(func(d string) (*graphenedb.Graph, error) { return openStore(d, storeOptions(false)) })
+	oursRO := count(func(d string) (*graphenedb.Graph, error) { return openStore(d, storeOptions(true)) })
 	theirs := count(graphenedb.Open)
 	theirsRO := count(graphenedb.OpenReadOnly)
 	if ours != theirs || oursRO != theirsRO || ours != oursRO || ours == 0 {

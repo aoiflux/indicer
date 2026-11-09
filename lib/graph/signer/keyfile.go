@@ -136,6 +136,16 @@ func (u Unlock) Protection() Protection { return u.protection }
 // passphrase or database key, or a file whose header was changed.
 var ErrWrongPassphrase = errors.New("the passphrase does not open this actor key")
 
+// ProtectionError is the error opening a key file with an unlock of another
+// kind: a passphrase for a key the database protects, say.
+type ProtectionError struct {
+	Have, Want Protection
+}
+
+func (e *ProtectionError) Error() string {
+	return fmt.Sprintf("the key is protected by %s, not %s", describe(e.Have), describe(e.Want))
+}
+
 // keyFile is a parsed key file.
 type keyFile struct {
 	protection Protection
@@ -252,7 +262,7 @@ func sealKey(seed []byte, keyID, actorID uint64, u Unlock) ([]byte, error) {
 // open returns the seed, which the caller clears when done.
 func (f keyFile) open(u Unlock) ([]byte, error) {
 	if u.protection != f.protection {
-		return nil, fmt.Errorf("the key is protected by %s, not %s", describe(f.protection), describe(u.protection))
+		return nil, &ProtectionError{Have: f.protection, Want: u.protection}
 	}
 	var aesKey []byte
 	switch f.protection {

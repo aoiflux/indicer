@@ -14,7 +14,8 @@ import (
 // and the presentation, log, temporary-file and database settings in
 // effect, each with whether a flag, the config file or the default chose
 // it. Paths are the ones in effect. Of the password only its source is
-// logged, as "unlock": the log redacts any field that names a password.
+// logged, as "unlock", and of the actor key's passphrase, as "actor_unlock":
+// the log redacts any field that names a password.
 func logSettings(f cliFlags, src sources, conf runConfig) {
 	setting := func(name string, value any) zap.Field { return logging.Setting(name, value, src.from(name)) }
 	path := func(name, dir string, err error) zap.Field {
@@ -33,6 +34,13 @@ func logSettings(f cliFlags, src sources, conf runConfig) {
 	case *f.pwdStdin:
 		unlock, unlockFrom = flagPasswordStdin, logging.FromFlag
 	}
+	actorUnlock, actorUnlockFrom := "none", logging.FromDefault
+	switch {
+	case *f.actorPwdFile != "":
+		actorUnlock, actorUnlockFrom = flagActorKeyPasswordFile, src.from(flagActorKeyPasswordFile)
+	case *f.actorPwdStdin:
+		actorUnlock, actorUnlockFrom = flagActorKeyPasswordStdin, logging.FromFlag
+	}
 
 	logging.GetLogger().Info("settings",
 		conf.Setting(),
@@ -48,5 +56,7 @@ func logSettings(f cliFlags, src sources, conf runConfig) {
 		path(flagTempDir, temp, tempErr),
 		path(cnst.FlagDBPath, root, rootErr),
 		logging.Setting("unlock", unlock, unlockFrom),
+		setting(flagActor, *f.actor),
+		logging.Setting("actor_unlock", actorUnlock, actorUnlockFrom),
 	)
 }

@@ -14,6 +14,7 @@ import (
 	"indicer/internal/tracefile"
 	"indicer/internal/ui"
 	"indicer/lib/dbmeta"
+	"indicer/lib/dbopen"
 	"indicer/lib/fio"
 	"indicer/lib/graph"
 	"indicer/lib/logging"
@@ -260,8 +261,16 @@ func run(args []string, conf runConfig, cliDef cliDefinition) error {
 			return err
 		}
 	}
+	var actor *dbopen.Actor
+	var passphrase []byte
+	if parsed != cliDef.commands.config.FullCommand() {
+		keyCommand := parsed == cliDef.commands.actorCreate.FullCommand() || parsed == cliDef.commands.actorRotate.FullCommand()
+		if actor, passphrase, err = resolveActor(cliDef.flags, src, os.Stdin, keyCommand); err != nil {
+			return err
+		}
+	}
 	dbOpts := cli.DBOptions{Path: *cliDef.flags.dbpath, Creds: creds, Layout: tuning.layout, Tuning: &tuning.engine, TempDir: tempDir,
-		Graph: graph.Config{AutoCompact: *cliDef.flags.graphCompact == graphCompactAuto}}
+		Graph: graph.Config{AutoCompact: *cliDef.flags.graphCompact == graphCompactAuto}, Actor: actor}
 	logSettings(cliDef.flags, src, conf)
 
 	printRunHeader(parsed, cliDef, tuning)
@@ -270,7 +279,7 @@ func run(args []string, conf runConfig, cliDef cliDefinition) error {
 	// second one exits at once (LOG-3).
 	ctx, stop := lifecycle.Context(context.Background())
 	defer stop()
-	return executeCommand(ctx, parsed, cliDef, dbOpts, tuning, src, conf)
+	return executeCommand(ctx, parsed, cliDef, dbOpts, tuning, src, conf, passphrase)
 }
 
 // startTrace traces the run into path, when --trace gives one, until stop is
@@ -297,8 +306,9 @@ func startTrace(path string) (stop func(), err error) {
 	}, nil
 }
 
-func executeCommand(ctx context.Context, parsed string, cliDef cliDefinition, dbOpts cli.DBOptions, tuning pipelineTuning, src sources, conf runConfig) error {
-	handlers := buildCommandHandlers(cliDef, dbOpts, tuning, src, conf)
+// newKey is the passphrase of the key dues actor create or rotate makes.
+func executeCommand(ctx context.Context, parsed string, cliDef cliDefinition, dbOpts cli.DBOptions, tuning pipelineTuning, src sources, conf runConfig, newKey []byte) error {
+	handlers := buildCommandHandlers(cliDef, dbOpts, tuning, src, conf, newKey)
 	handler, ok := handlers[parsed]
 	if !ok {
 		return fmt.Errorf("unsupported command: %s", parsed)
@@ -338,7 +348,7 @@ func showsProgress(parsed string, cliDef cliDefinition) bool {
 	return false
 }
 
-func buildCommandHandlers(cliDef cliDefinition, dbOpts cli.DBOptions, tuning pipelineTuning, src sources, conf runConfig) map[string]func(context.Context) error {
+func buildCommandHandlers(cliDef cliDefinition, dbOpts cli.DBOptions, tuning pipelineTuning, src sources, conf runConfig, newKey []byte) map[string]func(context.Context) error {
 	return map[string]func(context.Context) error{
 		cliDef.commands.version.FullCommand(): func(ctx context.Context) error {
 			logging.GetLogger().Debug("Command: version")
@@ -540,12 +550,32 @@ func buildCommandHandlers(cliDef cliDefinition, dbOpts cli.DBOptions, tuning pip
 			return cli.PackageImport(ctx, dbOpts, *cliDef.flags.pkgImportPath)
 		},
 		cliDef.commands.graphCompact.FullCommand(): func(ctx context.Context) error {
-			logging.GetLogger().Info("Command: graph compact", zap.String("dbpath", *cliDef.flags.dbpath))
-			return cli.GraphCompact(ctx, dbOpts)
+			logging.GetLogger().Info("Command: graph compact", zap.String("dbpath", *cliDef.flags.dbpath), zap.Bool("require_signed", *cliDef.flags.graphRequireSigned))
+			return cli.GraphCompact(ctx, dbOpts, *cliDef.flags.graphRequireSigned)
 		},
 		cliDef.commands.graphStatus.FullCommand(): func(ctx context.Context) error {
 			logging.GetLogger().Info("Command: graph status", zap.String("dbpath", *cliDef.flags.dbpath))
 			return cli.GraphStatus(ctx, dbOpts)
+		},
+		cliDef.commands.actorCreate.FullCommand(): func(ctx context.Context) error {
+			logging.GetLogger().Info("Command: actor create", zap.String("dbpath", *cliDef.flags.dbpath), zap.String("actor", *cliDef.flags.actorCreateName))
+			return cli.ActorCreate(ctx, dbOpts, *cliDef.flags.actorCreateName, newKey)
+		},
+		cliDef.commands.actorList.FullCommand(): func(context.Context) error {
+			logging.GetLogger().Info("Command: actor list", zap.String("dbpath", *cliDef.flags.dbpath))
+			return cli.ActorList(dbOpts)
+		},
+		cliDef.commands.actorExport.FullCommand(): func(context.Context) error {
+			logging.GetLogger().Info("Command: actor export-public", zap.String("dbpath", *cliDef.flags.dbpath), zap.String("actor", *cliDef.flags.actorExportName))
+			return cli.ActorExportPublic(dbOpts, *cliDef.flags.actorExportName, *cliDef.flags.actorExportOut, *cliDef.flags.actorExportForce)
+		},
+		cliDef.commands.actorRotate.FullCommand(): func(ctx context.Context) error {
+			logging.GetLogger().Info("Command: actor rotate", zap.String("dbpath", *cliDef.flags.dbpath), zap.String("actor", *cliDef.flags.actorRotateName))
+			return cli.ActorRotate(ctx, dbOpts, *cliDef.flags.actorRotateName, newKey)
+		},
+		cliDef.commands.actorRevoke.FullCommand(): func(ctx context.Context) error {
+			logging.GetLogger().Info("Command: actor revoke", zap.String("dbpath", *cliDef.flags.dbpath), zap.String("key_id", *cliDef.flags.actorRevokeKey))
+			return cli.ActorRevoke(ctx, dbOpts, *cliDef.flags.actorRevokeKey, *cliDef.flags.actorRevokeReason)
 		},
 		cliDef.commands.reset.FullCommand(): func(ctx context.Context) error {
 			logging.GetLogger().Info("Command: reset", zap.String("dbpath", *cliDef.flags.dbpath))

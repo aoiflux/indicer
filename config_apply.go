@@ -13,6 +13,7 @@ import (
 	"indicer/lib/cnst"
 	"indicer/lib/dbmeta"
 	"indicer/lib/dbopen"
+	"indicer/lib/graph/signer"
 	"io"
 	"os"
 	"strconv"
@@ -77,6 +78,87 @@ func resolveCredentials(f cliFlags, src sources, stdin io.Reader) (dbmeta.Creden
 		return dbmeta.NoPassword(), nil
 	}
 	return dbmeta.Password(pw), nil
+}
+
+// readSecret reads a secret from the first line of the file path, or, when
+// path is empty, of stdin. An empty secret is an error.
+func readSecret(path string, stdin io.Reader, flagFile, flagStdin, origin, what string) ([]byte, error) {
+	var line string
+	if path != "" {
+		b, err := os.ReadFile(path)
+		if err != nil {
+			return nil, lifecycle.Usagef("--%s%s: %v", flagFile, origin, err)
+		}
+		if line = firstLine(string(b)); line == "" {
+			return nil, lifecycle.Usagef("--%s%s: %s holds no %s", flagFile, origin, path, what)
+		}
+		return []byte(line), nil
+	}
+	got, err := bufio.NewReader(stdin).ReadString('\n')
+	if err != nil && !errors.Is(err, io.EOF) {
+		return nil, lifecycle.Usagef("--%s: %v", flagStdin, err)
+	}
+	if line = firstLine(got); line == "" {
+		return nil, lifecycle.Usagef("--%s: no %s on standard input", flagStdin, what)
+	}
+	return []byte(line), nil
+}
+
+// checkActorFlag checks the name --actor gives.
+func checkActorFlag(name string) error {
+	n, err := signer.NormalizeName(name)
+	if err != nil {
+		return err
+	}
+	if n == signer.DatabaseActor {
+		return fmt.Errorf("%q is the database's own actor, which signs when --%s names no other", n, flagActor)
+	}
+	return nil
+}
+
+// resolveActor returns who signs the run's graph commits: the actor --actor
+// names, with the passphrase of its key, or nil for the database's own. For
+// dues actor create and rotate, which name their actor as an argument, it
+// returns the passphrase of the new key instead, and no actor.
+//
+// The passphrase is read only when something needs it. Given on the command
+// line with nothing to unlock, it is a usage error; from the config file, it
+// is left unread.
+func resolveActor(f cliFlags, src sources, stdin io.Reader, keyCommand bool) (*dbopen.Actor, []byte, error) {
+	if *f.pwdStdin && *f.actorPwdStdin {
+		return nil, nil, lifecycle.Usagef("--%s and --%s both read standard input; give one of them as a file", flagPasswordStdin, flagActorKeyPasswordStdin)
+	}
+	name := *f.actor
+	if keyCommand {
+		if src.set[flagActor] {
+			return nil, nil, lifecycle.Usagef("--%s names who signs a command's graph commits; dues actor create and rotate take the actor's name as an argument", flagActor)
+		}
+		name = ""
+	}
+	given := *f.actorPwdFile != "" || *f.actorPwdStdin
+	if name == "" && !keyCommand {
+		if src.set[flagActorKeyPasswordFile] || *f.actorPwdStdin {
+			return nil, nil, lifecycle.Usagef("--%s and --%s unlock the key of the actor --%s names; name one", flagActorKeyPasswordFile, flagActorKeyPasswordStdin, flagActor)
+		}
+		return nil, nil, nil
+	}
+	if !given {
+		if keyCommand {
+			return nil, nil, nil
+		}
+		return nil, nil, lifecycle.Usagef("--%s%s needs the passphrase of its key: --%s or --%s", flagActor, src.originOf(flagActor), flagActorKeyPasswordFile, flagActorKeyPasswordStdin)
+	}
+	pass, err := readSecret(*f.actorPwdFile, stdin, flagActorKeyPasswordFile, flagActorKeyPasswordStdin, src.originOf(flagActorKeyPasswordFile), "passphrase")
+	if err != nil {
+		return nil, nil, err
+	}
+	if keyCommand {
+		return nil, pass, nil
+	}
+	if err := checkActorFlag(name); err != nil {
+		return nil, nil, lifecycle.Usagef("--%s%s: %v", flagActor, src.originOf(flagActor), err)
+	}
+	return &dbopen.Actor{Name: name, Passphrase: pass}, nil, nil
 }
 
 // The server's bearer token comes from --token-file only, for the same

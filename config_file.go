@@ -50,6 +50,9 @@ type fileConfig struct {
 	DBPath       *string `json:"dbpath"`
 	PasswordFile *string `json:"password-file"`
 
+	Actor                *string `json:"actor"`
+	ActorKeyPasswordFile *string `json:"actor-key-password-file"`
+
 	Preset        *string `json:"preset"`
 	CompressLevel *string `json:"compress-level"`
 	Low           *bool   `json:"low"`
@@ -116,6 +119,12 @@ func (c *fileConfig) validate(f *configfile.File) error {
 	oneOf(flagGraphCompact, c.GraphCompact, []string{graphCompactAuto, graphCompactNever})
 	path(cnst.FlagDBPath, c.DBPath)
 	path(flagPasswordFile, c.PasswordFile)
+	if c.Actor != nil {
+		if err := checkActorFlag(*c.Actor); err != nil {
+			bad(flagActor, "%v", err)
+		}
+	}
+	path(flagActorKeyPasswordFile, c.ActorKeyPasswordFile)
 	named(cnst.FlagPreset, c.Preset, appconfig.NormalizePreset, "quick, performance or low-resource")
 	named(cnst.FlagCompressLevel, c.CompressLevel, appconfig.NormalizeCompressLevel, "fast, default or best")
 	if s := c.Store; s != nil {
@@ -310,6 +319,8 @@ func (f cliFlags) bindings() []binding {
 		{"", flagGraphCompact, f.graphCompact},
 		{"", cnst.FlagDBPath, f.dbpath},
 		{"", flagPasswordFile, f.pwdFile},
+		{"", flagActor, f.actor},
+		{"", flagActorKeyPasswordFile, f.actorPwdFile},
 		{"", cnst.FlagPreset, f.preset},
 		{"", cnst.FlagCompressLevel, f.compressLevel},
 		{"", cnst.FlagLowResource, f.memopt},
@@ -381,6 +392,10 @@ func (c runConfig) apply(f cliFlags, parsed string, set map[string]bool) sources
 		case b.flag == flagPasswordFile:
 			// The command line's way of unlocking replaces the file's.
 			if *f.pwdStdin {
+				continue
+			}
+		case b.flag == flagActorKeyPasswordFile:
+			if *f.actorPwdStdin {
 				continue
 			}
 		}

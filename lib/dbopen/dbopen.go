@@ -22,6 +22,7 @@ import (
 	"runtime"
 	"slices"
 	"strings"
+	"sync"
 	"time"
 
 	"indicer/internal/diskspace"
@@ -33,6 +34,7 @@ import (
 	"indicer/lib/dbmeta"
 	"indicer/lib/engine"
 	"indicer/lib/fsx"
+	"indicer/lib/graph/signer"
 	"indicer/lib/logging"
 	"indicer/lib/store"
 	"indicer/lib/zstdx"
@@ -95,6 +97,9 @@ type Request struct {
 	// Tuning is how the engine runs on the database (engine.For). Nil takes
 	// cnst.DefaultTuning.
 	Tuning *cnst.Tuning
+	// Actor signs the graph commits a writable open makes, and the packages
+	// it exports. Nil is the database's own actor.
+	Actor *Actor
 }
 
 // Handle is an open database.
@@ -119,6 +124,15 @@ type Handle struct {
 	tuning cnst.Tuning
 	// atClose runs when the handle closes (AtClose).
 	atClose []func()
+
+	// actorKey wraps the database actor's key (dbmeta.Keys.Actor); nil for
+	// an unencrypted database. actor is Request.Actor. unsign undoes
+	// graph.SignWith. provider is what Signer resolved.
+	actorKey []byte
+	actor    *Actor
+	unsign   func()
+	signMu   sync.Mutex
+	provider signer.Provider
 }
 
 // AtClose has fn run when h closes, after the database and its lock. A
@@ -293,7 +307,7 @@ func (h *Handle) open(ctx context.Context, req Request) error {
 	if !h.ReadOnly {
 		h.sweepTemps()
 	}
-	return nil
+	return h.startSigning(req, keys)
 }
 
 // hasRecords reports whether the root's badger directory holds a database.
@@ -826,6 +840,7 @@ func (h *Handle) release() {
 		h.lock.Unlock()
 		h.lock = nil
 	}
+	h.stopSigning()
 	h.runAtClose()
 }
 
@@ -858,6 +873,7 @@ func (h *Handle) Close() error {
 		err = errors.Join(err, h.lock.Unlock())
 		h.lock = nil
 	}
+	h.stopSigning()
 	h.runAtClose()
 	return err
 }

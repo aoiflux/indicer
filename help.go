@@ -255,6 +255,30 @@ func printHelpForPath(path []string) {
 		return
 	}
 
+	if path[0] == cmdActor {
+		if len(path) > 1 {
+			switch path[1] {
+			case cmdActorCreate:
+				printActorCreateHelp()
+				return
+			case cmdActorList:
+				printActorListHelp()
+				return
+			case cmdActorExportPublic:
+				printActorExportHelp()
+				return
+			case cmdActorRotate:
+				printActorRotateHelp()
+				return
+			case cmdActorRevoke:
+				printActorRevokeHelp()
+				return
+			}
+		}
+		printActorHelp()
+		return
+	}
+
 	if path[0] == cmdGraph {
 		if len(path) > 1 {
 			switch path[1] {
@@ -350,6 +374,9 @@ func printRootHelp() {
 	fmt.Fprintf(helpOut, "  %s WHEN  Compact the graph after a command that wrote it: auto (when its log has passed 1 GiB or 5M records) or never\n", cmd("--graph-compact"))
 	fmt.Fprintf(helpOut, "  %s  Read the database password from the first line of a file\n", cmd("--password-file"))
 	fmt.Fprintf(helpOut, "  %s Read the database password from standard input\n", cmd("--password-stdin"))
+	fmt.Fprintf(helpOut, "  %s NAME     Sign the graph commits of a command that writes them as this actor\n", cmd("--actor"))
+	fmt.Fprintf(helpOut, "  %s FILE  Read the passphrase of the actor's key from a file\n", cmd("--actor-key-password-file"))
+	fmt.Fprintf(helpOut, "  %s   Read the passphrase of the actor's key from standard input\n", cmd("--actor-key-password-stdin"))
 	fmt.Fprintf(helpOut, "  %s, %s   Chunk size (KB) of a new database, default 256\n", cmd("--chonksize"), cmd("-c"))
 	fmt.Fprintf(helpOut, "  %s, %s   Low resource mode\n", cmd("--low"), cmd("-l"))
 	fmt.Fprintf(helpOut, "  %s, %s   Quick mode: a new database without table compression (encryption unchanged)\n", cmd("--quick"), cmd("-q"))
@@ -406,6 +433,7 @@ func printRootHelp() {
 	fmt.Fprintf(helpOut, "  %s %s\n", cmd(pad(cmdReindex, 20)), "Rebuild the index of stored evidence")
 	fmt.Fprintf(helpOut, "  %s %s\n", cmd(pad(cmdPackage, 20)), "Export the database as a package; inspect, verify or import one")
 	fmt.Fprintf(helpOut, "  %s %s\n", cmd(pad(cmdGraph, 20)), "Compact the graph store, or describe it")
+	fmt.Fprintf(helpOut, "  %s %s\n", cmd(pad(cmdActor, 20)), "Manage the actors that sign graph commits")
 
 	printHelpSection("Exit Codes")
 	fmt.Fprintln(helpOut, "  0 success; 1 failure; 2 usage error, or done with a warning (for example an")
@@ -668,9 +696,97 @@ func printGraphCompactHelp() {
 	fmt.Fprintln(helpOut, "or the machine has too little free memory to build it. Ctrl-C while the image")
 	fmt.Fprintln(helpOut, "is built leaves the store as it was. Stop dues server first: it holds the")
 	fmt.Fprintln(helpOut, "database open. DUES v0.39 and older cannot open a store this release made.")
+	fmt.Fprintln(helpOut)
+	fmt.Fprintln(helpOut, "  --require-signed  From now on, every open refuses an unsigned commit, a")
+	fmt.Fprintln(helpOut, "                    record outside any commit, and a commit no key of the")
+	fmt.Fprintln(helpOut, "                    keyring signed. Older DUES releases cannot write it again.")
 	printExamples(
 		"dues graph compact --dbpath ./caseA",
 		"dues graph compact --password-file ./pw --dbpath ./caseB",
+		"dues graph compact --require-signed --dbpath ./caseA",
+	)
+}
+
+func printActorHelp() {
+	printHelpHeader(cmdActor)
+	fmt.Fprintln(helpOut, "Usage: dues actor <create|list|export-public|rotate|revoke> ... [global options]")
+	fmt.Fprintln(helpOut, "Every graph commit is signed. A database signs as its own actor, \"database\",")
+	fmt.Fprintln(helpOut, "made the first time its graph is written, with a key the database password")
+	fmt.Fprintln(helpOut, "protects (an unencrypted database keeps it unprotected, readable only by its")
+	fmt.Fprintln(helpOut, "owner). An examiner signs as an actor of their own with --actor NAME and the")
+	fmt.Fprintln(helpOut, "passphrase of its key. Keys live in dues.keys in the data root; the keyring of")
+	fmt.Fprintln(helpOut, "public keys goes with a package, the private keys never do. dues reset keeps")
+	fmt.Fprintln(helpOut, "them. A signature is as strong as custody of the data root: whoever holds the")
+	fmt.Fprintln(helpOut, "root holds its keys, so keep an exported public key elsewhere to check against.")
+	fmt.Fprintln(helpOut)
+	fmt.Fprintln(helpOut, "  actor create         Make an actor")
+	fmt.Fprintln(helpOut, "  actor list           List every key of the keyring")
+	fmt.Fprintln(helpOut, "  actor export-public  Write an actor's current public key")
+	fmt.Fprintln(helpOut, "  actor rotate         Give an actor a new key")
+	fmt.Fprintln(helpOut, "  actor revoke         Stop a key from signing")
+	fmt.Fprintln(helpOut)
+	fmt.Fprintln(helpOut, "Try: dues help actor create")
+	printExamples(
+		"dues actor create jane --actor-key-password-file ./jane.pass -d ./caseA",
+		"dues enrich --actor jane --actor-key-password-file ./jane.pass -d ./caseA",
+	)
+}
+
+func printActorCreateHelp() {
+	printHelpHeader("actor create")
+	fmt.Fprintln(helpOut, "Usage: dues actor create NAME (--actor-key-password-file FILE | --actor-key-password-stdin) [global options]")
+	fmt.Fprintln(helpOut, "Makes the actor NAME with a new Ed25519 key, which the passphrase protects")
+	fmt.Fprintln(helpOut, "(argon2id and AES-256-GCM). Names are trimmed and lower-cased, up to 64")
+	fmt.Fprintln(helpOut, "characters; the actor's ID derives from its name, so every workstation agrees")
+	fmt.Fprintln(helpOut, "on it. \"database\" is the database's own actor, which it makes itself.")
+	printExamples(
+		"dues actor create jane --actor-key-password-file ./jane.pass -d ./caseA",
+	)
+}
+
+func printActorListHelp() {
+	printHelpHeader("actor list")
+	fmt.Fprintln(helpOut, "Usage: dues actor list [global options]")
+	fmt.Fprintln(helpOut, "Lists every key of the keyring: its actor, the actor and key IDs, what")
+	fmt.Fprintln(helpOut, "protects it, when it was made, and whether it is current, retired by a newer")
+	fmt.Fprintln(helpOut, "key, or revoked. It reads public files only: no password, no lock.")
+	printExamples(
+		"dues actor list --dbpath ./caseA",
+	)
+}
+
+func printActorExportHelp() {
+	printHelpHeader("actor export-public")
+	fmt.Fprintln(helpOut, "Usage: dues actor export-public NAME [--out FILE [--force]] [global options]")
+	fmt.Fprintln(helpOut, "Writes the actor's current public key, as JSON, to standard output or FILE.")
+	fmt.Fprintln(helpOut, "Keep it away from the data root: it is what the actor's signatures are")
+	fmt.Fprintln(helpOut, "checked against when the root itself cannot be trusted.")
+	printExamples(
+		"dues actor export-public database --out ./caseA.pub --dbpath ./caseA",
+	)
+}
+
+func printActorRotateHelp() {
+	printHelpHeader("actor rotate")
+	fmt.Fprintln(helpOut, "Usage: dues actor rotate NAME [--actor-key-password-file FILE | --actor-key-password-stdin] [global options]")
+	fmt.Fprintln(helpOut, "Gives the actor a new key, protected by the passphrase given (the database")
+	fmt.Fprintln(helpOut, "actor's, as the database is). The old key stays in the keyring, so what it")
+	fmt.Fprintln(helpOut, "signed still verifies. It needs no old passphrase: a lost one is the usual")
+	fmt.Fprintln(helpOut, "reason to rotate, and the keystore is only as safe as the data root anyway.")
+	printExamples(
+		"dues actor rotate jane --actor-key-password-stdin --dbpath ./caseA",
+		"dues actor rotate database --dbpath ./caseA",
+	)
+}
+
+func printActorRevokeHelp() {
+	printHelpHeader("actor revoke")
+	fmt.Fprintln(helpOut, "Usage: dues actor revoke KEY-ID [--reason TEXT] [global options]")
+	fmt.Fprintln(helpOut, "Stops the key from signing. What it signed before still verifies. An actor")
+	fmt.Fprintln(helpOut, "whose newest key is revoked cannot sign until it is rotated; the database")
+	fmt.Fprintln(helpOut, "actor gets a new key the next time its graph is written.")
+	printExamples(
+		"dues actor revoke 8f56dd6450c89522 --reason \"laptop lost\" --dbpath ./caseA",
 	)
 }
 
@@ -1055,7 +1171,8 @@ func printConfigHelp() {
 
 	printHelpSection("Keys")
 	fmt.Fprintln(helpOut, "  color, plain, ci, no-fun, theme, taskbar, log-dir, temp-dir, debug, dbpath,")
-	fmt.Fprintln(helpOut, "  password-file, preset, compress-level, low, graph-compact")
+	fmt.Fprintln(helpOut, "  password-file, preset, compress-level, low, graph-compact, actor,")
+	fmt.Fprintln(helpOut, "  actor-key-password-file")
 	fmt.Fprintln(helpOut, "  store:   pipeline, hash-strategy, io-engine, io-uring-queue-depth,")
 	fmt.Fprintln(helpOut, "           store-workers, store-queue, store-jobs")
 	fmt.Fprintln(helpOut, "  restore: restore-workers, restore-queue, restore-buffer-mb")

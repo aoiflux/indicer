@@ -12,9 +12,10 @@ import (
 // do not need to coordinate. graphene reserves actor 0 for "unattributed", so a
 // derivation that lands on 0 is remapped.
 //
-// P4 populates this from the signer provider; until then a caller may supply it
-// directly, and the zero value writes unattributed — which is what DUES did for
-// every write before transactions existed.
+// A handle that signs its commits (SignWith) attributes a writer opened with
+// the zero value to its own actor. On one that does not, the zero value
+// writes unattributed, which is what DUES did for every write before
+// transactions existed.
 type ActorRef struct {
 	Name    string
 	ActorID uint64
@@ -48,12 +49,25 @@ type Writer struct {
 
 // Writer acquires the exclusive write session. It blocks until any current
 // writer closes.
+//
+// On a handle that signs its commits (SignWith), a zero actor is the
+// handle's, and any other is refused: graphene signs with the open's key, so
+// a commit attributed to someone else would carry a signature that is not
+// theirs.
 func (h *Handle) Writer(actor ActorRef) (*Writer, error) {
 	if h == nil {
 		return nil, fmt.Errorf("graph: Writer on a nil handle")
 	}
 	if h.readOnly {
 		return nil, fmt.Errorf("graph: %s is open read-only; writes are refused", h.key)
+	}
+	if !h.actor.Unattributed() {
+		switch {
+		case actor.Unattributed():
+			actor = h.actor
+		case actor.ActorID != h.actor.ActorID || actor.KeyID != h.actor.KeyID:
+			return nil, fmt.Errorf("graph: %s signs as actor %q; a write attributed to %q is refused", h.dir, h.actor.Name, actor.Name)
+		}
 	}
 	h.writeMu.Lock()
 	return &Writer{handle: h, actor: actor, producer: DefaultProducer}, nil

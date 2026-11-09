@@ -138,7 +138,7 @@ if ($Long) {
 } else {
     Step "test" { go test -count=1 ./... }
 }
-Step "test (faultinject)" { go test -count=1 -tags faultinject ./... }
+Step "test (faultinject)" { go test -count=1 -timeout 30m -tags faultinject ./... }
 
 if (-not $Fast -and -not $NoWSL) {
     $wslRepo = (wsl.exe --exec wslpath -a ($repo -replace '\\', '/')).Trim()

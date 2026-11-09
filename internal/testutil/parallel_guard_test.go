@@ -71,6 +71,7 @@ var sharedSafely = map[string]bool{
 	"indicer/lib/engine.Register":                  true,
 	"indicer/lib/fio.initWriteBackend":             true,
 	"indicer/lib/fts.acquire":                      true,
+	"indicer/lib/graph.Configure":                  true,
 	"indicer/lib/graph.OpenWith":                   true,
 	"indicer/lib/store.joinChunkWriter":            true,
 	"indicer/lib/zstdx.Acquire":                    true,

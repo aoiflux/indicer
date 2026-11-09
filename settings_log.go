@@ -43,6 +43,7 @@ func logSettings(f cliFlags, src sources, conf runConfig) {
 		setting(ui.FlagTheme, *f.theme),
 		setting(ui.FlagTaskbar, *f.taskbar),
 		setting(flagDebug, *f.debug),
+		setting(flagGraphCompact, *f.graphCompact),
 		logging.DirSetting(flagLogDir, *f.logDir, src.from(flagLogDir)),
 		path(flagTempDir, temp, tempErr),
 		path(cnst.FlagDBPath, root, rootErr),

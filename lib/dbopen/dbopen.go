@@ -117,6 +117,22 @@ type Handle struct {
 	tempDir string
 	// tuning is Request.Tuning, or cnst.DefaultTuning.
 	tuning cnst.Tuning
+	// atClose runs when the handle closes (AtClose).
+	atClose []func()
+}
+
+// AtClose has fn run when h closes, after the database and its lock. A
+// command uses it to undo, with the open, what it set up for the root.
+func (h *Handle) AtClose(fn func()) {
+	h.atClose = append(h.atClose, fn)
+}
+
+// runAtClose runs the AtClose functions, the last added first.
+func (h *Handle) runAtClose() {
+	for i := len(h.atClose) - 1; i >= 0; i-- {
+		h.atClose[i]()
+	}
+	h.atClose = nil
 }
 
 // Errors.
@@ -810,6 +826,7 @@ func (h *Handle) release() {
 		h.lock.Unlock()
 		h.lock = nil
 	}
+	h.runAtClose()
 }
 
 // unregister forgets what the open registered for db, as it closes.
@@ -841,5 +858,6 @@ func (h *Handle) Close() error {
 		err = errors.Join(err, h.lock.Unlock())
 		h.lock = nil
 	}
+	h.runAtClose()
 	return err
 }

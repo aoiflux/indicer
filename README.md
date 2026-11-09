@@ -435,6 +435,8 @@ Tip: run `dues help <command>` for command-specific short flags and examples.
 - --debug: write debug entries to the log
 - --trace FILE: write a Go execution trace of the run to FILE, which must not
   exist yet, for `go tool trace`
+- --graph-compact auto|never: after a command that wrote the graph, compact
+  it when its log has passed 1 GiB or 5 million records (default auto)
 - --password-file: read the password from the first line of a file
 - --password-stdin: read the password from standard input
 - --chonksize, -c: chunk size in KB of a new database (default 256)
@@ -490,7 +492,7 @@ stores and restores. Paths must be absolute.
 
 - Keys: `color`, `plain`, `ci`, `no-fun`, `theme`, `taskbar`, `log-dir`,
   `temp-dir`, `debug`, `dbpath`, `password-file`, `preset`, `compress-level`,
-  `low`; `store`: `pipeline`, `hash-strategy`, `io-engine`,
+  `low`, `graph-compact`; `store`: `pipeline`, `hash-strategy`, `io-engine`,
   `io-uring-queue-depth`, `store-workers`, `store-queue`; `restore`:
   `restore-workers`, `restore-queue`, `restore-buffer-mb`; `server`: `listen`,
   `token-file`, `cors-origin`.

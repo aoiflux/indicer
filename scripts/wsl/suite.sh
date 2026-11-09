@@ -58,7 +58,8 @@ fs_suite() {
 	mounts_up || return 1
 	local args
 	mapfile -t args < <(bash scripts/wsl/mounts.sh args) || return 1
-	go test -count=1 -run 'ENOSPC|ReadOnly|Permission|DiskFull' "${fs_packages[@]}" -args "${args[@]}"
+	# -p 1: the packages share the small volume, which their tests fill.
+	go test -p 1 -count=1 -run 'ENOSPC|ReadOnly|Permission|DiskFull' "${fs_packages[@]}" -args "${args[@]}"
 }
 
 fuzz_run() {

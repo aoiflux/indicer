@@ -361,7 +361,8 @@ func stubImage(dir string, store *graphenedb.Graph) error {
 }
 
 // Every open replays the log written since the last compaction. Past these
-// sizes that is slow enough, and needs enough memory, to say so.
+// sizes that is slow enough, and needs enough memory, to say so, and a CLI
+// command compacts the store when it is done (Config).
 var (
 	replayWarnBytes   int64 = 1 << 30
 	replayWarnRecords int64 = 5_000_000
@@ -455,7 +456,8 @@ func resolveSchema(dir string, store *graphenedb.Graph, readOnly bool) (migrate.
 }
 
 // Release drops one reference. The store is closed, and the lock released, when
-// the last one goes.
+// the last one goes. On a root configured for it (Configure), the last Release
+// of a writable handle first compacts a log that has reached the threshold.
 func (h *Handle) Release() error {
 	if h == nil {
 		return nil
@@ -472,8 +474,23 @@ func (h *Handle) Release() error {
 		return nil
 	}
 	// Drop the registry entry while still holding the lock so that a concurrent
-	// Open cannot hand out a handle whose store is midway through closing.
+	// Open cannot hand out a handle whose store is midway through closing. An
+	// Open of the directory waits until the store is closed, compaction and
+	// all, as it waits for another open.
 	delete(registry, h.key)
+	done := make(chan struct{})
+	opening[h.key] = done
+	registryMu.Unlock()
+	defer func() {
+		registryMu.Lock()
+		delete(opening, h.key)
+		registryMu.Unlock()
+		close(done)
+	}()
+
+	h.compactIfDue()
+
+	registryMu.Lock()
 	store, lock := h.graph, h.lock
 	h.graph, h.lock = nil, nil
 	registryMu.Unlock()

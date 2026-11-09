@@ -49,6 +49,9 @@ func TUICmd(ctx context.Context, opts DBOptions) (err error) {
 	// The TUI shows its own status; nothing below reports to a terminal
 	// display.
 	ctx = progress.Without(ctx)
+	// A compaction at the end of a store would stall the TUI with nothing
+	// on screen, so the TUI never compacts the graph.
+	opts.Graph = duesgraph.Config{}
 	h, err := Common(ctx, opts, dbopen.ReadWrite, true)
 	if err != nil {
 		return err

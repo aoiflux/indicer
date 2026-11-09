@@ -14,6 +14,9 @@ import (
 // The filesystem-failure tests run where scripts/wsl/mounts.sh made the
 // special filesystems (the verify gate's WSL suite) and skip elsewhere.
 // Their names match the suite's filter: DiskFull, ReadOnly, Permission.
+//
+// The tests on the small volume (ENOSPCDir) do not run in parallel: each
+// fills it, and one that ends frees the space another counts on being gone.
 
 // duesRun runs the dues binary and returns its result.
 func duesRun(t *testing.T, bin, work string, args ...string) testutil.Result {
@@ -96,7 +99,6 @@ func listEvidence(t *testing.T, bin, work, root string) []listedEvidence {
 // reserve, a store fails before writing anything. badger used to crash the
 // process with SIGBUS when the disk filled under one of its mapped files.
 func TestStoreDiskFullRefusedUpFront(t *testing.T) {
-	t.Parallel()
 	small := testutil.ENOSPCDir.Require(t)
 	bin := testutil.BuildDues(t)
 	work := t.TempDir()
@@ -154,7 +156,6 @@ func TestStoreDiskFullMidway(t *testing.T) {
 // full volume: each fails, leaves no output or temporary file there, and the
 // database (elsewhere) is untouched.
 func TestOutputsDiskFull(t *testing.T) {
-	t.Parallel()
 	small := testutil.ENOSPCDir.Require(t)
 	bin := testutil.BuildDues(t)
 	work := t.TempDir()
@@ -193,7 +194,6 @@ func TestOutputsDiskFull(t *testing.T) {
 
 // TestLogDirDiskFull: a full log volume does not stop a command.
 func TestLogDirDiskFull(t *testing.T) {
-	t.Parallel()
 	small := testutil.ENOSPCDir.Require(t)
 	bin := testutil.BuildDues(t)
 	work := t.TempDir()

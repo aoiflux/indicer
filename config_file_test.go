@@ -192,7 +192,7 @@ func TestConfigValidate(t *testing.T) {
 	good := `{
 	"color": "never", "plain": true, "ci": false, "no-fun": true, "theme": "dark", "taskbar": true,
 	"log-dir": ` + abs + `, "temp-dir": ` + abs + `, "debug": true, "dbpath": ` + abs + `, "password-file": ` + abs + `,
-	"preset": "low-resource", "compress-level": "fast", "low": true,
+	"preset": "low-resource", "compress-level": "fast", "low": true, "graph-compact": "never",
 	"store": {"pipeline": "staged", "hash-strategy": "async", "io-engine": "stdlib", "io-uring-queue-depth": 0, "store-workers": 4, "store-queue": 8},
 	"restore": {"restore-workers": 2, "restore-queue": 4, "restore-buffer-mb": 64},
 	"server": {"listen": ["127.0.0.1:0", "[::1]:9"], "token-file": ` + abs + `, "cors-origin": ["https://ui.example.org"]}
@@ -204,6 +204,7 @@ func TestConfigValidate(t *testing.T) {
 		{`{"color": "auto "}`, "color", `unknown value "auto "`},
 		{`{"color": "Always"}`, "color", "use auto, always, never, ansi, truecolor"},
 		{`{"theme": "solarized"}`, "theme", "use auto, dark, light"},
+		{`{"graph-compact": "sometimes"}`, "graph-compact", "use auto, never"},
 		{`{"log-dir": "logs"}`, "log-dir", "is not an absolute path"},
 		{`{"temp-dir": ""}`, "temp-dir", "is not an absolute path"},
 		{`{"dbpath": "~/cases"}`, "dbpath", "is not an absolute path"},

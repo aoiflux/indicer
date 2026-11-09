@@ -15,6 +15,7 @@ import (
 	"indicer/internal/ui"
 	"indicer/lib/dbmeta"
 	"indicer/lib/fio"
+	"indicer/lib/graph"
 	"indicer/lib/logging"
 	"indicer/lib/store"
 	"os"
@@ -259,7 +260,8 @@ func run(args []string, conf runConfig, cliDef cliDefinition) error {
 			return err
 		}
 	}
-	dbOpts := cli.DBOptions{Path: *cliDef.flags.dbpath, Creds: creds, Layout: tuning.layout, Tuning: &tuning.engine, TempDir: tempDir}
+	dbOpts := cli.DBOptions{Path: *cliDef.flags.dbpath, Creds: creds, Layout: tuning.layout, Tuning: &tuning.engine, TempDir: tempDir,
+		Graph: graph.Config{AutoCompact: *cliDef.flags.graphCompact == graphCompactAuto}}
 	logSettings(cliDef.flags, src, conf)
 
 	printRunHeader(parsed, cliDef, tuning)

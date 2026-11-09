@@ -45,6 +45,8 @@ type fileConfig struct {
 	TempDir *string `json:"temp-dir"`
 	Debug   *bool   `json:"debug"`
 
+	GraphCompact *string `json:"graph-compact"`
+
 	DBPath       *string `json:"dbpath"`
 	PasswordFile *string `json:"password-file"`
 
@@ -111,6 +113,7 @@ func (c *fileConfig) validate(f *configfile.File) error {
 	oneOf(ui.FlagTheme, c.Theme, ui.ThemeNames)
 	path(flagLogDir, c.LogDir)
 	path(flagTempDir, c.TempDir)
+	oneOf(flagGraphCompact, c.GraphCompact, []string{graphCompactAuto, graphCompactNever})
 	path(cnst.FlagDBPath, c.DBPath)
 	path(flagPasswordFile, c.PasswordFile)
 	named(cnst.FlagPreset, c.Preset, appconfig.NormalizePreset, "quick, performance or low-resource")
@@ -304,6 +307,7 @@ func (f cliFlags) bindings() []binding {
 		{"", flagLogDir, f.logDir},
 		{"", flagTempDir, f.tempDir},
 		{"", flagDebug, f.debug},
+		{"", flagGraphCompact, f.graphCompact},
 		{"", cnst.FlagDBPath, f.dbpath},
 		{"", flagPasswordFile, f.pwdFile},
 		{"", cnst.FlagPreset, f.preset},

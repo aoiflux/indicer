@@ -20,6 +20,13 @@ const (
 // flagTrace names the flag that traces a run.
 const flagTrace = "trace"
 
+// --graph-compact: whether a command that wrote the graph compacts it.
+const (
+	flagGraphCompact  = "graph-compact"
+	graphCompactAuto  = "auto"
+	graphCompactNever = "never"
+)
+
 // cmdReindex names the reindex command.
 const cmdReindex = "reindex"
 
@@ -53,6 +60,7 @@ type cliFlags struct {
 	tempDir           *string
 	debug             *bool
 	trace             *string
+	graphCompact      *string
 	dbpath            *string
 	pwd               *string
 	pwdFile           *string
@@ -228,6 +236,8 @@ func newCLIDefinition() cliDefinition {
 	flags.debug = app.Flag(flagDebug, "Write debug entries to the log").Bool()
 	// A diagnostic for one run: no config key, and not in the settings record.
 	flags.trace = app.Flag(flagTrace, "Write a Go execution trace of the run to this new file, for go tool trace").PlaceHolder("FILE").String()
+	flags.graphCompact = app.Flag(flagGraphCompact, "After a command that wrote the graph, compact it when its log has passed 1 GiB or 5 million records: auto or never").
+		Default(graphCompactAuto).PlaceHolder("WHEN").Enum(graphCompactAuto, graphCompactNever)
 	flags.dbpath = app.Flag(cnst.FlagDBPath, "Custom path for DUES database").Short(cnst.FlagDBPathShort).String()
 	// --password and --token were removed: a secret on the command line is
 	// visible to other users. They stay, hidden, so a script that still

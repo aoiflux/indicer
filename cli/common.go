@@ -10,6 +10,7 @@ import (
 	"indicer/lib/dbio"
 	"indicer/lib/dbmeta"
 	"indicer/lib/dbopen"
+	"indicer/lib/graph"
 	"indicer/lib/ingest"
 	"indicer/lib/logging"
 
@@ -27,6 +28,10 @@ type DBOptions struct {
 	// Tuning is how the storage engine runs on the databases the command
 	// opens; nil takes cnst.DefaultTuning.
 	Tuning *cnst.Tuning
+	// Graph is how the command's graph handles end (--graph-compact): with
+	// AutoCompact, a writable open has the last of them compact a log that
+	// has grown past the threshold. A nil Ctx takes the command's.
+	Graph graph.Config
 }
 
 // LegacyKeyOptions builds DBOptions from the old (chunk size, path, key)
@@ -49,7 +54,8 @@ func (o DBOptions) Request() dbopen.Request {
 
 // Common opens the database for a command and prints the open's notices. A
 // writable open also finishes or fails ingests a crash left incomplete,
-// unless recover is false (repair inspects them first). Read-only opens
+// unless recover is false (repair inspects them first), and configures the
+// root's graph with opts.Graph until the database closes. Read-only opens
 // change nothing (CFG-11).
 func Common(ctx context.Context, opts DBOptions, mode dbopen.Mode, recover bool) (*dbopen.Handle, error) {
 	req := opts.Request()
@@ -57,6 +63,17 @@ func Common(ctx context.Context, opts DBOptions, mode dbopen.Mode, recover bool)
 	h, err := dbopen.Open(ctx, req)
 	if err != nil {
 		return nil, err
+	}
+	if mode != dbopen.ReadOnly && opts.Graph.AutoCompact {
+		cfg := opts.Graph
+		if cfg.Ctx == nil {
+			cfg.Ctx = ctx
+		}
+		remove, err := graph.Configure(h.Root, cfg)
+		if err != nil {
+			return nil, errors.Join(err, h.Close())
+		}
+		h.AtClose(remove)
 	}
 	for _, n := range h.Notices {
 		ui.Notef("%s", n)

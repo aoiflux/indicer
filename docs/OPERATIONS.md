@@ -249,7 +249,7 @@ keys.
 | Key | Where |
 |---|---|
 | `color`, `plain`, `ci`, `no-fun`, `theme`, `taskbar` | top level |
-| `log-dir`, `temp-dir`, `debug` | top level |
+| `log-dir`, `temp-dir`, `debug`, `graph-compact` | top level |
 | `dbpath`, `password-file`, `preset`, `compress-level`, `low` | top level |
 | `pipeline`, `hash-strategy`, `io-engine`, `io-uring-queue-depth`, `store-workers`, `store-queue`, `store-jobs` | `store` |
 | `restore-workers`, `restore-queue`, `restore-buffer-mb` | `restore` |
@@ -398,6 +398,16 @@ The graph store is an image and a log. Every open loads the image and replays
 the log written since, so enrichment and micro extraction make each open
 slower and need more memory, until a compaction folds the log into a new
 image. An open warns when the log passes 1 GiB or 5 million records.
+
+A command that wrote the graph (store, reindex, enrich, micro extract,
+repair) compacts it as it ends when the log has passed either size, as
+`dues graph compact` does, on the command's progress line:
+- A compaction that is refused or fails prints a warning. The command still
+  succeeds, and the store opens as it did.
+- Ctrl-C skips it, or stops it and leaves the store as it was.
+- `--graph-compact never` (config key `graph-compact`) turns it off.
+- The TUI and `dues server` never compact. Stop the server and run
+  `dues graph compact`.
 
 `dues graph compact` compacts the graph:
 - It holds the database writable, so no other DUES command writes meanwhile.

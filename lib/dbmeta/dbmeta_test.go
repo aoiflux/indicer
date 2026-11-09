@@ -2,6 +2,7 @@ package dbmeta
 
 import (
 	"bytes"
+	"encoding/hex"
 	"errors"
 	"math"
 	"os"
@@ -133,6 +134,36 @@ func TestKeys(t *testing.T) {
 	b, _ := m.Marshal()
 	if bytes.Contains(b, keys.Badger) || bytes.Contains(b, []byte("correct horse")) {
 		t.Fatal("manifest leaks a secret")
+	}
+}
+
+// TestActorKey: every encrypted database derives a key that wraps its
+// database actor's signing key, apart from its other keys; an unencrypted one
+// has none. A legacy database draws it from the unsalted legacy key, so the
+// value is fixed.
+func TestActorKey(t *testing.T) {
+	t.Parallel()
+	enc, keys, err := NewEncryption(Password("correct horse"), fastKDF)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(keys.Actor) != 32 || bytes.Equal(keys.Actor, keys.Badger) || bytes.Equal(keys.Actor, keys.Blob) {
+		t.Fatalf("actor key %x beside badger %x, blob %x", keys.Actor, keys.Badger, keys.Blob)
+	}
+	again, err := DeriveKeys(enc, Password("correct horse"))
+	if err != nil || !bytes.Equal(again.Actor, keys.Actor) {
+		t.Fatalf("re-derived actor key differs: %v", err)
+	}
+	legacy, err := DeriveKeys(Encryption{Scheme: SchemeSHA3Legacy}, Password("pw"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	// HKDF-SHA256(SHA3-256("pw"), no salt, "dues/actor/v1"), computed apart.
+	if got, want := hex.EncodeToString(legacy.Actor), "f7bbd1664dcc1d5f8dca30f405fffcc4ab471bc037129d42cc2b24b1d20b7644"; got != want {
+		t.Fatalf("legacy actor key %s, want %s", got, want)
+	}
+	if none, err := DeriveKeys(Encryption{Scheme: SchemeNone}, NoPassword()); err != nil || none.Actor != nil {
+		t.Fatalf("unencrypted database has actor key %x, %v", none.Actor, err)
 	}
 }
 

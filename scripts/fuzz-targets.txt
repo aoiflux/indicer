@@ -35,3 +35,5 @@
 ./internal/duesarc FuzzParseDatabaseManifest
 ./internal/products/compression_product FuzzParseManifest
 ./internal/configfile FuzzParse
+./lib/graph/signer FuzzParseKeyFile
+./lib/graph/signer FuzzKeyring

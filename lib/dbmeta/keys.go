@@ -24,13 +24,16 @@ type KDFParams struct {
 // over 64 MiB on four threads.
 var DefaultKDF = KDFParams{Time: 3, MemoryKiB: 64 << 10, Threads: 4}
 
-// Keys are the secrets an open database uses. Both are nil when it is not
+// Keys are the secrets an open database uses. All are nil when it is not
 // encrypted.
 type Keys struct {
 	// Badger is badger's encryption key.
 	Badger []byte
 	// Blob encrypts chunk blobs and containers.
 	Blob []byte
+	// Actor wraps the database actor's signing key in dues.keys
+	// (lib/graph/signer).
+	Actor []byte
 }
 
 // Credentials carry what the user supplied to unlock a database.
@@ -85,6 +88,7 @@ const (
 	infoBadger = "dues/badger/v1"
 	infoBlob   = "dues/blob/v1"
 	infoCheck  = "dues/key-check/v1"
+	infoActor  = "dues/actor/v1"
 	checkText  = "DUES key check v1"
 )
 
@@ -121,13 +125,17 @@ func argonKeys(password []byte, p KDFParams) (Keys, []byte, error) {
 	if err != nil {
 		return Keys{}, nil, err
 	}
+	actor, err := derive(infoActor)
+	if err != nil {
+		return Keys{}, nil, err
+	}
 	checkKey, err := derive(infoCheck)
 	if err != nil {
 		return Keys{}, nil, err
 	}
 	mac := hmac.New(sha256.New, checkKey)
 	mac.Write([]byte(checkText))
-	return Keys{Badger: badger, Blob: blob}, mac.Sum(nil), nil
+	return Keys{Badger: badger, Blob: blob, Actor: actor}, mac.Sum(nil), nil
 }
 
 // DeriveKeys returns the keys for a database encrypted as e. It checks an
@@ -139,9 +147,14 @@ func DeriveKeys(e Encryption, c Credentials) (Keys, error) {
 	case SchemeNone:
 		return Keys{}, nil
 	case SchemeSHA3Legacy:
-		// No password meant the hash of the empty password.
+		// No password meant the hash of the empty password. The legacy key
+		// was never salted, so neither is the actor key drawn from it.
 		k := c.legacyKey()
-		return Keys{Badger: k, Blob: k}, nil
+		actor, err := hkdf.Key(sha256.New, k, nil, infoActor, 32)
+		if err != nil {
+			return Keys{}, err
+		}
+		return Keys{Badger: k, Blob: k, Actor: actor}, nil
 	case SchemeArgon2id:
 		if !c.set {
 			return Keys{}, ErrPasswordRequired

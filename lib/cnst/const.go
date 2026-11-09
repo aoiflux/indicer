@@ -23,6 +23,7 @@ const (
 	BLOBSDIR            = "blob"
 	FTSDIR              = "fts"
 	UploadsDir          = "uploads"
+	KEYSDIR             = "dues.keys" // actors' signing keys and keyring (lib/graph/signer)
 	SHA3                = "sha3"
 	BLAKE3              = "blake3"
 	SyncHashStrategy    = "sync"

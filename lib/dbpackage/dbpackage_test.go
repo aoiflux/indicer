@@ -54,7 +54,8 @@ func newRoot(t *testing.T, creds dbmeta.Credentials) string {
 	}
 	for name, data := range map[string]string{
 		"graph/graphene.wal":                 "wal",
-		"graph/dues.schema.json":             `{"schema_version": 2}`,
+		"graph/dues.schema.json":             `{"schema_version": 3}`,
+		"graph/graphene.csr.tmp":             "a compaction's image, half built",
 		"graph/dues.lock":                    "",
 		"graph/dues.lock.1-ab.info":          "holder",
 		"graph/graphene.lock":                "",
@@ -116,7 +117,7 @@ func TestExportCopiesTheRoot(t *testing.T) {
 	if !slices.ContainsFunc(got, func(p string) bool { return strings.HasPrefix(p, "blob/") }) {
 		t.Error("the package holds no blob")
 	}
-	for _, left := range []string{dbopen.LockName, "kvdb/LOCK", "graph/dues.lock", "graph/dues.lock.1-ab.info", "graph/graphene.lock", "uploads/a.part", ".dues-manifest.json.dues-tmp-12345"} {
+	for _, left := range []string{dbopen.LockName, "kvdb/LOCK", "graph/dues.lock", "graph/dues.lock.1-ab.info", "graph/graphene.lock", "graph/graphene.csr.tmp", "uploads/a.part", ".dues-manifest.json.dues-tmp-12345"} {
 		if slices.Contains(got, left) {
 			t.Errorf("the package holds %s", left)
 		}
@@ -127,7 +128,7 @@ func TestExportCopiesTheRoot(t *testing.T) {
 	if m.Stats == nil || m.Stats.Evidence != 1 || m.Stats.LogicalBytes != evidenceBytes {
 		t.Errorf("stats = %+v, want 1 evidence of %d bytes", m.Stats, evidenceBytes)
 	}
-	if m.Database.Components["graph_schema"] != 2 || m.Database.Encrypted || m.Host != nil {
+	if m.Database.Components["graph_schema"] != 3 || m.Database.Encrypted || m.Host != nil {
 		t.Errorf("database = %+v, host %+v", m.Database, m.Host)
 	}
 	if len(res.Files) != 1 || res.Files[0] != res.Output {
@@ -573,6 +574,17 @@ func TestImportRefuses(t *testing.T) {
 	if _, err := Import(ctx, ImportOptions{Package: newer, Path: target}); !errors.Is(err, dbmeta.ErrNewerFormat) {
 		t.Errorf("a newer format: %v, want %v", err, dbmeta.ErrNewerFormat)
 	}
+
+	newerGraph := rewrite(t, res.Output, func(name string, data []byte) ([]byte, bool) {
+		if name == duesarc.ManifestName {
+			data = bytes.Replace(data, []byte(`"graph_schema": 3`), []byte(`"graph_schema": 4`), 1)
+		}
+		return data, true
+	}, nil)
+	if _, err := Import(ctx, ImportOptions{Package: newerGraph, Path: target}); err == nil || !strings.Contains(err.Error(), "schema version 4") {
+		t.Errorf("a newer graph schema: %v", err)
+	}
+	noStage(t, target, false)
 
 	miscounted := rewrite(t, res.Output, func(name string, data []byte) ([]byte, bool) {
 		if name == duesarc.ManifestName {

@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"time"
 
 	"indicer/lib/fsx"
 	"indicer/lib/logging"
@@ -51,6 +52,37 @@ type Marker struct {
 	OrderedEdgeKeys []string `json:"ordered_edge_keys"`
 
 	MigratedFrom *int `json:"migrated_from"`
+
+	// Image is the compacted image the log was last folded into, or nil
+	// while the store has never been compacted. A store that has one holds
+	// in its log only what came after it, so the image going missing is
+	// refused rather than read as a smaller graph.
+	Image *ImageRecord `json:"image"`
+
+	Signing Signing `json:"signing"`
+}
+
+// ImageRecord describes a store's compacted image (graphene.csr) as it was
+// when the marker recorded it.
+type ImageRecord struct {
+	CSRVersion  uint16    `json:"csr_version"`
+	CompactedAt time.Time `json:"compacted_at"`
+	Nodes       int       `json:"nodes"`
+	Edges       int       `json:"edges"`
+	// SnapshotRoot is the image's Merkle snapshot root in hex, or "" when
+	// the image carries none.
+	SnapshotRoot string `json:"snapshot_root"`
+	// SegmentSeq is the sequence number in the live log's header when the
+	// image was recorded. A compaction that keeps its log as a segment
+	// advances it, so a marker whose number is behind the log's describes
+	// an older image.
+	SegmentSeq uint64 `json:"segment_seq"`
+}
+
+// Signing is the store's posture on signed commits.
+type Signing struct {
+	// Required refuses any commit that is not signed.
+	Required bool `json:"required"`
 }
 
 // NewMarker returns the marker this build writes for a fresh store.

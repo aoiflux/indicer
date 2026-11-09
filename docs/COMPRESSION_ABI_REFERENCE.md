@@ -688,7 +688,7 @@ The zip holds:
   "created_by": { "product": "dues", "version": "0.39.0", "commit": "3484a4d" },
   "database": {
     "format": "dues-db", "format_version": 1,
-    "components": { "graph_schema": 2 },
+    "components": { "graph_schema": 3 },
     "layout": { "chunk_kib": 256, "chunk_hash": "blake3", "storage": "file",
                 "blob_encoding": "v2", "value_encoding": "zstd", "badger_compression": "zstd" },
     "encryption": "none", "encrypted": false
@@ -706,6 +706,11 @@ The zip holds:
 - `content_sha256` is the SHA-256 of one line per file,
   `path NUL size NUL sha256 LF`, in order. It leaves out times and the host,
   so two packages of one database state share it.
+- `components.graph_schema` is the schema version in the graph's marker,
+  `graph/dues.schema.json`; it is left out when the package holds no graph.
+  A reader refuses a version later than its own. A marker that records a
+  compacted image needs `graph/graphene.csr` beside it: a package without
+  it fails verify and import.
 - `stats` is left out for an encrypted database. `plaintext_components`
   (`fts`, `graph`) names what an encrypted database's package carries
   unencrypted. `host` is written only with `--host-info`.

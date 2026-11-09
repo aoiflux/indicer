@@ -5,6 +5,7 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -12,6 +13,9 @@ import (
 
 	"indicer/internal/duesarc"
 	"indicer/internal/progress"
+	"indicer/lib/cnst"
+	"indicer/lib/graph"
+	"indicer/lib/graph/schema"
 	"indicer/lib/store"
 )
 
@@ -229,7 +233,35 @@ func (p *Package) entries() (map[string]*zip.File, *DamagedError) {
 			bad.add(prefix+d+"/", "missing")
 		}
 	}
+	checkGraphImage(listed, bad)
 	return listed, bad
+}
+
+// checkGraphImage adds a problem when the graph's schema marker records a
+// compacted image and the package holds none: its log holds only what came
+// after the compaction, so the graph would open as a smaller one. A marker
+// that cannot be read is left to the content check.
+func checkGraphImage(listed map[string]*zip.File, bad *DamagedError) {
+	zf := listed[cnst.GRAPHDIR+"/"+schema.MarkerFileName]
+	image := cnst.GRAPHDIR + "/" + graph.ImageFileName
+	if zf == nil || listed[image] != nil {
+		return
+	}
+	rc, err := zf.Open()
+	if err != nil {
+		return
+	}
+	defer rc.Close()
+	var marker struct {
+		Image json.RawMessage `json:"image"`
+	}
+	data, err := io.ReadAll(io.LimitReader(rc, duesarc.MaxManifestBytes))
+	if err != nil || json.Unmarshal(data, &marker) != nil {
+		return
+	}
+	if len(marker.Image) > 0 && string(marker.Image) != "null" {
+		bad.add(duesarc.DatabaseDir+"/"+image, "missing, and the graph's schema marker records a compacted image")
+	}
 }
 
 // checkEntry copies one entry to w and says what does not match the

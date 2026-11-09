@@ -341,7 +341,7 @@ func skip(rel string, dir, withoutDerived bool) bool {
 		return false
 	case rel == dbopen.LockName, rel == cnst.KVDBDIR+"/LOCK", fsx.IsTempName(base):
 		return true
-	case top == cnst.GRAPHDIR && graph.IsLockFile(base):
+	case top == cnst.GRAPHDIR && (graph.IsLockFile(base) || graph.IsScratchFile(base)):
 		return true
 	}
 	return false

@@ -421,8 +421,8 @@ that holds the root's files as they are on disk, under `db/`, and a
   start while one runs.
 - It refuses a database that was not closed cleanly (run `dues repair --fix`)
   and a database made before manifests existed.
-- It leaves out the locks, temporary files a killed writer left, and
-  `uploads/`. `--without-derived` leaves out `fts/` and `graph/` too: `reindex
+- It leaves out the locks, temporary files a killed writer left, a graph
+  image a compaction is still writing (`graph/*.tmp`), and `uploads/`. `--without-derived` leaves out `fts/` and `graph/` too: `reindex
   --fts`, `enrich` and `micro extract` rebuild them.
 - An encrypted database is copied as its encrypted files, so the package
   needs no password. With one (`--password-file`), it is checked first. Its
@@ -444,7 +444,9 @@ have the same content hash, which can go in case notes.
 `dues package inspect PACKAGE` describes a package from its manifest alone.
 `dues package verify PACKAGE` reads all of it: a split package's parts against
 their sidecar, then every file against its size and SHA-256, and that nothing
-is missing or added. Each problem is named, and any fails the command (exit 1).
+is missing or added. A graph whose marker records a compacted image must
+include the image (`graph/graphene.csr`). Each problem is named, and any fails
+the command (exit 1).
 
 `--deep` also checks the database the package holds, as `dues repair
 --verify` checks a data root:

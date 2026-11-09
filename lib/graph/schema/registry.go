@@ -12,7 +12,9 @@ import (
 //	1 — graphene v0.1.3 encoding: custom node band at 128, relation edges at a
 //	    raw EdgeType(100). Never written by this build; only read.
 //	2 — graphene v0.4.0 encoding: custom bands at 32768.
-const CurrentVersion = 2
+//	3 — the v2 encoding, with the marker recording the compacted image the
+//	    log was folded into and whether every commit must be signed.
+const CurrentVersion = 3
 
 // Registry resolves kinds to the raw type values a particular store uses.
 //

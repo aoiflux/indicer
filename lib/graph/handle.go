@@ -4,6 +4,7 @@ import (
 	"errors"
 	"fmt"
 	"io/fs"
+	"math"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -132,14 +133,26 @@ var (
 // shared open fails; the store is then read without a process lock, which is
 // safe there because no writer can exist (CFG-12).
 var openStore = func(dir string, readOnly bool) (*graphenedb.Graph, error) {
-	if !readOnly {
-		return graphenedb.Open(dir)
-	}
-	g, err := graphenedb.OpenReadOnly(dir)
-	if err != nil && isReadOnlyMedia(err) {
-		return graphenedb.OpenLive(dir)
+	opts := storeOptions(readOnly)
+	g, err := graphenedb.OpenWithOptions(dir, opts)
+	if err != nil && readOnly && isReadOnlyMedia(err) {
+		opts.LiveReader = true
+		return graphenedb.OpenWithOptions(dir, opts)
 	}
 	return g, err
+}
+
+// storeOptions are graphene's options for every open: Open's and
+// OpenReadOnly's, keeping every log segment a compaction retires. graphene
+// keeps none by default, and a segment holds each commit's actor, time and
+// signature, which a compacted image does not.
+func storeOptions(readOnly bool) graphenedisk.Options {
+	opts := graphenedisk.Options{Retention: graphenedisk.RetentionPolicy{MaxSegments: math.MaxInt32}}
+	if readOnly {
+		opts.ReadOnly = true
+		opts.Constraints = graphenedisk.ConstraintDrop
+	}
+	return opts
 }
 
 // Open returns the handle for root's graph directory, opening the store on the
@@ -238,6 +251,10 @@ func openHandle(dir, key string, opts OpenOptions) (*Handle, error) {
 
 	lock, err := acquireLock(dir, opts.ReadOnly)
 	if err != nil {
+		return nil, err
+	}
+	if err := checkImage(dir); err != nil {
+		_ = lock.release()
 		return nil, err
 	}
 
@@ -352,18 +369,23 @@ func resolveSchema(dir string, store *graphenedb.Graph, readOnly bool) (migrate.
 	// found so the next open does not have to probe, and records that reads
 	// must stay widened.
 	mixed := kinds.Legacy()
+	image, imageChanged := adoptImage(dir, report.Marker.Image)
 	if !report.HasMarker ||
 		report.Marker.SchemaVersion != schema.CurrentVersion ||
-		report.Marker.MixedVocabulary != mixed {
+		report.Marker.MixedVocabulary != mixed || imageChanged {
 
 		marker := schema.NewMarker(writtenBy, mixed)
+		marker.Image = image
 		if report.HasMarker {
-			previous := report.Marker.SchemaVersion
-			marker.MigratedFrom = &previous
+			marker.MigratedFrom = report.Marker.MigratedFrom
+			if previous := report.Marker.SchemaVersion; previous != schema.CurrentVersion {
+				marker.MigratedFrom = &previous
+			}
 			// Preserve declarations a later phase will have added.
 			marker.OrderedNodeKeys = report.Marker.OrderedNodeKeys
 			marker.OrderedEdgeKeys = report.Marker.OrderedEdgeKeys
 			marker.DynamicNodeKinds = report.Marker.DynamicNodeKinds
+			marker.Signing = report.Marker.Signing
 		} else if report.Vocabulary == migrate.VocabLegacyV1 {
 			legacy := 1
 			marker.MigratedFrom = &legacy

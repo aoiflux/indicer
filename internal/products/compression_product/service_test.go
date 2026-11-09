@@ -225,7 +225,7 @@ func TestHandle_CompressFile_AsyncProgress(t *testing.T) {
 		t.Fatalf("missing task_id")
 	}
 
-	deadline := time.Now().Add(12 * time.Second)
+	deadline := time.Now().Add(asyncTaskDeadline)
 	for {
 		progressParams, _ := json.Marshal(map[string]any{"task_id": taskID})
 		progressRes, progressErr := svc.Handle(context.Background(), testOpGetProgress, progressParams)
@@ -296,7 +296,7 @@ func TestHandle_CompressFile_AsyncCancel(t *testing.T) {
 		t.Fatalf("cancel compress_file task failed: %v", cancelErr)
 	}
 
-	deadline := time.Now().Add(12 * time.Second)
+	deadline := time.Now().Add(asyncTaskDeadline)
 	for {
 		progressParams, _ := json.Marshal(map[string]any{"task_id": taskID})
 		progressRes, progressErr := svc.Handle(context.Background(), testOpGetProgress, progressParams)
@@ -377,7 +377,7 @@ func TestHandle_DecompressFile_AsyncProgress(t *testing.T) {
 		t.Fatalf("missing task_id")
 	}
 
-	deadline := time.Now().Add(12 * time.Second)
+	deadline := time.Now().Add(asyncTaskDeadline)
 	for {
 		progressParams, _ := json.Marshal(map[string]any{"task_id": taskID})
 		progressRes, progressErr := svc.Handle(context.Background(), testOpGetProgress, progressParams)
@@ -467,7 +467,7 @@ func TestHandle_DecompressFile_AsyncCancel(t *testing.T) {
 		t.Fatalf("cancel decompress_file task failed: %v", cancelErr)
 	}
 
-	deadline := time.Now().Add(12 * time.Second)
+	deadline := time.Now().Add(asyncTaskDeadline)
 	for {
 		progressParams, _ := json.Marshal(map[string]any{"task_id": taskID})
 		progressRes, progressErr := svc.Handle(context.Background(), testOpGetProgress, progressParams)
@@ -781,7 +781,7 @@ func TestHandle_CreateArchive_AsyncProgress(t *testing.T) {
 		t.Fatalf("missing task_id in async start response")
 	}
 
-	deadline := time.Now().Add(10 * time.Second)
+	deadline := time.Now().Add(asyncTaskDeadline)
 	for {
 		progressParams, _ := json.Marshal(map[string]any{"task_id": taskID})
 		progressRes, progressErr := svc.Handle(context.Background(), testOpGetProgress, progressParams)
@@ -878,7 +878,7 @@ func TestHandle_CreateArchive_AsyncCancel(t *testing.T) {
 		t.Fatalf("unexpected cancel task id: %q", gotTask)
 	}
 
-	deadline := time.Now().Add(12 * time.Second)
+	deadline := time.Now().Add(asyncTaskDeadline)
 	for {
 		progressParams, _ := json.Marshal(map[string]any{"task_id": taskID})
 		progressRes, progressErr := svc.Handle(context.Background(), testOpGetProgress, progressParams)
@@ -992,7 +992,7 @@ func TestHandle_ListArchive_AsyncProgress(t *testing.T) {
 		t.Fatalf("missing task_id")
 	}
 
-	deadline := time.Now().Add(10 * time.Second)
+	deadline := time.Now().Add(asyncTaskDeadline)
 	for {
 		progressParams, _ := json.Marshal(map[string]any{"task_id": taskID})
 		progressRes, progressErr := svc.Handle(context.Background(), testOpGetProgress, progressParams)
@@ -1065,7 +1065,7 @@ func TestHandle_ListArchive_AsyncCancel(t *testing.T) {
 		t.Fatalf("cancel list task failed: %v", cancelErr)
 	}
 
-	deadline := time.Now().Add(12 * time.Second)
+	deadline := time.Now().Add(asyncTaskDeadline)
 	for {
 		progressParams, _ := json.Marshal(map[string]any{"task_id": taskID})
 		progressRes, progressErr := svc.Handle(context.Background(), testOpGetProgress, progressParams)
@@ -1288,7 +1288,7 @@ func TestHandle_VerifyArchive_AsyncCancel(t *testing.T) {
 		t.Fatalf("cancel verify task failed: %v", cancelErr)
 	}
 
-	deadline := time.Now().Add(12 * time.Second)
+	deadline := time.Now().Add(asyncTaskDeadline)
 	for {
 		progressParams, _ := json.Marshal(map[string]any{"task_id": taskID})
 		progressRes, progressErr := svc.Handle(context.Background(), testOpGetProgress, progressParams)

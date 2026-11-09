@@ -50,3 +50,26 @@ func TestRestoreReorderWindowIsBounded(t *testing.T) {
 		t.Fatalf("restored %d bytes in %d chunks, want %d in %d", out.Len(), report.Chunks, l.Size(), chunks)
 	}
 }
+
+// TestRestoreBufferFitsTheObject: restore's write buffer is allocated whole,
+// so it is no larger than the object restored, and never under
+// minRestoreBuffer.
+func TestRestoreBufferFitsTheObject(t *testing.T) {
+	t.Parallel()
+	def := cnst.DefaultTuning()
+	for _, c := range []struct {
+		t    cnst.Tuning
+		size int64
+		want int
+	}{
+		{def, 0, minRestoreBuffer},
+		{def, 10, minRestoreBuffer},
+		{def, 5 * cnst.MB, int(5 * cnst.MB)},
+		{def, 10 * cnst.GB, int(256 * cnst.MB)},
+		{cnst.Tuning{RestoreBufferMB: 8}, 10 * cnst.GB, int(8 * cnst.MB)},
+	} {
+		if got := restoreBuffer(c.t, c.size); got != c.want {
+			t.Errorf("restoreBuffer(%+v, %d) = %d, want %d", c.t, c.size, got, c.want)
+		}
+	}
+}

@@ -23,10 +23,15 @@ func startTask(t *testing.T, svc *Service, ctx context.Context, fn taskFunc) str
 	return res.(asyncStartRes).TaskID
 }
 
+// asyncTaskDeadline bounds how long a test waits for an async task. It only
+// catches a task that never ends: tests run side by side, and a loaded
+// machine took over ten seconds to list a small archive.
+const asyncTaskDeadline = time.Minute
+
 // waitTask polls a task until it is in a terminal state.
 func waitTask(t *testing.T, svc *Service, id string) progressRes {
 	t.Helper()
-	deadline := time.Now().Add(20 * time.Second)
+	deadline := time.Now().Add(asyncTaskDeadline)
 	for time.Now().Before(deadline) {
 		p, ok := svc.tasks.get(id)
 		if !ok {

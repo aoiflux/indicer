@@ -154,6 +154,18 @@ func Restore(ctx context.Context, db *badger.DB, rhash string, dst io.Writer, op
 	return restoreLogical(ctx, l, dst, opts, ewf, engine.For(db).Tuning())
 }
 
+// minRestoreBuffer is the smallest write buffer a restore uses, so a tiny
+// object is still written in one call.
+const minRestoreBuffer = 64 << 10
+
+// restoreBuffer is the write buffer for restoring an object of size bytes:
+// the tuning's, but no larger than the object, as the rest would never fill.
+// The buffer is allocated whole, so restoring a small file at the default
+// 256 MiB took 256 MiB.
+func restoreBuffer(tun cnst.Tuning, size int64) int {
+	return int(max(min(int64(tun.RestoreWriteBuffer()), size), minRestoreBuffer))
+}
+
 // restoreLogical writes the content of l to dst, with the tuning of l's
 // database. Chunks are read and checked in parallel and written in order; at
 // most the window is between being read and being written (RST-5).
@@ -164,7 +176,7 @@ func restoreLogical(ctx context.Context, l *dbio.Logical, dst io.Writer, opts Re
 	fio.EnableContainerReadCache()
 	defer fio.DisableContainerReadCache()
 
-	writer := bufio.NewWriterSize(dst, tun.RestoreWriteBuffer())
+	writer := bufio.NewWriterSize(dst, restoreBuffer(tun, l.Size()))
 	var digest *digester
 	if opts.Verify == VerifyFull {
 		digest = newDigester(l)

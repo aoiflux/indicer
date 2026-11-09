@@ -87,9 +87,10 @@ type commandRun struct {
 
 // runCommands runs the same commands in a fresh work directory with env as
 // the whole environment, and returns their output with what differs from
-// one run to the next masked: the work directory, durations and IDs. Plain
-// start lines are dropped: one shows only when a sample finds its phase
-// still running, so a quick phase has one in some runs and not in others.
+// one run to the next masked: the work directory, durations, rates and IDs.
+// Plain start lines are dropped: one shows only when a sample finds its
+// phase still running, so a quick phase has one in some runs and not in
+// others.
 func runCommands(t *testing.T, bin string, env []string) []commandRun {
 	t.Helper()
 	work := t.TempDir()
@@ -138,6 +139,10 @@ func runCommands(t *testing.T, bin string, env []string) []commandRun {
 
 var (
 	durationRE = regexp.MustCompile(`(\d+(\.\d+)?(ns|µs|us|ms|s|m|h))+\b`)
+	// The rate a done line adds once its phase ran half a second or more,
+	// "0 files/s" or "281 KiB/s": a loaded machine adds it where an idle one
+	// does not.
+	rateRE = regexp.MustCompile(`, [\d,.]+ [A-Za-z]+/s\b`)
 	// An evidence or partition ID: 16 bytes in base64.
 	idRE = regexp.MustCompile(`[A-Za-z0-9+/]{22}==`)
 	// A plain line saying a phase started: "dues: index: start".
@@ -162,5 +167,6 @@ func (m *masker) apply(s string) string {
 		}
 		return m.ids[id]
 	})
+	s = rateRE.ReplaceAllString(s, "")
 	return durationRE.ReplaceAllString(s, "<duration>")
 }

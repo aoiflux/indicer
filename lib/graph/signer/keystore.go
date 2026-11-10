@@ -45,7 +45,7 @@ var (
 )
 
 const (
-	keyringName = "keyring.json"
+	KeyringName = "keyring.json"
 	actorsName  = "actors.json"
 	keysDirName = "actors"
 	// KeyFileExt ends the name of every key file, which holds a private key:
@@ -54,9 +54,8 @@ const (
 	// keyPerm keeps a key file to its owner; it is all that protects an
 	// unprotected key. On Windows the file inherits the folder's access list.
 	keyPerm = 0o600
-	// maxJSONLen bounds what the keystore reads of keyring.json or
-	// actors.json.
-	maxJSONLen = 4 << 20
+	// MaxJSONLen bounds what is read of keyring.json or actors.json.
+	MaxJSONLen = 4 << 20
 )
 
 // NewKeystore returns the keystore of the data root root. It reads and
@@ -68,7 +67,7 @@ func NewKeystore(root string) *Keystore {
 // Dir is the keystore's directory.
 func (k *Keystore) Dir() string { return k.dir }
 
-func (k *Keystore) keyringPath() string { return filepath.Join(k.dir, keyringName) }
+func (k *Keystore) keyringPath() string { return filepath.Join(k.dir, KeyringName) }
 func (k *Keystore) actorsPath() string  { return filepath.Join(k.dir, actorsName) }
 
 // KeyPath is where the key file of key keyID of actor actorID lives.
@@ -78,7 +77,7 @@ func (k *Keystore) KeyPath(actorID, keyID uint64) string {
 
 // Keyring reads the keyring; a keystore without one has an empty keyring.
 func (k *Keystore) Keyring() (*Keyring, error) {
-	b, err := readLimited(k.keyringPath(), maxJSONLen)
+	b, err := readLimited(k.keyringPath(), MaxJSONLen)
 	if errors.Is(err, fs.ErrNotExist) {
 		return &Keyring{}, nil
 	}
@@ -115,7 +114,7 @@ type actorJSON struct {
 // Actors reads the actors, in the order they were added; none without an
 // actors.json.
 func (k *Keystore) Actors() ([]Actor, error) {
-	b, err := readLimited(k.actorsPath(), maxJSONLen)
+	b, err := readLimited(k.actorsPath(), MaxJSONLen)
 	if errors.Is(err, fs.ErrNotExist) {
 		return nil, nil
 	}

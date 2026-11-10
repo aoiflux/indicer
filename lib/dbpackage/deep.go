@@ -13,6 +13,7 @@ import (
 	"indicer/lib/dbmeta"
 	"indicer/lib/dbopen"
 	"indicer/lib/fsx"
+	"indicer/lib/graph/signer"
 	"indicer/lib/store"
 )
 
@@ -33,7 +34,8 @@ type DeepOptions struct {
 	TempDir string
 	// Tuning is how the storage engine runs on the database it opens; nil
 	// takes cnst.DefaultTuning.
-	Tuning *cnst.Tuning
+	Tuning     *cnst.Tuning
+	TrustedKey *signer.Entry
 }
 
 // VerifyDeep checks a package as Verify does, then checks the database it
@@ -53,7 +55,7 @@ func (p *Package) VerifyDeep(ctx context.Context, opts DeepOptions) (res VerifyR
 	if err := checkReadable(m); err != nil {
 		return res, err
 	}
-	entries, bad, err := p.checkListing(ctx, &res)
+	entries, bad, err := p.checkListing(ctx, &res, opts.TrustedKey)
 	if err != nil {
 		return res, err
 	}

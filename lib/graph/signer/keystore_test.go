@@ -22,7 +22,7 @@ func TestMain(m *testing.M) {
 		"hold-keyring": func(args []string) int {
 			k := NewKeystore(args[0])
 			k.written = func(path string) {
-				if filepath.Base(path) != keyringName {
+				if filepath.Base(path) != KeyringName {
 					return
 				}
 				if err := testutil.NotifyPoint("keyring-written"); err != nil {

@@ -164,3 +164,65 @@ func TestActorCommands(t *testing.T) {
 		t.Fatalf("export of a revoked actor: %s", stderr)
 	}
 }
+
+// TestPackageSignatures: an export is signed by the database actor, whose
+// exported public key verify and import then trust; another actor's key is
+// refused, and an unreadable trusted key is a usage error.
+func TestPackageSignatures(t *testing.T) {
+	_, logArg := logArgs(t)
+	dir := t.TempDir()
+	db := filepath.Join(dir, "case")
+	dues := func(want int, args ...string) (string, string) {
+		t.Helper()
+		code := -1
+		stdout, stderr := captureOutput(t, func() { code = realMain(append(append([]string{}, logArg...), args...)) })
+		if code != want {
+			t.Fatalf("dues %q exited %d, want %d\nstdout %s\nstderr %s", args, code, want, stdout, stderr)
+		}
+		return stdout, stderr
+	}
+	evidence := filepath.Join(dir, "evidence.txt")
+	if err := os.WriteFile(evidence, []byte("packaged evidence\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	dues(lifecycle.ExitOK, "--dbpath", db, "store", evidence)
+
+	pkg := filepath.Join(dir, "case.duesarc")
+	stdout, _ := dues(lifecycle.ExitOK, "--dbpath", db, "package", "export", "--out", pkg)
+	if !strings.Contains(stdout, `signed by actor "database"`) {
+		t.Fatalf("export: %s", stdout)
+	}
+	if stdout, _ = dues(lifecycle.ExitOK, "package", "inspect", pkg); !strings.Contains(stdout, `by actor "database"`) {
+		t.Errorf("inspect: %s", stdout)
+	}
+
+	pub := filepath.Join(dir, "database.pub")
+	dues(lifecycle.ExitOK, "--dbpath", db, "actor", "export-public", "database", "--out", pub)
+	stdout, stderr := dues(lifecycle.ExitOK, "package", "verify", pkg, "--trusted-key", pub)
+	if !strings.Contains(stdout, "the key is the trusted key") || !strings.Contains(stderr, "unprotected key") {
+		t.Errorf("verify with the database's key:\nstdout %s\nstderr %s", stdout, stderr)
+	}
+	stdout, _ = dues(lifecycle.ExitOK, "package", "verify", pkg)
+	if !strings.Contains(stdout, "not checked against a trusted key") {
+		t.Errorf("verify without a trusted key: %s", stdout)
+	}
+
+	pass := writePass(t, "correct horse")
+	jane := filepath.Join(dir, "jane.pub")
+	dues(lifecycle.ExitOK, "--dbpath", db, "actor", "create", "jane", "--actor-key-password-file", pass)
+	dues(lifecycle.ExitOK, "--dbpath", db, "actor", "export-public", "jane", "--out", jane)
+	if _, stderr = dues(lifecycle.ExitFailure, "package", "verify", pkg, "--trusted-key", jane); !strings.Contains(stderr, `the trusted key is actor "jane"'s`) {
+		t.Errorf("verify with jane's key: %s", stderr)
+	}
+	target := filepath.Join(dir, "imported")
+	if _, stderr = dues(lifecycle.ExitFailure, "--dbpath", target, "package", "import", pkg, "--trusted-key", jane); !strings.Contains(stderr, "nothing was imported") {
+		t.Errorf("import with jane's key: %s", stderr)
+	}
+	if _, err := os.Stat(target); !os.IsNotExist(err) {
+		t.Errorf("a refused import left %s", target)
+	}
+	dues(lifecycle.ExitOK, "--dbpath", target, "package", "import", pkg, "--trusted-key", pub)
+
+	dues(lifecycle.ExitUsage, "package", "verify", pkg, "--trusted-key", filepath.Join(dir, "missing.pub"))
+	dues(lifecycle.ExitUsage, "package", "verify", pkg, "--trusted-key", evidence)
+}

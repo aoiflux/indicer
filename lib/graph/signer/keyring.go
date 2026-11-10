@@ -114,7 +114,7 @@ func (j entryJSON) entry() (Entry, error) {
 	if err != nil || len(pub) != ed25519.PublicKeySize {
 		return Entry{}, fmt.Errorf("public key of %s is not a base64 Ed25519 key", j.KeyID)
 	}
-	prot, err := parseProtection(j.Protection)
+	prot, err := ParseProtection(j.Protection)
 	if err != nil {
 		return Entry{}, err
 	}

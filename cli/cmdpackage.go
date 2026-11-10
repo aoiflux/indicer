@@ -12,9 +12,11 @@ import (
 
 	"indicer/internal/console"
 	"indicer/internal/duesarc"
+	"indicer/internal/lifecycle"
 	"indicer/internal/termsafe"
 	"indicer/internal/ui"
 	"indicer/lib/dbpackage"
+	"indicer/lib/graph/signer"
 	"indicer/lib/logging"
 
 	"go.uber.org/zap"
@@ -44,6 +46,7 @@ func PackageExport(ctx context.Context, opts DBOptions, po PackageExportOptions)
 		WithoutDerived: po.WithoutDerived,
 		HostInfo:       po.HostInfo,
 		Creator:        po.Creator,
+		Actor:          opts.Actor,
 	})
 	for _, n := range res.Notices {
 		ui.Notef("%s", n)
@@ -57,10 +60,13 @@ func PackageExport(ctx context.Context, opts DBOptions, po PackageExportOptions)
 	}
 	took := time.Since(start)
 	m := res.Manifest
-	logging.GetLogger().Info("PackageExport COMPLETE",
-		zap.String("root", res.Root), zap.String("output", res.Output), zap.Int("parts", len(res.Files)),
+	fields := []zap.Field{zap.String("root", res.Root), zap.String("output", res.Output), zap.Int("parts", len(res.Files)),
 		zap.Int("files", len(m.Files)), zap.Int64("bytes", m.Bytes()), zap.Int64("package_bytes", res.Bytes),
-		zap.String("content_sha256", m.ContentSHA256), zap.Int64("duration_ms", took.Milliseconds()))
+		zap.String("content_sha256", m.ContentSHA256), zap.Int64("duration_ms", took.Milliseconds())}
+	if s := m.Signature; s != nil {
+		fields = append(fields, zap.String("signed_by", s.Actor), zap.String("key_id", s.KeyID))
+	}
+	logging.GetLogger().Info("PackageExport COMPLETE", fields...)
 
 	w := console.Out()
 	fmt.Fprintf(w, "Exported database %s to %s in %s\n", res.Root, res.Output, ui.Duration(took))
@@ -69,7 +75,38 @@ func PackageExport(ctx context.Context, opts DBOptions, po PackageExportOptions)
 		fmt.Fprintf(w, "  written as %d parts, described by %s\n", len(res.Files), filepath.Base(res.Output+duesarc.SidecarExt))
 	}
 	fmt.Fprintf(w, "  content sha256 %s\n", m.ContentSHA256)
+	if s := m.Signature; s != nil {
+		fmt.Fprintf(w, "  signed by actor %q, key %s\n", s.Actor, s.KeyID)
+	}
 	return nil
+}
+
+// LoadTrustedKey reads --trusted-key; an empty path is none.
+func LoadTrustedKey(path string) (*signer.Entry, error) {
+	if path == "" {
+		return nil, nil
+	}
+	e, err := signer.ReadPublicKeyFile(path)
+	if err != nil {
+		return nil, lifecycle.Usagef("--trusted-key: %v", err)
+	}
+	return &e, nil
+}
+
+func describeSignature(w io.Writer, info *dbpackage.SignatureInfo, trustedPath string) {
+	if info == nil {
+		fmt.Fprintln(w, "  unsigned")
+		return
+	}
+	fmt.Fprintf(w, "  signed by actor %q, key %s\n", termsafe.Line(info.Actor), signer.FormatID(info.KeyID))
+	if info.Trusted {
+		fmt.Fprintf(w, "  the key is the trusted key %s\n", trustedPath)
+	} else {
+		fmt.Fprintln(w, "  not checked against a trusted key: whoever changed the package could sign it again (--trusted-key checks who signed it)")
+	}
+	if info.Protection == signer.ProtectNone {
+		ui.Warnf("the package is signed with an unprotected key: an unencrypted database keeps its actor's key as it is, so whoever could read its data root could sign as it")
+	}
 }
 
 // PackageInspect describes a package from its manifest, reading nothing
@@ -130,13 +167,23 @@ func describePackage(w io.Writer, p *dbpackage.Package) {
 	if h := m.Host; h != nil {
 		row("host", "%s/%s %s", safe(h.OS), safe(h.Arch), safe(h.Hostname))
 	}
+	if s := m.Signature; s != nil {
+		row("signed", "by actor %q, key %s, protected by %s (verify checks the signature)", safe(s.Actor), safe(s.KeyID), safe(s.Protection))
+	} else {
+		row("signed", "no")
+	}
 }
 
-// PackageVerify checks a package against its manifest. With deep, it also
-// copies the database into the temporary directory, opens it read-only with
-// opts' credentials and reads every evidence back, as repair --verify does.
-func PackageVerify(ctx context.Context, opts DBOptions, path string, deep bool) error {
+// PackageVerify checks a package against its manifest and signature. With
+// deep, it also copies the database into the temporary directory, opens it
+// read-only with opts' credentials and reads every evidence back, as repair
+// --verify does.
+func PackageVerify(ctx context.Context, opts DBOptions, path string, deep bool, trustedKey string) error {
 	start := time.Now()
+	trusted, err := LoadTrustedKey(trustedKey)
+	if err != nil {
+		return err
+	}
 	p, err := dbpackage.Open(path)
 	if err != nil {
 		return err
@@ -144,9 +191,13 @@ func PackageVerify(ctx context.Context, opts DBOptions, path string, deep bool) 
 	defer p.Close()
 	var res dbpackage.VerifyResult
 	if deep {
-		res, err = p.VerifyDeep(ctx, dbpackage.DeepOptions{Creds: opts.Creds, TempDir: opts.TempDir, Tuning: opts.Tuning})
+		res, err = p.VerifyDeep(ctx, dbpackage.DeepOptions{Creds: opts.Creds, TempDir: opts.TempDir, Tuning: opts.Tuning, TrustedKey: trusted})
 	} else {
-		res, err = p.Verify(ctx)
+		res, err = p.Verify(ctx, dbpackage.VerifyOptions{TrustedKey: trusted})
+	}
+	if _, ok := errors.AsType[*dbpackage.SignatureError](err); ok {
+		logging.GetLogger().Error("PackageVerify SIGNATURE", zap.String("path", p.Path), zap.Error(err))
+		return fmt.Errorf("package %s: %w", p.Path, err)
 	}
 	for _, n := range res.Notices {
 		ui.Notef("%s", n)
@@ -176,6 +227,9 @@ func PackageVerify(ctx context.Context, opts DBOptions, path string, deep bool) 
 	if ev := res.Evidence; ev != nil {
 		fields = append(fields, zap.Int("evidence_verified", ev.Verified))
 	}
+	if s := res.Signature; s != nil {
+		fields = append(fields, zap.String("signed_by", s.Actor), zap.String("key_id", signer.FormatID(s.KeyID)), zap.Bool("trusted", s.Trusted))
+	}
 	logging.GetLogger().Info("PackageVerify COMPLETE", fields...)
 	w := console.Out()
 	fmt.Fprintf(w, "Package %s is intact: %s files, %s checked in %s\n", p.Path, ui.Count(int64(res.Files)), ui.Bytes(res.Bytes), ui.Duration(took))
@@ -186,6 +240,7 @@ func PackageVerify(ctx context.Context, opts DBOptions, path string, deep bool) 
 		fmt.Fprintf(w, "  its database opens, and %s evidence read back against their chunk hashes\n", ui.Count(int64(ev.Verified)))
 	}
 	fmt.Fprintf(w, "  content sha256 %s\n", termsafe.Line(p.Manifest.ContentSHA256))
+	describeSignature(w, res.Signature, trustedKey)
 	return nil
 }
 
@@ -198,9 +253,13 @@ func problems(n int) string {
 
 // PackageImport makes a new database, at the --dbpath target, from a
 // package.
-func PackageImport(ctx context.Context, opts DBOptions, path string) error {
+func PackageImport(ctx context.Context, opts DBOptions, path, trustedKey string) error {
 	start := time.Now()
-	res, err := dbpackage.Import(ctx, dbpackage.ImportOptions{Package: path, Path: opts.Path, Creds: opts.Creds, TempDir: opts.TempDir, Tuning: opts.Tuning})
+	trusted, err := LoadTrustedKey(trustedKey)
+	if err != nil {
+		return err
+	}
+	res, err := dbpackage.Import(ctx, dbpackage.ImportOptions{Package: path, Path: opts.Path, Creds: opts.Creds, TempDir: opts.TempDir, Tuning: opts.Tuning, TrustedKey: trusted})
 	for _, n := range res.Notices {
 		ui.Notef("%s", n)
 	}
@@ -209,6 +268,10 @@ func PackageImport(ctx context.Context, opts DBOptions, path string) error {
 			ui.Errorf("%s: %s", termsafe.Line(pr.Name), termsafe.Line(pr.Reason))
 		}
 		return fmt.Errorf("package %s does not match its manifest: %s; nothing was imported", path, problems(bad.Count))
+	}
+	if _, ok := errors.AsType[*dbpackage.SignatureError](err); ok {
+		logging.GetLogger().Error("PackageImport SIGNATURE", zap.String("package", path), zap.Error(err))
+		return fmt.Errorf("package %s: %w; nothing was imported", path, err)
 	}
 	if err != nil {
 		logging.GetLogger().Error("PackageImport ERROR", zap.String("package", path), zap.String("root", res.Root), zap.Error(err))
@@ -223,5 +286,6 @@ func PackageImport(ctx context.Context, opts DBOptions, path string) error {
 	fmt.Fprintf(w, "Imported %s as database %s in %s\n", path, res.Root, ui.Duration(took))
 	fmt.Fprintf(w, "  %s files, %s, each matching the package\n", ui.Count(int64(len(m.Files))), ui.Bytes(m.Bytes()))
 	fmt.Fprintf(w, "  content sha256 %s\n", termsafe.Line(m.ContentSHA256))
+	describeSignature(w, res.Signature, trustedKey)
 	return nil
 }

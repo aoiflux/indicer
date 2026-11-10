@@ -44,8 +44,9 @@ type DatabaseManifest struct {
 	// ContentSHA256 identifies the contents: ContentHash of Files. It
 	// leaves out times and the host, so two packages of one database state
 	// share it.
-	ContentSHA256 string `json:"content_sha256"`
-	Host          *Host  `json:"host,omitempty"`
+	ContentSHA256 string     `json:"content_sha256"`
+	Host          *Host      `json:"host,omitempty"`
+	Signature     *Signature `json:"signature,omitempty"`
 }
 
 // Creator is the program that made a package.

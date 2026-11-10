@@ -809,7 +809,8 @@ func printPackageHelp() {
 	fmt.Fprintln(helpOut, "Usage: dues package <export|inspect|verify|import> ... [global options]")
 	fmt.Fprintln(helpOut, "A package is a .duesarc holding a copy of the database's files as they are on")
 	fmt.Fprintln(helpOut, "disk, and a manifest with each file's size and SHA-256. Move it, keep it, and")
-	fmt.Fprintln(helpOut, "check it later; its content hash names the database state it holds.")
+	fmt.Fprintln(helpOut, "check it later; its content hash names the database state it holds. An actor")
+	fmt.Fprintln(helpOut, "of the database signs it; verify --trusted-key checks who.")
 	fmt.Fprintln(helpOut)
 	fmt.Fprintln(helpOut, "  package export   Copy the database into a package")
 	fmt.Fprintln(helpOut, "  package inspect  Describe a package from its manifest")
@@ -835,6 +836,11 @@ func printPackageExportHelp() {
 	fmt.Fprintln(helpOut, "An encrypted database stays encrypted in the package, and needs no password;")
 	fmt.Fprintln(helpOut, "with one, the password is checked first. Its full-text index and graph are")
 	fmt.Fprintln(helpOut, "not encrypted, on disk or in the package.")
+	fmt.Fprintln(helpOut)
+	fmt.Fprintln(helpOut, "The database actor signs the package, and is made now if the database has")
+	fmt.Fprintln(helpOut, "none. Its key opens only with the password, so an encrypted database exported")
+	fmt.Fprintln(helpOut, "without it is unsigned, unless --actor names an actor to sign. Private keys")
+	fmt.Fprintln(helpOut, "never go into a package; the public keyring always does.")
 	printHelpSection("Options")
 	fmt.Fprintln(helpOut, "  --out              Package path (default dues-<database>-<UTC time>.duesarc)")
 	fmt.Fprintln(helpOut, "  --split-size-mb    Write parts of this many MiB and a .split.json sidecar")
@@ -846,6 +852,7 @@ func printPackageExportHelp() {
 		"dues package export --dbpath ./caseA",
 		"dues package export --out caseA.duesarc --split-size-mb 4096 --dbpath ./caseA",
 		"dues package export --without-derived --password-file ./pw --dbpath ./caseB",
+		"dues package export --actor jane --actor-key-password-file ./jane.pw",
 	)
 }
 
@@ -854,7 +861,8 @@ func printPackageInspectHelp() {
 	fmt.Fprintln(helpOut, "Usage: dues package inspect PACKAGE [global options]")
 	fmt.Fprintln(helpOut, "Describes a package from its manifest alone: who made it and when, the")
 	fmt.Fprintln(helpOut, "database's format and layout, encryption, files, bytes and content hash.")
-	fmt.Fprintln(helpOut, "It reads nothing else, so it is quick, and checks nothing: use verify.")
+	fmt.Fprintln(helpOut, "It reads nothing else, so it is quick, and checks nothing, not even who it")
+	fmt.Fprintln(helpOut, "says signed it: use verify.")
 	printExamples(
 		"dues package inspect caseA.duesarc",
 		"dues package inspect caseA.duesarc.split.json",
@@ -863,18 +871,26 @@ func printPackageInspectHelp() {
 
 func printPackageVerifyHelp() {
 	printHelpHeader("package verify")
-	fmt.Fprintln(helpOut, "Usage: dues package verify PACKAGE [--deep] [global options]")
+	fmt.Fprintln(helpOut, "Usage: dues package verify PACKAGE [--deep] [--trusted-key FILE]")
+	fmt.Fprintln(helpOut, "         [global options]")
 	fmt.Fprintln(helpOut, "Reads the whole package and checks it: a split package's parts against their")
-	fmt.Fprintln(helpOut, "sidecar, then every file against the size and SHA-256 its manifest gives, and")
-	fmt.Fprintln(helpOut, "that nothing is missing or added. Each problem is named; any fails the command.")
+	fmt.Fprintln(helpOut, "sidecar, its signature, then every file against the size and SHA-256 its")
+	fmt.Fprintln(helpOut, "manifest gives, and that nothing is missing or added. Each problem is named;")
+	fmt.Fprintln(helpOut, "any fails the command.")
+	fmt.Fprintln(helpOut)
+	fmt.Fprintln(helpOut, "The signing key travels with the package, so a signature alone shows only that")
+	fmt.Fprintln(helpOut, "nothing changed after signing: whoever changed it could sign it again. A key")
+	fmt.Fprintln(helpOut, "kept apart from the database (dues actor export-public) shows who signed it.")
 	printHelpSection("Options")
 	fmt.Fprintln(helpOut, "  --deep  Also check the database the package holds: copy it into --temp-dir,")
 	fmt.Fprintln(helpOut, "          open the copy read-only, count its evidence against the manifest")
 	fmt.Fprintln(helpOut, "          and read every evidence back against its chunk hashes, as repair")
 	fmt.Fprintln(helpOut, "          --verify does. It needs the package's size free there, and the")
 	fmt.Fprintln(helpOut, "          password of an encrypted database. The copy is removed afterwards.")
+	fmt.Fprintln(helpOut, "  --trusted-key  Require a signature by this public key")
 	printExamples(
 		"dues package verify caseA.duesarc",
+		"dues package verify caseA.duesarc --trusted-key ./caseA-database.pub",
 		"dues package verify caseA.duesarc.001",
 		"dues package verify caseB.duesarc --deep --password-file ./pw",
 	)
@@ -882,16 +898,20 @@ func printPackageVerifyHelp() {
 
 func printPackageImportHelp() {
 	printHelpHeader("package import")
-	fmt.Fprintln(helpOut, "Usage: dues package import PACKAGE [global options]")
+	fmt.Fprintln(helpOut, "Usage: dues package import PACKAGE [--trusted-key FILE] [global options]")
 	fmt.Fprintln(helpOut, "Makes a new database at --dbpath (default ~/.dues) from a package. The folder")
 	fmt.Fprintln(helpOut, "must be missing or empty: an import never merges into a database. The files")
 	fmt.Fprintln(helpOut, "are written into a folder beside it and checked against the manifest as they")
 	fmt.Fprintln(helpOut, "are written; the database is opened to check it, and only then does the folder")
 	fmt.Fprintln(helpOut, "take the --dbpath name. A failure or an interruption leaves nothing behind.")
 	fmt.Fprintln(helpOut, "An encrypted database is opened only with its password (--password-file);")
-	fmt.Fprintln(helpOut, "without it, its files are checked and it is not opened.")
+	fmt.Fprintln(helpOut, "without it, its files are checked and it is not opened. A signed package's")
+	fmt.Fprintln(helpOut, "signature is checked; --trusted-key imports only a package that key signed.")
+	fmt.Fprintln(helpOut, "The new database signs with an actor key of its own, made at its first graph")
+	fmt.Fprintln(helpOut, "write or export.")
 	printExamples(
 		"dues package import caseA.duesarc --dbpath ./caseA",
+		"dues package import caseA.duesarc --dbpath ./caseA --trusted-key ./caseA.pub",
 		"dues package import caseB.duesarc.001 --dbpath ./caseB --password-file ./pw",
 	)
 }

@@ -2,8 +2,10 @@ package dbopen
 
 import (
 	"bytes"
+	"context"
 	"errors"
 	"fmt"
+	"os"
 
 	"indicer/internal/console"
 	"indicer/lib/dbmeta"
@@ -66,7 +68,7 @@ func (h *Handle) Signer() (signer.Provider, error) {
 	if h.DB == nil {
 		return nil, errors.New("the database is closed")
 	}
-	p, err := h.resolveSigner()
+	p, err := resolveSigner(h.Root, h.actor, h.actorKey, !h.ReadOnly)
 	if err != nil {
 		return nil, err
 	}
@@ -77,23 +79,39 @@ func (h *Handle) Signer() (signer.Provider, error) {
 	return p, nil
 }
 
-func (h *Handle) resolveSigner() (signer.Provider, error) {
-	ks := signer.NewKeystore(h.Root)
-	if a := h.actor; a != nil {
+// TakeSigner is Signer, but the caller closes the provider, which outlives
+// the handle.
+func (h *Handle) TakeSigner() (signer.Provider, error) {
+	p, err := h.Signer()
+	if err != nil {
+		return nil, err
+	}
+	h.signMu.Lock()
+	h.provider = nil
+	h.signMu.Unlock()
+	return p, nil
+}
+
+// resolveSigner resolves actor, or the database actor when nil. write means
+// the caller holds root's lock exclusively, so a database actor without a
+// usable key may be given one.
+func resolveSigner(root string, actor *Actor, actorKey []byte, write bool) (signer.Provider, error) {
+	ks := signer.NewKeystore(root)
+	if a := actor; a != nil {
 		p, err := ks.Resolve(a.Name, signer.Passphrase(a.Passphrase))
 		if errors.Is(err, signer.ErrNoActor) {
 			return nil, fmt.Errorf("actor %q is not in %s (dues actor create makes it): %w", a.Name, ks.Dir(), err)
 		}
 		return p, err
 	}
-	u := signer.ForDatabase(h.actorKey)
+	u := signer.ForDatabase(actorKey)
 	p, err := ks.Resolve(signer.DatabaseActor, u)
 	var protected *signer.ProtectionError
 	switch {
 	case err == nil:
 		return p, nil
-	case h.ReadOnly:
-		return nil, fmt.Errorf("the database actor of %s: %w", h.Root, err)
+	case !write:
+		return nil, fmt.Errorf("the database actor of %s: %w", root, err)
 	case errors.Is(err, signer.ErrNoActor):
 		_, err = ks.CreateActor(signer.DatabaseActor, u)
 	case errors.Is(err, signer.ErrNoKey):
@@ -105,17 +123,76 @@ func (h *Handle) resolveSigner() (signer.Provider, error) {
 		// The database has opened, so its key is the right one: the
 		// actor's key is an earlier database's, one reset or replaced at
 		// this root. The keyring keeps that key for the commits it signed.
-		msg := fmt.Sprintf("the database actor's key in %s belongs to an earlier database at %s; a new one signs from now on", ks.Dir(), h.Root)
-		logging.GetLogger().Warn("signer: database actor key replaced", zap.String("root", h.Root), zap.Error(err))
+		msg := fmt.Sprintf("the database actor's key in %s belongs to an earlier database at %s; a new one signs from now on", ks.Dir(), root)
+		logging.GetLogger().Warn("signer: database actor key replaced", zap.String("root", root), zap.Error(err))
 		console.Errorln("warning: " + msg)
 		_, err = ks.Rotate(signer.DatabaseActor, u)
 	default:
-		return nil, fmt.Errorf("the database actor of %s: %w", h.Root, err)
+		return nil, fmt.Errorf("the database actor of %s: %w", root, err)
 	}
 	if err != nil {
-		return nil, fmt.Errorf("making a key for the database actor of %s: %w", h.Root, err)
+		return nil, fmt.Errorf("making a key for the database actor of %s: %w", root, err)
 	}
 	return ks.Resolve(signer.DatabaseActor, u)
+}
+
+// EnsureDatabaseActor makes the database actor key, as the first graph
+// write would, when the keyring has no current one with its key file. It
+// takes the root lock exclusively but never opens badger. A key left by an
+// earlier database at the root is not detected here; the next graph write
+// replaces it.
+func EnsureDatabaseActor(ctx context.Context, req Request) (bool, error) {
+	if err := ctx.Err(); err != nil {
+		return false, err
+	}
+	root, err := ResolveRoot(req.Path)
+	if err != nil {
+		return false, err
+	}
+	if !dbmeta.HasDatabase(root) {
+		return false, fmt.Errorf("%w at %s", ErrNoDatabase, root)
+	}
+	if hasDatabaseKey(root) {
+		return false, nil
+	}
+	h := &Handle{Root: root}
+	if err := h.takeLock(); err != nil {
+		return false, err
+	}
+	defer func() { _ = h.lock.Unlock() }()
+	m, err := dbmeta.Load(root)
+	if err != nil {
+		return false, fmt.Errorf("reading the manifest of %s: %w", root, err)
+	}
+	keys, err := dbmeta.DeriveKeys(m.Encryption, req.Creds)
+	if err != nil {
+		return false, h.keyError(err, req.Creds)
+	}
+	defer clear(keys.Actor)
+	if hasDatabaseKey(root) {
+		return false, nil
+	}
+	p, err := resolveSigner(root, nil, keys.Actor, true)
+	if err != nil {
+		return false, err
+	}
+	ref := p.Actor()
+	logging.GetLogger().Info("signer: database actor made", zap.String("root", root), zap.String("key_id", signer.FormatID(ref.KeyID)))
+	return true, p.Close()
+}
+
+func hasDatabaseKey(root string) bool {
+	ks := signer.NewKeystore(root)
+	ring, err := ks.Keyring()
+	if err != nil {
+		return false
+	}
+	e, ok := ring.Current(signer.ActorID(signer.DatabaseActor))
+	if !ok {
+		return false
+	}
+	_, err = os.Stat(ks.KeyPath(e.ActorID, e.KeyID))
+	return err == nil
 }
 
 // RotateDatabaseActor gives the database actor a new key, protected as the

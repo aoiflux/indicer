@@ -99,7 +99,7 @@ func TestVerifyDeepFindsDamagedEvidence(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	_, err = p.Verify(t.Context())
+	_, err = p.Verify(t.Context(), VerifyOptions{})
 	p.Close()
 	if err != nil {
 		t.Fatalf("verify of a package that matches its manifest: %v", err)
@@ -150,11 +150,12 @@ func TestVerifyDeepRefuses(t *testing.T) {
 		t.Errorf("a file changed: %v", err)
 	}
 
-	// The content hash covers the file list, not the counts: a manifest
-	// that claims more evidence still opens, and the deep verify counts.
+	// The content hash covers the file list, not the counts: an unsigned
+	// manifest that claims more evidence still opens, and the deep verify
+	// counts.
 	more := rewrite(t, res.Output, func(name string, data []byte) ([]byte, bool) {
 		if name == duesarc.ManifestName {
-			data = bytes.Replace(data, []byte(`"evidence": 1`), []byte(`"evidence": 2`), 1)
+			data = unsigned(t, bytes.Replace(data, []byte(`"evidence": 1`), []byte(`"evidence": 2`), 1))
 		}
 		return data, true
 	}, nil)

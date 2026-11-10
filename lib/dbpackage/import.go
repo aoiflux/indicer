@@ -20,6 +20,7 @@ import (
 	"indicer/lib/dbopen"
 	"indicer/lib/fsx"
 	"indicer/lib/graph/schema"
+	"indicer/lib/graph/signer"
 	"indicer/lib/store"
 )
 
@@ -49,7 +50,8 @@ type ImportOptions struct {
 	TempDir string
 	// Tuning is how the storage engine runs on the database it opens; nil
 	// takes cnst.DefaultTuning.
-	Tuning *cnst.Tuning
+	Tuning     *cnst.Tuning
+	TrustedKey *signer.Entry
 }
 
 // ImportResult is what an import made.
@@ -59,7 +61,8 @@ type ImportResult struct {
 	// Opened is set when the imported database was opened to check it.
 	Opened bool
 	// Notices are one-line messages for the user.
-	Notices []string
+	Notices   []string
+	Signature *SignatureInfo
 }
 
 // Import makes a new data root from a package. The package's files are
@@ -94,6 +97,9 @@ func Import(ctx context.Context, opts ImportOptions) (res ImportResult, err erro
 	entries, bad := p.entries()
 	if bad.Count > 0 {
 		return res, bad
+	}
+	if res.Signature, err = p.checkSignature(entries, opts.TrustedKey); err != nil {
+		return res, err
 	}
 
 	parent := filepath.Dir(root)

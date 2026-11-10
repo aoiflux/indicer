@@ -241,3 +241,67 @@ func TestCloseEndsSigning(t *testing.T) {
 		t.Fatalf("after close the graph signs as %+v", g.Actor())
 	}
 }
+
+// TestEnsureDatabaseActor: it makes the database actor once, without
+// opening the database, and refuses an encrypted one without its password.
+func TestEnsureDatabaseActor(t *testing.T) {
+	t.Parallel()
+	for _, c := range []struct {
+		name  string
+		creds dbmeta.Credentials
+		want  signer.Protection
+	}{
+		{"unencrypted", dbmeta.NoPassword(), signer.ProtectNone},
+		{"encrypted", dbmeta.Password("pw"), signer.ProtectDatabase},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			t.Parallel()
+			root := setup(t)
+			h, err := Open(t.Context(), Request{Path: root, Mode: ReadWrite, Creds: c.creds, KDF: &fastKDF})
+			if err != nil {
+				t.Fatal(err)
+			}
+			if err := h.Close(); err != nil {
+				t.Fatal(err)
+			}
+			if c.creds.IsSet() {
+				if _, err := EnsureDatabaseActor(t.Context(), Request{Path: root}); !errors.Is(err, dbmeta.ErrPasswordRequired) {
+					t.Fatalf("without the password: %v", err)
+				}
+			}
+			for i, want := range []bool{true, false} {
+				made, err := EnsureDatabaseActor(t.Context(), Request{Path: root, Creds: c.creds})
+				if err != nil || made != want {
+					t.Fatalf("call %d: made %v, %v; want %v", i+1, made, err, want)
+				}
+			}
+			ring := keyring(t, root)
+			e, ok := ring.Current(signer.ActorID(signer.DatabaseActor))
+			if !ok || ring.Len() != 1 || e.Protection != c.want {
+				t.Fatalf("keyring %+v", ring.Entries())
+			}
+			if a := graphActorAfterOpen(t, root, c.creds); a.KeyID != e.KeyID {
+				t.Fatalf("the graph signs with key %x, not the key made: %x", a.KeyID, e.KeyID)
+			}
+		})
+	}
+}
+
+// TestEnsureDatabaseActorNeedsTheRoot: a database in use for writing is
+// refused, as is a root with no database.
+func TestEnsureDatabaseActorNeedsTheRoot(t *testing.T) {
+	t.Parallel()
+	if _, err := EnsureDatabaseActor(t.Context(), Request{Path: setup(t)}); !errors.Is(err, ErrNoDatabase) {
+		t.Fatalf("no database: %v", err)
+	}
+	h := open(t, Request{Path: setup(t), Mode: ReadWrite})
+	if _, err := EnsureDatabaseActor(t.Context(), Request{Path: h.Root}); !errors.Is(err, ErrInUse) {
+		t.Fatalf("in use: %v", err)
+	}
+}
+
+func graphActorAfterOpen(t *testing.T, root string, creds dbmeta.Credentials) graph.ActorRef {
+	t.Helper()
+	h := open(t, Request{Path: root, Mode: ReadWrite, Creds: creds})
+	return graphActor(t, h.Root)
+}

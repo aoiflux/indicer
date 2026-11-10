@@ -39,6 +39,11 @@ const (
 	cmdPackageImport  = "import"
 )
 
+const (
+	flagTrustedKey = "trusted-key"
+	trustedKeyHelp = "Require the package to be signed by this public key (dues actor export-public writes one)"
+)
+
 // The graph command and its subcommands.
 const (
 	cmdGraph        = "graph"
@@ -188,7 +193,9 @@ type cliFlags struct {
 	pkgInspectPath    *string
 	pkgVerifyPath     *string
 	pkgVerifyDeep     *bool
+	pkgVerifyTrusted  *string
 	pkgImportPath     *string
+	pkgImportTrusted  *string
 
 	graphRequireSigned *bool
 
@@ -414,8 +421,10 @@ func newCLIDefinition() cliDefinition {
 	commands.pkgVerify = commands.pkg.Command(cmdPackageVerify, "Check every file of a package against its manifest")
 	flags.pkgVerifyPath = commands.pkgVerify.Arg("package", "The package, or a part or the sidecar of a split one").Required().String()
 	flags.pkgVerifyDeep = commands.pkgVerify.Flag("deep", "Also copy the database into --temp-dir, open it read-only and read every evidence back against its chunk hashes").Default("false").Bool()
+	flags.pkgVerifyTrusted = commands.pkgVerify.Flag(flagTrustedKey, trustedKeyHelp).PlaceHolder("FILE").String()
 	commands.pkgImport = commands.pkg.Command(cmdPackageImport, "Make a new database, at --dbpath, from a package")
 	flags.pkgImportPath = commands.pkgImport.Arg("package", "The package, or a part or the sidecar of a split one").Required().String()
+	flags.pkgImportTrusted = commands.pkgImport.Flag(flagTrustedKey, trustedKeyHelp).PlaceHolder("FILE").String()
 
 	commands.graph = app.Command(cmdGraph, "Compact the graph store, or describe it")
 	commands.graphCompact = commands.graph.Command(cmdGraphCompact, "Fold the graph's log into its image, keeping the log as a segment")

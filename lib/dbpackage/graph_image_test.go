@@ -26,7 +26,7 @@ func TestGraphImageMustTravelWithItsMarker(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	_, err = p.Verify(t.Context())
+	_, err = p.Verify(t.Context(), VerifyOptions{})
 	p.Close()
 	if !isDamaged(err, image) {
 		t.Fatalf("verify of a package without the image: %v, want %s named", err, image)
@@ -45,7 +45,7 @@ func TestGraphImageMustTravelWithItsMarker(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	_, err = p.Verify(t.Context())
+	_, err = p.Verify(t.Context(), VerifyOptions{})
 	p.Close()
 	if err != nil {
 		t.Fatalf("verify of a package with the image: %v", err)

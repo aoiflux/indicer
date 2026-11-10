@@ -63,7 +63,7 @@ func (p Protection) String() string {
 	return fmt.Sprintf("protection(%d)", uint8(p))
 }
 
-func parseProtection(s string) (Protection, error) {
+func ParseProtection(s string) (Protection, error) {
 	for _, p := range []Protection{ProtectPassphrase, ProtectDatabase, ProtectNone} {
 		if p.String() == s {
 			return p, nil

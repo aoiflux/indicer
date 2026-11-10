@@ -146,7 +146,7 @@ func TestExportCopiesTheRoot(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	vr, err := p.Verify(t.Context())
+	vr, err := p.Verify(t.Context(), VerifyOptions{})
 	p.Close()
 	if err != nil || vr.Files != len(m.Files) || vr.Bytes != m.Bytes() {
 		t.Fatalf("verify = %+v, %v; want %d files, %d bytes", vr, err, len(m.Files), m.Bytes())
@@ -173,6 +173,21 @@ func TestExportCopiesTheRoot(t *testing.T) {
 	if bare.Manifest.Database.Components != nil {
 		t.Errorf("--without-derived recorded components %v", bare.Manifest.Database.Components)
 	}
+}
+
+// unsigned is a manifest without its signature.
+func unsigned(t *testing.T, data []byte) []byte {
+	t.Helper()
+	var m map[string]json.RawMessage
+	if err := json.Unmarshal(data, &m); err != nil {
+		t.Fatal(err)
+	}
+	delete(m, "signature")
+	out, err := json.Marshal(m)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return out
 }
 
 // rewrite copies the package at src to a new zip, through edit, which may
@@ -262,7 +277,7 @@ func TestVerifyNamesWhatIsWrong(t *testing.T) {
 				t.Fatal(err)
 			}
 			defer p.Close()
-			_, err = p.Verify(t.Context())
+			_, err = p.Verify(t.Context(), VerifyOptions{})
 			bad, ok := errors.AsType[*DamagedError](err)
 			if !ok {
 				t.Fatalf("verify = %v, want a *DamagedError", err)
@@ -418,7 +433,7 @@ func TestExportSplit(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	vr, err := p.Verify(t.Context())
+	vr, err := p.Verify(t.Context(), VerifyOptions{})
 	p.Close()
 	if err != nil || !vr.SidecarChecked || p.Parts != len(res.Files) {
 		t.Fatalf("verify = %+v, %v; parts %d", vr, err, p.Parts)
@@ -437,7 +452,7 @@ func TestExportSplit(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer p.Close()
-	if _, err := p.Verify(t.Context()); err == nil || !strings.Contains(err.Error(), "does not match its sidecar") {
+	if _, err := p.Verify(t.Context(), VerifyOptions{}); err == nil || !strings.Contains(err.Error(), "does not match its sidecar") {
 		t.Fatalf("verify of a changed part: %v", err)
 	}
 }
@@ -599,7 +614,8 @@ func TestImportRefuses(t *testing.T) {
 
 	miscounted := rewrite(t, res.Output, func(name string, data []byte) ([]byte, bool) {
 		if name == duesarc.ManifestName {
-			data = bytes.Replace(data, []byte(`"evidence": 1`), []byte(`"evidence": 5`), 1)
+			// Unsigned: a signed manifest that was changed fails earlier.
+			data = unsigned(t, bytes.Replace(data, []byte(`"evidence": 1`), []byte(`"evidence": 5`), 1))
 		}
 		return data, true
 	}, nil)
@@ -671,7 +687,7 @@ func TestOpenReadsOnlyTheManifest(t *testing.T) {
 	if p.Manifest.ContentSHA256 != res.Manifest.ContentSHA256 {
 		t.Fatal("the manifest read back differs")
 	}
-	_, err = p.Verify(t.Context())
+	_, err = p.Verify(t.Context(), VerifyOptions{})
 	if bad, ok := errors.AsType[*DamagedError](err); !ok || bad.Count != damaged {
 		t.Fatalf("verify = %v, want %d problems", err, damaged)
 	}

@@ -40,6 +40,19 @@ func MarshalPublicKey(e Entry) ([]byte, error) {
 	return append(b, '\n'), nil
 }
 
+// ReadPublicKeyFile reads the public key file at path.
+func ReadPublicKeyFile(path string) (Entry, error) {
+	b, err := readLimited(path, maxPublicKeyLen)
+	if err != nil {
+		return Entry{}, err
+	}
+	e, err := ParsePublicKey(b)
+	if err != nil {
+		return Entry{}, fmt.Errorf("%s: %w", path, err)
+	}
+	return e, nil
+}
+
 // ParsePublicKey reads a public key MarshalPublicKey wrote. It refuses one
 // whose IDs are not the ones its name and key derive.
 func ParsePublicKey(b []byte) (Entry, error) {

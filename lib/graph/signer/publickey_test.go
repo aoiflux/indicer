@@ -2,6 +2,8 @@ package signer
 
 import (
 	"bytes"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 )
@@ -53,5 +55,38 @@ func TestPublicKeyRoundTrip(t *testing.T) {
 	}
 	if _, err := ParsePublicKey([]byte(strings.Repeat(" ", maxPublicKeyLen+1))); err == nil {
 		t.Error("an oversized file was accepted")
+	}
+}
+
+// TestReadPublicKeyFile: a key file reads back, and one past the size bound
+// is refused before parsing, naming the file.
+func TestReadPublicKeyFile(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+	e, err := NewKeystore(dir).CreateActor(DatabaseActor, ForDatabase(nil))
+	if err != nil {
+		t.Fatal(err)
+	}
+	b, err := MarshalPublicKey(e)
+	if err != nil {
+		t.Fatal(err)
+	}
+	path := filepath.Join(dir, "database.pub")
+	if err := os.WriteFile(path, b, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if got, err := ReadPublicKeyFile(path); err != nil || got.KeyID != e.KeyID {
+		t.Fatalf("ReadPublicKeyFile = %+v, %v", got, err)
+	}
+
+	big := filepath.Join(dir, "big.pub")
+	if err := os.WriteFile(big, bytes.Repeat([]byte(" "), maxPublicKeyLen+1), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := ReadPublicKeyFile(big); err == nil || !strings.Contains(err.Error(), big) {
+		t.Errorf("an oversized key file: %v", err)
+	}
+	if _, err := ReadPublicKeyFile(filepath.Join(dir, "missing.pub")); err == nil {
+		t.Error("a missing key file reads")
 	}
 }

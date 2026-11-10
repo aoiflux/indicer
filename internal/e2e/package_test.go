@@ -27,8 +27,10 @@ func TestPackage(t *testing.T) {
 	if !strings.Contains(out, "Exported database "+db+" to "+filepath.Join(work, "case.duesarc")) || !strings.Contains(out, "content sha256 ") {
 		t.Fatalf("export:\n%s", out)
 	}
-	hash := out[strings.Index(out, "content sha256 ")+len("content sha256 "):]
-	hash = strings.TrimSpace(hash)
+	hash, _, _ := strings.Cut(out[strings.Index(out, "content sha256 ")+len("content sha256 "):], "\n")
+	if !strings.Contains(out, `signed by actor "database"`) {
+		t.Errorf("export is unsigned:\n%s", out)
+	}
 
 	info := duesMust(t, bin, work, "package", "inspect", "case.duesarc").Stdout
 	for _, want := range []string{"DUES database package case.duesarc", "dues-db format 1", "encrypted  no", "evidence   1, 512 KiB", "sha256 " + hash} {

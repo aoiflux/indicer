@@ -16,6 +16,7 @@ import (
 	"indicer/lib/cnst"
 	"indicer/lib/graph"
 	"indicer/lib/graph/schema"
+	"indicer/lib/graph/signer"
 	"indicer/lib/store"
 )
 
@@ -125,25 +126,33 @@ type VerifyResult struct {
 	// after Verify.
 	Evidence *store.VerifyReport
 	// Notices are one-line messages for the user from a deep verify's open.
-	Notices []string
+	Notices   []string
+	Signature *SignatureInfo
+}
+
+type VerifyOptions struct {
+	// TrustedKey, when set, must be the key that signed the package.
+	TrustedKey *signer.Entry
 }
 
 // Verify checks a package against its manifest: a split package's parts
-// against their sidecar, then every entry: each file the manifest lists is
-// there, at its size, with its SHA-256, and nothing else is. What does not
-// match comes back as a *DamagedError.
-func (p *Package) Verify(ctx context.Context) (VerifyResult, error) {
+// against their sidecar, its signature when it has one (checkSignature),
+// then every entry: each file the manifest lists is there, at its size,
+// with its SHA-256, and nothing else is. What does not match comes back as
+// a *DamagedError, and a signature that does not hold as a
+// *SignatureError.
+func (p *Package) Verify(ctx context.Context, opts VerifyOptions) (VerifyResult, error) {
 	var res VerifyResult
-	entries, bad, err := p.checkListing(ctx, &res)
+	entries, bad, err := p.checkListing(ctx, &res, opts.TrustedKey)
 	if err != nil {
 		return res, err
 	}
 	return res, p.checkContents(ctx, entries, bad, &res)
 }
 
-// checkListing checks a split package's parts against their sidecar and
-// matches the zip's entries to the manifest (entries).
-func (p *Package) checkListing(ctx context.Context, res *VerifyResult) (map[string]*zip.File, *DamagedError, error) {
+// checkListing checks a split package's parts against their sidecar,
+// matches the zip's entries to the manifest and checks the signature.
+func (p *Package) checkListing(ctx context.Context, res *VerifyResult, trusted *signer.Entry) (map[string]*zip.File, *DamagedError, error) {
 	if p.zip.In.Verified() {
 		if err := p.zip.In.Verify(ctx); err != nil {
 			return nil, nil, err
@@ -151,6 +160,18 @@ func (p *Package) checkListing(ctx context.Context, res *VerifyResult) (map[stri
 		res.SidecarChecked = true
 	}
 	entries, bad := p.entries()
+	if bad.Count == 0 {
+		info, err := p.checkSignature(entries, trusted)
+		if _, damaged := errors.AsType[*DamagedError](err); damaged {
+			// The content check reports the keyring with every other
+			// damaged entry.
+			return entries, bad, nil
+		}
+		if err != nil {
+			return nil, nil, err
+		}
+		res.Signature = info
+	}
 	return entries, bad, nil
 }
 
@@ -219,6 +240,8 @@ func (p *Package) entries() (map[string]*zip.File, *DamagedError) {
 			bad.add(name, "a directory the manifest does not list")
 		case !inDB || !files[rel]:
 			bad.add(name, "a file the manifest does not list")
+		case isPrivateKey(rel):
+			bad.add(name, "an actor's private key, which a package never carries")
 		default:
 			listed[rel] = zf
 		}
@@ -235,6 +258,10 @@ func (p *Package) entries() (map[string]*zip.File, *DamagedError) {
 	}
 	checkGraphImage(listed, bad)
 	return listed, bad
+}
+
+func isPrivateKey(rel string) bool {
+	return strings.HasPrefix(rel, cnst.KEYSDIR+"/") && strings.HasSuffix(rel, signer.KeyFileExt)
 }
 
 // checkGraphImage adds a problem when the graph's schema marker records a

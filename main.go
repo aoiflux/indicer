@@ -543,11 +543,11 @@ func buildCommandHandlers(cliDef cliDefinition, dbOpts cli.DBOptions, tuning pip
 		},
 		cliDef.commands.pkgVerify.FullCommand(): func(ctx context.Context) error {
 			logging.GetLogger().Info("Command: package verify", zap.String("package", *cliDef.flags.pkgVerifyPath), zap.Bool("deep", *cliDef.flags.pkgVerifyDeep))
-			return cli.PackageVerify(ctx, dbOpts, *cliDef.flags.pkgVerifyPath, *cliDef.flags.pkgVerifyDeep)
+			return cli.PackageVerify(ctx, dbOpts, *cliDef.flags.pkgVerifyPath, *cliDef.flags.pkgVerifyDeep, *cliDef.flags.pkgVerifyTrusted)
 		},
 		cliDef.commands.pkgImport.FullCommand(): func(ctx context.Context) error {
 			logging.GetLogger().Info("Command: package import", zap.String("package", *cliDef.flags.pkgImportPath), zap.String("dbpath", *cliDef.flags.dbpath))
-			return cli.PackageImport(ctx, dbOpts, *cliDef.flags.pkgImportPath)
+			return cli.PackageImport(ctx, dbOpts, *cliDef.flags.pkgImportPath, *cliDef.flags.pkgImportTrusted)
 		},
 		cliDef.commands.graphCompact.FullCommand(): func(ctx context.Context) error {
 			logging.GetLogger().Info("Command: graph compact", zap.String("dbpath", *cliDef.flags.dbpath), zap.Bool("require_signed", *cliDef.flags.graphRequireSigned))

@@ -74,6 +74,8 @@ type ExportOptions struct {
 	HostInfo bool
 	// Creator is the program making the package.
 	Creator duesarc.Creator
+	// Actor signs the package; nil is the database actor.
+	Actor *dbopen.Actor
 }
 
 // ExportResult is what an export made.
@@ -116,7 +118,17 @@ type entry struct {
 // Export packs a data root. The root is held (dbopen.TakeSnapshot) from
 // before its files are listed until the package is written, so no DUES
 // writer changes it meanwhile; readers may run.
+//
+// A database actor that cannot sign leaves the package unsigned, with a
+// notice; a named actor that cannot sign fails the export, since the user
+// asked for that signature.
 func Export(ctx context.Context, opts ExportOptions) (res ExportResult, err error) {
+	var ensureErr error
+	if opts.Actor == nil {
+		if ensureErr = ensureDatabaseActor(ctx, opts); isCredentialError(ensureErr) {
+			return res, ensureErr
+		}
+	}
 	snap, err := dbopen.TakeSnapshot(ctx, opts.Path)
 	if err != nil {
 		return res, err
@@ -183,9 +195,12 @@ func Export(ctx context.Context, opts ExportOptions) (res ExportResult, err erro
 		}
 	}
 
-	stats, notices, err := checkDatabase(ctx, snap, opts)
+	stats, prov, notices, err := checkDatabase(ctx, snap, opts, ensureErr)
 	if err != nil {
 		return res, err
+	}
+	if prov != nil {
+		defer prov.Close()
 	}
 	res.Notices = append(res.Notices, notices...)
 	if !m.Database.Encrypted {
@@ -202,7 +217,7 @@ func Export(ctx context.Context, opts ExportOptions) (res ExportResult, err erro
 
 	ph := progress.Start(ctx, "export", progress.Bytes, total)
 	files, err := duesarc.WriteOutput(ctx, out, opts.PartSize, func(w io.Writer) error {
-		return writePackage(ctx, w, entries, &m, created, ph)
+		return writePackage(ctx, w, entries, &m, created, prov, ph)
 	})
 	ph.Done(err)
 	if err != nil {
@@ -232,20 +247,72 @@ func databaseInfo(s *dbopen.Snapshot) duesarc.DatabaseInfo {
 	}
 }
 
-// checkDatabase opens the database read-only, beside the snapshot, when it
-// can be: to check the password of an encrypted one, and to count an
-// unencrypted one's evidence. An encrypted database without a password is
-// not opened.
-func checkDatabase(ctx context.Context, s *dbopen.Snapshot, opts ExportOptions) (*duesarc.Stats, []string, error) {
+// checkDatabase opens the database read-only beside the snapshot, when the
+// password allows, to check the password, count evidence and resolve the
+// signer, which the caller closes. Without the password only a named actor
+// can sign: the database actor's key is wrapped under the password.
+func checkDatabase(ctx context.Context, s *dbopen.Snapshot, opts ExportOptions, ensureErr error) (_ *duesarc.Stats, prov signer.Provider, notices []string, err error) {
 	if s.Manifest.Encrypted() && !opts.Creds.IsSet() {
-		return nil, []string{fmt.Sprintf("database %s is encrypted and no password was given: the package copies its encrypted files, and the password was not checked", s.Root)}, nil
+		notices = append(notices, fmt.Sprintf("database %s is encrypted and no password was given: the package copies its encrypted files, and the password was not checked", s.Root))
+		if a := opts.Actor; a != nil {
+			prov, err = signer.NewKeystore(s.Root).Resolve(a.Name, signer.Passphrase(a.Passphrase))
+			if err != nil {
+				return nil, nil, notices, fmt.Errorf("actor %q cannot sign the package: %w", a.Name, err)
+			}
+			return nil, prov, notices, nil
+		}
+		notices = append(notices, "the package is unsigned: the database actor's key opens only with the database's password (--actor signs with an actor's own key)")
+		return nil, nil, notices, nil
 	}
-	h, err := dbopen.Open(ctx, dbopen.Request{Path: s.Root, Mode: dbopen.ReadOnly, Creds: opts.Creds, TempDir: opts.TempDir, Tuning: opts.Tuning})
+	h, err := dbopen.Open(ctx, dbopen.Request{Path: s.Root, Mode: dbopen.ReadOnly, Creds: opts.Creds, TempDir: opts.TempDir, Tuning: opts.Tuning, Actor: opts.Actor})
 	if err != nil {
-		return nil, nil, err
+		return nil, nil, nil, err
 	}
+	defer func() {
+		if err = errors.Join(err, h.Close()); err != nil && prov != nil {
+			_ = prov.Close()
+			prov = nil
+		}
+	}()
+	notices = h.Notices
 	stats, err := evidenceStats(ctx, h.DB)
-	return stats, h.Notices, errors.Join(err, h.Close())
+	if err != nil {
+		return nil, nil, notices, err
+	}
+	prov, serr := h.TakeSigner()
+	switch {
+	case serr == nil:
+	case opts.Actor != nil:
+		return nil, nil, notices, fmt.Errorf("actor %q cannot sign the package: %w", opts.Actor.Name, serr)
+	case ensureErr != nil:
+		notices = append(notices, fmt.Sprintf("the package is unsigned: the database actor could not be made: %v", ensureErr))
+	default:
+		notices = append(notices, fmt.Sprintf("the package is unsigned: %v (a graph write, or dues actor rotate database, gives the database actor a key it can sign with)", serr))
+	}
+	return stats, prov, notices, nil
+}
+
+// ensureDatabaseActor runs before the snapshot because it writes the
+// keystore, which the package copies.
+func ensureDatabaseActor(ctx context.Context, opts ExportOptions) error {
+	if !opts.Creds.IsSet() {
+		root, err := dbopen.ResolveRoot(opts.Path)
+		if err != nil {
+			return nil
+		}
+		if m, err := dbmeta.Load(root); err == nil && m.Encrypted() {
+			return nil
+		}
+	}
+	_, err := dbopen.EnsureDatabaseActor(ctx, dbopen.Request{Path: opts.Path, Creds: opts.Creds})
+	if errors.Is(err, dbopen.ErrNoDatabase) {
+		return nil
+	}
+	return err
+}
+
+func isCredentialError(err error) bool {
+	return errors.Is(err, dbmeta.ErrWrongPassword) || errors.Is(err, dbmeta.ErrPasswordRequired)
 }
 
 // evidenceStats counts the completed evidence and their bytes, as stats
@@ -390,9 +457,9 @@ func checkSpace(out string, total int64, entries int, partSize int64) error {
 	return diskspace.Check(filepath.Dir(out), need)
 }
 
-// writePackage writes the zip: the entries in order, then the manifest,
-// which gets their sizes and hashes.
-func writePackage(ctx context.Context, w io.Writer, entries []entry, m *duesarc.DatabaseManifest, created time.Time, ph *progress.Phase) error {
+// writePackage writes the entries in order, then the manifest, which
+// needs their hashes.
+func writePackage(ctx context.Context, w io.Writer, entries []entry, m *duesarc.DatabaseManifest, created time.Time, prov signer.Provider, ph *progress.Phase) error {
 	zw := zip.NewWriter(w)
 	m.Dirs, m.Files = nil, nil
 	for _, e := range entries {
@@ -419,6 +486,12 @@ func writePackage(ctx context.Context, w io.Writer, entries []entry, m *duesarc.
 		return errors.New("the data root holds no files to package")
 	}
 	m.ContentSHA256 = duesarc.ContentHash(m.Files)
+	m.Signature = nil
+	if prov != nil {
+		if err := sign(m, prov); err != nil {
+			return err
+		}
+	}
 	data, err := json.MarshalIndent(m, "", "  ")
 	if err != nil {
 		return err

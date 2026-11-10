@@ -26,6 +26,7 @@ type Provider interface {
 	Actor() ActorRef
 	// Public is the signing key's public half.
 	Public() ed25519.PublicKey
+	Protection() Protection
 	// Signer signs graph commits and packages.
 	Signer() store.Signer
 	// Verifier checks signatures against the keyring.
@@ -41,6 +42,7 @@ type provider struct {
 
 func (p *provider) Actor() ActorRef           { return p.key.entry.Ref() }
 func (p *provider) Public() ed25519.PublicKey { return bytes.Clone(p.key.entry.Public) }
+func (p *provider) Protection() Protection    { return p.key.entry.Protection }
 func (p *provider) Signer() store.Signer      { return p.key }
 func (p *provider) Verifier() store.Verifier  { return p.verifier }
 func (p *provider) Close() error              { p.key.Close(); return nil }

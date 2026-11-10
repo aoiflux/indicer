@@ -18,6 +18,7 @@ given. A data root holds:
 | `blob/` | Chunk blobs (file mode) or container files (container mode). Older hierarchical databases also have `blob/blocks/*.bidx`. |
 | `graph/` | The graph store for enrichment and micro-artefacts, when either has run: the image `graphene.csr`, the log written since `graphene.wal`, the logs earlier compactions retired `graphene.NNNNNN.wal`, and the schema marker `dues.schema.json` (see Graph compaction) |
 | `fts/` | The full-text index, when one was built |
+| `dues.keys/` | The actors' signing keys and the keyring of their public keys (see [Keys and signing](#keys-and-signing)) |
 | `uploads/` | Part files of server uploads in progress |
 | `.dues.lock` | The root lock (see below) |
 
@@ -442,6 +443,59 @@ misread the store.
 To back up the graph, copy `graph/` whole while no DUES command runs, or use
 `dues package export`. The image, the log and the segments belong together.
 
+## Keys and signing
+
+Every graph commit is signed with Ed25519, and every open checks the
+signatures of the log it replays.
+
+A database signs as its own actor, `database`:
+- Its key is made the first time the database's graph is written, or when
+  the database is exported.
+- In an encrypted database, the database password protects the key. A
+  command that writes the graph needs the password anyway.
+- In an unencrypted database, the key is stored unprotected, with mode 0600
+  on Linux and macOS; on Windows it gets the folder's ACLs. Whoever can read
+  the data root can sign as the database.
+
+An examiner signs as an actor of their own:
+- `dues actor create NAME` makes one, with a key its passphrase protects
+  (Argon2id and AES-256-GCM). The actor's ID derives from its name, so every
+  workstation agrees on it.
+- `--actor NAME` with `--actor-key-password-file FILE` or
+  `--actor-key-password-stdin` signs a command's graph commits as that actor.
+  The config keys are `actor` and `actor-key-password-file`.
+- `--password-stdin` and `--actor-key-password-stdin` cannot both be given.
+
+`dues actor list` lists every key of the keyring. `dues actor rotate NAME`
+gives an actor a new key and keeps the old one, so what it signed still
+verifies. `dues actor revoke KEY-ID` stops a key from signing; what it signed
+before still verifies. Create, rotate and revoke hold the database writable.
+
+The keys live in `dues.keys/`:
+- `keyring.json`: every actor's public keys, and which are revoked;
+- `actors.json`: the actors' names and IDs;
+- `actors/*.key`: the private keys.
+
+An open checks each commit against the keyring:
+- A signature that does not verify fails the open.
+- A commit signed by a key the keyring does not hold is let through, with a
+  warning that counts them.
+- After `dues graph compact --require-signed`, every open also refuses an
+  unsigned commit, a record outside any commit, a commit by an unknown key,
+  and a writable open with no actor to sign.
+
+A signature is only as strong as the custody of the data root. Whoever holds
+the root holds its private keys, and can rewrite the graph and sign it again.
+To check signatures against something the root cannot change, export a
+public key with `dues actor export-public NAME --out FILE` and keep the file
+elsewhere. `dues package verify --trusted-key FILE` checks a package against
+it (see [Packages](#packages)).
+
+Back up `dues.keys/` with the rest of the data root. Without its key file,
+an actor cannot sign until it is rotated; what it signed still verifies from
+the keyring. The database actor gets a new key by itself the next time its
+graph is written.
+
 ## Disk space
 
 DUES keeps 128 MiB free on the volume that holds the database:
@@ -489,10 +543,22 @@ that holds the root's files as they are on disk, under `db/`, and a
   first.
 - `--host-info` records the machine's OS, architecture and name. Without it
   the package says nothing of where it was made.
+- The keyring of public keys always goes into the package, also with
+  `--without-derived`. Private keys never do.
 
 The package prints a content hash: the SHA-256 of the manifest's file list.
 It leaves out times and the host, so two packages of the same database state
 have the same content hash, which can go in case notes.
+
+The database actor signs the package (see [Keys and signing](#keys-and-signing)):
+- The signature covers the content hash, the creation time and what the
+  manifest says of the database.
+- Export makes the database actor's key when the database has none.
+- An encrypted database's key opens only with its password. Exported without
+  it, the package is unsigned, and export says so.
+- `--actor NAME`, with its passphrase, signs as that actor instead. This
+  needs no database password. A named actor that cannot sign fails the
+  export.
 
 `dues package inspect PACKAGE` describes a package from its manifest alone.
 `dues package verify PACKAGE` reads all of it: a split package's parts against
@@ -500,6 +566,19 @@ their sidecar, then every file against its size and SHA-256, and that nothing
 is missing or added. A graph whose marker records a compacted image must
 include the image (`graph/graphene.csr`). Each problem is named, and any fails
 the command (exit 1).
+
+Verify also checks a signed package's signature:
+- The signature must verify, and the packaged keyring must hold its key,
+  not revoked.
+- The signing key travels in the package. A signature alone therefore shows
+  only that nothing changed after signing: whoever changed the package could
+  sign it again.
+- `--trusted-key FILE` requires a signature by that public key, written by
+  `dues actor export-public`. Without it, verify says the signature was not
+  checked against a trusted key.
+- A package signed with an unprotected key gets a warning: whoever could
+  read its data root could sign as it.
+- A package that holds a private key fails.
 
 `--deep` also checks the database the package holds, as `dues repair
 --verify` checks a data root:
@@ -531,6 +610,11 @@ package:
   manifest. Only then is the folder renamed to TARGET.
 - An encrypted database is opened only with its password (`--password-file`);
   without it, its files are checked and it is not opened.
+- A signed package's signature is checked as verify checks it.
+  `--trusted-key FILE` imports only a package that key signed.
+- The new database's actor gets a key of its own the first time its graph is
+  written. The source's public keys stay in the keyring, so what they signed
+  still verifies.
 - A failure or an interruption removes the folder and leaves no TARGET. A
   folder left by a killed import is removed by the next import of the same
   TARGET.
@@ -551,3 +635,7 @@ in `docs/COMPRESSION_ABI_REFERENCE.md` (Database packages).
 The records go first and the manifest last, so a reset that is interrupted
 leaves a database without records, or a manifest alone. Running reset again
 finishes it.
+
+Reset keeps `dues.keys/`: keys are custody records, and the keyring lets what
+they signed be checked later. A database made again in the root gets a new
+database key; the old one stays in the keyring.

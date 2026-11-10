@@ -63,6 +63,11 @@ Behaviour that changed:
   command line from the file `case.dd` instead.
 - Settings can be kept in a config file, `~/.config/dues/dues.json`, read on
   every run when it exists (see [Config file](#config-file)).
+- Every graph commit is signed, by the database's own actor or by an examiner
+  named with `--actor`, and packages are signed too. The keys live in
+  `dues.keys/` in the data root, which `dues reset` keeps.
+- The graph store is compacted when its log grows large. DUES v0.39 and older
+  refuse a graph store this release made, instead of misreading it.
 
 ## Feature highlights
 
@@ -136,6 +141,11 @@ Behaviour that changed:
   event records; PE, registry and EVTX metadata. PE, ELF and PDF files are
   parsed for their text too. Hostile input is parsed with bounds.
 - An interactive HTML view of the graph (`graph.html`, or `--out`).
+- Every graph commit is signed with Ed25519 and checked on open. `dues actor`
+  manages the signing actors and their keys.
+- `dues graph compact` folds the graph's log into its image, and commands that
+  write the graph do it themselves once the log is large; `dues graph status`
+  describes the store.
 
 ### 6) API, server, and browser upload path
 
@@ -177,6 +187,8 @@ Behaviour that changed:
 - Ctrl-C and SIGTERM stop at a safe point; the exit codes are stable.
 - DUES keeps 128 MiB free on the database's volume, and stops an ingest before
   the disk fills.
+- `dues package` exports a database to a signed, verifiable `.duesarc` and
+  imports it elsewhere; `--trusted-key` checks who signed it.
 - See [docs/OPERATIONS.md](docs/OPERATIONS.md).
 
 ## Installation
@@ -384,6 +396,9 @@ Core commands:
 - dues enrich
 - dues micro extract
 - dues micro list
+- dues package export|inspect|verify|import
+- dues graph compact|status
+- dues actor create|list|export-public|rotate|revoke
 - dues server
 - dues tui
 - dues version
@@ -439,6 +454,10 @@ Tip: run `dues help <command>` for command-specific short flags and examples.
   it when its log has passed 1 GiB or 5 million records (default auto)
 - --password-file: read the password from the first line of a file
 - --password-stdin: read the password from standard input
+- --actor NAME: sign the graph commits of a command that writes them as this
+  actor, not the database's own
+- --actor-key-password-file, --actor-key-password-stdin: the passphrase of
+  that actor's key
 - --chonksize, -c: chunk size in KB of a new database (default 256)
 - --low, -l: low-resource mode
 - --quick, -q: a new database without table compression; encryption is unchanged
@@ -492,7 +511,7 @@ stores and restores. Paths must be absolute.
 
 - Keys: `color`, `plain`, `ci`, `no-fun`, `theme`, `taskbar`, `log-dir`,
   `temp-dir`, `debug`, `dbpath`, `password-file`, `preset`, `compress-level`,
-  `low`, `graph-compact`; `store`: `pipeline`, `hash-strategy`, `io-engine`,
+  `low`, `graph-compact`, `actor`, `actor-key-password-file`; `store`: `pipeline`, `hash-strategy`, `io-engine`,
   `io-uring-queue-depth`, `store-workers`, `store-queue`; `restore`:
   `restore-workers`, `restore-queue`, `restore-buffer-mb`; `server`: `listen`,
   `token-file`, `cors-origin`.
@@ -587,6 +606,18 @@ See [docs/CLI_UX.md](docs/CLI_UX.md).
   [OPERATIONS.md](docs/OPERATIONS.md))
 - reindex --failed | --all | ID...: rebuild indexes from the stored chunks;
   --source reads one evidence from its original file instead
+
+### Packages, graph and actors
+
+- package export --without-derived: leave out the full-text index and graph
+- package export --split-size-mb N: write parts of N MiB
+- package verify --deep: also read every evidence back from a copy
+- package verify|import --trusted-key FILE: require a signature by this
+  public key (`dues actor export-public`)
+- graph compact --require-signed: from now on, refuse unsigned commits
+- actor create|rotate NAME --actor-key-password-file FILE: make an actor, or
+  give it a new key
+- actor revoke KEY-ID [--reason TEXT]: stop a key from signing
 
 ## CLI migration notes
 

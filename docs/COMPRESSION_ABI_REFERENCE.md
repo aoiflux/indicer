@@ -697,7 +697,10 @@ The zip holds:
   "dirs": [ "blob", "kvdb" ],
   "files": [ { "path": "dues-manifest.json", "size": 412, "sha256": "…" } ],
   "content_sha256": "…",
-  "host": { "os": "windows", "arch": "amd64", "hostname": "lab-3" }
+  "host": { "os": "windows", "arch": "amd64", "hostname": "lab-3" },
+  "signature": { "scheme": "ed25519", "actor": "database",
+                 "actor_id": "8f56dd6450c89522", "key_id": "1c0b7e2a9d4f3365",
+                 "public_key": "…", "key_protection": "database", "signature": "…" }
 }
 ```
 
@@ -714,6 +717,34 @@ The zip holds:
 - `stats` is left out for an encrypted database. `plaintext_components`
   (`fts`, `graph`) names what an encrypted database's package carries
   unencrypted. `host` is written only with `--host-info`.
+- `db/dues.keys/` holds the keyring (`keyring.json`, `actors.json`) and
+  never a private key (`*.key`): a package listing one fails verify and
+  import.
+- `signature` is left out of an unsigned package. `public_key` and
+  `signature` are base64; `actor_id` and `key_id` are 16 hex digits;
+  `key_protection` is `passphrase`, `database` or `none`.
+- The signature is Ed25519 over a statement, not over the manifest's JSON.
+  The statement is a series of fields, each a 4-byte big-endian length and
+  its UTF-8 bytes, in this order:
+  1. `dues.package.v1`, then `signature.scheme`;
+  2. `version`, `kind`, `pipeline`, `created_at_utc`, `db_path`,
+     `content_sha256`;
+  3. `dirs`: its count in decimal, then each entry;
+  4. `stats` as `<evidence> <logical_bytes>` in decimal, or empty when left
+     out;
+  5. `database.format`, `format_version`, `components.graph_schema` (0 when
+     left out), `encryption`, `encrypted` (`true` or `false`);
+  6. `plaintext_components`: its count, then each entry;
+  7. the `layout` fields, in the order shown above;
+  8. `signature.actor`, `actor_id`, `key_id`, the public key's raw 32 bytes,
+     and `key_protection`.
+
+  Numbers are decimal text. `created_by` and `host` are not covered.
+- A reader also checks that `actor_id` is the ID of `actor` and `key_id` the
+  ID of `public_key`, and that the packaged keyring holds the key, not
+  revoked, with the same protection. Given a trusted key, the key IDs must
+  match. The key travels in the package, so only a key held elsewhere shows
+  who signed it.
 - Fields may be added within version 3; readers ignore the ones they do not
   know. A reader refuses a later version.
 

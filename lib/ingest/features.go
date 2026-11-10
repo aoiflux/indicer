@@ -77,6 +77,16 @@ func (s *Session) enrich(ctx context.Context, eid []byte) error {
 // hide the index of an evidence it quarantines. A database without a graph is
 // left without one. keepEvidence keeps the evidence's own node.
 func (s *Session) DeleteGraphIndex(eid []byte, keepEvidence bool) error {
+	end, err := s.begin()
+	if err != nil {
+		return err
+	}
+	defer end()
+	return s.deleteGraphIndex(eid, keepEvidence)
+}
+
+// deleteGraphIndex is DeleteGraphIndex within a call the session admitted.
+func (s *Session) deleteGraphIndex(eid []byte, keepEvidence bool) error {
 	repo, err := s.graphStore(false)
 	if err != nil || repo == nil {
 		return err

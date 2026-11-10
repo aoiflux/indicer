@@ -20,6 +20,7 @@ import (
 func TestQuitWhileJobsRunAsks(t *testing.T) {
 	t.Parallel()
 	g := newGate()
+	g.holdAfterCancel = true
 	d := newDriver(t, Actions{Store: storeWith(g, Outcome{})})
 	d.open(StateStore)
 	d.typeText("case.e01")
@@ -40,6 +41,8 @@ func TestQuitWhileJobsRunAsks(t *testing.T) {
 	if d.m.quit != quitStopping || !d.shows("Waiting for: store case.e01") {
 		t.Fatalf("y: dialog %d; screen:\n%s", d.m.quit, d.view())
 	}
+	d.until("the store is cancelled", func() bool { return g.ended() != nil })
+	close(g.release)
 	d.until("the program quits", func() bool { return d.quit })
 	if !errors.Is(g.ended(), errStopping) {
 		t.Fatalf("the store ended with %v, want %v", g.ended(), errStopping)

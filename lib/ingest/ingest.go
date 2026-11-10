@@ -171,9 +171,11 @@ func Run(ctx context.Context, db *badger.DB, req Request) (Result, error) {
 
 // Run ingests req.Path into the session's database.
 func (s *Session) Run(ctx context.Context, req Request) (Result, error) {
-	if err := s.usable(); err != nil {
+	end, err := s.begin()
+	if err != nil {
 		return Result{}, err
 	}
+	defer end()
 	db := s.db
 	// One strategy for the whole ingest: its plan, record and lookup agree.
 	strategy := engine.For(db).Tuning().HashStrategy

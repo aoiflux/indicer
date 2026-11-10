@@ -1,15 +1,24 @@
 package ingest
 
 import (
+	"context"
 	"errors"
 	"os"
 	"strings"
 	"testing"
+	"time"
 
 	"indicer/internal/testutil"
 	"indicer/lib/dbio"
 	duesgraph "indicer/lib/graph"
+	"indicer/lib/index"
 	"indicer/lib/util"
+)
+
+// How long, and how often, a test checks that Close has started refusing.
+const (
+	closingTimeout = 30 * time.Second
+	closingPoll    = time.Millisecond
 )
 
 // TestSessionOpensEachStoreOnce: a session that stores and then reindexes
@@ -160,5 +169,87 @@ func TestSessionCloseReportsAReleaseThatFailed(t *testing.T) {
 	}
 	if _, err := s.textIndex(true); !errors.Is(err, errSessionClosed) {
 		t.Fatalf("full-text index after a failed close = %v, want %v", err, errSessionClosed)
+	}
+}
+
+// TestSessionCloseWaitsForRunningCalls: Close refuses new calls at once but
+// lets a running ingest finish, opening the stores it needs, and releases
+// them only after it returns.
+func TestSessionCloseWaitsForRunningCalls(t *testing.T) {
+	t.Parallel()
+	db := openDB(t)
+	s := NewSession(db)
+	stored, err := s.Run(t.Context(), Request{Path: fixture(t, "fat/fat12"), Decode: true, Quiet: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	indexing, release := make(chan struct{}), make(chan struct{})
+	s.passes.index = func(ctx context.Context, o index.Options) (index.Result, error) {
+		close(indexing)
+		<-release
+		return index.Run(ctx, o)
+	}
+	type outcome struct {
+		res Result
+		err error
+	}
+	ran := make(chan outcome, 1)
+	go func() {
+		res, err := s.Run(t.Context(), Request{Path: fixture(t, "fat/fat16"), Decode: true, Quiet: true, FTS: true, Enrich: true})
+		ran <- outcome{res, err}
+	}()
+	<-indexing
+	closed := make(chan error, 1)
+	go func() { closed <- s.Close() }()
+	waitClosing(t, s)
+
+	if _, err := s.Run(t.Context(), Request{Path: fixture(t, "fat/fat32"), Decode: true, Quiet: true}); !errors.Is(err, errSessionClosed) {
+		t.Fatalf("run while closing = %v, want %v", err, errSessionClosed)
+	}
+	if _, err := s.Reindex(t.Context(), stored.EvidenceID, ReindexOptions{}); !errors.Is(err, errSessionClosed) {
+		t.Fatalf("reindex while closing = %v, want %v", err, errSessionClosed)
+	}
+	if err := s.DeleteGraphIndex(stored.EvidenceID, true); !errors.Is(err, errSessionClosed) {
+		t.Fatalf("graph delete while closing = %v, want %v", err, errSessionClosed)
+	}
+	select {
+	case err := <-closed:
+		t.Fatalf("close returned (%v) while an ingest was running", err)
+	default:
+	}
+
+	close(release)
+	if got := <-ran; got.err != nil {
+		t.Fatalf("the running ingest: %v", got.err)
+	}
+	if err := <-closed; err != nil {
+		t.Fatalf("close: %v", err)
+	}
+	if got, want := s.Opens(), (Opens{Text: 1, Graph: 1}); got != want {
+		t.Fatalf("opens = %+v, want %+v: the running ingest's stores", got, want)
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.text != nil || s.graph != nil {
+		t.Fatal("close kept a store open")
+	}
+}
+
+// waitClosing waits until s refuses new calls.
+func waitClosing(t *testing.T, s *Session) {
+	t.Helper()
+	deadline := time.Now().Add(closingTimeout)
+	for {
+		s.mu.Lock()
+		closing := s.closing
+		s.mu.Unlock()
+		if closing {
+			return
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("close did not start refusing calls in %v", closingTimeout)
+		}
+		time.Sleep(closingPoll)
 	}
 }

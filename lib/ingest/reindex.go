@@ -56,9 +56,11 @@ func Reindex(ctx context.Context, db *badger.DB, eid []byte, opts ReindexOptions
 
 // Reindex is the package's Reindex on the session's database.
 func (s *Session) Reindex(ctx context.Context, eid []byte, opts ReindexOptions) (Result, error) {
-	if err := s.usable(); err != nil {
+	end, err := s.begin()
+	if err != nil {
 		return Result{}, err
 	}
+	defer end()
 	db := s.db
 	e, err := dbio.GetEvidenceFile(eid, db)
 	if err != nil {
@@ -218,7 +220,7 @@ func (s *Session) deletePrevious(ctx context.Context, eid []byte) (err error) {
 			return fmt.Errorf("delete the previous full-text documents: %w", err)
 		}
 	}
-	if err := s.DeleteGraphIndex(eid, true); err != nil {
+	if err := s.deleteGraphIndex(eid, true); err != nil {
 		return fmt.Errorf("delete the previous index from the graph: %w", err)
 	}
 	return nil

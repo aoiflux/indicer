@@ -26,11 +26,13 @@ type Session struct {
 	db     *badger.DB
 	passes passes
 
-	mu     sync.Mutex
-	text   *fts.Index
-	graph  *enrichment.GrapheneRepository
-	opens  Opens
-	closed bool
+	mu      sync.Mutex
+	running sync.WaitGroup
+	text    *fts.Index
+	graph   *enrichment.GrapheneRepository
+	opens   Opens
+	closing bool // no new calls: Close waits for the running ones
+	closed  bool // the stores are released
 }
 
 // Opens counts what a session opened: each store at most once.
@@ -56,9 +58,17 @@ func (s *Session) Opens() Opens {
 	return s.opens
 }
 
-// Close releases the full-text index and the graph the session opened. The
-// database stays open: it belongs to the caller. A second Close does nothing.
+// Close refuses new calls, waits for the running ones to return, then
+// releases the full-text index and the graph the session opened. Cancel the
+// running calls' context to have them return early. The database stays open:
+// it belongs to the caller. A second Close does nothing. A call of the
+// session must not Close it: it would wait for itself.
 func (s *Session) Close() error {
+	s.mu.Lock()
+	s.closing = true
+	s.mu.Unlock()
+	s.running.Wait()
+
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.closed = true
@@ -123,14 +133,16 @@ func (s *Session) graphStore(create bool) (*enrichment.GrapheneRepository, error
 	return repo, nil
 }
 
-// usable fails a session used after Close, before it writes anything.
-func (s *Session) usable() error {
+// begin admits a call before it writes anything, and Close waits for its end.
+// Once Close has begun, calls are refused.
+func (s *Session) begin() (end func(), err error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	if s.closed {
-		return errSessionClosed
+	if s.closing {
+		return nil, errSessionClosed
 	}
-	return nil
+	s.running.Add(1)
+	return s.running.Done, nil
 }
 
 // closeWith closes a one-shot session, adding its error to err.

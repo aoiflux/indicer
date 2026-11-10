@@ -215,6 +215,9 @@ type gate struct {
 	release chan struct{}
 	// ignoreCancel makes the job ignore its context.
 	ignoreCancel bool
+	// holdAfterCancel keeps a cancelled job running until release, so a test
+	// can see the screen of a job that is stopping.
+	holdAfterCancel bool
 
 	mu    sync.Mutex
 	calls int
@@ -241,6 +244,9 @@ func (g *gate) wait(ctx context.Context) error {
 		g.mu.Lock()
 		g.cause = context.Cause(ctx)
 		g.mu.Unlock()
+		if g.holdAfterCancel {
+			<-g.release
+		}
 		return ctx.Err()
 	}
 }

@@ -18,7 +18,6 @@ import (
 	"indicer/lib/dbmeta"
 	"indicer/lib/engine"
 	"indicer/lib/ingest"
-	"indicer/lib/store"
 )
 
 // withJobsBudget gives evidence run at once budget bytes between them.
@@ -92,7 +91,7 @@ func TestStoreFolderJobsFitMemory(t *testing.T) {
 	d := testdb.Open(t, testdb.Default)
 	in, size := twoChunkFolder(t, d, 4)
 	// Two fit; three do not. Each holds its pass and one for an object.
-	withJobsBudget(t, 2*2*store.PassMemory(d.DB, size, innerWorkers(engine.For(d.DB), 2)))
+	withJobsBudget(t, 2*ingest.LaneMemory(d.DB, size, 2, 2))
 	got := recordStores(t)
 	sess := ingest.NewSession(d.DB)
 	defer sess.Close()
@@ -113,8 +112,8 @@ func TestStoreFolderJobsFitMemory(t *testing.T) {
 		t.Fatalf("stored %v, want all four", got)
 	}
 	for name, workers := range got {
-		if workers != innerWorkers(engine.For(d.DB), 2) {
-			t.Errorf("%s ran with %d workers, want %d: the share of two at once", name, workers, innerWorkers(engine.For(d.DB), 2))
+		if workers != ingest.InnerWorkers(engine.For(d.DB), 2) {
+			t.Errorf("%s ran with %d workers, want %d: the share of two at once", name, workers, ingest.InnerWorkers(engine.For(d.DB), 2))
 		}
 	}
 }
@@ -124,8 +123,8 @@ func TestStoreFolderJobsFitMemory(t *testing.T) {
 func TestHeavyEvidenceRunsWithEveryWorker(t *testing.T) {
 	withJobsBudget(t, 1<<50)
 	d := testdb.Open(t, testdb.Default)
-	if innerWorkers(engine.For(d.DB), 4) == 0 {
-		t.Fatal("innerWorkers(4) = 0: --store-workers is set")
+	if ingest.InnerWorkers(engine.For(d.DB), 4) == 0 {
+		t.Fatal("ingest.InnerWorkers(4) = 0: --store-workers is set")
 	}
 	in, _ := twoChunkFolder(t, d, 3)
 	f, err := os.Create(filepath.Join(in, "heavy.bin"))
@@ -133,7 +132,7 @@ func TestHeavyEvidenceRunsWithEveryWorker(t *testing.T) {
 		t.Fatal(err)
 	}
 	// Sparse where the file system allows: only its size matters.
-	if err := errors.Join(f.Truncate(heavyItem), f.Close()); err != nil {
+	if err := errors.Join(f.Truncate(ingest.HeavySize), f.Close()); err != nil {
 		t.Fatal(err)
 	}
 	got := recordStores(t)
@@ -142,7 +141,7 @@ func TestHeavyEvidenceRunsWithEveryWorker(t *testing.T) {
 	if err := storeFolder(t.Context(), io.Discard, sess, in, StoreOptions{Decode: true, Quiet: true, Jobs: 4}); err != nil {
 		t.Fatal(err)
 	}
-	want := map[string]int{"f0.bin": innerWorkers(engine.For(d.DB), 4), "f1.bin": innerWorkers(engine.For(d.DB), 4), "f2.bin": innerWorkers(engine.For(d.DB), 4), "heavy.bin": 0}
+	want := map[string]int{"f0.bin": ingest.InnerWorkers(engine.For(d.DB), 4), "f1.bin": ingest.InnerWorkers(engine.For(d.DB), 4), "f2.bin": ingest.InnerWorkers(engine.For(d.DB), 4), "heavy.bin": 0}
 	if fmt.Sprint(got) != fmt.Sprint(want) {
 		t.Fatalf("worker caps %v, want %v", got, want)
 	}

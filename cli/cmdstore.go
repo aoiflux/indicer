@@ -57,7 +57,7 @@ type StoreOptions struct {
 	// credit is the evidence's place in its folder (store.ChunkCredits).
 	credit store.Credit
 	// heavy is the decoded size from which a folder's evidence is stored
-	// alone; 0 means heavyItem. Tests lower it.
+	// alone; 0 means ingest.HeavySize. Tests lower it.
 	heavy int64
 }
 
@@ -164,7 +164,7 @@ func storeFolder(ctx context.Context, w io.Writer, sess *ingest.Session, dir str
 	var items []workpool.Item
 	if jobs > 1 {
 		var sizes []int64
-		items, sizes = folderItems(ctx, sess.DB(), plan.Items, sopts.Decode, jobs, cmp.Or(sopts.heavy, heavyItem))
+		items, sizes = folderItems(ctx, sess.DB(), plan.Items, sopts.Decode, jobs, cmp.Or(sopts.heavy, ingest.HeavySize))
 		passes := 2
 		if sopts.NoIndex {
 			passes = 1
@@ -217,7 +217,7 @@ func storeFolder(ctx context.Context, w io.Writer, sess *ingest.Session, dir str
 		if jobs > 1 && !items[i].Heavy {
 			// Beside others: a share of the machine. A heavy one runs
 			// alone, with all of it.
-			isopts.maxWorkers = innerWorkers(eng, jobs)
+			isopts.maxWorkers = ingest.InnerWorkers(eng, jobs)
 		}
 		isopts.credit = creditOf(i)
 		probe := startItemProbe(sess.DB(), credits)

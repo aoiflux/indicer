@@ -156,6 +156,11 @@ func Flags() { kingpin.EnableFileExpansion = false }
 			t.Errorf("%s: guard reported %v, want nothing", src, bad)
 		}
 	}
+	measures := parsePackage(t, modulePath+"/internal/testutil", "package testutil\nfunc PeakHeap(fn func()) uint64 { return 0 }\n",
+		"package testutil\nimport \"testing\"\nfunc TestX(t *testing.T) { t.Parallel(); _ = PeakHeap(nil) }\n")
+	if bad := measures.unsafeParallelTests(); len(bad) != 1 {
+		t.Errorf("own measuring helper: guard reported %v, want TestX", bad)
+	}
 	for path, want := range map[string]string{
 		"os":                               "os",
 		"github.com/alecthomas/kingpin/v2": "kingpin",
@@ -176,13 +181,19 @@ func testFile(body string) string {
 // parseModule loads a module of one package p from its sources.
 func parseModule(t *testing.T, prod, test string) *module {
 	t.Helper()
+	return parsePackage(t, modulePath+"/p", prod, test)
+}
+
+// parsePackage loads a module of one package at path from its sources.
+func parsePackage(t *testing.T, path, prod, test string) *module {
+	t.Helper()
 	m := newModule()
 	for name, src := range map[string]string{"p.go": prod, "p_test.go": test} {
 		f, err := parser.ParseFile(m.fset, name, src, 0)
 		if err != nil {
 			t.Fatal(err)
 		}
-		m.add(modulePath+"/p", name, f)
+		m.add(path, name, f)
 	}
 	m.findWriters()
 	return m
@@ -637,8 +648,13 @@ func (m *module) processCall(body *ast.BlockStmt, imports map[string]string, own
 			}
 			return false
 		case *ast.Ident:
-			if own != nil && (x.Obj == nil || x.Obj.Kind == ast.Fun) && own.writers[x.Name] != "" {
-				why = "calls " + x.Name + ", which " + own.writers[x.Name]
+			if own == nil || (x.Obj != nil && x.Obj.Kind != ast.Fun) {
+				return true
+			}
+			if processCalls[own.path][x.Name] {
+				why = "calls " + x.Name
+			} else if w := own.writers[x.Name]; w != "" {
+				why = "calls " + x.Name + ", which " + w
 			}
 		}
 		return why == ""

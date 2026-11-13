@@ -238,13 +238,13 @@ func TestFolderJobsReportFailuresInFolderOrder(t *testing.T) {
 // low-resource mode stores one at a time.
 func TestStoreJobs(t *testing.T) {
 	t.Parallel()
-	for _, n := range []int{-1, 65} {
+	for _, n := range []int{-1, ingest.MaxJobs + 1} {
 		if _, err := StoreJobs(n, false); err == nil {
 			t.Errorf("StoreJobs(%d) accepted", n)
 		}
 	}
-	if n, err := StoreJobs(0, false); err != nil || n < 1 || n > 4 {
-		t.Errorf("StoreJobs(0) = %d, %v; want 1 to 4", n, err)
+	if n, err := StoreJobs(0, false); err != nil || n != ingest.AutoJobs() {
+		t.Errorf("StoreJobs(0) = %d, %v; want %d", n, err, ingest.AutoJobs())
 	}
 	if n, _ := StoreJobs(8, false); n != 8 {
 		t.Errorf("StoreJobs(8) = %d", n)

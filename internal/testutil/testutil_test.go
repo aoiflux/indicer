@@ -231,7 +231,6 @@ func TestFakeClock(t *testing.T) {
 }
 
 func TestPeakHeapAndAllocBelow(t *testing.T) {
-	t.Parallel()
 	var keep []byte
 	peak := PeakHeap(func() { keep = make([]byte, 8<<20); time.Sleep(5 * time.Millisecond) })
 	if peak < 8<<20 {

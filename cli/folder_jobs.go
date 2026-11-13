@@ -7,7 +7,6 @@ import (
 	"fmt"
 	"io"
 	"math"
-	"runtime"
 	"slices"
 	"sync"
 	"time"
@@ -17,57 +16,36 @@ import (
 	"indicer/internal/workpool"
 	"indicer/lib/cnst"
 	"indicer/lib/dbmeta"
-	"indicer/lib/engine"
 	"indicer/lib/evidence"
+	"indicer/lib/ingest"
 	"indicer/lib/logging"
-	"indicer/lib/store"
 
 	"github.com/dgraph-io/badger/v4"
 	"go.uber.org/zap"
 )
 
-// maxStoreJobs bounds --store-jobs: past a few, evidence stored at once only
-// compete for the disk.
-const maxStoreJobs = 64
-
-// heavyItem is the decoded size from which a folder's evidence is stored
-// alone, with every worker: a large image keeps the machine busy by itself.
-const heavyItem = 256 << 20
-
 // StoreJobs turns --store-jobs into StoreOptions.Jobs: n, or for 0 a number
 // for this machine. Low-resource mode (low) stores one at a time.
 func StoreJobs(n int, low bool) (int, error) {
 	switch {
-	case n < 0 || n > maxStoreJobs:
-		return 0, lifecycle.Usagef("--%s must be from 0 to %d, got %d", cnst.FlagStoreJobs, maxStoreJobs, n)
+	case n < 0 || n > ingest.MaxJobs:
+		return 0, lifecycle.Usagef("--%s must be from 0 to %d, got %d", cnst.FlagStoreJobs, ingest.MaxJobs, n)
 	case low:
 		return 1, nil
 	case n == 0:
-		return min(4, max(1, runtime.NumCPU()/4)), nil
+		return ingest.AutoJobs(), nil
 	}
 	return n, nil
 }
 
 // folderJobs is how many evidence of a folder a store with Jobs n runs at
-// once with tuning t: one for 0, at most maxStoreJobs, one in low-resource
+// once with tuning t: one for 0, at most ingest.MaxJobs, one in low-resource
 // mode.
 func folderJobs(t cnst.Tuning, n int) int {
 	if t.LowResource {
 		return 1
 	}
-	return min(max(n, 1), maxStoreJobs)
-}
-
-// innerWorkers is the chunk-pass width of one evidence among jobs stored at
-// once in the database of e: its pipeline width shared out, or 0 (the
-// configured width) when one runs at a time or --store-workers set it.
-func innerWorkers(e *engine.Engine, jobs int) int {
-	t := e.Tuning()
-	if jobs <= 1 || t.StoreWorkers > 0 {
-		return 0
-	}
-	workers, _ := t.StorePipeline(e.Container())
-	return max(2, workers/jobs)
+	return min(max(n, 1), ingest.MaxJobs)
 }
 
 // folderItems tells the scheduler which evidence of a folder may hold the
@@ -134,17 +112,15 @@ var jobsBudget = func() int64 { return appconfig.MemoryBudget(appconfig.Machine(
 
 // jobsInMemory is how many evidence may run at once, of jobs asked for, in
 // jobsBudget. Each evidence beside others holds what passes chunk passes of
-// its size hold (store.PassMemory): its own, and one for an object its index
-// pass stores. A heavy one runs alone, as one store does, and is not counted. Jobs the user gave that do not fit are
-// refused; jobs chosen for this machine (auto) come down until they fit.
+// its size hold (ingest.LaneMemory). A heavy one runs alone, as one store
+// does, and is not counted. Jobs the user gave that do not fit are refused;
+// jobs chosen for this machine (auto) come down until they fit.
 func jobsInMemory(db *badger.DB, jobs int, auto bool, items []workpool.Item, sizes []int64, passes int) (int, error) {
 	if jobs <= 1 {
 		return jobs, nil
 	}
 	budget := jobsBudget()
-	lane := func(i, jobs int) int64 {
-		return int64(passes) * store.PassMemory(db, sizes[i], innerWorkers(engine.For(db), jobs))
-	}
+	lane := func(i, jobs int) int64 { return ingest.LaneMemory(db, sizes[i], jobs, passes) }
 	fit, need := fitJobs(jobs, items, lane, budget)
 	if fit == jobs {
 		return jobs, nil

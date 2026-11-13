@@ -111,7 +111,7 @@ func reindexEvidence(ctx context.Context, db *badger.DB, ro ReindexOptions, w io
 	items := make([]workpool.Item, len(targets))
 	sizes := make([]int64, len(targets))
 	for i, t := range targets {
-		items[i].Heavy, sizes[i] = t.size >= heavyItem, t.size
+		items[i].Heavy, sizes[i] = t.size >= ingest.HeavySize, t.size
 	}
 	if jobs, err = jobsInMemory(db, jobs, ro.AutoJobs, items, sizes, 1); err != nil {
 		return sum, err
@@ -144,7 +144,7 @@ func reindexEvidence(ctx context.Context, db *badger.DB, ro ReindexOptions, w io
 		one.Weigh(itemWeight(t.size))
 		opts := ingest.ReindexOptions{Source: ro.Source, FTS: ro.FTS, Enrich: ro.Enrich}
 		if jobs > 1 && !items[i].Heavy {
-			opts.MaxWorkers = innerWorkers(eng, jobs)
+			opts.MaxWorkers = ingest.InnerWorkers(eng, jobs)
 		}
 		res, err := sess.Reindex(progress.Within(ctx, one), t.id, opts)
 		one.Done(err)

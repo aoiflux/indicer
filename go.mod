@@ -2,7 +2,7 @@ module indicer
 
 go 1.26.2
 
-toolchain go1.27.3
+toolchain go1.27.4
 
 require (
 	charm.land/bubbles/v2 v2.1.0

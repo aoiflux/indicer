@@ -10,31 +10,40 @@ import (
 	"indicer/api"
 	"indicer/internal/lifecycle"
 	"indicer/lib/dbopen"
+	"indicer/lib/server"
 )
 
-// TestServerTokenSources: the token comes from --token-file only. DUES_TOKEN
+// TestServerTokenSources: the tokens come from --token-file only. DUES_TOKEN
 // is not read, and the removed --token is refused, naming --token-file.
 func TestServerTokenSources(t *testing.T) {
 	t.Setenv("DUES_TOKEN", "from-env")
-	tokFile := filepath.Join(t.TempDir(), "tok")
-	if err := os.WriteFile(tokFile, []byte("from-file-0123456789abcdef0123456789\r\nignored\n"), 0o600); err != nil {
-		t.Fatal(err)
+	dir := t.TempDir()
+	write := func(name, content string) string {
+		p := filepath.Join(dir, name)
+		if err := os.WriteFile(p, []byte(content), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		return p
 	}
-	empty := filepath.Join(t.TempDir(), "empty")
-	if err := os.WriteFile(empty, []byte("\n"), 0o600); err != nil {
-		t.Fatal(err)
-	}
+	const tok = "from-file-0123456789abcdef0123456789"
+	one := write("one", tok+"\r\n")
+	twoLines := write("two-lines", tok+"\r\nignored\n")
+	v1 := write("v1", server.TokenFileHeader+"\n"+tok+" read reader\n"+tok+"x all admin\n")
+	empty := write("empty", "\n")
 	for _, c := range []struct {
 		name  string
 		args  []string
-		want  string
+		want  string // label:scopes of each token
 		usage string // part of the usage error expected; empty for none
 	}{
 		{"none", nil, "", ""},
-		{"file", []string{"--token-file", tokFile}, "from-file-0123456789abcdef0123456789", ""},
+		{"file", []string{"--token-file", one}, "default:read,upload", ""},
+		{"v1 file", []string{"--token-file", v1}, "reader:read admin:read,upload,export", ""},
+		{"second line", []string{"--token-file", twoLines}, "", server.TokenFileHeader},
 		{"removed flag", []string{"--token", "from-flag"}, "", "--token-file"},
-		{"removed flag with a file", []string{"--token-file", tokFile, "--token", "x"}, "", "--token-file"},
-		{"missing file", []string{"--token-file", filepath.Join(t.TempDir(), "nope")}, "", "--token-file"},
+		{"removed flag with a file", []string{"--token-file", one, "--token", "x"}, "", "--token-file"},
+		{"missing file", []string{"--token-file", filepath.Join(dir, "nope")}, "", "--token-file"},
+		{"directory", []string{"--token-file", dir}, "", "is a directory"},
 		{"empty file", []string{"--token-file", empty}, "", "holds no token"},
 	} {
 		t.Run(c.name, func(t *testing.T) {
@@ -47,18 +56,22 @@ func TestServerTokenSources(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			tok, err := resolveServerToken(cliDef.flags, sources{set: set})
+			creds, err := resolveServerTokens(cliDef.flags, sources{set: set})
 			if c.usage != "" {
-				if lifecycle.ExitCode(err) != lifecycle.ExitUsage || !strings.Contains(err.Error(), c.usage) {
-					t.Fatalf("error %v, want a usage error containing %q", err, c.usage)
+				if lifecycle.ExitCode(err) != lifecycle.ExitUsage || !strings.Contains(err.Error(), c.usage) || strings.Contains(err.Error(), tok) {
+					t.Fatalf("error %v, want a usage error containing %q and not the token", err, c.usage)
 				}
 				return
 			}
 			if err != nil {
 				t.Fatal(err)
 			}
-			if tok != c.want {
-				t.Fatalf("token %q, want %q", tok, c.want)
+			var got []string
+			for _, cr := range creds {
+				got = append(got, cr.Label()+":"+cr.Scopes().String())
+			}
+			if strings.Join(got, " ") != c.want {
+				t.Fatalf("tokens %q, want %q", got, c.want)
 			}
 		})
 	}

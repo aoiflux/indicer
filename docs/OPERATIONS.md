@@ -303,6 +303,34 @@ access comes from the file's ACLs and is not checked.
 value in effect and its source (`flag`, `config` or `default`). It opens no
 database and reads neither the password file nor the token file.
 
+## Server tokens
+
+`dues server --token-file PATH` reads the server's bearer tokens. The file
+holds one token on its first line, which may read and upload, or, after a
+`#dues-tokens v1` header, one `<token> <scopes> <label>` per line with the
+scopes `read`, `upload`, `export` or `all`. `docs/SERVER_API.md` describes
+the format and what each scope allows.
+
+- **The file.** It is read by the config file's rules above: a regular file
+  of at most 64 KiB, and on Linux and macOS one that belongs to you or root
+  and that neither its group nor others may write. Others may read it, as
+  they can a mounted container secret. A file that cannot be used stops the
+  server with exit 2, naming the line, never the token.
+- **Labels in the log.** The log names a token by its label, in the field
+  `bearer`: on `server request`, `server scope refused`, `upload started`,
+  `upload stored`, `upload failed` and `upload of another token`. With
+  `upload started` and its `request_id`, `upload stored` ties each stored
+  evidence to the token that sent it. No field holds the token itself.
+- **Scopes are not tenants.** Every token works on the one database. A token
+  with `upload` learns whether content it holds is stored, and the 16
+  uploads in progress are shared by all tokens. Give `upload` only to
+  clients trusted not to take every slot.
+- **Revoking a token.** In a `#dues-tokens v1` file, remove its line, or
+  put `#` before it. In a one-token file, replace the token: comments need
+  the header, so a `#` before that token stops the server from starting.
+  Then restart the server. A restart ends every upload in progress, of every token;
+  their clients upload again.
+
 ## Logs and crash files
 
 DUES writes its log to the first directory it can write in, in this order:

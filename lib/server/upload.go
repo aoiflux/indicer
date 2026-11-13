@@ -109,6 +109,9 @@ type session struct {
 	hash       string // the client's, base64
 	sum        hash.Hash
 	size       int64 // declared; -1 when not (a StreamFile without size)
+	// owner is the label of the token that started the session; only that
+	// token may go on with it.
+	owner string
 
 	// Guarded by uploads.mu.
 	offset   int64
@@ -379,8 +382,9 @@ func (m *uploads) checkHash(h string) (string, error) {
 	return h, nil
 }
 
-// start opens a session for a file of size bytes (-1: not declared).
-func (m *uploads) start(path, ftype, h string, size int64) (*session, *uploadError) {
+// start opens a session for a file of size bytes (-1: not declared), owned
+// by the token of the request ctx belongs to.
+func (m *uploads) start(ctx context.Context, path, ftype, h string, size int64) (*session, *uploadError) {
 	if err := checkClientPath(path); err != nil {
 		return nil, uploadErr(http.StatusBadRequest, "%v", err)
 	}
@@ -424,12 +428,12 @@ func (m *uploads) start(path, ftype, h string, size int64) (*session, *uploadErr
 	now := m.now()
 	s := &session{
 		id: id, path: part, f: f, clientPath: path, fileType: ft, hash: h, sum: m.hasher(), size: size,
-		created: now, last: now, state: stateReceiving,
+		owner: credentialOf(ctx).label, created: now, last: now, state: stateReceiving,
 		op: make(chan struct{}, 1), done: make(chan struct{}),
 	}
 	m.sessions[id] = s
-	m.s.log.Info("upload started", zap.String("upload_id", id), zap.String("client_path", truncate(path, 512)),
-		zap.Int64("size", size))
+	m.s.log.Info("upload started", zap.String("upload_id", id), zap.String("request_id", RequestID(ctx)),
+		bearerField(s.owner), zap.String("client_path", truncate(path, 512)), zap.Int64("size", size))
 	return s, nil
 }
 
@@ -547,10 +551,11 @@ func (m *uploads) runFinalize(ctx context.Context, s *session) {
 	m.mu.Unlock()
 	m.dropFile(s)
 	if uerr != nil {
-		m.s.log.Warn("upload failed", zap.String("upload_id", s.id), zap.Int("status", uerr.status), zap.String("error", uerr.msg))
+		m.s.log.Warn("upload failed", zap.String("upload_id", s.id), bearerField(s.owner), zap.Int("status", uerr.status), zap.String("error", uerr.msg))
 		return
 	}
-	m.s.log.Info("upload stored", zap.String("upload_id", s.id), zap.String("outcome", res.Outcome), zap.String("evidence", res.EviFile.FileId))
+	m.s.log.Info("upload stored", zap.String("upload_id", s.id), bearerField(s.owner), zap.String("outcome", res.Outcome),
+		zap.String("evidence", res.EviFile.FileId))
 }
 
 // ingestUpload checks a received upload against its hash and stores it.
@@ -748,14 +753,14 @@ func (m *uploads) status(s *session) uploadStatus {
 // HTTP endpoints.
 
 func (s *Server) uploadRoutes() {
-	js := route{maxBody: s.cfg.Limits.MaxJSONBody, read: 30 * time.Second, write: 30 * time.Second}
-	s.handle(s.mux, "POST /web/upload/start", js, http.HandlerFunc(s.handleUploadStart))
-	s.handle(s.mux, "POST /web/upload/chunk", route{maxBody: maxChunk, idleRead: time.Minute, write: time.Minute}, http.HandlerFunc(s.handleUploadChunk))
-	s.handle(s.mux, "POST /web/upload/status", js, http.HandlerFunc(s.handleUploadStatus))
-	s.handle(s.mux, "POST /web/upload/abort", js, http.HandlerFunc(s.handleUploadAbort))
+	js := route{maxBody: s.cfg.Limits.MaxJSONBody, read: 30 * time.Second, write: 30 * time.Second, scope: ScopeUpload}
+	s.handle("POST /web/upload/start", js, http.HandlerFunc(s.handleUploadStart))
+	s.handle("POST /web/upload/chunk", route{maxBody: maxChunk, idleRead: time.Minute, write: time.Minute, scope: ScopeUpload}, http.HandlerFunc(s.handleUploadChunk))
+	s.handle("POST /web/upload/status", js, http.HandlerFunc(s.handleUploadStatus))
+	s.handle("POST /web/upload/abort", js, http.HandlerFunc(s.handleUploadAbort))
 	// A finalize answers once FinalizeWait has passed, at the latest.
-	fin := route{maxBody: s.cfg.Limits.MaxJSONBody, read: 30 * time.Second, write: s.uploads.lim.FinalizeWait + 30*time.Second}
-	s.handle(s.mux, "POST /web/upload/finalize", fin, http.HandlerFunc(s.handleUploadFinalize))
+	fin := route{maxBody: s.cfg.Limits.MaxJSONBody, read: 30 * time.Second, write: s.uploads.lim.FinalizeWait + 30*time.Second, scope: ScopeUpload}
+	s.handle("POST /web/upload/finalize", fin, http.HandlerFunc(s.handleUploadFinalize))
 }
 
 func (s *Server) stopUploads(idle bool) {
@@ -780,13 +785,22 @@ func writeUploadError(w http.ResponseWriter, r *http.Request, e *uploadError) {
 	writeJSON(w, e.status, body)
 }
 
-// session finds the session a request names, or answers 404.
+// session finds the session a request names, or answers 404. A session
+// another token started is answered as unknown, so no token learns of
+// another's uploads.
 func (s *Server) session(w http.ResponseWriter, r *http.Request, id string) *session {
 	if id == "" {
 		httpError(w, r, http.StatusBadRequest, "upload_id is required")
 		return nil
 	}
 	sess := s.uploads.get(id)
+	if sess != nil {
+		if who := credentialOf(r.Context()).label; sess.owner != who {
+			s.log.Warn("upload of another token", zap.String("request_id", RequestID(r.Context())), zap.String("upload_id", sess.id),
+				bearerField(who))
+			sess = nil
+		}
+	}
 	if sess == nil {
 		httpError(w, r, http.StatusNotFound, "upload session not found or expired")
 	}
@@ -820,7 +834,7 @@ func (s *Server) handleUploadStart(w http.ResponseWriter, r *http.Request) {
 		httpError(w, r, http.StatusBadRequest, "size must not be negative")
 		return
 	}
-	sess, uerr := s.uploads.start(req.FilePath, req.FileType, req.FileHash, *req.Size)
+	sess, uerr := s.uploads.start(r.Context(), req.FilePath, req.FileType, req.FileHash, *req.Size)
 	if uerr != nil {
 		writeUploadError(w, r, uerr)
 		return
@@ -985,7 +999,7 @@ func (s *Server) streamUpload(ctx context.Context, stream *connect.ClientStream[
 	if size <= 0 {
 		size = -1
 	}
-	sess, uerr := s.uploads.start(meta.GetFilePath(), meta.GetFileType(), meta.GetFileHash(), size)
+	sess, uerr := s.uploads.start(ctx, meta.GetFilePath(), meta.GetFileType(), meta.GetFileHash(), size)
 	if uerr != nil {
 		return nil, uploadRPCError(uerr)
 	}

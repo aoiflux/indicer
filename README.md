@@ -152,9 +152,10 @@ Behaviour that changed:
 - Connect, gRPC and gRPC-Web on port 50051, served on 127.0.0.1 and [::1]
   only unless `--listen` says otherwise.
 - A non-loopback address needs a bearer token of at least 32 characters
-  (`--token-file`). Once set, the token is required on every
-  request but the health checks. Traffic is plain HTTP; use a TLS proxy or an
-  SSH tunnel for remote clients.
+  (`--token-file`). Once set, a token is required on every request but the
+  health checks. A `#dues-tokens v1` file gives several tokens, each with a
+  label and the scopes `read`, `upload` or `export`. Traffic is plain HTTP;
+  use a TLS proxy or an SSH tunnel for remote clients.
 - Browser pages from loopback origins, and from `--cors-origin` origins, may
   call the server; other origins are refused.
 - Paged listings of evidence, partitions and indexed files, with chunk maps.

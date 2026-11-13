@@ -18,7 +18,7 @@ import (
 // Options are the server's command-line settings.
 type Options struct {
 	Listen      []string
-	Token       string
+	Tokens      []server.Credential
 	CORSOrigins []string
 	// UploadJobs is how many uploads are stored at once; 0 keeps the
 	// server's default.
@@ -31,7 +31,7 @@ type Options struct {
 // opened. A stop that leaves work running (server.ErrUncleanShutdown) leaves
 // the database as it is, for recovery at its next open.
 func Server(ctx context.Context, db dbopen.Request, so Options) (err error) {
-	cfg := server.Config{Listen: so.Listen, Token: so.Token, CORSOrigins: so.CORSOrigins, Limits: server.DefaultLimits()}
+	cfg := server.Config{Listen: so.Listen, Tokens: so.Tokens, CORSOrigins: so.CORSOrigins, Limits: server.DefaultLimits()}
 	if so.UploadJobs > 0 {
 		cfg.Limits.Upload.Jobs = so.UploadJobs
 	}
@@ -70,9 +70,7 @@ func Server(ctx context.Context, db dbopen.Request, so Options) (err error) {
 		lines = append(lines, fmt.Sprintf("Listening on %s", a))
 	}
 	lines = append(lines, srv.Notes...)
-	if so.Token != "" {
-		lines = append(lines, "Bearer token required on every request except /healthz and /readyz")
-	}
+	lines = append(lines, tokenLines(so.Tokens)...)
 	lines = append(lines, "Service path: /dues.DuesService/*", "Health: GET /healthz, GET /readyz", "Press Ctrl+C to stop gracefully")
 	printSuccess("Server online", lines)
 	for _, a := range cfg.Listen {
@@ -122,4 +120,17 @@ func printSection(role ui.Role, mark func(ui.Glyphs) string, title string, lines
 		console.Println(bullet + line)
 	}
 	console.Println()
+}
+
+// tokenLines say what each token may do, by its label; the token itself is
+// never printed.
+func tokenLines(tokens []server.Credential) []string {
+	if len(tokens) == 0 {
+		return []string{fmt.Sprintf("No token: every request may %s; %s is off", server.DefaultScopes, server.ScopeExport)}
+	}
+	lines := []string{"Bearer token required on every request except /healthz and /readyz"}
+	for _, c := range tokens {
+		lines = append(lines, fmt.Sprintf("Token %s: %s", c.Label(), c.Scopes()))
+	}
+	return lines
 }

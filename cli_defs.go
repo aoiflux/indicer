@@ -3,8 +3,11 @@ package main
 // The command-line definition: flags and commands.
 
 import (
+	"strconv"
+
 	"indicer/internal/ui"
 	"indicer/lib/cnst"
+	"indicer/lib/server"
 
 	"github.com/alecthomas/kingpin/v2"
 )
@@ -406,7 +409,7 @@ func newCLIDefinition() cliDefinition {
 	commands.server = app.Command(cnst.CmdServer, "Run gRPC / Web combined DUES server")
 	flags.serverHashAlgo = commands.server.Flag(cnst.FlagHashAlgo, "Hashing algorithm to use [sha3|blake3] (default: BLAKE3)").Short(cnst.FlagHashAlgoShort).Default(cnst.BLAKE3).String()
 	flags.serverListen = commands.server.Flag(flagListen, "Serve on this host:port (repeatable; default 127.0.0.1:50051 and [::1]:50051). A non-loopback address needs a token").Strings()
-	flags.serverTokenFile = commands.server.Flag(flagTokenFile, "Require the bearer token on the first line of this file").String()
+	flags.serverTokenFile = commands.server.Flag(flagTokenFile, "Require a bearer token from this file: one on its first line, or "+strconv.Quote(server.TokenFileHeader)+" and <token> <scopes> <label> lines").String()
 	flags.serverToken = commands.server.Flag(flagToken, "Removed: use --token-file").Hidden().String()
 	flags.serverCORSOrigins = commands.server.Flag(flagCORSOrigin, "Also let pages from this origin call the server, as scheme://host[:port] (repeatable)").Strings()
 	flags.serverUploadJobs = commands.server.Flag(flagUploadJobs, "Uploads stored at once (default 1; 0 = chosen for this machine)").Default("1").Int()

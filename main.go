@@ -588,7 +588,7 @@ func buildCommandHandlers(cliDef cliDefinition, dbOpts cli.DBOptions, tuning pip
 		cliDef.commands.server.FullCommand(): func(ctx context.Context) error {
 			logging.GetLogger().Info("Command: server", zap.String("dbpath", *cliDef.flags.dbpath), zap.Int("chonksize_kb", *cliDef.flags.chonkSize),
 				zap.Int("upload_jobs", *cliDef.flags.serverUploadJobs))
-			token, err := resolveServerToken(cliDef.flags, src)
+			tokens, err := resolveServerTokens(cliDef.flags, src)
 			if err != nil {
 				return err
 			}
@@ -598,7 +598,7 @@ func buildCommandHandlers(cliDef cliDefinition, dbOpts cli.DBOptions, tuning pip
 			}
 			err = api.Server(ctx, dbOpts.Request(), api.Options{
 				Listen:      *cliDef.flags.serverListen,
-				Token:       token,
+				Tokens:      tokens,
 				CORSOrigins: *cliDef.flags.serverCORSOrigins,
 				UploadJobs:  jobs,
 			})

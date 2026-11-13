@@ -89,7 +89,6 @@ func TestParseRejects(t *testing.T) {
 		{"comment", "{\n  // no comments\n}", 2, 3, "", "invalid character '/'"},
 		{"unclosed", `{"name": "a"`, 1, 13, "", "ends before the JSON object does"},
 		{"unclosed section", `{"store": {"mode": "a"`, 1, 23, "", "ends before the JSON object does"},
-		{"UTF-16", "\xff\xfe{\x00}\x00", 0, 0, "", "is UTF-16 text"},
 		{"invalid UTF-8", "{\"name\": \"\xff\"}", 1, 11, "", "is not valid UTF-8"},
 		{"column counts characters", `{"name": "é", "Count": 1}`, 1, 15, "Count", "did you mean"},
 		{"byte order mark is not a column", "\xEF\xBB\xBF{\"nope\": 1}", 1, 2, "nope", "unknown key"},
@@ -179,9 +178,49 @@ func TestLoad(t *testing.T) {
 		t.Fatalf("a file over MaxSize: %v", err)
 	}
 
+	if _, err := Load(write("utf16.json", "\xff\xfe{\x00}\x00"), &c); err == nil || !strings.HasSuffix(err.Error(), "is UTF-16 text; save it as UTF-8") {
+		t.Fatalf("UTF-16: %v", err)
+	}
+
 	if _, err := Load(write("bad.json", `{"count": "x"}`), &c); err == nil ||
 		err.Error() != `config file `+filepath.Join(dir, "bad.json")+`:1:11: "count": must be a whole number` {
 		t.Fatalf("bad value: %v", err)
+	}
+}
+
+// ReadFile reads by Load's rules, and its errors name the path but never
+// what the file holds.
+func TestReadFile(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+	secret := strings.Repeat("s", 40)
+	good := filepath.Join(dir, "good")
+	if err := os.WriteFile(good, []byte(secret), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if b, err := ReadFile(good); err != nil || string(b) != secret {
+		t.Fatalf("good file: %q %v", b, err)
+	}
+	big := filepath.Join(dir, "big")
+	if err := os.WriteFile(big, []byte(secret+strings.Repeat(" ", MaxSize)), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	utf16 := filepath.Join(dir, "utf16")
+	if err := os.WriteFile(utf16, []byte("\xff\xfes\x00s\x00\r\x00\n\x00"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	for _, c := range []struct{ path, want string }{
+		{big, big + ": is larger than 64 KiB"},
+		{dir, dir + ": is a directory, not a file"},
+		{utf16, utf16 + ": is UTF-16 text; save it as UTF-8"},
+	} {
+		_, err := ReadFile(c.path)
+		if err == nil || err.Error() != c.want {
+			t.Errorf("%s: %v, want %q", c.path, err, c.want)
+		}
+	}
+	if _, err := ReadFile(filepath.Join(dir, "missing")); err == nil || strings.Contains(err.Error(), "config file") {
+		t.Errorf("missing file: %v", err)
 	}
 }
 

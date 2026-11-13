@@ -74,20 +74,24 @@ func (s *Server) rpcRoutes() {
 	_, unary := pbconnect.NewDuesServiceHandler(svc, append(common, connect.WithReadMaxBytes(unaryReadMax))...)
 	_, stream := pbconnect.NewDuesServiceHandler(svc, append(common, connect.WithReadMaxBytes(streamReadMax))...)
 
-	listing := route{maxBody: 2 * unaryReadMax, read: 30 * time.Second, write: 5 * time.Minute}
+	listing := route{maxBody: 2 * unaryReadMax, read: 30 * time.Second, write: 5 * time.Minute, scope: ScopeRead, rpc: true}
 	for _, p := range []string{
-		pbconnect.DuesServiceAppendIfExistsProcedure,
 		pbconnect.DuesServiceGetEviFilesProcedure,
 		pbconnect.DuesServiceGetPartiFilesProcedure,
 		pbconnect.DuesServiceGetIdxFilesProcedure,
 	} {
-		s.handle(s.mux, "POST "+p, listing, unary)
+		s.handle("POST "+p, listing, unary)
 	}
-	s.handle(s.mux, "POST "+pbconnect.DuesServiceSearchProcedure,
-		route{maxBody: 2 * unaryReadMax, read: 30 * time.Second, write: searchBudget + 30*time.Second}, unary)
+	// Telling whether content is stored saves an upload, so it belongs to
+	// the upload scope, though it answers like a listing.
+	appendIfExists := listing
+	appendIfExists.scope = ScopeUpload
+	s.handle("POST "+pbconnect.DuesServiceAppendIfExistsProcedure, appendIfExists, unary)
+	s.handle("POST "+pbconnect.DuesServiceSearchProcedure,
+		route{maxBody: 2 * unaryReadMax, read: 30 * time.Second, write: searchBudget + 30*time.Second, scope: ScopeRead, rpc: true}, unary)
 	// An upload's body may take long, but must keep moving; its ingest may
 	// take long too, so the response has no deadline of its own.
-	s.handle(s.mux, "POST "+pbconnect.DuesServiceStreamFileProcedure, route{idleRead: time.Minute}, stream)
+	s.handle("POST "+pbconnect.DuesServiceStreamFileProcedure, route{idleRead: time.Minute, scope: ScopeUpload, rpc: true}, stream)
 }
 
 // recoverRPC turns a handler panic into an internal error naming only the

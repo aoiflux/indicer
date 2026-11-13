@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"indicer/internal/ui"
 	"indicer/lib/cnst"
+	"indicer/lib/server"
 	"io"
 	"os"
 	"slices"
@@ -1106,7 +1107,7 @@ func printServerHelp() {
 	fmt.Fprintln(helpOut, "docs/SERVER_API.md describes the protocol.")
 	printHelpSection("Options")
 	fmt.Fprintln(helpOut, "  --listen        Serve on this host:port (repeatable). A non-loopback address needs a token")
-	fmt.Fprintln(helpOut, "  --token-file    Require the bearer token on the first line of this file (at least 32 characters)")
+	fmt.Fprintf(helpOut, "  --token-file    Require a bearer token from this file: one token on its first line, or a %q file of \"<token> <scopes> <label>\" lines\n", server.TokenFileHeader)
 	fmt.Fprintln(helpOut, "  --cors-origin   Also let pages from this origin call the server, as scheme://host[:port] (repeatable)")
 	fmt.Fprintln(helpOut, "  --upload-jobs   Uploads stored at once (default 1; 0 = chosen for this machine)")
 	printHelpSection("Notes")
@@ -1115,7 +1116,12 @@ func printServerHelp() {
 	fmt.Fprintln(helpOut, "  Uploads stored at once share the store workers. Uploads of one client path")
 	fmt.Fprintln(helpOut, "  or one content are stored one after another, and a large one is stored")
 	fmt.Fprintln(helpOut, "  alone. Low-resource mode stores one at a time.")
-	fmt.Fprintln(helpOut, "  Health checks: GET /healthz and GET /readyz, without the token.")
+	fmt.Fprintln(helpOut, "  Scopes: read (listings, search), upload (uploads, AppendIfExists), export,")
+	fmt.Fprintln(helpOut, "  or all. A one-token file reads and uploads. Without a token, every request")
+	fmt.Fprintln(helpOut, "  reads and uploads, and none exports.")
+	fmt.Fprintln(helpOut, "  The token file must belong to you or root, and not be writable by group or")
+	fmt.Fprintln(helpOut, "  others (Linux, macOS).")
+	fmt.Fprintln(helpOut, "  Health checks: GET /healthz and GET /readyz, without a token.")
 	printExamples(
 		"dues server",
 		"dues server --dbpath ./caseA",

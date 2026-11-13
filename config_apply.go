@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"indicer/internal/appconfig"
+	"indicer/internal/configfile"
 	"indicer/internal/console"
 	"indicer/internal/lifecycle"
 	"indicer/internal/ui"
@@ -14,6 +15,7 @@ import (
 	"indicer/lib/dbmeta"
 	"indicer/lib/dbopen"
 	"indicer/lib/graph/signer"
+	"indicer/lib/server"
 	"io"
 	"os"
 	"strconv"
@@ -161,7 +163,7 @@ func resolveActor(f cliFlags, src sources, stdin io.Reader, keyCommand bool) (*d
 	return &dbopen.Actor{Name: name, Passphrase: pass}, nil, nil
 }
 
-// The server's bearer token comes from --token-file only, for the same
+// The server's bearer tokens come from --token-file only, for the same
 // reason as the password.
 const (
 	flagListen     = "listen"
@@ -172,25 +174,27 @@ const (
 
 const flagUploadJobs = "upload-jobs"
 
-// resolveServerToken returns the server's bearer token from --token-file;
-// none is no token. The removed --token is refused with what replaces it.
-func resolveServerToken(f cliFlags, src sources) (string, error) {
+// resolveServerTokens returns the server's tokens from --token-file; none
+// is no token. The file is read by the configuration file's rules, so
+// another account cannot add a token to it. The removed --token is refused
+// with what replaces it.
+func resolveServerTokens(f cliFlags, src sources) ([]server.Credential, error) {
 	if src.set[flagToken] {
-		return "", lifecycle.Usagef("--%s was removed: a token on the command line is visible to other users of this machine; use --%s", flagToken, flagTokenFile)
+		return nil, lifecycle.Usagef("--%s was removed: a token on the command line is visible to other users of this machine; use --%s", flagToken, flagTokenFile)
 	}
 	if *f.serverTokenFile == "" {
-		return "", nil
+		return nil, nil
 	}
 	origin := src.originOf(flagTokenFile)
-	b, err := os.ReadFile(*f.serverTokenFile)
+	b, err := configfile.ReadFile(*f.serverTokenFile)
 	if err != nil {
-		return "", lifecycle.Usagef("--%s%s: %v", flagTokenFile, origin, err)
+		return nil, lifecycle.Usagef("--%s%s: %v", flagTokenFile, origin, err)
 	}
-	tok := strings.TrimSpace(firstLine(string(b)))
-	if tok == "" {
-		return "", lifecycle.Usagef("--%s%s: %s holds no token", flagTokenFile, origin, *f.serverTokenFile)
+	creds, err := server.ParseTokens(b)
+	if err != nil {
+		return nil, lifecycle.Usagef("--%s%s: %s: %v", flagTokenFile, origin, *f.serverTokenFile, err)
 	}
-	return tok, nil
+	return creds, nil
 }
 
 // firstLine returns s up to its first line break.

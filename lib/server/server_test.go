@@ -125,6 +125,11 @@ func newReq(t *testing.T, method, url string, body io.Reader) *http.Request {
 
 func TestConfigValidate(t *testing.T) {
 	t.Parallel()
+	tok := mustCredential(t, testToken, DefaultScopes, "test")
+	var tooMany []Credential
+	for i := range MaxTokens + 1 {
+		tooMany = append(tooMany, mustCredential(t, fmt.Sprintf("%s%04d", testToken, i), ScopeRead, fmt.Sprintf("t%d", i)))
+	}
 	for _, c := range []struct {
 		name    string
 		cfg     Config
@@ -140,10 +145,14 @@ func TestConfigValidate(t *testing.T) {
 		{"any v6", Config{Listen: []string{"[::]:50051"}}, "needs a token"},
 		{"lan", Config{Listen: []string{"192.168.1.5:50051"}}, "needs a token"},
 		{"name", Config{Listen: []string{"example.com:50051"}}, "needs a token"},
-		{"lan with token", Config{Listen: []string{"192.168.1.5:50051"}, Token: testToken}, ""},
-		{"short token", Config{Listen: []string{"192.168.1.5:50051"}, Token: testToken[:31]}, "at least 32"},
-		{"short token on loopback", Config{Token: "short"}, "at least 32"},
-		{"token with space", Config{Token: strings.Repeat("a", 20) + " " + strings.Repeat("b", 20)}, "visible ASCII"},
+		{"lan with token", Config{Listen: []string{"192.168.1.5:50051"}, Tokens: []Credential{tok}}, ""},
+		{"lan with a zero credential", Config{Listen: []string{"192.168.1.5:50051"}, Tokens: []Credential{{}}}, "not made by NewCredential"},
+		{"same token twice", Config{Tokens: []Credential{tok, mustCredential(t, testToken, ScopeRead, "other")}}, "same token"},
+		{"same label but for case", Config{Tokens: []Credential{tok, mustCredential(t, testToken40('x'), ScopeRead, "TEST")}}, "same label"},
+		{"too many tokens", Config{Tokens: tooMany}, "at most 64"},
+		{"the most tokens", Config{Tokens: tooMany[:MaxTokens]}, ""},
+		{"same label, upper case first", Config{Tokens: []Credential{mustCredential(t, testToken40('y'), ScopeRead, "TEST"), tok}}, "same label"},
+		{"credential without a label", Config{Tokens: []Credential{anonymous}}, "not made by NewCredential"},
 		{"no port", Config{Listen: []string{"127.0.0.1"}}, "host:port"},
 		{"bad port", Config{Listen: []string{"127.0.0.1:70000"}}, "port"},
 		{"twice", Config{Listen: []string{"127.0.0.1:1", "127.0.0.1:1"}}, "twice"},
@@ -183,7 +192,7 @@ func TestDefaultAddressesAreLoopback(t *testing.T) {
 func TestHTTPServerProtocols(t *testing.T) {
 	t.Parallel()
 	ls := startServer(t, Config{}, Deps{}, func(s *Server) {
-		s.mux.HandleFunc("GET /test/proto", func(w http.ResponseWriter, r *http.Request) { _, _ = io.WriteString(w, r.Proto) })
+		testRoute(s, "GET /test/proto", ScopeRead, func(w http.ResponseWriter, r *http.Request) { _, _ = io.WriteString(w, r.Proto) })
 	})
 	for _, tc := range []struct {
 		name  string
@@ -241,8 +250,8 @@ func TestHealthAndUnknownPaths(t *testing.T) {
 // SRV-1: a token, once set, is required on every request but health checks.
 func TestBearerToken(t *testing.T) {
 	t.Parallel()
-	ls := startServer(t, Config{Token: testToken}, Deps{}, func(s *Server) {
-		s.mux.HandleFunc("POST /test/echo", func(w http.ResponseWriter, r *http.Request) { _, _ = io.WriteString(w, "in") })
+	ls := startServer(t, Config{Tokens: []Credential{mustCredential(t, testToken, ScopeRead, "test")}}, Deps{}, func(s *Server) {
+		testRoute(s, "POST /test/echo", ScopeRead, func(w http.ResponseWriter, r *http.Request) { _, _ = io.WriteString(w, "in") })
 	})
 	for _, c := range []struct {
 		name, auth string
@@ -254,6 +263,7 @@ func TestBearerToken(t *testing.T) {
 		{"basic", "Basic " + testToken, 401},
 		{"right", "Bearer " + testToken, 200},
 		{"scheme case", "bearer " + testToken, 200},
+		{"extra space", "Bearer  " + testToken, 200},
 	} {
 		req := newReq(t, "POST", ls.url+"/test/echo", nil)
 		if c.auth != "" {
@@ -270,6 +280,25 @@ func TestBearerToken(t *testing.T) {
 	for _, p := range []string{"/healthz", "/readyz"} {
 		if resp, _ := do(t, newReq(t, "GET", ls.url+p, nil)); resp.StatusCode != 200 {
 			t.Errorf("%s without a token: %d", p, resp.StatusCode)
+		}
+	}
+	// What matches no route is answered by the mux, once the token is right.
+	for _, c := range []struct {
+		method, path, auth string
+		status             int
+	}{
+		{"GET", "/nope", "", 401},
+		{"POST", "/healthz", "", 401},
+		{"GET", "/nope", "Bearer " + testToken, 404},
+		{"GET", "/test/echo", "Bearer " + testToken, 405},
+	} {
+		req := newReq(t, c.method, ls.url+c.path, nil)
+		if c.auth != "" {
+			req.Header.Set("Authorization", c.auth)
+		}
+		resp, _ := do(t, req)
+		if resp.StatusCode != c.status || (c.status == 405 && resp.Header.Get("Allow") == "") {
+			t.Errorf("%s %s (%q): %d, Allow %q, want %d", c.method, c.path, c.auth, resp.StatusCode, resp.Header.Get("Allow"), c.status)
 		}
 	}
 	// A preflight carries no credentials; it is answered before auth.
@@ -311,7 +340,7 @@ func TestHostCheckDefeatsRebinding(t *testing.T) {
 func TestCORS(t *testing.T) {
 	t.Parallel()
 	ls := startServer(t, Config{CORSOrigins: []string{"https://app.example.org"}}, Deps{}, func(s *Server) {
-		s.mux.HandleFunc("POST /test/echo", func(w http.ResponseWriter, r *http.Request) { _, _ = io.WriteString(w, "in") })
+		testRoute(s, "POST /test/echo", ScopeRead, func(w http.ResponseWriter, r *http.Request) { _, _ = io.WriteString(w, "in") })
 	})
 	allowed := []string{
 		"http://localhost:3000", "http://127.0.0.1:8080", "https://[::1]:8443", "http://app.localhost",
@@ -381,7 +410,7 @@ func TestInFlightLimit(t *testing.T) {
 	lim := testLimits()
 	lim.MaxInFlight = 1
 	ls := startServer(t, Config{Limits: lim}, Deps{}, func(s *Server) {
-		s.mux.HandleFunc("GET /test/block", func(w http.ResponseWriter, r *http.Request) {
+		testRoute(s, "GET /test/block", ScopeRead, func(w http.ResponseWriter, r *http.Request) {
 			entered <- struct{}{}
 			<-release
 		})
@@ -467,7 +496,7 @@ func TestPanicBecomes500(t *testing.T) {
 	t.Parallel()
 	core, logs := observer.New(zap.InfoLevel)
 	ls := startServer(t, Config{}, Deps{Log: zap.New(core)}, func(s *Server) {
-		s.mux.HandleFunc("GET /test/panic", func(http.ResponseWriter, *http.Request) { panic("boom") })
+		testRoute(s, "GET /test/panic", ScopeRead, func(http.ResponseWriter, *http.Request) { panic("boom") })
 	})
 	resp, body := do(t, newReq(t, "GET", ls.url+"/test/panic", nil))
 	id := resp.Header.Get("Request-Id")
@@ -486,7 +515,7 @@ func TestPanicBecomes500(t *testing.T) {
 func TestAccessLogOmitsToken(t *testing.T) {
 	t.Parallel()
 	core, logs := observer.New(zap.InfoLevel)
-	ls := startServer(t, Config{Token: testToken}, Deps{Log: zap.New(core)}, nil)
+	ls := startServer(t, Config{Tokens: []Credential{mustCredential(t, testToken, ScopeRead, "test")}}, Deps{Log: zap.New(core)}, nil)
 	req := newReq(t, "GET", ls.url+"/readyz?x=1", nil)
 	req.Header.Set("Authorization", "Bearer "+testToken)
 	resp, _ := do(t, req)
@@ -511,7 +540,7 @@ func TestShutdownCancelsRequests(t *testing.T) {
 	t.Parallel()
 	entered := make(chan struct{}, 1)
 	ls := startServer(t, Config{}, Deps{}, func(s *Server) {
-		s.mux.HandleFunc("GET /test/wait", func(w http.ResponseWriter, r *http.Request) {
+		testRoute(s, "GET /test/wait", ScopeRead, func(w http.ResponseWriter, r *http.Request) {
 			entered <- struct{}{}
 			<-r.Context().Done()
 		})
@@ -541,7 +570,7 @@ func TestShutdownWithStuckWorkIsUnclean(t *testing.T) {
 	entered := make(chan struct{}, 1)
 	release := make(chan struct{})
 	ls := startServer(t, Config{}, Deps{}, func(s *Server) {
-		s.mux.HandleFunc("GET /test/stuck", func(w http.ResponseWriter, r *http.Request) {
+		testRoute(s, "GET /test/stuck", ScopeRead, func(w http.ResponseWriter, r *http.Request) {
 			entered <- struct{}{}
 			<-release
 		})

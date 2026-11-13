@@ -97,10 +97,29 @@ func (f *File) Errorf(key, format string, args ...any) *Error {
 // is a section, the object of that key. A missing file is an *Error that
 // wraps fs.ErrNotExist.
 func Load(path string, into any) (*File, error) {
-	fail := func(msg string, err error) (*File, error) {
+	data, err := read(path)
+	if err != nil {
+		return nil, err
+	}
+	return parse(path, data, into)
+}
+
+// ReadFile reads a file a setting names, such as the server's token file,
+// by the rules Load reads the configuration file by. Its error names the
+// path, never what the file holds.
+func ReadFile(path string) ([]byte, error) {
+	data, err := read(path)
+	if err != nil {
+		return nil, fmt.Errorf("%s: %s", err.Path, err.Msg)
+	}
+	return data, nil
+}
+
+func read(path string) ([]byte, *Error) {
+	fail := func(msg string, err error) ([]byte, *Error) {
 		return nil, &Error{Path: path, Msg: msg, Err: err}
 	}
-	osErr := func(err error) (*File, error) {
+	osErr := func(err error) ([]byte, *Error) {
 		if pe, ok := errors.AsType[*fs.PathError](err); ok {
 			return fail(pe.Err.Error(), err)
 		}
@@ -133,7 +152,11 @@ func Load(path string, into any) (*File, error) {
 	if len(data) > MaxSize {
 		return fail(fmt.Sprintf("is larger than %d KiB", MaxSize>>10), nil)
 	}
-	return parse(path, data, into)
+	// Windows PowerShell 5.1's > writes UTF-16.
+	if bytes.HasPrefix(data, []byte{0xFF, 0xFE}) || bytes.HasPrefix(data, []byte{0xFE, 0xFF}) {
+		return fail("is UTF-16 text; save it as UTF-8", nil)
+	}
+	return data, nil
 }
 
 var utf8BOM = []byte{0xEF, 0xBB, 0xBF}
@@ -148,9 +171,6 @@ func parse(path string, data []byte, into any) (*File, error) {
 		panic(fmt.Sprintf("configfile: Load needs a pointer to a struct, not %T", into))
 	}
 	f := &File{Path: path, data: data, at: map[string]int{}}
-	if bytes.HasPrefix(data, []byte{0xFF, 0xFE}) || bytes.HasPrefix(data, []byte{0xFE, 0xFF}) {
-		return nil, &Error{Path: path, Msg: "is UTF-16 text; save it as UTF-8"}
-	}
 	// Windows PowerShell 5.1 writes a byte order mark; JSON may ignore it.
 	if bytes.HasPrefix(data, utf8BOM) {
 		f.bom = len(utf8BOM)

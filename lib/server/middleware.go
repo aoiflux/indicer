@@ -2,8 +2,6 @@ package server
 
 import (
 	"context"
-	"crypto/sha256"
-	"crypto/subtle"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -13,6 +11,7 @@ import (
 	"strings"
 	"time"
 
+	"connectrpc.com/connect"
 	"github.com/google/uuid"
 	"go.uber.org/zap"
 )
@@ -22,6 +21,8 @@ type ctxKey int
 const (
 	requestIDKey ctxKey = iota
 	loopbackConnKey
+	credentialKey
+	authNoteKey
 )
 
 // RequestID returns the ID the server gave the request ctx belongs to.
@@ -142,8 +143,9 @@ func newRequestID() string {
 	return uuid.NewString()
 }
 
-// withAccessLog logs one line per request. No header is logged, so the
-// Authorization header never reaches the log.
+// withAccessLog logs one line per request, with the label of the token it
+// came with. No header is logged, so the Authorization header never reaches
+// the log.
 func (s *Server) withAccessLog(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		start := time.Now()
@@ -151,7 +153,8 @@ func (s *Server) withAccessLog(next http.Handler) http.Handler {
 		if !ok {
 			sw = &statusWriter{ResponseWriter: w}
 		}
-		next.ServeHTTP(sw, r)
+		note := &authNote{}
+		next.ServeHTTP(sw, r.WithContext(context.WithValue(r.Context(), authNoteKey, note)))
 		status := sw.status
 		if status == 0 {
 			status = http.StatusOK
@@ -162,10 +165,20 @@ func (s *Server) withAccessLog(next http.Handler) http.Handler {
 			zap.String("path", truncate(r.URL.Path, 256)),
 			zap.String("proto", r.Proto),
 			zap.String("remote", r.RemoteAddr),
+			bearerField(note.label),
 			zap.Int("status", status),
 			zap.Int64("bytes", sw.bytes),
 			zap.Int64("duration_ms", time.Since(start).Milliseconds()))
 	})
+}
+
+// bearerField names a credential by its label; there is none to name when
+// no token is set.
+func bearerField(label string) zap.Field {
+	if label == "" {
+		return zap.Skip()
+	}
+	return zap.String(logFieldBearer, label)
 }
 
 func truncate(s string, n int) string {
@@ -269,32 +282,68 @@ func (s *Server) originAllowed(origin string) bool {
 	return isLoopbackHost(hostOfHostport(host))
 }
 
-// withAuth requires the bearer token, when one is set, on every request but
-// health checks. CORS preflights were answered before this layer: a browser
+// withAuth finds the route a request is for, and lets the request in when
+// the route is public, or its token holds the route's scope. A route
+// registered without a scope is refused, so none is served by mistake. A
+// request that matches no route gets the mux's 404 or 405, once
+// authenticated. CORS preflights were answered before this layer: a browser
 // sends them without credentials.
 func (s *Server) withAuth(next http.Handler) http.Handler {
-	if s.tokenSum == nil {
-		return next
-	}
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if !isHealthPath(r.URL.Path) && !s.tokenOK(r.Header.Get("Authorization")) {
-			w.Header().Set("WWW-Authenticate", `Bearer realm="dues"`)
+		_, pattern := s.mux.Handler(r)
+		rt, known := s.registered[pattern]
+		if known && rt.public {
+			next.ServeHTTP(w, r)
+			return
+		}
+		cred, ok := s.authenticate(r.Header.Get("Authorization"))
+		if !ok {
+			w.Header().Set("WWW-Authenticate", bearerChallenge)
 			httpError(w, r, http.StatusUnauthorized, "a valid bearer token is required")
 			return
 		}
-		next.ServeHTTP(w, r)
+		noteCredential(r.Context(), cred)
+		switch {
+		case pattern == "":
+		case !known:
+			s.log.Warn("server route has no scope", zap.String("request_id", RequestID(r.Context())), zap.String("pattern", pattern))
+			httpError(w, r, http.StatusForbidden, "this route is not served")
+			return
+		case cred.scopes&rt.scope != rt.scope:
+			s.refuseScope(w, r, rt, cred)
+			return
+		}
+		next.ServeHTTP(w, r.WithContext(context.WithValue(r.Context(), credentialKey, cred)))
 	})
 }
 
-// tokenOK compares the presented token with the server's in constant time.
-// Both are hashed first, so the comparison does not reveal the length.
-func (s *Server) tokenOK(header string) bool {
-	scheme, tok, ok := strings.Cut(header, " ")
-	if !ok || !strings.EqualFold(scheme, "Bearer") {
-		return false
+// noTokenScope is the refusal of a scope the server cannot grant, because it
+// has no token: export, which is never anonymous.
+const noTokenScope = "%s needs a token with that scope; start the server with --token-file naming a file that begins %q and gives a token %s or %s"
+
+// bearerChallenge is the WWW-Authenticate challenge of a refused request.
+const bearerChallenge = `Bearer realm="dues"`
+
+// refuseScope answers 403 to a token without the route's scope. An RPC
+// route answers with a Connect error, which every RPC client reads; the JSON
+// body of the other routes would reach a streaming or gRPC client as a bare
+// status.
+func (s *Server) refuseScope(w http.ResponseWriter, r *http.Request, rt route, cred Credential) {
+	need := rt.scope &^ cred.scopes
+	s.log.Warn("server scope refused", zap.String("request_id", RequestID(r.Context())),
+		zap.String("path", truncate(r.URL.Path, 256)), bearerField(cred.label), zap.String("scope", need.String()))
+	var msg string
+	if len(s.cfg.Tokens) == 0 {
+		msg = fmt.Sprintf(noTokenScope, need, TokenFileHeader, need, scopeAllName)
+	} else {
+		w.Header().Set("WWW-Authenticate", fmt.Sprintf(`%s, error="insufficient_scope", scope="%s"`, bearerChallenge, strings.Join(need.names(), " ")))
+		msg = fmt.Sprintf("this token may not %s: its scopes are %s", need, cred.scopes)
 	}
-	sum := sha256.Sum256([]byte(strings.TrimSpace(tok)))
-	return subtle.ConstantTimeCompare(sum[:], s.tokenSum) == 1
+	if rt.rpc {
+		_ = s.rpcErr.Write(w, r, connect.NewError(connect.CodePermissionDenied, errors.New(msg)))
+		return
+	}
+	httpError(w, r, http.StatusForbidden, msg)
 }
 
 func isHealthPath(p string) bool { return p == "/healthz" || p == "/readyz" }
@@ -311,10 +360,21 @@ type route struct {
 	// the request; 0 leaves it unbounded (the request context still ends at
 	// shutdown).
 	write time.Duration
+	// scope is what a token needs to call the route; a public route needs no
+	// token. A route is one or the other.
+	scope  Scope
+	public bool
+	// rpc routes are answered by Connect handlers.
+	rpc bool
 }
 
-func (s *Server) handle(mux *http.ServeMux, pattern string, rt route, h http.Handler) {
-	mux.Handle(pattern, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+// handle registers a route on the server's mux.
+func (s *Server) handle(pattern string, rt route, h http.Handler) {
+	if rt.public == (rt.scope != 0) {
+		panic(fmt.Sprintf("server: route %q must be either public or scoped", pattern))
+	}
+	s.registered[pattern] = rt
+	s.mux.Handle(pattern, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		rc := http.NewResponseController(w)
 		now := time.Now()
 		if rt.idleRead > 0 {

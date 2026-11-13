@@ -30,6 +30,7 @@
 ./lib/microartefact FuzzTextDetectors
 ./lib/server FuzzOriginCheck
 ./lib/server FuzzUploadRequests
+./lib/server FuzzParseTokens
 ./pkg/api FuzzDispatchJSON
 ./internal/duesarc FuzzLocalName
 ./internal/duesarc FuzzParseDatabaseManifest

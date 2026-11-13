@@ -87,4 +87,16 @@ func TestLoadRefusesAFIFOWithoutWaiting(t *testing.T) {
 	case <-time.After(10 * time.Second):
 		t.Fatal("Load waited for a writer")
 	}
+	go func() {
+		_, err := ReadFile(p)
+		done <- err
+	}()
+	select {
+	case err := <-done:
+		if err == nil || !strings.HasSuffix(err.Error(), "is not a regular file") {
+			t.Fatalf("ReadFile: got %v", err)
+		}
+	case <-time.After(10 * time.Second):
+		t.Fatal("ReadFile waited for a writer")
+	}
 }

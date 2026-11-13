@@ -11,9 +11,9 @@ dues server [--listen HOST:PORT]... [--token-file PATH] [--cors-origin ORIGIN]..
 ```
 
 - **Addresses.** By default the server listens on `127.0.0.1:50051` and `[::1]:50051` only. If the host has no IPv6 loopback, the IPv6 address is skipped and a note is printed. `--listen` replaces the defaults and may be given more than once.
-- **Token.** A non-loopback address (`0.0.0.0`, `::`, `:50051`, a LAN address or a host name) is refused unless a bearer token is set. The token must be at least 32 visible ASCII characters. It comes from `--token-file PATH` (the file's first line) only. `--token` was removed, because other users can see a command line; passing it is a usage error that names `--token-file`. The `DUES_TOKEN` environment variable is ignored.
+- **Tokens.** A non-loopback address (`0.0.0.0`, `::`, `:50051`, a LAN address or a host name) is refused unless a bearer token is set. Tokens come from `--token-file PATH` only; [Tokens and scopes](#tokens-and-scopes) describes the file. `--token` was removed, because other users can see a command line; passing it is a usage error that names `--token-file`. The `DUES_TOKEN` environment variable is ignored.
 
-  Once a token is set, every listener requires it, loopback included.
+  Once a token is set, every listener requires one, loopback included. The startup lines name each token by its label, with its scopes; the token itself is never printed or logged.
 - **Encryption.** The server speaks plain HTTP. A warning is printed when it listens on a non-loopback address. To serve remote clients, put a TLS-terminating proxy or an SSH tunnel in front of it.
 - **Uploads at once.** `--upload-jobs N` stores up to N uploads at once: from 0 to 64, default 1, and 0 picks a number for this machine. No more than 16 uploads may be in progress, so a higher number is cut to 16, with a note. Low-resource mode stores one at a time. See [Browser uploads](#browser-uploads) for the order they are stored in.
 - **Configuration errors.** A bad address, origin, token or `--upload-jobs` value exits with code 2 before the database is opened.
@@ -26,22 +26,61 @@ dues server --listen 0.0.0.0:50051 --token-file ./token
 dues server --listen 192.168.1.10:50051 --token-file ./token --cors-origin https://ui.example.org
 ```
 
-## Authentication
+## Tokens and scopes
 
-When a token is set, send it on every request except health checks:
+When tokens are set, send one on every request except health checks:
 
 ```
 Authorization: Bearer <token>
 ```
 
-A missing or wrong token gets `401 Unauthorized` with `WWW-Authenticate: Bearer realm="dues"`. Connect and gRPC clients see this as the `unauthenticated` code. The server compares tokens in constant time.
+**The token file.** `--token-file` takes one of two forms.
+
+- **One token.** Without a header, the file's first line is the token, at least 32 visible ASCII characters, not starting with `#`. It may read and upload, and its label is `default`. Any other non-blank line is refused: a file of several tokens needs the header.
+- **Several tokens.** A file whose first line is `#dues-tokens v1` holds one token per line, as `<token> <scopes> <label>`, separated by spaces:
+
+  ```
+  #dues-tokens v1
+  # examiner workstation
+  3f9c…(64 hex digits)…  read,upload  examiner-1
+  b81e…(64 hex digits)…  all          admin
+  ```
+
+  - A token is at least 32 characters of `A-Z a-z 0-9 - . _ ~ + /`, which may end in `=` (RFC 6750). `openssl rand -hex 32` makes one. A token therefore never starts with `#`.
+  - Scopes are `read`, `upload` and `export`, separated by commas. `all` is exactly these three: a scope added in a later release is not granted by `all` in a v1 file.
+  - A label is 1 to 31 characters of `A-Z a-z 0-9 . _ -`. Labels must differ, without regard to case. A label is shorter than any token, so a line with its columns swapped is refused rather than a token being taken for a label.
+  - Blank lines and lines starting with `#` are skipped. Putting `#` before a token's line turns that token off.
+  - A file holds at most 64 tokens, and no token twice.
+- **Errors.** A file that cannot be used stops the server with exit 2. The message names the line and what is wrong with it, never what the line holds.
+- **The file itself.** The file is read by the config file's rules: a regular file of at most 64 KiB, and on Linux and macOS one that belongs to you or root and that neither its group nor others may write (`chmod go-w`). Others may read it, as they can a mounted container secret.
+- **Revoking a token.** In a `#dues-tokens v1` file, remove or comment out its line. In a one-token file, replace the token with a new one: comments need the header, so a `#` before that token stops the server from starting. Then restart the server: the file is read only at start. A restart ends every upload in progress, of every token: their clients upload again.
+
+**What each scope allows.**
+
+| Scope | Routes |
+| --- | --- |
+| `read` | `GetEviFiles`, `GetPartiFiles`, `GetIdxFiles`, `Search` |
+| `upload` | `StreamFile`, `AppendIfExists`, `/web/upload/*` |
+| `export` | the export routes, when a release adds them |
+| none | `GET /healthz`, `GET /readyz` |
+
+Scopes say what a token may do. They do not divide the database: every token works on the one store. A token with `upload` sees, through `AppendIfExists`, whether content whose hash it holds is stored, and the stored evidence's `file_id`, size and chunk map. Uploads of the same client path, or of the same content, by different tokens are stored one after another, and a later upload of stored content becomes an alias, whichever token stored it first.
+
+**Refusals.**
+
+- A missing or wrong token gets `401 Unauthorized` with `WWW-Authenticate: Bearer realm="dues"`. Connect and gRPC clients see this as the `unauthenticated` code. Every token is compared, in constant time.
+- A token without the route's scope is refused with `WWW-Authenticate: Bearer realm="dues", error="insufficient_scope", scope="<scope>"`. `/web` routes and Connect unary calls get `403 Forbidden`. gRPC, gRPC-Web and Connect streaming calls get the `permission_denied` code in their status, over HTTP 200, as those protocols carry errors. The message names the scope that is missing. The log records `server scope refused` with the token's label and the scope.
+
+**Without tokens.** When no token is set, the server listens on loopback only, and every request may read and upload. Export is refused with `403`: its message says to start the server with a `#dues-tokens v1` file that gives a token `export` or `all`.
+
+**In the log.** The access log, `server request`, names the token a request came with by its label, in the field `bearer`, when tokens are set.
 
 ## Browser access
 
 - **Origins.** A page may call the server when its `Origin` is a loopback origin (`localhost`, a name under `.localhost`, or a loopback IP, any port, http or https) or exactly one of the `--cors-origin` values. Origins are compared without regard to case, and with default ports left out.
 - **Refused origins.** A request that carries any other `Origin`, `null` included, gets `403` before it is served. This applies to preflight and non-preflight requests alike, so a foreign page cannot get the browser to send even a "simple" request (CSRF).
 - **No Origin.** A request without an `Origin` header is not from a browser page, and is served.
-- **Preflights.** Preflights are answered `204` without needing the token, and allow:
+- **Preflights.** Preflights are answered `204` without needing a token, and allow:
   - methods `GET, POST, OPTIONS`
   - request headers `Authorization`, `Content-Type`, the Connect and gRPC-Web headers, `Upload-Id` and `Upload-Offset`
 - **Exposed headers.** `Grpc-Status`, `Grpc-Message`, `Grpc-Status-Details-Bin`, `Request-Id` and `Upload-Offset`.
@@ -78,6 +117,9 @@ Every response carries a `Request-Id` header. The server's log records each requ
   - `not_found` for an unknown ID
   - `resource_exhausted` for a message over the limit
   - `deadline_exceeded` for a search over its budget
+  - `permission_denied` for a token without the procedure's scope
+
+  A refusal before the procedure is found (a wrong token, `401`, or a busy or stopping server, `503`) is a bare HTTP status: Connect and gRPC clients see only its code, `unauthenticated` or `unavailable`.
 - **Internal failures.** Any other failure, a panic included, is `internal`. Its message names only the request ID, `internal error (request <id>)`, so no internal detail (paths, keys) reaches clients.
 
 ## Health
@@ -85,7 +127,7 @@ Every response carries a `Request-Id` header. The server's log records each requ
 - `GET /healthz` answers `200 ok` while the process serves.
 - `GET /readyz` answers `200 ready`. It answers `503` while the server shuts down, or once its database is closed.
 
-Neither needs the token. Any other path, `/` included, is `404` (or `405` for the wrong method).
+Neither needs a token. Any other path, `/` included, is `404` (or `405` for the wrong method), once the token is accepted.
 
 ## The service
 
@@ -159,7 +201,7 @@ Every object is described by a `BaseFile`:
 
 Uploads and `StreamFile` are stored with the default store settings: the store tuning flags and the config file's `store` object apply to `dues store` and the TUI, not to the server. Uploads stored at once share the store workers between them, as the evidence of `dues store --store-jobs` do.
 
-An upload is a session. Its bytes are written in order, at offsets the client names, so an upload that is cut off can carry on where the server says it stopped. All endpoints take and give JSON, except `chunk`, which takes raw bytes.
+An upload is a session, and belongs to the token that started it: any other token is told, for its `chunk`, `finalize`, `status` and `abort`, that no such session exists (`404`). The log records `upload of another token` with that token's label. Its bytes are written in order, at offsets the client names, so an upload that is cut off can carry on where the server says it stopped. All endpoints take and give JSON, except `chunk`, which takes raw bytes.
 
 **1. Start.**
 
@@ -176,7 +218,7 @@ POST /web/upload/start
 - **Refusals.**
   - `400`: a bad field
   - `413`: a size over 256 GiB
-  - `429` (with `Retry-After`): 16 uploads are already in progress (receiving, waiting their turn, or being stored)
+  - `429` (with `Retry-After`): 16 uploads are already in progress (receiving, waiting their turn, or being stored). The 16 are shared by every token, so a token with `upload` can hold all of them: give `upload` only to clients trusted not to.
   - `507`: less free space than the size plus 64 MiB
 
 **2. Send chunks.**
@@ -196,7 +238,7 @@ Upload-Offset: <offset>
   - `400`: a missing or bad `Upload-Offset`
   - `413`: a chunk over `chunk_max`, or past the declared size
   - `507`: the server's disk is full. The session keeps what it held before the chunk, and the chunk can be sent again
-  - `404`: an unknown or expired session
+  - `404`: an unknown or expired session, or one another token started
 - **One at a time.** Chunks of one session are written one at a time.
 
 **3. Finalize.**

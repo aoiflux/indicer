@@ -9,10 +9,12 @@ import (
 	"fmt"
 	"net"
 	"net/http"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
 
+	"connectrpc.com/connect"
 	"github.com/dgraph-io/badger/v4"
 	"go.uber.org/zap"
 )
@@ -31,10 +33,11 @@ type Config struct {
 	// Listen holds host:port addresses. Empty serves 127.0.0.1 and [::1] on
 	// DefaultPort.
 	Listen []string
-	// Token, when set, must be presented as a bearer token on every request
-	// except health checks, on every listener. A non-loopback address needs
-	// one.
-	Token string
+	// Tokens, when set, are the bearer tokens a request may present, on
+	// every listener; each route needs a scope its token holds. Health checks
+	// need none. Without tokens, every request may read and upload, and none
+	// may export. A non-loopback address needs a token.
+	Tokens []Credential
 	// CORSOrigins are origins whose pages may call the server, besides
 	// loopback ones, matched exactly (scheme://host[:port]).
 	CORSOrigins []string
@@ -76,19 +79,17 @@ func DefaultLimits() Limits {
 }
 
 // Validate checks the configuration without listening: the addresses parse,
-// a non-loopback address has a token, the token and origins are well formed.
+// a non-loopback address has a token, the tokens and origins are well formed.
 func (c Config) Validate() error {
 	addrs, err := parseListen(c.Listen)
 	if err != nil {
 		return err
 	}
-	if c.Token != "" {
-		if err := checkToken(c.Token); err != nil {
-			return err
-		}
+	if err := checkCredentials(c.Tokens); err != nil {
+		return err
 	}
 	for _, a := range addrs {
-		if !a.loopback && c.Token == "" {
+		if !a.loopback && len(c.Tokens) == 0 {
 			return fmt.Errorf("listen address %s is not a loopback address: serving it needs a token of at least %d characters (--token-file)", a.addr, MinTokenLength)
 		}
 	}
@@ -96,6 +97,28 @@ func (c Config) Validate() error {
 		if err := CheckOrigin(o); err != nil {
 			return err
 		}
+	}
+	return nil
+}
+
+func checkCredentials(cs []Credential) error {
+	if len(cs) > MaxTokens {
+		return fmt.Errorf("the server takes at most %d tokens, not %d", MaxTokens, len(cs))
+	}
+	sums := map[[sha256.Size]byte]int{}
+	labels := map[string]int{}
+	for i, c := range cs {
+		if c.scopes == 0 || c.scopes&^ScopeAll != 0 || checkLabel(c.label) != nil {
+			return fmt.Errorf("token %d was not made by NewCredential", i+1)
+		}
+		if prev, dup := sums[c.sum]; dup {
+			return fmt.Errorf("tokens %d and %d are the same token", prev, i+1)
+		}
+		key := strings.ToLower(c.label)
+		if prev, dup := labels[key]; dup {
+			return fmt.Errorf("tokens %d and %d have the same label %s (labels are compared without regard to case)", prev, i+1, c.label)
+		}
+		sums[c.sum], labels[key] = i+1, i+1
 	}
 	return nil
 }
@@ -125,12 +148,15 @@ type Deps struct {
 
 // Server serves one DUES database.
 type Server struct {
-	cfg      Config
-	deps     Deps
-	log      *zap.Logger
-	addrs    []listenAddr
-	tokenSum []byte // sha256 of the token, nil without one
-	origins  map[string]bool
+	cfg     Config
+	deps    Deps
+	log     *zap.Logger
+	addrs   []listenAddr
+	origins map[string]bool
+	// registered holds each pattern's route, for the scope check in
+	// front of the mux. It is written only before the server listens.
+	registered map[string]route
+	rpcErr     *connect.ErrorWriter
 
 	inflight chan struct{}
 	conns    chan struct{}
@@ -166,18 +192,16 @@ func New(cfg Config, deps Deps) (*Server, error) {
 	}
 	addrs, _ := parseListen(cfg.Listen)
 	s := &Server{
-		cfg:      cfg,
-		deps:     deps,
-		log:      deps.Log,
-		addrs:    addrs,
-		origins:  map[string]bool{},
-		inflight: make(chan struct{}, max(cfg.Limits.MaxInFlight, 1)),
-		conns:    make(chan struct{}, max(cfg.Limits.MaxConns, 1)),
-		mux:      http.NewServeMux(),
-	}
-	if cfg.Token != "" {
-		sum := sha256.Sum256([]byte(cfg.Token))
-		s.tokenSum = sum[:]
+		cfg:        cfg,
+		deps:       deps,
+		log:        deps.Log,
+		addrs:      addrs,
+		origins:    map[string]bool{},
+		registered: map[string]route{},
+		rpcErr:     connect.NewErrorWriter(),
+		inflight:   make(chan struct{}, max(cfg.Limits.MaxInFlight, 1)),
+		conns:      make(chan struct{}, max(cfg.Limits.MaxConns, 1)),
+		mux:        http.NewServeMux(),
 	}
 	for _, o := range cfg.CORSOrigins {
 		n, _ := normalizeOrigin(o)
@@ -195,8 +219,8 @@ func New(cfg Config, deps Deps) (*Server, error) {
 }
 
 // handler is the middleware chain around the routes, outermost first:
-// recover, access log, in-flight limit, Host check, CORS, auth. Body limits
-// and deadlines are set per route.
+// recover, access log, in-flight limit, Host check, CORS, auth and scope.
+// Body limits and deadlines are set per route.
 func (s *Server) handler() http.Handler {
 	var h http.Handler = s.mux
 	h = s.withAuth(h)
@@ -209,9 +233,9 @@ func (s *Server) handler() http.Handler {
 
 // routes registers every endpoint. Anything else, "/" included, is 404.
 func (s *Server) routes() {
-	health := route{read: 10 * time.Second, write: 10 * time.Second}
-	s.handle(s.mux, "GET /healthz", health, http.HandlerFunc(s.healthz))
-	s.handle(s.mux, "GET /readyz", health, http.HandlerFunc(s.readyz))
+	health := route{read: 10 * time.Second, write: 10 * time.Second, public: true}
+	s.handle("GET /healthz", health, http.HandlerFunc(s.healthz))
+	s.handle("GET /readyz", health, http.HandlerFunc(s.readyz))
 	s.rpcRoutes()
 	s.uploadRoutes()
 }

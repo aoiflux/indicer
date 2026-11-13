@@ -34,6 +34,39 @@ func FuzzOriginCheck(f *testing.F) {
 	})
 }
 
+// FuzzParseTokens: a token file either gives credentials the server takes,
+// or is refused with an error that quotes nothing a token could be.
+func FuzzParseTokens(f *testing.F) {
+	tok := strings.Repeat("a", MinTokenLength)
+	for _, s := range []string{
+		tok, "\xEF\xBB\xBF" + tok + "\r\n", "#" + tok, tok + "\nsecond",
+		TokenFileHeader + "\n" + tok + " read,upload alice\n# off\n" + tok + "b== all bob\n",
+		TokenFileHeader + "\nalice read " + tok, TokenFileHeader + "\n" + tok + " read " + tok + "x",
+		TokenFileHeader + "\n" + tok + " read Alice\n" + tok + "b read alice", "#dues-tokens v2\n" + tok + " read a",
+		TokenFileHeader + "\nalice " + tok + " read", TokenFileHeader + " x\n" + tok + " read a", "\n" + tok,
+		TokenFileHeader + "\n" + strings.Repeat("=", MinTokenLength) + " read a",
+	} {
+		f.Add([]byte(s))
+	}
+	f.Fuzz(func(t *testing.T, data []byte) {
+		creds, err := ParseTokens(data)
+		if err != nil {
+			for field := range strings.FieldsSeq(string(data)) {
+				if len(field) >= MinTokenLength && strings.Contains(err.Error(), field) {
+					t.Fatalf("the error quotes the file: %v", err)
+				}
+			}
+			return
+		}
+		if len(creds) == 0 || len(creds) > MaxTokens {
+			t.Fatalf("%d credentials", len(creds))
+		}
+		if err := (Config{Tokens: creds}).Validate(); err != nil {
+			t.Fatalf("the credentials do not validate: %v", err)
+		}
+	})
+}
+
 // FuzzUploadRequests sends upload start bodies and chunk offsets the server
 // did not expect: each gets a 2xx or 4xx answer, or 507 for space, never a
 // panic or another 5xx.

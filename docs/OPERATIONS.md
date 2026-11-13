@@ -101,6 +101,17 @@ not fit.
 selects. That suits `--all` over many small evidence. The config file's
 `store.store-jobs` applies to `store` only.
 
+`dues server --upload-jobs N` stores up to N uploads at once, by the same
+rules: default 1, 0 picks a number for the machine, uploads of one content
+(or one client path) one after another, a large one alone, and the uploads
+stored at once share the store workers. Uploads arrive one by one, so the
+server does not refuse a number that may not fit: an upload that would not
+fit in memory beside the ones being stored waits for them. No more than 16
+uploads may be in progress, so a number above 16 is cut to 16. The log
+records `upload queued` when an upload must wait its turn, `upload storing`
+with its wait when it starts, and `upload stored` or `upload failed` when it
+ends.
+
 ## After a crash or a kill
 
 DUES makes chunks durable before it records them, and records an ingest's
@@ -246,7 +257,8 @@ exception is `dues tui`: it stores and restores in the same process, with no
 tuning flags of its own, so the `store` and `restore` objects tune it too.
 `dues server` does not take them: it stores uploads with the default store
 settings, since uploads run side by side and one upload's worker counts would
-be multiplied by the number running.
+be multiplied by the number running. Its own `server.upload-jobs` sets how
+many run.
 Paths must be absolute: `~` is not expanded. `dues help config` lists the
 keys.
 
@@ -257,7 +269,7 @@ keys.
 | `dbpath`, `password-file`, `preset`, `compress-level`, `low` | top level |
 | `pipeline`, `hash-strategy`, `io-engine`, `io-uring-queue-depth`, `store-workers`, `store-queue`, `store-jobs` | `store` |
 | `restore-workers`, `restore-queue`, `restore-buffer-mb` | `restore` |
-| `listen`, `token-file`, `cors-origin` | `server` |
+| `listen`, `token-file`, `cors-origin`, `upload-jobs` | `server` |
 | `log-dir`, `temp-dir` | `compression.json`, top level |
 
 The layout of a new database (chunk size, container, hash algorithm, quick)

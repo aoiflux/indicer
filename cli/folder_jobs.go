@@ -24,12 +24,13 @@ import (
 	"go.uber.org/zap"
 )
 
-// StoreJobs turns --store-jobs into StoreOptions.Jobs: n, or for 0 a number
-// for this machine. Low-resource mode (low) stores one at a time.
-func StoreJobs(n int, low bool) (int, error) {
+// Jobs turns the jobs flag named flag (--store-jobs, --upload-jobs) into how
+// many evidence run at once: n, or for 0 a number for this machine.
+// Low-resource mode (low) runs one at a time.
+func Jobs(flag string, n int, low bool) (int, error) {
 	switch {
 	case n < 0 || n > ingest.MaxJobs:
-		return 0, lifecycle.Usagef("--%s must be from 0 to %d, got %d", cnst.FlagStoreJobs, ingest.MaxJobs, n)
+		return 0, lifecycle.Usagef("--%s must be from 0 to %d, got %d", flag, ingest.MaxJobs, n)
 	case low:
 		return 1, nil
 	case n == 0:

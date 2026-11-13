@@ -7,7 +7,7 @@ The service is defined in [`protos/dues.proto`](../protos/dues.proto). The gener
 ## Running it
 
 ```
-dues server [--listen HOST:PORT]... [--token-file PATH] [--cors-origin ORIGIN]... [global options]
+dues server [--listen HOST:PORT]... [--token-file PATH] [--cors-origin ORIGIN]... [--upload-jobs N] [global options]
 ```
 
 - **Addresses.** By default the server listens on `127.0.0.1:50051` and `[::1]:50051` only. If the host has no IPv6 loopback, the IPv6 address is skipped and a note is printed. `--listen` replaces the defaults and may be given more than once.
@@ -15,7 +15,8 @@ dues server [--listen HOST:PORT]... [--token-file PATH] [--cors-origin ORIGIN]..
 
   Once a token is set, every listener requires it, loopback included.
 - **Encryption.** The server speaks plain HTTP. A warning is printed when it listens on a non-loopback address. To serve remote clients, put a TLS-terminating proxy or an SSH tunnel in front of it.
-- **Configuration errors.** A bad address, origin or token exits with code 2 before the database is opened.
+- **Uploads at once.** `--upload-jobs N` stores up to N uploads at once: from 0 to 64, default 1, and 0 picks a number for this machine. No more than 16 uploads may be in progress, so a higher number is cut to 16, with a note. Low-resource mode stores one at a time. See [Browser uploads](#browser-uploads) for the order they are stored in.
+- **Configuration errors.** A bad address, origin, token or `--upload-jobs` value exits with code 2 before the database is opened.
 
 Examples:
 
@@ -156,7 +157,7 @@ Every object is described by a `BaseFile`:
 
 ## Browser uploads
 
-Uploads and `StreamFile` are stored with the default store settings: the store tuning flags and the config file's `store` object apply to `dues store` and the TUI, not to the server.
+Uploads and `StreamFile` are stored with the default store settings: the store tuning flags and the config file's `store` object apply to `dues store` and the TUI, not to the server. Uploads stored at once share the store workers between them, as the evidence of `dues store --store-jobs` do.
 
 An upload is a session. Its bytes are written in order, at offsets the client names, so an upload that is cut off can carry on where the server says it stopped. All endpoints take and give JSON, except `chunk`, which takes raw bytes.
 
@@ -175,7 +176,7 @@ POST /web/upload/start
 - **Refusals.**
   - `400`: a bad field
   - `413`: a size over 256 GiB
-  - `429` (with `Retry-After`): 16 uploads are already in progress
+  - `429` (with `Retry-After`): 16 uploads are already in progress (receiving, waiting their turn, or being stored)
   - `507`: less free space than the size plus 64 MiB
 
 **2. Send chunks.**
@@ -208,7 +209,13 @@ POST /web/upload/finalize
 ```
 
 - **Before it runs.** The session must hold every declared byte; otherwise the answer is `409` with the held offset.
-- **What it does.** The server compares the bytes' hash with `file_hash`. A mismatch is `422`, and nothing is stored. Otherwise the file is stored and indexed: one upload is stored at a time. The evidence is named by the last element of `file_path`, and records `file_path` as where it came from.
+- **What it does.** The server compares the bytes' hash with `file_hash`. A mismatch is `422`, and nothing is stored. Otherwise the file is stored and indexed. The evidence is named by the last element of `file_path`, and records `file_path` as where it came from.
+- **Its turn.** Up to `--upload-jobs` uploads are stored at once, one by default. A finalized upload waits its turn when:
+  - an upload of the same `file_path`, or of the same content, is being stored or waits before it. Such uploads are stored one after another, in the order their hash checks end. A later upload of the same content becomes an alias of the first.
+  - a large upload (an image of 256 MiB or more once decoded) is being stored or waits before it. A large upload is stored alone.
+  - the uploads being stored would, with it, hold more memory than the server allows. An upload stored alone always fits.
+
+  Other uploads may be stored before one that waits for its `file_path` or content.
 - **The result.**
   - `outcome` is `stored`, or `aliased` when the content was already stored. An aliased upload is recorded as an alias of the evidence holding it, and `file_type` is not applied to that evidence.
   - `warning` is set when the file was stored but its index is incomplete, or an EWF image's stored digests did not match.
@@ -219,14 +226,16 @@ POST /web/upload/finalize
 
 ```
 POST /web/upload/status {"upload_id": "…"}
-→ {"upload_id": "…", "state": "receiving|finalizing|done|failed", "offset": …, "size": …,
+→ {"upload_id": "…", "state": "receiving|finalizing|done|failed", "queued": true, "offset": …, "size": …,
    "expires_at": "…", "result": {…}, "error": "…"}
 
 POST /web/upload/abort {"upload_id": "…"}
 → {"ok": true}
 ```
 
-`abort` removes what the session received. A session being finalized cannot be aborted (`409`).
+`queued` is `true` while a finalizing upload waits its turn to be stored, and is left out otherwise.
+
+`abort` removes what the session received. A session being finalized cannot be aborted (`409`), even while it waits its turn.
 
 **Expiry.**
 - A session ends 30 minutes after its last chunk or status call, and in any case 24 hours after it started. What it received is then removed.
@@ -239,7 +248,7 @@ On the first interrupt or termination signal, the server shuts down in this orde
 
 1. It stops taking new requests, and `/readyz` turns `503`.
 2. The requests being served get 25 s to finish.
-3. Their work is then told to stop: searches end, and an upload being stored stops, to be uploaded again.
+3. Their work is then told to stop: searches end, and an upload being stored stops, to be uploaded again. An upload still waiting its turn fails with `503`, to be uploaded again too.
 4. That work gets 10 s more to return.
 5. If work is still running after that, the server exits without closing the database. badger recovers it at its next open.
 

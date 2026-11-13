@@ -17,6 +17,10 @@ const MaxJobs = 64
 // every worker: a large image keeps the machine busy by itself.
 const HeavySize = 256 << 20
 
+// IndexedPasses are the chunk passes an evidence being stored and indexed
+// holds at once (LaneMemory).
+const IndexedPasses = 2
+
 const (
 	// AutoJobs runs one evidence per cpusPerAutoJob CPUs, at most maxAutoJobs.
 	cpusPerAutoJob = 4

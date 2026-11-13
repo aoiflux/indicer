@@ -46,7 +46,7 @@ type StoreOptions struct {
 	// Quiet shows no progress bar: the TUI owns the terminal.
 	Quiet bool
 	// Jobs is how many evidence of a folder are stored at once; 0 or 1, one
-	// at a time (StoreJobs reads --store-jobs).
+	// at a time (Jobs reads --store-jobs).
 	Jobs int
 	// AutoJobs says Jobs was chosen for this machine (--store-jobs 0): a
 	// folder store runs fewer when that many would not fit in memory, where
@@ -165,7 +165,7 @@ func storeFolder(ctx context.Context, w io.Writer, sess *ingest.Session, dir str
 	if jobs > 1 {
 		var sizes []int64
 		items, sizes = folderItems(ctx, sess.DB(), plan.Items, sopts.Decode, jobs, cmp.Or(sopts.heavy, ingest.HeavySize))
-		passes := 2
+		passes := ingest.IndexedPasses
 		if sopts.NoIndex {
 			passes = 1
 		}

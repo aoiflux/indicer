@@ -170,6 +170,8 @@ const (
 	flagCORSOrigin = "cors-origin"
 )
 
+const flagUploadJobs = "upload-jobs"
+
 // resolveServerToken returns the server's bearer token from --token-file;
 // none is no token. The removed --token is refused with what replaces it.
 func resolveServerToken(f cliFlags, src sources) (string, error) {

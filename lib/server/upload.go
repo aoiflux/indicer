@@ -15,11 +15,14 @@ import (
 	"sync"
 	"time"
 
+	"indicer/internal/appconfig"
 	"indicer/internal/diskspace"
 	"indicer/internal/faultinject"
 	"indicer/lib/cnst"
 	"indicer/lib/dbio"
 	"indicer/lib/dbmeta"
+	"indicer/lib/engine"
+	"indicer/lib/evidence"
 	"indicer/lib/ingest"
 	"indicer/lib/store"
 	"indicer/lib/structs"
@@ -55,6 +58,9 @@ type UploadLimits struct {
 	ReapInterval time.Duration
 	// Headroom is the free space wanted beyond an upload's declared size.
 	Headroom int64
+	// Jobs is how many uploads are stored at once: at most MaxSessions, and
+	// one in low-resource mode.
+	Jobs int
 }
 
 // DefaultUploadLimits are the limits `dues server` runs with.
@@ -68,6 +74,7 @@ func DefaultUploadLimits() UploadLimits {
 		FinalizeWait: 25 * time.Second,
 		ReapInterval: time.Minute,
 		Headroom:     diskspace.Reserve,
+		Jobs:         1,
 	}
 }
 
@@ -109,6 +116,7 @@ type session struct {
 	last     time.Time
 	finished time.Time
 	state    string
+	queued   bool // finalizing, and waiting its turn to be stored
 	result   *uploadResult
 	err      *uploadError
 
@@ -167,13 +175,15 @@ type uploads struct {
 
 	mu       sync.Mutex
 	sessions map[string]*session
-	ingest   chan struct{} // one ingest at a time
+
+	ingest *ingest.Session
+	queue  *ingestQueue
 
 	// Seams for tests.
 	now       func() time.Time
 	free      func(string) (uint64, error)
 	writeAt   func(f *os.File, p []byte, off int64) (int, error)
-	runIngest func(context.Context, *badger.DB, ingest.Request) (ingest.Result, error)
+	runIngest func(context.Context, ingest.Request) (ingest.Result, error)
 
 	reaperDone chan struct{}
 }
@@ -188,20 +198,30 @@ func newUploads(s *Server) (*uploads, error) {
 	if lim == (UploadLimits{}) {
 		lim = DefaultUploadLimits()
 	}
+	jobs := min(max(lim.Jobs, 1), lim.MaxSessions)
+	if jobs < lim.Jobs {
+		s.Notes = append(s.Notes, fmt.Sprintf("%d uploads are stored at once, not %d: no more may be in progress at once", jobs, lim.Jobs))
+	}
+	if engine.For(s.deps.DB).Tuning().LowResource {
+		jobs = 1
+	}
+	// Sampled once: the memory free later is less what the uploads stored
+	// then hold, which their lanes already count.
+	budget := appconfig.MemoryBudget(appconfig.Machine())
+	s.log.Info("upload jobs", zap.Int("jobs", jobs), zap.Int64("budget_bytes", budget))
 	m := &uploads{
 		s:        s,
 		dir:      filepath.Join(s.deps.Root, cnst.UploadsDir),
 		lim:      lim,
 		hasher:   dbmeta.FileHasher(s.deps.DB),
 		sessions: map[string]*session{},
-		ingest:   make(chan struct{}, 1),
+		ingest:   ingest.NewSession(s.deps.DB),
+		queue:    newIngestQueue(jobs, budget),
 		now:      time.Now,
 		free:     diskspace.Free,
 		writeAt:  func(f *os.File, p []byte, off int64) (int, error) { return f.WriteAt(p, off) },
-		runIngest: func(ctx context.Context, db *badger.DB, req ingest.Request) (ingest.Result, error) {
-			return ingest.Run(ctx, db, req)
-		},
 	}
+	m.runIngest = m.ingest.Run
 	m.hashLen = m.hasher().Size()
 	if err := os.MkdirAll(m.dir, 0o700); err != nil {
 		return nil, fmt.Errorf("server: uploads directory: %w", err)
@@ -302,8 +322,15 @@ func (m *uploads) dropFile(s *session) {
 }
 
 // stop removes the part files of sessions still receiving. It runs once the
-// server's requests and work have stopped.
-func (m *uploads) stop() {
+// server's requests and work have stopped, or, not idle, given up waiting
+// for its work: the ingest session is then left open, as Close would wait
+// for the ingests still running.
+func (m *uploads) stop(idle bool) {
+	if idle {
+		if err := m.ingest.Close(); err != nil {
+			m.s.log.Warn("upload ingest session not closed", zap.Error(err))
+		}
+	}
 	if m.reaperDone != nil {
 		<-m.reaperDone
 	}
@@ -544,22 +571,40 @@ func (m *uploads) ingestUpload(ctx context.Context, s *session) (*uploadResult, 
 		m.s.log.Warn("upload hash mismatch", zap.String("upload_id", s.id), zap.String("client_hash", s.hash), zap.String("hash", got))
 		return nil, uploadErr(http.StatusUnprocessableEntity, "the uploaded bytes do not match file_hash: their %s hash is %s", dbmeta.HashAlgo(m.s.deps.DB), got)
 	}
-	select {
-	case m.ingest <- struct{}{}:
-		defer func() { <-m.ingest }()
-	case <-ctx.Done():
+	db := m.s.deps.DB
+	job, size := m.queueJob(ctx, s)
+	arrived := m.now()
+	release, err := m.queue.acquire(ctx, job, func(ahead int) {
+		m.mu.Lock()
+		s.queued = true
+		m.mu.Unlock()
+		m.s.log.Info("upload queued", zap.String("upload_id", s.id), zap.Int("ahead", ahead))
+	})
+	m.mu.Lock()
+	s.queued = false
+	m.mu.Unlock()
+	if err != nil {
 		return nil, uploadErr(http.StatusServiceUnavailable, "the server stopped before the upload was stored; upload it again")
 	}
-	db := m.s.deps.DB
+	defer release()
+	workers := 0
+	if !job.heavy {
+		// Beside others: a share of the machine. A heavy one runs alone,
+		// with all of it.
+		workers = ingest.InnerWorkers(engine.For(db), m.queue.jobs)
+	}
+	m.s.log.Info("upload storing", zap.String("upload_id", s.id), zap.Int64("size", size), zap.Bool("heavy", job.heavy),
+		zap.Int("workers", workers), zap.Int64("wait_ms", m.now().Sub(arrived).Milliseconds()))
 	if err := faultinject.Hit(faultinject.UploadBeforeIngest); err != nil {
 		return nil, internal("ingest", err)
 	}
-	res, err := m.runIngest(ctx, db, ingest.Request{
+	res, err := m.runIngest(ctx, ingest.Request{
 		Path:       s.path,
 		Name:       clientBase(s.clientPath),
 		SourcePath: s.clientPath,
 		Decode:     true,
 		Quiet:      true,
+		MaxWorkers: workers,
 	})
 	if err == nil {
 		err = faultinject.Hit(faultinject.UploadAfterIngest)
@@ -610,6 +655,34 @@ func (m *uploads) ingestUpload(ctx context.Context, s *session) (*uploadResult, 
 	return out, nil
 }
 
+// The keys of a queued upload. Its client path names its ingest attempt,
+// which two ingests at once would both resume; its decoded size and
+// fingerprint name its content, which the first upload stores and the
+// later ones alias.
+const (
+	pathKey    = "path:"
+	contentKey = "content:"
+)
+
+// queueJob is a finalized upload as the queue sees it, with its decoded
+// size: -1 when it cannot be opened, as its ingest then fails on its own.
+func (m *uploads) queueJob(ctx context.Context, s *session) (j *queueJob, size int64) {
+	j = &queueJob{keys: []string{pathKey + s.clientPath}}
+	size = -1
+	if src, err := evidence.Open(ctx, s.path, evidence.Options{Decode: true}); err == nil {
+		size = src.Size()
+		if fp, err := src.Fingerprint(m.hasher); err == nil {
+			j.keys = append(j.keys, fmt.Sprintf("%s%d:%s", contentKey, size, fp))
+		}
+		_ = src.Close()
+	}
+	j.heavy = size >= ingest.HeavySize
+	if !j.heavy {
+		j.lane = ingest.LaneMemory(m.s.deps.DB, size, m.queue.jobs, ingest.IndexedPasses)
+	}
+	return j, size
+}
+
 // discard ends a session still receiving: its client went away.
 func (m *uploads) discard(s *session) {
 	if !s.tryLock() {
@@ -640,6 +713,7 @@ func (m *uploads) touch(s *session) {
 type uploadStatus struct {
 	UploadID  string        `json:"upload_id"`
 	State     string        `json:"state"`
+	Queued    bool          `json:"queued,omitempty"`
 	Offset    int64         `json:"offset"`
 	Size      *int64        `json:"size,omitempty"`
 	ExpiresAt time.Time     `json:"expires_at"`
@@ -650,7 +724,7 @@ type uploadStatus struct {
 func (m *uploads) status(s *session) uploadStatus {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	st := uploadStatus{UploadID: s.id, State: s.state, Offset: s.offset, Result: s.result}
+	st := uploadStatus{UploadID: s.id, State: s.state, Queued: s.queued, Offset: s.offset, Result: s.result}
 	if s.size >= 0 {
 		size := s.size
 		st.Size = &size
@@ -684,9 +758,9 @@ func (s *Server) uploadRoutes() {
 	s.handle(s.mux, "POST /web/upload/finalize", fin, http.HandlerFunc(s.handleUploadFinalize))
 }
 
-func (s *Server) stopUploads() {
+func (s *Server) stopUploads(idle bool) {
 	if s.uploads != nil {
-		s.uploads.stop()
+		s.uploads.stop(idle)
 	}
 }
 

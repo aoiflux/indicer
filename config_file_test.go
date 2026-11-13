@@ -194,9 +194,9 @@ func TestConfigValidate(t *testing.T) {
 	"log-dir": ` + abs + `, "temp-dir": ` + abs + `, "debug": true, "dbpath": ` + abs + `, "password-file": ` + abs + `,
 	"preset": "low-resource", "compress-level": "fast", "low": true, "graph-compact": "never",
 	"actor": "Jane Doe", "actor-key-password-file": ` + abs + `,
-	"store": {"pipeline": "staged", "hash-strategy": "async", "io-engine": "stdlib", "io-uring-queue-depth": 0, "store-workers": 4, "store-queue": 8},
+	"store": {"pipeline": "staged", "hash-strategy": "async", "io-engine": "stdlib", "io-uring-queue-depth": 0, "store-workers": 4, "store-queue": 8, "store-jobs": 64},
 	"restore": {"restore-workers": 2, "restore-queue": 4, "restore-buffer-mb": 64},
-	"server": {"listen": ["127.0.0.1:0", "[::1]:9"], "token-file": ` + abs + `, "cors-origin": ["https://ui.example.org"]}
+	"server": {"listen": ["127.0.0.1:0", "[::1]:9"], "token-file": ` + abs + `, "cors-origin": ["https://ui.example.org"], "upload-jobs": 0}
 }`
 	if _, _, err := readConfig([]string{"--config", writeConfig(t, good)}); err != nil {
 		t.Fatalf("every key, good values: %v", err)
@@ -222,12 +222,14 @@ func TestConfigValidate(t *testing.T) {
 		{`{"store": {"io-uring-queue-depth": -1}}`, "store.io-uring-queue-depth", "or more, got -1"},
 		{`{"store": {"store-workers": -2}}`, "store.store-workers", "or more, got -2"},
 		{`{"store": {"store-queue": -1}}`, "store.store-queue", "or more"},
+		{`{"store": {"store-jobs": 65}}`, "store.store-jobs", "from 0 (automatic) to 64, got 65"},
 		{`{"restore": {"restore-workers": -1}}`, "restore.restore-workers", "or more"},
 		{`{"restore": {"restore-queue": -1}}`, "restore.restore-queue", "or more"},
 		{`{"restore": {"restore-buffer-mb": -1}}`, "restore.restore-buffer-mb", "or more"},
 		{`{"server": {"listen": ["localhost"]}}`, "server.listen", "want host:port"},
 		{`{"server": {"token-file": "tok"}}`, "server.token-file", "is not an absolute path"},
 		{`{"server": {"cors-origin": ["ui.example.org"]}}`, "server.cors-origin", "want scheme://host[:port]"},
+		{`{"server": {"upload-jobs": -1}}`, "server.upload-jobs", "from 0 (automatic) to 64, got -1"},
 		{`{"chonksize": 512}`, "chonksize", "unknown key"},
 		{`{"password": "x"}`, "password", "unknown key"},
 		{`{"store-workers": 4}`, "store-workers", `goes in the "store" section`},

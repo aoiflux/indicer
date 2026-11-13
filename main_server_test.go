@@ -64,13 +64,24 @@ func TestServerTokenSources(t *testing.T) {
 	}
 }
 
-// TestServerFlagsParse: the listen and origin flags repeat.
+// TestServerFlagsParse: the listen and origin flags repeat; upload jobs
+// default to one.
 func TestServerFlagsParse(t *testing.T) {
 	t.Parallel()
+	plain := newCLIDefinition()
+	if _, err := plain.app.Parse([]string{"server"}); err != nil {
+		t.Fatal(err)
+	}
+	if *plain.flags.serverUploadJobs != 1 {
+		t.Errorf("upload jobs by default %d, want 1", *plain.flags.serverUploadJobs)
+	}
 	cliDef := newCLIDefinition()
 	if _, err := cliDef.app.Parse([]string{"server", "--listen", "127.0.0.1:1", "--listen", "[::1]:2",
-		"--cors-origin", "https://a.example", "--cors-origin", "http://b.example:8080"}); err != nil {
+		"--cors-origin", "https://a.example", "--cors-origin", "http://b.example:8080", "--" + flagUploadJobs, "3"}); err != nil {
 		t.Fatal(err)
+	}
+	if *cliDef.flags.serverUploadJobs != 3 {
+		t.Errorf("upload jobs %d, want 3", *cliDef.flags.serverUploadJobs)
 	}
 	if got := strings.Join(*cliDef.flags.serverListen, " "); got != "127.0.0.1:1 [::1]:2" {
 		t.Errorf("listen %q", got)

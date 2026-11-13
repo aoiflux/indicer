@@ -234,23 +234,24 @@ func TestFolderJobsReportFailuresInFolderOrder(t *testing.T) {
 	}
 }
 
-// TestStoreJobs: --store-jobs takes 0 to 64; 0 picks a number, and
-// low-resource mode stores one at a time.
-func TestStoreJobs(t *testing.T) {
+// TestJobs: a jobs flag takes 0 to 64, and a refusal names it; 0 picks a
+// number, and low-resource mode runs one at a time.
+func TestJobs(t *testing.T) {
 	t.Parallel()
+	const flag = "some-jobs"
 	for _, n := range []int{-1, ingest.MaxJobs + 1} {
-		if _, err := StoreJobs(n, false); err == nil {
-			t.Errorf("StoreJobs(%d) accepted", n)
+		if _, err := Jobs(flag, n, false); err == nil || !strings.Contains(err.Error(), "--"+flag) {
+			t.Errorf("Jobs(%d) = %v, want a refusal naming --%s", n, err, flag)
 		}
 	}
-	if n, err := StoreJobs(0, false); err != nil || n != ingest.AutoJobs() {
-		t.Errorf("StoreJobs(0) = %d, %v; want %d", n, err, ingest.AutoJobs())
+	if n, err := Jobs(flag, 0, false); err != nil || n != ingest.AutoJobs() {
+		t.Errorf("Jobs(0) = %d, %v; want %d", n, err, ingest.AutoJobs())
 	}
-	if n, _ := StoreJobs(8, false); n != 8 {
-		t.Errorf("StoreJobs(8) = %d", n)
+	if n, _ := Jobs(flag, 8, false); n != 8 {
+		t.Errorf("Jobs(8) = %d", n)
 	}
-	if n, _ := StoreJobs(8, true); n != 1 {
-		t.Errorf("StoreJobs(8) in low-resource mode = %d, want 1", n)
+	if n, _ := Jobs(flag, 8, true); n != 1 {
+		t.Errorf("Jobs(8) in low-resource mode = %d, want 1", n)
 	}
 }
 

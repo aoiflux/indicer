@@ -1100,7 +1100,7 @@ func printNearOutHelp() {
 
 func printServerHelp() {
 	printHelpHeader("server")
-	fmt.Fprintln(helpOut, "Usage: dues server [--listen HOST:PORT]... [--token-file PATH] [--cors-origin ORIGIN]... [--hash-algo|-g sha3|blake3] [global options]")
+	fmt.Fprintln(helpOut, "Usage: dues server [--listen HOST:PORT]... [--token-file PATH] [--cors-origin ORIGIN]... [--upload-jobs N] [--hash-algo|-g sha3|blake3] [global options]")
 	fmt.Fprintln(helpOut, "Serves the database over Connect, gRPC and gRPC-Web, with resumable browser")
 	fmt.Fprintln(helpOut, "uploads. It listens on 127.0.0.1:50051 and [::1]:50051 unless told otherwise.")
 	fmt.Fprintln(helpOut, "docs/SERVER_API.md describes the protocol.")
@@ -1108,15 +1108,20 @@ func printServerHelp() {
 	fmt.Fprintln(helpOut, "  --listen        Serve on this host:port (repeatable). A non-loopback address needs a token")
 	fmt.Fprintln(helpOut, "  --token-file    Require the bearer token on the first line of this file (at least 32 characters)")
 	fmt.Fprintln(helpOut, "  --cors-origin   Also let pages from this origin call the server, as scheme://host[:port] (repeatable)")
+	fmt.Fprintln(helpOut, "  --upload-jobs   Uploads stored at once (default 1; 0 = chosen for this machine)")
 	printHelpSection("Notes")
 	fmt.Fprintln(helpOut, "  Traffic is plain HTTP: put a TLS proxy or an SSH tunnel in front of a")
 	fmt.Fprintln(helpOut, "  non-loopback address.")
+	fmt.Fprintln(helpOut, "  Uploads stored at once share the store workers. Uploads of one client path")
+	fmt.Fprintln(helpOut, "  or one content are stored one after another, and a large one is stored")
+	fmt.Fprintln(helpOut, "  alone. Low-resource mode stores one at a time.")
 	fmt.Fprintln(helpOut, "  Health checks: GET /healthz and GET /readyz, without the token.")
 	printExamples(
 		"dues server",
 		"dues server --dbpath ./caseA",
 		"dues server --listen 192.168.1.10:50051 --token-file ./token",
 		"dues server --cors-origin https://ui.example.org",
+		"dues server --upload-jobs 4",
 	)
 }
 
@@ -1196,7 +1201,7 @@ func printConfigHelp() {
 	fmt.Fprintln(helpOut, "  store:   pipeline, hash-strategy, io-engine, io-uring-queue-depth,")
 	fmt.Fprintln(helpOut, "           store-workers, store-queue, store-jobs")
 	fmt.Fprintln(helpOut, "  restore: restore-workers, restore-queue, restore-buffer-mb")
-	fmt.Fprintln(helpOut, "  server:  listen, token-file, cors-origin")
+	fmt.Fprintln(helpOut, "  server:  listen, token-file, cors-origin, upload-jobs")
 	fmt.Fprintln(helpOut, "  Not keys: the database layout (chonksize, container, hash-algo, quick), which")
 	fmt.Fprintln(helpOut, "  a database fixes when it is created; choices for one run (fix, force, out,")
 	fmt.Fprintln(helpOut, "  ...); and the password, which only a file named by password-file holds.")

@@ -157,9 +157,9 @@ func evidenceCount(t *testing.T, db *badger.DB) int {
 func countIngests(n *atomic.Int32) func(*uploads) {
 	return func(m *uploads) {
 		next := m.runIngest
-		m.runIngest = func(ctx context.Context, db *badger.DB, req ingest.Request) (ingest.Result, error) {
+		m.runIngest = func(ctx context.Context, req ingest.Request) (ingest.Result, error) {
 			n.Add(1)
-			return next(ctx, db, req)
+			return next(ctx, req)
 		}
 	}
 }
@@ -449,9 +449,9 @@ func TestUploadFinalizePending(t *testing.T) {
 	release := make(chan struct{})
 	ls := uploadServer(t, &lim, func(m *uploads) {
 		next := m.runIngest
-		m.runIngest = func(ctx context.Context, db *badger.DB, req ingest.Request) (ingest.Result, error) {
+		m.runIngest = func(ctx context.Context, req ingest.Request) (ingest.Result, error) {
 			<-release
-			return next(ctx, db, req)
+			return next(ctx, req)
 		}
 	})
 	db := ls.deps.DB
@@ -735,16 +735,27 @@ func TestUploadOfStoredContent(t *testing.T) {
 }
 
 // TestConcurrentUploads: clients upload at once, three of one content and
-// three of others. Every upload is stored or aliased, each content is
-// stored once, and the clients of one content get the same evidence.
+// three of others, stored one or four at a time. Every upload is stored or
+// aliased, each content is stored once, and the clients of one content get
+// the same evidence.
 func TestConcurrentUploads(t *testing.T) {
 	t.Parallel()
-	ls := uploadServer(t, nil, nil)
+	for _, jobs := range []int{1, 4} {
+		t.Run(fmt.Sprintf("jobs=%d", jobs), func(t *testing.T) {
+			t.Parallel()
+			lim := DefaultUploadLimits()
+			lim.Jobs = jobs
+			concurrentUploads(t, uploadServer(t, &lim, nil))
+		})
+	}
+}
+
+func concurrentUploads(t *testing.T, ls *liveServer) {
 	db := ls.deps.DB
 	shared := bytes.Repeat([]byte("shared content "), 20_000)
 	contents := [][]byte{shared, shared, shared}
 	for i := range 3 {
-		contents = append(contents, bytes.Repeat([]byte(fmt.Sprintf("distinct %d ", i)), 20_000))
+		contents = append(contents, bytes.Repeat(fmt.Appendf(nil, "distinct %d ", i), 20_000))
 	}
 	ids := make([]string, len(contents))
 	errs := make([]error, len(contents))

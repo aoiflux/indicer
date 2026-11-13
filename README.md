@@ -159,7 +159,7 @@ Behaviour that changed:
   call the server; other origins are refused.
 - Paged listings of evidence, partitions and indexed files, with chunk maps.
 - Resumable browser uploads, checked against the client's hash before they
-  are stored:
+  are stored, up to `--upload-jobs` at once (default 1):
   - POST /web/upload/start
   - POST /web/upload/chunk (with `Upload-Offset`)
   - POST /web/upload/status
@@ -512,9 +512,9 @@ stores and restores. Paths must be absolute.
 - Keys: `color`, `plain`, `ci`, `no-fun`, `theme`, `taskbar`, `log-dir`,
   `temp-dir`, `debug`, `dbpath`, `password-file`, `preset`, `compress-level`,
   `low`, `graph-compact`, `actor`, `actor-key-password-file`; `store`: `pipeline`, `hash-strategy`, `io-engine`,
-  `io-uring-queue-depth`, `store-workers`, `store-queue`; `restore`:
-  `restore-workers`, `restore-queue`, `restore-buffer-mb`; `server`: `listen`,
-  `token-file`, `cors-origin`.
+  `io-uring-queue-depth`, `store-workers`, `store-queue`, `store-jobs`;
+  `restore`: `restore-workers`, `restore-queue`, `restore-buffer-mb`;
+  `server`: `listen`, `token-file`, `cors-origin`, `upload-jobs`.
 - Not keys: the layout of a new database (chunk size, container, hash
   algorithm, quick), choices for one run (`--fix`, `--force`, `--out`...) and
   the password itself.

@@ -15,6 +15,7 @@ import (
 	"indicer/internal/lifecycle"
 	"indicer/internal/ui"
 	"indicer/lib/cnst"
+	"indicer/lib/ingest"
 	"indicer/lib/logging"
 	"indicer/lib/server"
 )
@@ -82,6 +83,7 @@ type fileServer struct {
 	Listen     *[]string `json:"listen"`
 	TokenFile  *string   `json:"token-file"`
 	CORSOrigin *[]string `json:"cors-origin"`
+	UploadJobs *int      `json:"upload-jobs"`
 }
 
 // validate checks every value the file sets with the rules its flag
@@ -111,6 +113,11 @@ func (c *fileConfig) validate(f *configfile.File) error {
 			bad(key, "must be 0 (automatic) or more, got %d", *v)
 		}
 	}
+	jobs := func(key string, v *int) {
+		if v != nil && (*v < 0 || *v > ingest.MaxJobs) {
+			bad(key, "must be from 0 (automatic) to %d, got %d", ingest.MaxJobs, *v)
+		}
+	}
 
 	oneOf(ui.FlagColor, c.Color, ui.ColorPolicies)
 	oneOf(ui.FlagTheme, c.Theme, ui.ThemeNames)
@@ -134,7 +141,7 @@ func (c *fileConfig) validate(f *configfile.File) error {
 		count("store."+cnst.FlagStoreIOUringQueueDepth, s.IOUringQueueDepth)
 		count("store."+cnst.FlagStoreWorkers, s.Workers)
 		count("store."+cnst.FlagStoreQueue, s.Queue)
-		count("store."+cnst.FlagStoreJobs, s.Jobs)
+		jobs("store."+cnst.FlagStoreJobs, s.Jobs)
 	}
 	if r := c.Restore; r != nil {
 		count("restore."+cnst.FlagRestoreWorkers, r.Workers)
@@ -156,6 +163,7 @@ func (c *fileConfig) validate(f *configfile.File) error {
 				}
 			}
 		}
+		jobs("server."+flagUploadJobs, s.UploadJobs)
 	}
 	return errors.Join(errs...)
 }
@@ -337,6 +345,7 @@ func (f cliFlags) bindings() []binding {
 		{cnst.CmdServer, flagListen, f.serverListen},
 		{cnst.CmdServer, flagTokenFile, f.serverTokenFile},
 		{cnst.CmdServer, flagCORSOrigin, f.serverCORSOrigins},
+		{cnst.CmdServer, flagUploadJobs, f.serverUploadJobs},
 	}
 }
 

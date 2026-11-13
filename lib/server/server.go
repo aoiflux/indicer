@@ -327,7 +327,7 @@ func (s *Server) stop() error {
 	s.cancelBase(errStopping)
 	idle := s.work.wait(lim.IdleWait)
 	_ = s.http.Close()
-	s.stopUploads()
+	s.stopUploads(idle)
 	if !idle {
 		s.log.Error("server stopped with work still running", zap.Int("running", s.work.count()))
 		return ErrUncleanShutdown

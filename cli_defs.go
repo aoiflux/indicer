@@ -184,6 +184,7 @@ type cliFlags struct {
 	serverToken       *string
 	serverTokenFile   *string
 	serverCORSOrigins *[]string
+	serverUploadJobs  *int
 
 	pkgOut            *string
 	pkgSplitSizeMB    *int
@@ -408,6 +409,7 @@ func newCLIDefinition() cliDefinition {
 	flags.serverTokenFile = commands.server.Flag(flagTokenFile, "Require the bearer token on the first line of this file").String()
 	flags.serverToken = commands.server.Flag(flagToken, "Removed: use --token-file").Hidden().String()
 	flags.serverCORSOrigins = commands.server.Flag(flagCORSOrigin, "Also let pages from this origin call the server, as scheme://host[:port] (repeatable)").Strings()
+	flags.serverUploadJobs = commands.server.Flag(flagUploadJobs, "Uploads stored at once (default 1; 0 = chosen for this machine)").Default("1").Int()
 
 	commands.pkg = app.Command(cmdPackage, "Export the database as a package; inspect, verify or import one")
 	commands.pkgExport = commands.pkg.Command(cmdPackageExport, "Copy the database, as it is on disk, into a .duesarc package")

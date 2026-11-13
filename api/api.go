@@ -20,6 +20,9 @@ type Options struct {
 	Listen      []string
 	Token       string
 	CORSOrigins []string
+	// UploadJobs is how many uploads are stored at once; 0 keeps the
+	// server's default.
+	UploadJobs int
 }
 
 // Server serves the database db names until ctx ends. It opens it writable,
@@ -29,6 +32,9 @@ type Options struct {
 // the database as it is, for recovery at its next open.
 func Server(ctx context.Context, db dbopen.Request, so Options) (err error) {
 	cfg := server.Config{Listen: so.Listen, Token: so.Token, CORSOrigins: so.CORSOrigins, Limits: server.DefaultLimits()}
+	if so.UploadJobs > 0 {
+		cfg.Limits.Upload.Jobs = so.UploadJobs
+	}
 	if err := cfg.Validate(); err != nil {
 		return lifecycle.Usagef("server: %v", err)
 	}

@@ -38,7 +38,7 @@ type ReindexOptions struct {
 	Source string
 	// FTS and Enrich also run those features.
 	FTS, Enrich bool
-	// Jobs is how many evidence are reindexed at once (StoreJobs reads
+	// Jobs is how many evidence are reindexed at once (Jobs reads
 	// --store-jobs); 0 or 1 reindexes one at a time.
 	Jobs int
 	// AutoJobs says Jobs was chosen for this machine: fewer run when that

@@ -13,6 +13,7 @@ import (
 	"indicer/internal/osdirs"
 	"indicer/internal/tracefile"
 	"indicer/internal/ui"
+	"indicer/lib/cnst"
 	"indicer/lib/dbmeta"
 	"indicer/lib/dbopen"
 	"indicer/lib/fio"
@@ -382,7 +383,7 @@ func buildCommandHandlers(cliDef cliDefinition, dbOpts cli.DBOptions, tuning pip
 				zap.Int("store_jobs", *cliDef.flags.storeJobs),
 				zap.Int("store_workers_effective", tuning.storeWorkers),
 				zap.Int("store_queue_effective", tuning.storeQueue))
-			jobs, err := cli.StoreJobs(*cliDef.flags.storeJobs, tuning.engine.LowResource)
+			jobs, err := cli.Jobs(cnst.FlagStoreJobs, *cliDef.flags.storeJobs, tuning.engine.LowResource)
 			if err != nil {
 				return err
 			}
@@ -449,7 +450,7 @@ func buildCommandHandlers(cliDef cliDefinition, dbOpts cli.DBOptions, tuning pip
 				zap.Bool("failed", *cliDef.flags.reindexFailed),
 				zap.Bool("all", *cliDef.flags.reindexAll),
 				zap.Int("store_jobs", *cliDef.flags.reindexJobs))
-			jobs, err := cli.StoreJobs(*cliDef.flags.reindexJobs, tuning.engine.LowResource)
+			jobs, err := cli.Jobs(cnst.FlagStoreJobs, *cliDef.flags.reindexJobs, tuning.engine.LowResource)
 			if err != nil {
 				return err
 			}
@@ -585,8 +586,13 @@ func buildCommandHandlers(cliDef cliDefinition, dbOpts cli.DBOptions, tuning pip
 		cliDef.commands.fortune.FullCommand(): func(context.Context) error { ui.Fortune(); return nil },
 		cliDef.commands.mew.FullCommand():     func(context.Context) error { ui.Meow(); return nil },
 		cliDef.commands.server.FullCommand(): func(ctx context.Context) error {
-			logging.GetLogger().Info("Command: server", zap.String("dbpath", *cliDef.flags.dbpath), zap.Int("chonksize_kb", *cliDef.flags.chonkSize))
+			logging.GetLogger().Info("Command: server", zap.String("dbpath", *cliDef.flags.dbpath), zap.Int("chonksize_kb", *cliDef.flags.chonkSize),
+				zap.Int("upload_jobs", *cliDef.flags.serverUploadJobs))
 			token, err := resolveServerToken(cliDef.flags, src)
+			if err != nil {
+				return err
+			}
+			jobs, err := cli.Jobs(flagUploadJobs, *cliDef.flags.serverUploadJobs, tuning.engine.LowResource)
 			if err != nil {
 				return err
 			}
@@ -594,6 +600,7 @@ func buildCommandHandlers(cliDef cliDefinition, dbOpts cli.DBOptions, tuning pip
 				Listen:      *cliDef.flags.serverListen,
 				Token:       token,
 				CORSOrigins: *cliDef.flags.serverCORSOrigins,
+				UploadJobs:  jobs,
 			})
 			// The file's listen addresses can need a token the command line
 			// does not give; say where they came from.

@@ -33,10 +33,10 @@ func AutoJobs() int {
 
 // InnerWorkers is the chunk-pass width of one evidence among jobs run at once
 // in the database of e: its pipeline width shared out, or 0 (the configured
-// width) when one runs at a time or --store-workers set it.
+// width) when one runs at a time or the user chose the width.
 func InnerWorkers(e *engine.Engine, jobs int) int {
 	t := e.Tuning()
-	if jobs <= 1 || t.StoreWorkers > 0 {
+	if jobs <= 1 || t.StoreWorkersChosen {
 		return 0
 	}
 	workers, _ := t.StorePipeline(e.Container())

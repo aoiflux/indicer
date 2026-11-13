@@ -90,6 +90,9 @@ evidence under 256 MiB: a larger one already keeps the machine busy, so it is
 stored alone. A folder of mostly large images gains little, and was slower when
 the folder and the database shared one disk. Copies of one content are stored
 one after another, and the report reads as a store of one at a time.
+Evidence stored at once share the store workers between them; a
+`--store-workers` given on the command line or in the config file is the
+width of each instead.
 The evidence stored at once must fit in a quarter of the free memory: a
 number that does not fit is refused before anything is stored, and 0 picks
 no more than fit. Large chunks (`--chonksize`) are what usually make them

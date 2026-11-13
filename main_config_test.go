@@ -10,6 +10,8 @@ import (
 	"indicer/internal/lifecycle"
 	"indicer/lib/cnst"
 	"indicer/lib/dbopen"
+	"indicer/lib/engine"
+	"indicer/lib/ingest"
 )
 
 // configure parses args the way run does and applies the runtime config.
@@ -189,6 +191,57 @@ func TestConfigStoreTuningOverrides(t *testing.T) {
 	}
 	if w, q := tuning.engine.StorePipeline(tuning.layout.Container); w != 3 || q != 9 {
 		t.Fatalf("pipeline sees %d/%d, want 3/9", w, q)
+	}
+}
+
+// TestStoreJobsShareFittedWorkers: evidence stored side by side share the
+// store width fitted to memory, and each keep a width the user chose on the
+// command line or in the config file. Regression: a fitted width counted as
+// chosen, so they never shared.
+func TestStoreJobsShareFittedWorkers(t *testing.T) {
+	t.Parallel()
+	const jobs = 4
+	inner := func(file string, args ...string) int {
+		t.Helper()
+		root := filepath.Join(t.TempDir(), "db")
+		args = append([]string{"-d", root}, args...)
+		conf, _, err := readConfig(append([]string{"--config", writeConfig(t, file)}, args...))
+		if err != nil {
+			t.Fatal(err)
+		}
+		cliDef := newCLIDefinition()
+		parsed, err := cliDef.app.Parse(args)
+		if err != nil {
+			t.Fatal(err)
+		}
+		tuning, err := applyRuntimeConfig(parsed, cliDef, conf.apply(cliDef.flags, parsed, cmdLineSources(t, cliDef, args).set))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if tuning.engine.StoreWorkers < 1 {
+			t.Fatalf("%q: no store width fitted", args)
+		}
+		h, err := dbopen.Open(t.Context(), dbopen.Request{Path: root, Mode: dbopen.ReadWrite, Layout: tuning.layout, Tuning: &tuning.engine})
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer func() {
+			if err := h.Close(); err != nil {
+				t.Error(err)
+			}
+		}()
+		return ingest.InnerWorkers(engine.For(h.DB), jobs)
+	}
+	for _, args := range [][]string{{"store", "x"}, {"store", "-w", "0", "x"}} {
+		if w := inner(`{}`, args...); w == 0 {
+			t.Errorf("%q: %d at once keep the whole fitted width; want it shared", args, jobs)
+		}
+	}
+	if w := inner(`{}`, "store", "-w", "3", "x"); w != 0 {
+		t.Errorf("store -w 3: %d at once run %d workers each; want the 3 chosen", jobs, w)
+	}
+	if w := inner(`{"store": {"store-workers": 3}}`, "store", "x"); w != 0 {
+		t.Errorf("store-workers 3 in the config file: %d at once run %d workers each; want the 3 chosen", jobs, w)
 	}
 }
 

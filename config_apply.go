@@ -329,6 +329,7 @@ func applyRuntimeConfig(parsed string, cliDef cliDefinition, src sources) (pipel
 	// RestorePipeline).
 	if eff.StoreWorkers > 0 {
 		tuning.engine.StoreWorkers, tuning.engine.StoreQueue = eff.StoreWorkers, eff.StoreQueue
+		tuning.engine.StoreWorkersChosen = raw.StoreWorkers > 0
 		tuning.storeWorkers, tuning.storeQueue = tuning.engine.StorePipeline(eff.Container)
 	}
 	if parsed == cliDef.commands.restore.FullCommand() && set[cnst.FlagRestoreProgressMs] {

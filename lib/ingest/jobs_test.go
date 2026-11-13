@@ -20,7 +20,8 @@ func TestAutoJobs(t *testing.T) {
 }
 
 // TestInnerWorkers: one at a time keeps the configured width; several share
-// it out, never below minSharedWorkers; a width the user set is kept.
+// it out, never below minSharedWorkers; a width the user chose is kept, and
+// one only fitted to memory is shared.
 func TestInnerWorkers(t *testing.T) {
 	t.Parallel()
 	e := engine.For(openDB(t))
@@ -37,11 +38,15 @@ func TestInnerWorkers(t *testing.T) {
 		}
 	}
 
+	const fitted, jobs = 8, 4
 	tun := testdb.Tuning()
-	tun.StoreWorkers = 8
-	set := engine.For(openDBWith(t, testdb.Options{ChunkKiB: 64, Tuning: &tun}))
-	if w := InnerWorkers(set, 4); w != 0 {
-		t.Fatalf("InnerWorkers(4) with --store-workers set = %d, want 0", w)
+	tun.StoreWorkers = fitted
+	if w := InnerWorkers(engine.For(openDBWith(t, testdb.Options{ChunkKiB: 64, Tuning: &tun})), jobs); w != fitted/jobs {
+		t.Errorf("InnerWorkers(%d) of a fitted width of %d = %d, want %d", jobs, fitted, w, fitted/jobs)
+	}
+	tun.StoreWorkersChosen = true
+	if w := InnerWorkers(engine.For(openDBWith(t, testdb.Options{ChunkKiB: 64, Tuning: &tun})), jobs); w != 0 {
+		t.Errorf("InnerWorkers(%d) with --store-workers chosen = %d, want 0", jobs, w)
 	}
 }
 

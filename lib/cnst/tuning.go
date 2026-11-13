@@ -32,6 +32,10 @@ type Tuning struct {
 	// StoreWorkers and StoreQueue, above 0, replace the store pipeline's
 	// width and queue depth for this machine.
 	StoreWorkers, StoreQueue int
+	// StoreWorkersChosen is set when the user gave StoreWorkers, rather than
+	// it being fitted to the machine's memory: evidence stored side by side
+	// then each keep that width instead of sharing it out.
+	StoreWorkersChosen bool
 	// RestoreWorkers and RestoreQueue, above 0, replace restore's.
 	RestoreWorkers, RestoreQueue int
 	// RestoreBufferMB, above 0, is restore's write buffer in MiB (1 to 256).

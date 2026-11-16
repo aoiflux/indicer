@@ -315,3 +315,27 @@ func TestWriteAtomicRemovesStaleTemps(t *testing.T) {
 		t.Errorf("TempPattern = %q", got)
 	}
 }
+
+// TestTempTarget: a temporary file name of this package names the file it
+// was made for; no other name does.
+func TestTempTarget(t *testing.T) {
+	t.Parallel()
+	if got, ok := TempTarget(".x.json" + tempMarker + "123"); !ok || got != "x.json" {
+		t.Errorf("TempTarget of a temporary name: %q, %v", got, ok)
+	}
+	f, err := os.CreateTemp(t.TempDir(), TempPattern("y.duesarc.partial"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := f.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if got, ok := TempTarget(filepath.Base(f.Name())); !ok || got != "y.duesarc.partial" {
+		t.Errorf("TempTarget of %s: %q, %v", filepath.Base(f.Name()), got, ok)
+	}
+	for _, name := range []string{"x.json", ".x.json", "", "x.json" + tempMarker + "1", "." + tempMarker + "1"} {
+		if got, ok := TempTarget(name); ok {
+			t.Errorf("TempTarget(%q) = %q, want none", name, got)
+		}
+	}
+}

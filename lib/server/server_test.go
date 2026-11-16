@@ -56,6 +56,10 @@ func testLimits() Limits {
 	l.IdleWait = 300 * time.Millisecond
 	l.PauseLeaseWait = 300 * time.Millisecond
 	l.ResumeRetry = [resumeRetries]time.Duration{time.Millisecond, time.Millisecond, time.Millisecond}
+	l.Export.DownloadIdle = 2 * time.Second
+	l.Export.SizingBudget = 200 * time.Millisecond
+	// Tests reap when they mean to.
+	l.Export.ReapInterval = time.Hour
 	return l
 }
 
@@ -237,15 +241,20 @@ func TestHTTPServerProtocols(t *testing.T) {
 	}
 }
 
-// deadlineWriter records the read deadlines set through its
+// deadlineWriter records the deadlines set through its
 // ResponseController.
 type deadlineWriter struct {
 	http.ResponseWriter
-	read []time.Time
+	read, write []time.Time
 }
 
 func (w *deadlineWriter) SetReadDeadline(t time.Time) error {
 	w.read = append(w.read, t)
+	return nil
+}
+
+func (w *deadlineWriter) SetWriteDeadline(t time.Time) error {
+	w.write = append(w.write, t)
 	return nil
 }
 
@@ -266,6 +275,69 @@ func TestIdleBodyClearsDeadlineAtEnd(t *testing.T) {
 		if d.IsZero() {
 			t.Errorf("read deadlines %v: one was cleared before the end", w.read)
 		}
+	}
+}
+
+// TestIdleWriterMovesDeadline: each write of a response moves its deadline
+// a full idle period past the moment it began, so a client that keeps
+// reading is never cut.
+func TestIdleWriterMovesDeadline(t *testing.T) {
+	t.Parallel()
+	const idle = time.Minute
+	rec := httptest.NewRecorder()
+	w := &deadlineWriter{ResponseWriter: rec}
+	iw := &idleWriter{ResponseWriter: w, rc: http.NewResponseController(w), idle: idle}
+	for i := range 3 {
+		before := time.Now()
+		if _, err := io.WriteString(iw, "part"); err != nil {
+			t.Fatal(err)
+		}
+		if len(w.write) != i+1 || w.write[i].Before(before.Add(idle)) {
+			t.Fatalf("write %d: deadlines %v, want one at least %v after %v", i, w.write, idle, before)
+		}
+	}
+	if rec.Body.String() != "partpartpart" {
+		t.Errorf("written %q", rec.Body.String())
+	}
+}
+
+// TestIdleWriterCut: once cut, a response takes no more writes, and its
+// deadline is in the past, so a write already blocked returns.
+func TestIdleWriterCut(t *testing.T) {
+	t.Parallel()
+	rec := httptest.NewRecorder()
+	w := &deadlineWriter{ResponseWriter: rec}
+	iw := &idleWriter{ResponseWriter: w, rc: http.NewResponseController(w), idle: time.Minute}
+	if _, err := io.WriteString(iw, "before"); err != nil {
+		t.Fatal(err)
+	}
+	iw.cut()
+	cutAt := time.Now()
+	if n, err := io.WriteString(iw, "after"); n != 0 || !errors.Is(err, errResponseCut) {
+		t.Errorf("a write after the cut: %d, %v", n, err)
+	}
+	if rec.Body.String() != "before" {
+		t.Errorf("written %q", rec.Body.String())
+	}
+	if last := w.write[len(w.write)-1]; last.After(cutAt) {
+		t.Errorf("the last deadline %v is after the cut at %v", last, cutAt)
+	}
+	if iw.Unwrap() != w {
+		t.Error("Unwrap does not reach the writer below")
+	}
+}
+
+// TestIdleWriterCutAfterEnd: a cut that fires once the handler returned
+// leaves the response writer alone. HTTP/2 invalidates the writer when the
+// handler returns, and a deadline set on it then crashes the server.
+func TestIdleWriterCutAfterEnd(t *testing.T) {
+	t.Parallel()
+	w := &deadlineWriter{ResponseWriter: httptest.NewRecorder()}
+	iw := &idleWriter{ResponseWriter: w, rc: http.NewResponseController(w), idle: time.Minute}
+	iw.end()
+	iw.cut()
+	if len(w.write) != 0 {
+		t.Errorf("deadlines %v set after the handler returned", w.write)
 	}
 }
 
@@ -406,14 +478,16 @@ func TestCORS(t *testing.T) {
 		pre.Header.Set("Access-Control-Request-Headers", "authorization, content-type")
 		resp, _ := do(t, pre)
 		if resp.StatusCode != http.StatusNoContent || resp.Header.Get("Access-Control-Allow-Origin") != o ||
-			!strings.Contains(resp.Header.Get("Access-Control-Allow-Headers"), "Authorization") {
+			!strings.Contains(resp.Header.Get("Access-Control-Allow-Headers"), "Authorization") ||
+			!strings.Contains(resp.Header.Get("Access-Control-Allow-Headers"), "If-Range") {
 			t.Errorf("preflight from %s: %d, allow-origin %q", o, resp.StatusCode, resp.Header.Get("Access-Control-Allow-Origin"))
 		}
 		req := newReq(t, "POST", ls.url+"/test/echo", strings.NewReader("x"))
 		req.Header.Set("Origin", o)
 		resp, body := do(t, req)
 		if resp.StatusCode != 200 || body != "in" || resp.Header.Get("Access-Control-Allow-Origin") != o ||
-			!strings.Contains(resp.Header.Get("Access-Control-Expose-Headers"), "Request-Id") {
+			!strings.Contains(resp.Header.Get("Access-Control-Expose-Headers"), "Request-Id") ||
+			!strings.Contains(resp.Header.Get("Access-Control-Expose-Headers"), "Repr-Digest") {
 			t.Errorf("POST from %s: %d %q", o, resp.StatusCode, body)
 		}
 	}

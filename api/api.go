@@ -23,6 +23,7 @@ type Options struct {
 	// UploadJobs is how many uploads are stored at once; 0 keeps the
 	// server's default.
 	UploadJobs int
+	Exports    server.ExportConfig
 }
 
 // Server serves the database db names until ctx ends. It opens it writable,
@@ -33,9 +34,16 @@ type Options struct {
 // (server.ErrUncleanShutdown) leaves it as it is, for recovery at its next
 // open.
 func Server(ctx context.Context, db dbopen.Request, so Options) error {
-	cfg := server.Config{Listen: so.Listen, Tokens: so.Tokens, CORSOrigins: so.CORSOrigins, Limits: server.DefaultLimits()}
+	cfg := server.Config{Listen: so.Listen, Tokens: so.Tokens, CORSOrigins: so.CORSOrigins, Limits: server.DefaultLimits(), Exports: so.Exports}
 	if so.UploadJobs > 0 {
 		cfg.Limits.Upload.Jobs = so.UploadJobs
+	}
+	root, err := dbopen.ResolveRoot(db.Path)
+	if err != nil {
+		return lifecycle.Usagef("server: %v", err)
+	}
+	if err := server.CheckExportDir(root, so.Exports.Dir); err != nil {
+		return lifecycle.Usagef("server: %v", err)
 	}
 	if err := cfg.Validate(); err != nil {
 		return lifecycle.Usagef("server: %v", err)
@@ -55,7 +63,7 @@ func Server(ctx context.Context, db dbopen.Request, so Options) error {
 	}
 	if err := srv.Listen(); err != nil {
 		printErr("Server startup failed", []string{err.Error()})
-		return errors.Join(err, h.Close())
+		return errors.Join(err, srv.Release(), h.Close())
 	}
 	lines := []string{fmt.Sprintf("Database: %s", h.Root)}
 	for _, a := range srv.Addrs() {

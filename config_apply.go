@@ -18,8 +18,10 @@ import (
 	"indicer/lib/server"
 	"io"
 	"os"
+	"path/filepath"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/alecthomas/kingpin/v2"
 )
@@ -174,6 +176,12 @@ const (
 
 const flagUploadJobs = "upload-jobs"
 
+const (
+	flagExportDir          = "export-dir"
+	flagExportKeepHours    = "export-keep-hours"
+	flagExportDrainTimeout = "export-drain-timeout"
+)
+
 // resolveServerTokens returns the server's tokens from --token-file; none
 // is no token. The file is read by the configuration file's rules, so
 // another account cannot add a token to it. The removed --token is refused
@@ -195,6 +203,32 @@ func resolveServerTokens(f cliFlags, src sources) ([]server.Credential, error) {
 		return nil, lifecycle.Usagef("--%s%s: %s: %v", flagTokenFile, origin, *f.serverTokenFile, err)
 	}
 	return creds, nil
+}
+
+// resolveServerExports returns where the server's export routes write
+// packages and how long they keep them. Each value is checked before the
+// database opens; api.Server, which resolves the data root, checks where
+// the folder sits against it.
+func resolveServerExports(f cliFlags, src sources) (server.ExportConfig, error) {
+	cfg := server.ExportConfig{Creator: duesCreator()}
+	if dir := *f.serverExportDir; dir != "" {
+		abs, err := filepath.Abs(dir)
+		if err != nil {
+			return cfg, lifecycle.Usagef("--%s%s: %v", flagExportDir, src.originOf(flagExportDir), err)
+		}
+		cfg.Dir = abs
+	}
+	hours := *f.serverExportKeep
+	if err := server.CheckExportKeepHours(hours); err != nil {
+		return cfg, lifecycle.Usagef("--%s%s: %v", flagExportKeepHours, src.originOf(flagExportKeepHours), err)
+	}
+	cfg.Keep = time.Duration(hours) * time.Hour
+	drain, err := server.ParseDrainTimeout(*f.serverExportDrain)
+	if err != nil {
+		return cfg, lifecycle.Usagef("--%s%s: %v", flagExportDrainTimeout, src.originOf(flagExportDrainTimeout), err)
+	}
+	cfg.Drain = drain
+	return cfg, nil
 }
 
 // firstLine returns s up to its first line break.

@@ -236,6 +236,9 @@ about 55, and a CI log never goes silent for long.
 ### Elsewhere
 
 In the TUI, the server, the FFI library and the compression product: nothing.
+The server prints nothing while it exports: a client reads the progress from
+`POST /web/export/status` (`bytes_written` of `bytes_expected`), and the
+steps are in the server's log.
 `internal/progress` measures the command as a whole (`Tracker`) for any
 renderer, so a later TUI can show the same overall row.
 

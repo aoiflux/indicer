@@ -9,6 +9,7 @@ import (
 	"strings"
 	"sync/atomic"
 	"testing"
+	"time"
 
 	"indicer/lib/util"
 	"indicer/pb"
@@ -218,6 +219,10 @@ func TestRouteScopes(t *testing.T) {
 		"POST /web/upload/status":                         {scope: ScopeUpload},
 		"POST /web/upload/abort":                          {scope: ScopeUpload},
 		"POST /web/upload/finalize":                       {scope: ScopeUpload},
+		"POST /web/export/start":                          {scope: ScopeExport},
+		"POST /web/export/status":                         {scope: ScopeExport},
+		"POST /web/export/cancel":                         {scope: ScopeExport},
+		"GET /web/export/download/{id}":                   {scope: ScopeExport},
 	}
 	for p, rt := range s.registered {
 		if got := (rs{rt.scope, rt.public, rt.rpc, rt.lease}); got != want[p] {
@@ -233,7 +238,10 @@ func TestRouteScopes(t *testing.T) {
 
 func TestRouteMustBePublicOrScoped(t *testing.T) {
 	t.Parallel()
-	for _, rt := range []route{{}, {public: true, scope: ScopeRead}, {public: true, lease: true}} {
+	for _, rt := range []route{
+		{}, {public: true, scope: ScopeRead}, {public: true, lease: true},
+		{scope: ScopeRead, write: time.Second, idleWrite: time.Second},
+	} {
 		func() {
 			defer func() {
 				if recover() == nil {

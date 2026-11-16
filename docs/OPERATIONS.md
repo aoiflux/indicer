@@ -20,7 +20,7 @@ given. A data root holds:
 | `fts/` | The full-text index, when one was built |
 | `dues.keys/` | The actors' signing keys and the keyring of their public keys (see [Keys and signing](#keys-and-signing)) |
 | `uploads/` | Part files of server uploads in progress |
-| `exports/` | Packages written into the data root; packages of the root leave it out (see [Packages](#packages)) |
+| `exports/` | Packages written into the data root, `dues server`'s exports among them (its default `--export-dir`); packages of the root leave it out (see [Packages](#packages)) |
 | `.dues.lock` | The root lock (see below) |
 
 The layout is fixed when the database is created:
@@ -113,6 +113,15 @@ records `upload queued` when an upload must wait its turn, `upload storing`
 with its wait when it starts, and `upload stored` or `upload failed` when it
 ends.
 
+An export through the server pauses the database, one export at a time. The
+uploads being stored get `--export-drain-timeout` (default 5 min) to finish,
+and are then stopped and requeued; the reads still running get 60 s, and are
+then cut. From the end of the upload drain until the package is written, every
+read is refused with `Retry-After: 5`, and `/readyz` answers `503 paused`. For
+a large database that is the whole copy, so plan exports for when reads can
+wait. Uploads keep arriving meanwhile, and are stored once the database
+reopens. `docs/SERVER_API.md` (Pauses) gives the details.
+
 ## After a crash or a kill
 
 DUES makes chunks durable before it records them, and records an ingest's
@@ -174,6 +183,15 @@ A restore, a report or an archive that is interrupted leaves nothing at its
 target. Output is written to a temporary file beside the target and renamed
 into place only at the end. The next write to the same path removes any
 temporary file an interrupted one left.
+
+When `dues server` starts, it tidies its export folder:
+- It removes unfinished exports (`*.duesarc.partial` and their temporary
+  files), and an export's package or JSON file whose other half is missing.
+- It keeps the finished exports of this database, and serves them to the
+  same token label until they expire. It removes those that have expired.
+- It leaves another database's exports, and any other file, alone.
+
+The startup lines say how many it removed, kept and left.
 
 ## Signals and interruption
 
@@ -270,8 +288,11 @@ keys.
 | `dbpath`, `password-file`, `preset`, `compress-level`, `low` | top level |
 | `pipeline`, `hash-strategy`, `io-engine`, `io-uring-queue-depth`, `store-workers`, `store-queue`, `store-jobs` | `store` |
 | `restore-workers`, `restore-queue`, `restore-buffer-mb` | `restore` |
-| `listen`, `token-file`, `cors-origin`, `upload-jobs` | `server` |
+| `listen`, `token-file`, `cors-origin`, `upload-jobs`, `export-dir`, `export-keep-hours`, `export-drain-timeout` | `server` |
 | `log-dir`, `temp-dir` | `compression.json`, top level |
+
+`server.export-drain-timeout` is a duration string, such as `"90s"` or
+`"10m"`; `server.export-keep-hours` is a number of hours.
 
 The layout of a new database (chunk size, container, hash algorithm, quick)
 is not a key: a database fixes it when it is created, and a value that
@@ -319,9 +340,16 @@ the format and what each scope allows.
   server with exit 2, naming the line, never the token.
 - **Labels in the log.** The log names a token by its label, in the field
   `bearer`: on `server request`, `server scope refused`, `upload started`,
-  `upload stored`, `upload failed` and `upload of another token`. With
-  `upload started` and its `request_id`, `upload stored` ties each stored
-  evidence to the token that sent it. No field holds the token itself.
+  `upload stored`, `upload failed` and `upload of another token`, and on the
+  export records (see [Server exports and pauses](#server-exports-and-pauses)).
+  With `upload started` and its `request_id`, `upload stored` ties each stored
+  evidence to the token that sent it; the export records tie each package to
+  the token that made it and each download to the token that took it. No
+  field holds the token itself.
+- **Export is never anonymous.** A server without tokens refuses every export
+  route. Only a token whose scopes include `export` (or `all`) may export, and
+  it takes a copy of the whole case and pauses the database each time: give
+  it only to trusted operators.
 - **Scopes are not tenants.** Every token works on the one database. A token
   with `upload` learns whether content it holds is stored, and the 16
   uploads in progress are shared by all tokens. Give `upload` only to
@@ -419,6 +447,46 @@ The log records `trace START` and `trace COMPLETE` with the file's path. The
 flag is for one run: it has no config key, and the `settings` record does not
 list it. A trace grows with what the run's goroutines do: a store of 256 MiB
 in eight files wrote 0.7 MB.
+
+### Server exports and pauses
+
+`dues server` logs each export, and each pause of the database it needs. An
+export's records carry `export_id`; a pause's carry `pause_for`, which is
+`export <export_id>`. `bearer` is the token's label, and `request_id` matches
+the access log's `server request`, which gives the status and bytes sent.
+
+| Record | Level | Fields | When |
+|---|---|---|---|
+| `export started` | info | `export_id`, `request_id`, `bearer`, `without_derived`, `bytes_expected` | `start` was accepted |
+| `export sizing skipped` | warn | `export_id`, `elapsed_ms` | sizing the database took more than 20 s; the export goes on |
+| `export sizing failed` | error | `export_id`, `request_id`, `error` | the database could not be sized; `start` answered `500`. A request that ended meanwhile is not recorded |
+| `server pause started` | info | `pause_for`, `drain_ms`, `uploads_storing`, `uploads_waiting`, `requests` | the pause begins |
+| `server pause cancelled uploads` | warn | `pause_for`, `count` | uploads still storing after the drain were stopped |
+| `upload requeued` | info | `upload_id`, `bearer`, `attempt` | a stopped upload went back to its place in the queue |
+| `server pause cancelled requests` | warn | `pause_for`, `count` | reads still running after 60 s were cut |
+| `upload ingest session not closed` | warn | `pause_for`, `error` | the store session could not be closed before the pause; the server also logs it, without `pause_for`, when it closes the database |
+| `server paused` | info | `pause_for`, `gen`, `wait_ms`, `uploads_cut`, `requests_cut` | the database is closed, and the copy starts |
+| `server pause given up` | error | `pause_for`, `stage`, `error` | the pause ended before the database was closed (`stage`: `uploads`, `requests`, `quiesced` or `suspend`); the server goes on as before |
+| `export written` | info | `export_id`, `bearer`, `bytes`, `sha256`, `content_sha256`, `files`, `signed_by`, `key_id`, `duration_ms`, `expires_at`, `notices`, `warnings` | the package is ready to download |
+| `export failed` | warn, or error for an internal failure | `export_id`, `bearer`, `error`, `retryable`, `duration_ms` | the export ended without a package |
+| `export cancelled` | info | `export_id`, `bearer`, `stage` | a running export was cancelled (`stage`: `pausing` or `packaging`) |
+| `server resume failed` | warn | `pause_for`, `attempt`, `error` | one try to reopen the database failed |
+| `server resume given up` | error | `pause_for`, `error` | every try failed; the server stops with that error |
+| `server resumed` | info | `pause_for`, `gen`, `paused_ms`, `attempts` | the database is open again |
+| `export downloaded` | info | `export_id`, `request_id`, `bearer`, `range` | a `GET` of the package ended; `range` says whether it asked for part |
+| `export removed` | info | `export_id`, `reason` | its files were removed: `expired`, `cancelled`, `left by an earlier run`, `orphan` or `unreadable sidecar` |
+| `export of another token` | warn | `request_id`, `export_id`, `bearer` | a token asked for an export it did not start; it was answered `404` |
+| `export file not removed` | warn | `export_id`, `file`, `error` | a file could not be removed; the next round, or the next start, tries again |
+| `export sidecar not valid`, `export not read` | warn | `export_id`, `error` | at start, an export's files did not match; they are removed |
+| `export not opened`, `export not closed` | error, warn | `export_id`, `error`, and `request_id` when not opened | the package could not be opened for a download, or closed after it |
+| `export folder not unlocked` | warn | `error` | an export folder outside the data root could not be unlocked at the stop |
+
+`export written` holds the notices and warnings of the package writer, such
+as why a package is unsigned; the status a client reads does not, as they may
+name server paths. `server resume given up` is the record to alert on: it
+stops the server. `server pause given up` also follows a cancel during the
+pause, so read it beside the `export cancelled` or `export failed` record of
+the same export.
 
 ## Read-only media
 
@@ -558,6 +626,14 @@ disk meanwhile, so keep well more than 128 MiB free.
 `dues graph compact` checks the volume itself before it starts (see Graph
 compaction).
 
+A server export needs the package's size plus 128 MiB free on the export
+folder's volume: `start` answers `507` otherwise, and the export checks the
+exact size again once the database is paused. Reopening the database after
+it needs 128 MiB free on the database's volume; the server tries 4 times in
+about 21 s, then stops with an error. While an export writes into the data
+root's `exports/`, an upload `start` also counts the bytes the export has
+still to write.
+
 A store that runs out of space fails and leaves the database whole. Earlier
 evidence still restores, and storing the file again after making space resumes
 the attempt.
@@ -669,6 +745,26 @@ package:
 All four take the package, any of its parts, or its sidecar. The format is
 in `docs/COMPRESSION_ABI_REFERENCE.md` (Database packages).
 
+**Server exports.** A token with the `export` scope can have `dues server`
+write a package (`docs/SERVER_API.md`, Exports):
+- It is the format `dues package export` writes, never split, and verified
+  and imported the same way. The server pauses the database while it copies
+  it, instead of taking the root lock shared.
+- It is signed by the actor the server's database was opened with: `--actor`
+  when `dues server` was started with one, else the database actor.
+- It is written to `--export-dir` (default `exports/` in the data root) as
+  `<export_id>.duesarc`, beside `<export_id>.json`, which records the token
+  label that made it, the database, its hashes and when it expires.
+- It is kept `--export-keep-hours` (default 24), and at most 4 at once.
+- A folder outside the data root is used by one server at a time (it holds
+  `.dues-exports.lock` there). On Linux and macOS it must belong to you or
+  root, and neither its group nor others may write it. On Windows the server
+  does not check its ACLs: give only your account access to it. A link into
+  the data root, and a folder inside another database's data root, are
+  refused.
+- The package and its JSON file are written readable by the server's account
+  only (mode 0600 on Linux and macOS).
+
 ## Resetting a database
 
 `dues reset` deletes the database in the data root and nothing else there:
@@ -686,4 +782,6 @@ finishes it.
 Reset keeps `dues.keys/`: keys are custody records, and the keyring lets what
 they signed be checked later. It keeps `exports/` too: a package is a copy
 made for someone else. A database made again in the root gets a new
-database key; the old one stays in the keyring.
+database key; the old one stays in the keyring. A server on the new database
+leaves the old database's server exports in `exports/` alone: remove them by
+hand once they are no longer needed.

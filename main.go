@@ -30,6 +30,7 @@ import (
 )
 
 const (
+	duesProduct  = "dues"
 	duesVersion  = "0.39.0"
 	duesCodename = "<pineapple> spacebar"
 )
@@ -41,6 +42,12 @@ var buildCommit string
 
 func buildInfo() ui.Build {
 	return ui.Build{Version: duesVersion, Codename: duesCodename, Commit: buildCommit}
+}
+
+// duesCreator names this build in the packages it makes, by command or by
+// server.
+func duesCreator() duesarc.Creator {
+	return duesarc.Creator{Product: duesProduct, Version: duesVersion, Commit: buildCommit}
 }
 
 func main() {
@@ -535,7 +542,7 @@ func buildCommandHandlers(cliDef cliDefinition, dbOpts cli.DBOptions, tuning pip
 				Force:          *cliDef.flags.pkgForce,
 				WithoutDerived: *cliDef.flags.pkgWithoutDerived,
 				HostInfo:       *cliDef.flags.pkgHostInfo,
-				Creator:        duesarc.Creator{Product: "dues", Version: duesVersion, Commit: buildCommit},
+				Creator:        duesCreator(),
 			})
 		},
 		cliDef.commands.pkgInspect.FullCommand(): func(context.Context) error {
@@ -587,8 +594,13 @@ func buildCommandHandlers(cliDef cliDefinition, dbOpts cli.DBOptions, tuning pip
 		cliDef.commands.mew.FullCommand():     func(context.Context) error { ui.Meow(); return nil },
 		cliDef.commands.server.FullCommand(): func(ctx context.Context) error {
 			logging.GetLogger().Info("Command: server", zap.String("dbpath", *cliDef.flags.dbpath), zap.Int("chonksize_kb", *cliDef.flags.chonkSize),
-				zap.Int("upload_jobs", *cliDef.flags.serverUploadJobs))
+				zap.Int("upload_jobs", *cliDef.flags.serverUploadJobs), zap.String("export_dir", *cliDef.flags.serverExportDir),
+				zap.Int("export_keep_hours", *cliDef.flags.serverExportKeep), zap.String("export_drain", *cliDef.flags.serverExportDrain))
 			tokens, err := resolveServerTokens(cliDef.flags, src)
+			if err != nil {
+				return err
+			}
+			exports, err := resolveServerExports(cliDef.flags, src)
 			if err != nil {
 				return err
 			}
@@ -601,6 +613,7 @@ func buildCommandHandlers(cliDef cliDefinition, dbOpts cli.DBOptions, tuning pip
 				Tokens:      tokens,
 				CORSOrigins: *cliDef.flags.serverCORSOrigins,
 				UploadJobs:  jobs,
+				Exports:     exports,
 			})
 			// The file's listen addresses can need a token the command line
 			// does not give; say where they came from.

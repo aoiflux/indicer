@@ -404,7 +404,7 @@ func (m *uploads) start(ctx context.Context, path, ftype, h string, size int64) 
 		return nil, uploadErr(http.StatusRequestEntityTooLarge, "size %d is over the %d bytes one upload may hold", size, m.lim.MaxSize)
 	}
 	if m.s.draining.Load() {
-		return nil, uploadErr(http.StatusServiceUnavailable, "the server is shutting down")
+		return nil, uploadErr(http.StatusServiceUnavailable, msgShuttingDown)
 	}
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -418,9 +418,12 @@ func (m *uploads) start(ctx context.Context, path, ftype, h string, size int64) 
 		return nil, uploadErr(http.StatusTooManyRequests, "%d uploads are already in progress; retry when one ends", active)
 	}
 	if size > 0 {
+		// An export into the root shares its volume: what it has still to
+		// write is not free for uploads.
+		need := uint64(size+m.lim.Headroom) + uint64(m.s.exports.outstanding())
 		free, err := m.free(m.dir)
-		if err == nil && free < uint64(size+m.lim.Headroom) {
-			return nil, uploadErr(http.StatusInsufficientStorage, "%d bytes are free for uploads; this one needs %d", free, size+m.lim.Headroom)
+		if err == nil && free < need {
+			return nil, uploadErr(http.StatusInsufficientStorage, "%d bytes are free for uploads; this one needs %d", free, need)
 		}
 	}
 	id := uuid.NewString()
@@ -794,13 +797,13 @@ func (m *uploads) status(s *session) uploadStatus {
 // HTTP endpoints.
 
 func (s *Server) uploadRoutes() {
-	js := route{maxBody: s.cfg.Limits.MaxJSONBody, read: 30 * time.Second, write: 30 * time.Second, scope: ScopeUpload}
+	js := route{maxBody: s.cfg.Limits.MaxJSONBody, read: jsonRouteTimeout, write: jsonRouteTimeout, scope: ScopeUpload}
 	s.handle("POST /web/upload/start", js, http.HandlerFunc(s.handleUploadStart))
 	s.handle("POST /web/upload/chunk", route{maxBody: maxChunk, idleRead: time.Minute, write: time.Minute, scope: ScopeUpload}, http.HandlerFunc(s.handleUploadChunk))
 	s.handle("POST /web/upload/status", js, http.HandlerFunc(s.handleUploadStatus))
 	s.handle("POST /web/upload/abort", js, http.HandlerFunc(s.handleUploadAbort))
 	// A finalize answers once FinalizeWait has passed, at the latest.
-	fin := route{maxBody: s.cfg.Limits.MaxJSONBody, read: 30 * time.Second, write: s.uploads.lim.FinalizeWait + 30*time.Second, scope: ScopeUpload}
+	fin := route{maxBody: s.cfg.Limits.MaxJSONBody, read: jsonRouteTimeout, write: s.uploads.lim.FinalizeWait + jsonRouteTimeout, scope: ScopeUpload}
 	s.handle("POST /web/upload/finalize", fin, http.HandlerFunc(s.handleUploadFinalize))
 }
 

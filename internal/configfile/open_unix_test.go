@@ -49,11 +49,11 @@ func TestCheckAccessOwner(t *testing.T) {
 	if os.Getuid() == 0 {
 		st.Uid = 1
 	}
-	if msg := checkAccess(other); !strings.Contains(msg, "not to you") {
+	if msg := CheckAccess(other); !strings.Contains(msg, "not to you") {
 		t.Fatalf("another account's file: %q", msg)
 	}
 	st.Uid = 0
-	if msg := checkAccess(fakeInfo{FileInfo: info, sys: &st, perm: 0o644}); msg != "" {
+	if msg := CheckAccess(fakeInfo{FileInfo: info, sys: &st, perm: 0o644}); msg != "" {
 		t.Fatalf("root's file: %q", msg)
 	}
 }

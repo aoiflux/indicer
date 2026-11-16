@@ -166,6 +166,14 @@ Behaviour that changed:
   - POST /web/upload/status
   - POST /web/upload/abort
   - POST /web/upload/finalize
+- Package exports for a token with the `export` scope, one at a time, kept
+  `--export-keep-hours` (default 24) in `--export-dir` (default the data
+  root's `exports/`). The database is paused while it is copied, so reads
+  are refused (503, Retry-After: 5) until the package is written:
+  - POST /web/export/start
+  - POST /web/export/status
+  - POST /web/export/cancel
+  - GET /web/export/download/{id} (with the `Authorization` header)
 - Health checks at GET /healthz and GET /readyz.
 - The protocol is described in [docs/SERVER_API.md](docs/SERVER_API.md).
 
@@ -515,7 +523,8 @@ stores and restores. Paths must be absolute.
   `low`, `graph-compact`, `actor`, `actor-key-password-file`; `store`: `pipeline`, `hash-strategy`, `io-engine`,
   `io-uring-queue-depth`, `store-workers`, `store-queue`, `store-jobs`;
   `restore`: `restore-workers`, `restore-queue`, `restore-buffer-mb`;
-  `server`: `listen`, `token-file`, `cors-origin`, `upload-jobs`.
+  `server`: `listen`, `token-file`, `cors-origin`, `upload-jobs`,
+  `export-dir`, `export-keep-hours`, `export-drain-timeout`.
 - Not keys: the layout of a new database (chunk size, container, hash
   algorithm, quick), choices for one run (`--fix`, `--force`, `--out`...) and
   the password itself.

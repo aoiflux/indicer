@@ -186,6 +186,16 @@ func IsTempName(name string) bool {
 	return strings.HasPrefix(name, ".") && strings.Contains(name, tempMarker)
 }
 
+// TempTarget is the base name of the file the temporary file name was made
+// for by this package, when it is one.
+func TempTarget(name string) (string, bool) {
+	if !IsTempName(name) {
+		return "", false
+	}
+	target, _, _ := strings.Cut(name[1:], tempMarker)
+	return target, target != ""
+}
+
 // SweepTemps removes temporary files this package left in dir, typically
 // after a crash, that are older than olderThan. It does not recurse, removes
 // only regular files whose names carry the package's marker, and leaves

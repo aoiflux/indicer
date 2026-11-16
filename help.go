@@ -1101,15 +1101,20 @@ func printNearOutHelp() {
 
 func printServerHelp() {
 	printHelpHeader("server")
-	fmt.Fprintln(helpOut, "Usage: dues server [--listen HOST:PORT]... [--token-file PATH] [--cors-origin ORIGIN]... [--upload-jobs N] [--hash-algo|-g sha3|blake3] [global options]")
+	fmt.Fprintln(helpOut, "Usage: dues server [--listen HOST:PORT]... [--token-file PATH] [--cors-origin ORIGIN]... [--upload-jobs N] [--export-dir DIR] [--export-keep-hours N] [--export-drain-timeout D] [--hash-algo|-g sha3|blake3] [global options]")
 	fmt.Fprintln(helpOut, "Serves the database over Connect, gRPC and gRPC-Web, with resumable browser")
-	fmt.Fprintln(helpOut, "uploads. It listens on 127.0.0.1:50051 and [::1]:50051 unless told otherwise.")
-	fmt.Fprintln(helpOut, "docs/SERVER_API.md describes the protocol.")
+	fmt.Fprintln(helpOut, "uploads and database exports. It listens on 127.0.0.1:50051 and [::1]:50051")
+	fmt.Fprintln(helpOut, "unless told otherwise. docs/SERVER_API.md describes the protocol.")
 	printHelpSection("Options")
-	fmt.Fprintln(helpOut, "  --listen        Serve on this host:port (repeatable). A non-loopback address needs a token")
-	fmt.Fprintf(helpOut, "  --token-file    Require a bearer token from this file: one token on its first line, or a %q file of \"<token> <scopes> <label>\" lines\n", server.TokenFileHeader)
-	fmt.Fprintln(helpOut, "  --cors-origin   Also let pages from this origin call the server, as scheme://host[:port] (repeatable)")
-	fmt.Fprintln(helpOut, "  --upload-jobs   Uploads stored at once (default 1; 0 = chosen for this machine)")
+	fmt.Fprintln(helpOut, "  --listen                Serve on this host:port (repeatable). A non-loopback address needs a token")
+	fmt.Fprintf(helpOut, "  --token-file            Require a bearer token from this file: one token on its first line, or a %q file of \"<token> <scopes> <label>\" lines\n", server.TokenFileHeader)
+	fmt.Fprintln(helpOut, "  --cors-origin           Also let pages from this origin call the server, as scheme://host[:port] (repeatable)")
+	fmt.Fprintln(helpOut, "  --upload-jobs           Uploads stored at once (default 1; 0 = chosen for this machine)")
+	fmt.Fprintf(helpOut, "  --export-dir            Write export packages to this folder (default: the database's %s folder; inside the database, only that folder or one in it)\n", cnst.ExportsDir)
+	fmt.Fprintf(helpOut, "  --export-keep-hours     Keep a written export this many hours (default %d; %d to %d)\n",
+		server.DefaultExportKeepHours, server.MinExportKeepHours, server.MaxExportKeepHours)
+	fmt.Fprintf(helpOut, "  --export-drain-timeout  How long an export waits for the uploads being stored, such as 90s or 10m (default %v; %v to %v)\n",
+		server.DefaultDrainTimeout, server.MinDrainTimeout, server.MaxDrainTimeout)
 	printHelpSection("Notes")
 	fmt.Fprintln(helpOut, "  Traffic is plain HTTP: put a TLS proxy or an SSH tunnel in front of a")
 	fmt.Fprintln(helpOut, "  non-loopback address.")
@@ -1121,6 +1126,13 @@ func printServerHelp() {
 	fmt.Fprintln(helpOut, "  reads and uploads, and none exports.")
 	fmt.Fprintln(helpOut, "  The token file must belong to you or root, and not be writable by group or")
 	fmt.Fprintln(helpOut, "  others (Linux, macOS).")
+	fmt.Fprintln(helpOut, "  An export pauses the database: uploads drain up to --export-drain-timeout,")
+	fmt.Fprintln(helpOut, "  then reads are refused (503, Retry-After: 5) until the package is written.")
+	fmt.Fprintln(helpOut, "  One export runs at a time. Give export only to trusted operators: it")
+	fmt.Fprintln(helpOut, "  copies the whole case.")
+	fmt.Fprintln(helpOut, "  An --export-dir outside the database must belong to you, and not be")
+	fmt.Fprintln(helpOut, "  writable by group or others (Linux, macOS); on Windows, give only your")
+	fmt.Fprintln(helpOut, "  account access to it. Packages are written readable by you alone.")
 	fmt.Fprintln(helpOut, "  Health checks: GET /healthz and GET /readyz, without a token.")
 	printExamples(
 		"dues server",
@@ -1128,6 +1140,7 @@ func printServerHelp() {
 		"dues server --listen 192.168.1.10:50051 --token-file ./token",
 		"dues server --cors-origin https://ui.example.org",
 		"dues server --upload-jobs 4",
+		"dues server --token-file tokens --export-dir ./exports --export-keep-hours 48",
 	)
 }
 
@@ -1207,7 +1220,8 @@ func printConfigHelp() {
 	fmt.Fprintln(helpOut, "  store:   pipeline, hash-strategy, io-engine, io-uring-queue-depth,")
 	fmt.Fprintln(helpOut, "           store-workers, store-queue, store-jobs")
 	fmt.Fprintln(helpOut, "  restore: restore-workers, restore-queue, restore-buffer-mb")
-	fmt.Fprintln(helpOut, "  server:  listen, token-file, cors-origin, upload-jobs")
+	fmt.Fprintln(helpOut, "  server:  listen, token-file, cors-origin, upload-jobs, export-dir,")
+	fmt.Fprintln(helpOut, "           export-keep-hours, export-drain-timeout")
 	fmt.Fprintln(helpOut, "  Not keys: the database layout (chonksize, container, hash-algo, quick), which")
 	fmt.Fprintln(helpOut, "  a database fixes when it is created; choices for one run (fix, force, out,")
 	fmt.Fprintln(helpOut, "  ...); and the password, which only a file named by password-file holds.")

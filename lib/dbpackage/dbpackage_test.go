@@ -524,7 +524,7 @@ func TestImportRoundTrip(t *testing.T) {
 	}
 	more := testutil.WriteRandomFile(t, t.TempDir(), "more.bin", 9, 64<<10)
 	_, err = ingest.Run(t.Context(), h.DB, ingest.Request{Path: more, Decode: true, Quiet: true})
-	stats, serr := evidenceStats(t.Context(), h.DB)
+	stats, serr := EvidenceStats(t.Context(), h.DB)
 	if cerr := h.Close(); err != nil || serr != nil || cerr != nil {
 		t.Fatalf("store into the import: %v, %v, %v", err, serr, cerr)
 	}

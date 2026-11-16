@@ -196,7 +196,8 @@ func TestConfigValidate(t *testing.T) {
 	"actor": "Jane Doe", "actor-key-password-file": ` + abs + `,
 	"store": {"pipeline": "staged", "hash-strategy": "async", "io-engine": "stdlib", "io-uring-queue-depth": 0, "store-workers": 4, "store-queue": 8, "store-jobs": 64},
 	"restore": {"restore-workers": 2, "restore-queue": 4, "restore-buffer-mb": 64},
-	"server": {"listen": ["127.0.0.1:0", "[::1]:9"], "token-file": ` + abs + `, "cors-origin": ["https://ui.example.org"], "upload-jobs": 0}
+	"server": {"listen": ["127.0.0.1:0", "[::1]:9"], "token-file": ` + abs + `, "cors-origin": ["https://ui.example.org"], "upload-jobs": 0,
+	           "export-dir": ` + abs + `, "export-keep-hours": 24, "export-drain-timeout": "90s"}
 }`
 	if _, _, err := readConfig([]string{"--config", writeConfig(t, good)}); err != nil {
 		t.Fatalf("every key, good values: %v", err)
@@ -230,6 +231,11 @@ func TestConfigValidate(t *testing.T) {
 		{`{"server": {"token-file": "tok"}}`, "server.token-file", "is not an absolute path"},
 		{`{"server": {"cors-origin": ["ui.example.org"]}}`, "server.cors-origin", "want scheme://host[:port]"},
 		{`{"server": {"upload-jobs": -1}}`, "server.upload-jobs", "from 0 (automatic) to 64, got -1"},
+		{`{"server": {"export-dir": "exports"}}`, "server.export-dir", "is not an absolute path"},
+		{`{"server": {"export-keep-hours": -1}}`, "server.export-keep-hours", "must be from 1 to 720 hours, not -1"},
+		{`{"server": {"export-keep-hours": 721}}`, "server.export-keep-hours", "not 721"},
+		{`{"server": {"export-drain-timeout": "x"}}`, "server.export-drain-timeout", `"x" is not a duration`},
+		{`{"server": {"export-drain-timeout": "2h"}}`, "server.export-drain-timeout", "must be from 1s to 1h0m0s, not 2h0m0s"},
 		{`{"chonksize": 512}`, "chonksize", "unknown key"},
 		{`{"password": "x"}`, "password", "unknown key"},
 		{`{"store-workers": 4}`, "store-workers", `goes in the "store" section`},

@@ -80,10 +80,13 @@ type fileRestore struct {
 }
 
 type fileServer struct {
-	Listen     *[]string `json:"listen"`
-	TokenFile  *string   `json:"token-file"`
-	CORSOrigin *[]string `json:"cors-origin"`
-	UploadJobs *int      `json:"upload-jobs"`
+	Listen             *[]string `json:"listen"`
+	TokenFile          *string   `json:"token-file"`
+	CORSOrigin         *[]string `json:"cors-origin"`
+	UploadJobs         *int      `json:"upload-jobs"`
+	ExportDir          *string   `json:"export-dir"`
+	ExportKeepHours    *int      `json:"export-keep-hours"`
+	ExportDrainTimeout *string   `json:"export-drain-timeout"`
 }
 
 // validate checks every value the file sets with the rules its flag
@@ -164,6 +167,17 @@ func (c *fileConfig) validate(f *configfile.File) error {
 			}
 		}
 		jobs("server."+flagUploadJobs, s.UploadJobs)
+		path("server."+flagExportDir, s.ExportDir)
+		if s.ExportKeepHours != nil {
+			if err := server.CheckExportKeepHours(*s.ExportKeepHours); err != nil {
+				bad("server."+flagExportKeepHours, "%v", err)
+			}
+		}
+		if s.ExportDrainTimeout != nil {
+			if _, err := server.ParseDrainTimeout(*s.ExportDrainTimeout); err != nil {
+				bad("server."+flagExportDrainTimeout, "%v", err)
+			}
+		}
 	}
 	return errors.Join(errs...)
 }
@@ -346,6 +360,9 @@ func (f cliFlags) bindings() []binding {
 		{cnst.CmdServer, flagTokenFile, f.serverTokenFile},
 		{cnst.CmdServer, flagCORSOrigin, f.serverCORSOrigins},
 		{cnst.CmdServer, flagUploadJobs, f.serverUploadJobs},
+		{cnst.CmdServer, flagExportDir, f.serverExportDir},
+		{cnst.CmdServer, flagExportKeepHours, f.serverExportKeep},
+		{cnst.CmdServer, flagExportDrainTimeout, f.serverExportDrain},
 	}
 }
 

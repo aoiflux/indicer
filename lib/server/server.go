@@ -15,6 +15,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	"indicer/internal/duesarc"
 	"indicer/lib/dbopen"
 
 	"connectrpc.com/connect"
@@ -44,6 +45,21 @@ type Config struct {
 	// loopback ones, matched exactly (scheme://host[:port]).
 	CORSOrigins []string
 	Limits      Limits
+	Exports     ExportConfig
+}
+
+// ExportConfig says where the export routes write packages and how long
+// they keep them.
+type ExportConfig struct {
+	// Dir holds the packages; "" is <root>/exports. Inside the data root only
+	// that folder may hold them.
+	Dir string
+	// Keep is how long a written package is kept; 0 is DefaultExportKeepHours.
+	Keep time.Duration
+	// Drain bounds a pause's wait for the uploads being stored; 0 is
+	// DefaultDrainTimeout.
+	Drain   time.Duration
+	Creator duesarc.Creator
 }
 
 // Limits bound what the server takes on.
@@ -69,6 +85,29 @@ type Limits struct {
 	// An array keeps Limits comparable.
 	ResumeRetry [resumeRetries]time.Duration
 	Upload      UploadLimits
+	Export      ExportLimits
+}
+
+// ExportLimits bound the export routes.
+type ExportLimits struct {
+	MaxDownloads int           // GETs served at once; HEAD is free
+	DownloadIdle time.Duration // a download whose client reads nothing this long is cut
+	SizingBudget time.Duration // start's walk of the root for its disk check
+	MaxKept      int           // written packages kept at once
+	DoneTTL      time.Duration // how long a failed or cancelled status is kept
+	ReapInterval time.Duration
+}
+
+// DefaultExportLimits are the limits `dues server` runs with.
+func DefaultExportLimits() ExportLimits {
+	return ExportLimits{
+		MaxDownloads: 4,
+		DownloadIdle: time.Minute,
+		SizingBudget: 20 * time.Second,
+		MaxKept:      4,
+		DoneTTL:      10 * time.Minute,
+		ReapInterval: time.Minute,
+	}
 }
 
 // resumeRetries is how many times a pause tries again to reopen the
@@ -90,6 +129,7 @@ func DefaultLimits() Limits {
 		PauseLeaseWait:    time.Minute,
 		ResumeRetry:       [resumeRetries]time.Duration{time.Second, 5 * time.Second, 15 * time.Second},
 		Upload:            DefaultUploadLimits(),
+		Export:            DefaultExportLimits(),
 	}
 }
 
@@ -113,7 +153,7 @@ func (c Config) Validate() error {
 			return err
 		}
 	}
-	return nil
+	return c.Exports.check()
 }
 
 func checkCredentials(cs []Credential) error {
@@ -189,6 +229,7 @@ type Server struct {
 	fatal chan error
 
 	uploads *uploads
+	exports *exports
 
 	mux  *http.ServeMux
 	http *http.Server
@@ -246,6 +287,13 @@ func New(cfg Config, deps Deps) (*Server, error) {
 		return nil, err
 	}
 	s.uploads = up
+	// Last: an export folder outside the root is locked, and nothing after
+	// this may fail with the lock held.
+	ex, err := newExports(s, h)
+	if err != nil {
+		return nil, err
+	}
+	s.exports = ex
 	s.routes()
 	s.http = s.newHTTPServer(s.handler())
 	return s, nil
@@ -271,6 +319,7 @@ func (s *Server) routes() {
 	s.handle("GET /readyz", health, http.HandlerFunc(s.readyz))
 	s.rpcRoutes()
 	s.uploadRoutes()
+	s.exportRoutes()
 }
 
 // newHTTPServer is the HTTP server for h. It speaks HTTP/1.1 and cleartext
@@ -333,10 +382,16 @@ func (s *Server) Addrs() []net.Addr {
 	return out
 }
 
+// Release gives up what New took, for a server that will not serve: the lock
+// on an export folder outside the root. The database stays the caller's.
+func (s *Server) Release() error {
+	return s.exports.lock.Unlock()
+}
+
 // Run listens and serves until ctx ends.
 func (s *Server) Run(ctx context.Context) error {
 	if err := s.Listen(); err != nil {
-		return err
+		return errors.Join(err, s.Release())
 	}
 	return s.Serve(ctx)
 }
@@ -346,6 +401,7 @@ func (s *Server) Run(ctx context.Context) error {
 // returns nil after a clean stop. From here the server owns the database.
 func (s *Server) Serve(ctx context.Context) error {
 	s.uploads.startReaper(s.base)
+	s.exports.startReaper(s.base)
 	serveErr := make(chan error, len(s.lns))
 	for _, ln := range s.lns {
 		go func() {
@@ -389,6 +445,7 @@ func (s *Server) stop() error {
 	idle := s.work.wait(context.Background(), lim.IdleWait)
 	_ = s.http.Close()
 	s.stopUploads()
+	s.stopExports(idle)
 	if !idle {
 		s.log.Error("server stopped with work still running", zap.Int("running", s.work.count()))
 		return ErrUncleanShutdown

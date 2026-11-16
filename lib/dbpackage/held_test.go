@@ -25,7 +25,7 @@ func suspended(t *testing.T, root string, creds dbmeta.Credentials, actor *dbope
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { _ = h.Close() })
-	stats, err := evidenceStats(t.Context(), h.DB)
+	stats, err := EvidenceStats(t.Context(), h.DB)
 	if err != nil {
 		t.Fatal(err)
 	}

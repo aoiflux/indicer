@@ -3,6 +3,7 @@ package main
 // The command-line definition: flags and commands.
 
 import (
+	"fmt"
 	"strconv"
 
 	"indicer/internal/ui"
@@ -188,6 +189,9 @@ type cliFlags struct {
 	serverTokenFile   *string
 	serverCORSOrigins *[]string
 	serverUploadJobs  *int
+	serverExportDir   *string
+	serverExportKeep  *int
+	serverExportDrain *string
 
 	pkgOut            *string
 	pkgSplitSizeMB    *int
@@ -413,6 +417,9 @@ func newCLIDefinition() cliDefinition {
 	flags.serverToken = commands.server.Flag(flagToken, "Removed: use --token-file").Hidden().String()
 	flags.serverCORSOrigins = commands.server.Flag(flagCORSOrigin, "Also let pages from this origin call the server, as scheme://host[:port] (repeatable)").Strings()
 	flags.serverUploadJobs = commands.server.Flag(flagUploadJobs, "Uploads stored at once (default 1; 0 = chosen for this machine)").Default("1").Int()
+	flags.serverExportDir = commands.server.Flag(flagExportDir, "Write export packages to this folder (default: the database's exports folder)").String()
+	flags.serverExportKeep = commands.server.Flag(flagExportKeepHours, fmt.Sprintf("Keep a written export this many hours (%d-%d)", server.MinExportKeepHours, server.MaxExportKeepHours)).Default(strconv.Itoa(server.DefaultExportKeepHours)).Int()
+	flags.serverExportDrain = commands.server.Flag(flagExportDrainTimeout, fmt.Sprintf("How long an export waits for the uploads being stored, such as 90s or 10m (%v-%v)", server.MinDrainTimeout, server.MaxDrainTimeout)).Default(server.DefaultDrainTimeout.String()).String()
 
 	commands.pkg = app.Command(cmdPackage, "Export the database as a package; inspect, verify or import one")
 	commands.pkgExport = commands.pkg.Command(cmdPackageExport, "Copy the database, as it is on disk, into a .duesarc package")

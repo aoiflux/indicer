@@ -355,7 +355,7 @@ func openStaged(ctx context.Context, dir string, m duesarc.DatabaseManifest, req
 	}
 	defer func() { err = errors.Join(err, h.Close()) }()
 	*notices = append(*notices, h.Notices...)
-	stats, err := evidenceStats(ctx, h.DB)
+	stats, err := EvidenceStats(ctx, h.DB)
 	if err != nil {
 		return err
 	}

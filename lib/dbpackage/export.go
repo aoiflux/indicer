@@ -21,6 +21,7 @@ import (
 	"io"
 	"io/fs"
 	"os"
+	"path"
 	"path/filepath"
 	"runtime"
 	"slices"
@@ -331,7 +332,7 @@ func checkDatabase(ctx context.Context, s *dbopen.Snapshot, opts ExportOptions, 
 		}
 	}()
 	notices = h.Notices
-	stats, err := evidenceStats(ctx, h.DB)
+	stats, err := EvidenceStats(ctx, h.DB)
 	if err != nil {
 		return nil, nil, notices, err
 	}
@@ -371,9 +372,10 @@ func isCredentialError(err error) bool {
 	return errors.Is(err, dbmeta.ErrWrongPassword) || errors.Is(err, dbmeta.ErrPasswordRequired)
 }
 
-// evidenceStats counts the completed evidence and their bytes, as stats
-// does, reading only the evidence records.
-func evidenceStats(ctx context.Context, db *badger.DB) (*duesarc.Stats, error) {
+// EvidenceStats counts the completed evidence and their bytes, as stats
+// does, reading only the evidence records. A server counts them on its open
+// database before it suspends it.
+func EvidenceStats(ctx context.Context, db *badger.DB) (*duesarc.Stats, error) {
 	s := &duesarc.Stats{}
 	prefix := []byte(cnst.EviFileNamespace)
 	err := db.View(func(txn *badger.Txn) error {
@@ -452,6 +454,87 @@ func listRoot(ctx context.Context, root string, withoutDerived bool) ([]entry, e
 	return entries, nil
 }
 
+// sizingBatch is how many entries of a folder EstimateNeed reads at once.
+// ctx is checked between batches, so a folder of millions of blobs neither
+// outlasts the caller's deadline in one read nor sits in memory whole.
+const sizingBatch = 4096
+
+// EstimateNeed is the free space a package of root needs, as Export would
+// list it, for a check made while the database is still open and changing:
+// files that vanish meanwhile are skipped, and nothing is refused. It keeps
+// no list, as a root can hold millions of files. It is a ceiling: the open
+// database's newest log files count at their preallocated size, which they
+// lose when it closes.
+func EstimateNeed(ctx context.Context, root string, withoutDerived bool) (uint64, error) {
+	w := sizeWalk{withoutDerived: withoutDerived}
+	if err := w.folder(ctx, root, ""); err != nil {
+		return 0, err
+	}
+	return spaceNeed(w.total, w.entries, 0), nil
+}
+
+// sizeWalk adds up a root as EstimateNeed sizes it, folder by folder in
+// directory order.
+type sizeWalk struct {
+	withoutDerived bool
+	total          int64
+	entries        int
+}
+
+// folder sizes the folder abs, at rel ("" for the root) in slash form.
+func (w *sizeWalk) folder(ctx context.Context, abs, rel string) error {
+	f, err := os.Open(abs)
+	if err != nil {
+		if rel != "" && errors.Is(err, fs.ErrNotExist) {
+			return nil
+		}
+		return err
+	}
+	defer f.Close()
+	for {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
+		batch, rerr := f.ReadDir(sizingBatch)
+		for _, d := range batch {
+			if err := w.entry(ctx, abs, rel, d); err != nil {
+				return err
+			}
+		}
+		switch {
+		case errors.Is(rerr, io.EOF):
+			return nil
+		case rerr != nil && rel != "" && errors.Is(rerr, fs.ErrNotExist):
+			return nil
+		case rerr != nil:
+			return fmt.Errorf("sizing %s: %w", abs, rerr)
+		}
+	}
+}
+
+func (w *sizeWalk) entry(ctx context.Context, parent, parentRel string, d fs.DirEntry) error {
+	rel := path.Join(parentRel, d.Name())
+	if skip(rel, d.IsDir(), w.withoutDerived) {
+		return nil
+	}
+	if d.IsDir() {
+		w.entries++
+		return w.folder(ctx, filepath.Join(parent, d.Name()), rel)
+	}
+	info, err := d.Info()
+	switch {
+	case errors.Is(err, fs.ErrNotExist):
+		return nil
+	case err != nil:
+		return fmt.Errorf("sizing %s: %w", filepath.Join(parent, d.Name()), err)
+	case info.Mode().IsRegular():
+		w.total += info.Size()
+		w.entries++
+	}
+	// Anything else listRoot refuses at the export, which reports it better.
+	return nil
+}
+
 // skip reports whether a path of the data root stays out of a package.
 func skip(rel string, dir, withoutDerived bool) bool {
 	top, _, _ := strings.Cut(rel, "/")
@@ -502,15 +585,27 @@ func graphSchema(root string) (int, bool) {
 	return marker.SchemaVersion, true
 }
 
-// checkSpace refuses an export the output's volume has no room for. A split
+const (
+	// entryOverhead bounds one entry's zip headers, local and central.
+	entryOverhead = 256
+	// manifestSlack covers manifest.json and the end of the zip.
+	manifestSlack = 1 << 20
+)
+
+// checkSpace refuses an export the output's volume has no room for.
+func checkSpace(out string, total int64, entries int, partSize int64) error {
+	return diskspace.Check(filepath.Dir(out), spaceNeed(total, entries, partSize))
+}
+
+// spaceNeed is the room a package of total bytes in entries needs. A split
 // package is written whole first, then cut into parts, so it needs twice
 // the room.
-func checkSpace(out string, total int64, entries int, partSize int64) error {
-	need := uint64(total) + uint64(entries)*256 + 1<<20
+func spaceNeed(total int64, entries int, partSize int64) uint64 {
+	need := uint64(total) + uint64(entries)*entryOverhead + manifestSlack
 	if partSize > 0 {
 		need *= 2
 	}
-	return diskspace.Check(filepath.Dir(out), need)
+	return need
 }
 
 // writePackage writes the entries in order, then the manifest, which
@@ -588,6 +683,21 @@ func copyEntry(ctx context.Context, zw *zip.Writer, name string, e entry, create
 		return "", fmt.Errorf("%s changed while it was copied (%d bytes, listed with %d)", e.abs, n, e.size)
 	}
 	return hex.EncodeToString(h.Sum(nil)), nil
+}
+
+// CheckOutputDir says whether packages of root may be written into dir:
+// outside root, or in its exports folder, which must exist; inRoot reports
+// the latter. Both paths should have their links resolved, so a link
+// outside root that leads into it is caught.
+func CheckOutputDir(root, dir string) (inRoot bool, err error) {
+	out := filepath.Join(dir, Ext)
+	if !inside(root, out) {
+		return false, nil
+	}
+	if !inExports(root, out) {
+		return false, lifecycle.Usagef("packages written to %s would be inside the database they copy, %s (only its %s folder, which packages leave out, may hold them)", dir, root, cnst.ExportsDir)
+	}
+	return true, nil
 }
 
 // inside reports whether p is root or under it.

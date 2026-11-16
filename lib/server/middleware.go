@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"runtime/debug"
 	"strings"
+	"sync"
 	"time"
 
 	"connectrpc.com/connect"
@@ -17,6 +18,21 @@ import (
 )
 
 type ctxKey int
+
+// jsonRouteTimeout bounds reading a JSON request and writing its answer.
+const jsonRouteTimeout = 30 * time.Second
+
+const (
+	headerContentType        = "Content-Type"
+	headerContentTypeOptions = "X-Content-Type-Options"
+	noSniff                  = "nosniff"
+	// msgShuttingDown is the one refusal of every new request or upload
+	// once the server drains.
+	msgShuttingDown = "the server is shutting down"
+)
+
+// errResponseCut fails the writes of a response cut when its request ended.
+var errResponseCut = errors.New("server: the response was cut")
 
 const (
 	requestIDKey ctxKey = iota
@@ -77,8 +93,8 @@ func httpError(w http.ResponseWriter, r *http.Request, status int, msg string) {
 }
 
 func writeJSON(w http.ResponseWriter, status int, v any) {
-	w.Header().Set("Content-Type", "application/json")
-	w.Header().Set("X-Content-Type-Options", "nosniff")
+	w.Header().Set(headerContentType, "application/json")
+	w.Header().Set(headerContentTypeOptions, noSniff)
 	w.WriteHeader(status)
 	_ = json.NewEncoder(w).Encode(v)
 }
@@ -195,7 +211,7 @@ func (s *Server) withInFlight(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if s.draining.Load() && !isHealthPath(r.URL.Path) {
 			w.Header().Set("Connection", "close")
-			httpError(w, r, http.StatusServiceUnavailable, "the server is shutting down")
+			httpError(w, r, http.StatusServiceUnavailable, msgShuttingDown)
 			return
 		}
 		select {
@@ -231,8 +247,9 @@ const (
 	corsAllowMethods = "GET, POST, OPTIONS"
 	corsAllowHeaders = "Authorization, Content-Type, Connect-Protocol-Version, Connect-Timeout-Ms, " +
 		"Connect-Accept-Encoding, Connect-Content-Encoding, Grpc-Timeout, X-Grpc-Web, X-User-Agent, " +
-		"Upload-Id, Upload-Offset"
-	corsExposeHeaders = "Grpc-Status, Grpc-Message, Grpc-Status-Details-Bin, Request-Id, Upload-Offset"
+		"Upload-Id, Upload-Offset, Range, If-Range, If-None-Match, If-Match"
+	corsExposeHeaders = "Grpc-Status, Grpc-Message, Grpc-Status-Details-Bin, Request-Id, Upload-Offset, " +
+		"ETag, Repr-Digest, Content-Disposition, Content-Range, Accept-Ranges"
 )
 
 // withCORS lets browser pages from loopback origins, on any port, and from
@@ -360,6 +377,11 @@ type route struct {
 	// the request; 0 leaves it unbounded (the request context still ends at
 	// shutdown).
 	write time.Duration
+	// idleWrite, when set, allows that long between writes of the response
+	// instead of write, for responses that may take long but must keep
+	// moving. The response is cut when the request's context ends, so a
+	// download never holds a stop past IdleWait.
+	idleWrite time.Duration
 	// scope is what a token needs to call the route; a public route needs no
 	// token. A route is one or the other.
 	scope  Scope
@@ -380,6 +402,9 @@ func (s *Server) handle(pattern string, rt route, h http.Handler) {
 	if rt.lease && rt.public {
 		panic(fmt.Sprintf("server: route %q uses the database, so it must be scoped", pattern))
 	}
+	if rt.idleWrite > 0 && rt.write > 0 {
+		panic(fmt.Sprintf("server: route %q bounds its response twice: write and idleWrite", pattern))
+	}
 	s.registered[pattern] = rt
 	s.mux.Handle(pattern, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		rc := http.NewResponseController(w)
@@ -390,7 +415,13 @@ func (s *Server) handle(pattern string, rt route, h http.Handler) {
 		} else if rt.read > 0 {
 			_ = rc.SetReadDeadline(now.Add(rt.read))
 		}
-		if rt.write > 0 {
+		if rt.idleWrite > 0 {
+			iw := &idleWriter{ResponseWriter: w, rc: rc, idle: rt.idleWrite}
+			_ = rc.SetWriteDeadline(now.Add(rt.idleWrite))
+			defer iw.end()
+			defer context.AfterFunc(r.Context(), iw.cut)()
+			w = iw
+		} else if rt.write > 0 {
 			_ = rc.SetWriteDeadline(now.Add(rt.write))
 		}
 		if rt.maxBody > 0 {
@@ -429,9 +460,56 @@ func (b *idleBody) Read(p []byte) (int, error) {
 	return n, err
 }
 
+// idleWriter moves the write deadline on before every write, so a response
+// the client keeps reading is never cut, and one it stops reading is.
+// ServeContent ignores the request's context, so cut ends a response whose
+// request ended: its write fails at once.
+type idleWriter struct {
+	http.ResponseWriter
+	rc   *http.ResponseController
+	idle time.Duration
+	// mu orders cut against the deadline a write sets, so a write that
+	// started before the cut still gets the past deadline.
+	mu   sync.Mutex
+	done bool
+	// ended is set once the handler returned. An HTTP/2 response writer
+	// is invalid from then on, and a late cut must not reach it.
+	ended bool
+}
+
+func (w *idleWriter) Write(p []byte) (int, error) {
+	w.mu.Lock()
+	if w.done {
+		w.mu.Unlock()
+		return 0, errResponseCut
+	}
+	_ = w.rc.SetWriteDeadline(time.Now().Add(w.idle))
+	w.mu.Unlock()
+	return w.ResponseWriter.Write(p)
+}
+
+func (w *idleWriter) cut() {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	w.done = true
+	if !w.ended {
+		_ = w.rc.SetWriteDeadline(time.Now())
+	}
+}
+
+// end marks the handler returned. A cut that already began finishes first,
+// because end waits for mu.
+func (w *idleWriter) end() {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	w.ended = true
+}
+
+func (w *idleWriter) Unwrap() http.ResponseWriter { return w.ResponseWriter }
+
 // healthz answers that the process is serving.
 func (s *Server) healthz(w http.ResponseWriter, r *http.Request) {
-	w.Header().Set("Content-Type", "text/plain; charset=utf-8")
+	w.Header().Set(headerContentType, "text/plain; charset=utf-8")
 	w.Header().Set(headerCacheControl, cacheNoStore)
 	_, _ = io.WriteString(w, "ok\n")
 }
@@ -440,7 +518,7 @@ func (s *Server) healthz(w http.ResponseWriter, r *http.Request) {
 // while its database is paused, which says when to ask again, and not once
 // its database is closed.
 func (s *Server) readyz(w http.ResponseWriter, r *http.Request) {
-	w.Header().Set("Content-Type", "text/plain; charset=utf-8")
+	w.Header().Set(headerContentType, "text/plain; charset=utf-8")
 	w.Header().Set(headerCacheControl, cacheNoStore)
 	status, body := http.StatusOK, bodyReady
 	switch ref := s.dbs.current(); {

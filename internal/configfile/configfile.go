@@ -142,7 +142,7 @@ func read(path string) ([]byte, *Error) {
 	case !info.Mode().IsRegular():
 		return fail("is not a regular file", nil)
 	}
-	if msg := checkAccess(info); msg != "" {
+	if msg := CheckAccess(info); msg != "" {
 		return fail(msg, nil)
 	}
 	data, err := io.ReadAll(io.LimitReader(f, MaxSize+1))

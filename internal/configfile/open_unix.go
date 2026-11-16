@@ -15,10 +15,10 @@ func open(path string) (*os.File, error) {
 	return os.OpenFile(path, os.O_RDONLY|syscall.O_NONBLOCK, 0)
 }
 
-// checkAccess applies ssh's rule to the file: settings or tokens that
+// CheckAccess applies ssh's rule to the file: settings or tokens that
 // another account can change are not the user's. The file must belong to
 // the user or to root, and neither its group nor others may write it.
-func checkAccess(info fs.FileInfo) string {
+func CheckAccess(info fs.FileInfo) string {
 	st, ok := info.Sys().(*syscall.Stat_t)
 	if !ok {
 		return "has no owner to check"

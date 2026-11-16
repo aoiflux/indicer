@@ -70,6 +70,10 @@ type Request struct {
 	// they share as one at a time, in order, would (store.ChunkCredits): the
 	// evidence of a folder store.
 	Credit store.Credit
+	// BeforeFlush, when set, is called once the chunks are stored and before
+	// they are marked FLUSHED; an error fails the attempt, which stays
+	// resumable.
+	BeforeFlush func() error
 }
 
 // Result is how an ingest ended.
@@ -469,6 +473,13 @@ func (s *Session) run(ctx context.Context, src *evidence.Source, eid []byte, nam
 		stopIndex(err)
 		wg.Wait()
 		return res, fail(db, eid, err)
+	}
+	if req.BeforeFlush != nil {
+		if err := req.BeforeFlush(); err != nil {
+			stopIndex(err)
+			wg.Wait()
+			return res, fail(db, eid, err)
+		}
 	}
 	region = trace.StartRegion(ctx, "flush")
 	err = flush(db, eid, chunks, check)

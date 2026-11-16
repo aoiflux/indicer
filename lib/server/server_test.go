@@ -8,6 +8,7 @@ import (
 	"io"
 	"net"
 	"net/http"
+	"net/http/httptest"
 	"path/filepath"
 	"strings"
 	"sync"
@@ -16,6 +17,7 @@ import (
 
 	"indicer/lib/dbopen"
 
+	"github.com/dgraph-io/badger/v4"
 	"go.uber.org/zap"
 	"go.uber.org/zap/zaptest/observer"
 )
@@ -29,18 +31,31 @@ func openDB(t *testing.T) *dbopen.Handle {
 	if err != nil {
 		t.Fatal(err)
 	}
-	t.Cleanup(func() {
-		if !h.DB.IsClosed() {
-			_ = h.Close()
-		}
-	})
+	// A server that stopped cleanly has closed it already; Close is then a
+	// no-op.
+	t.Cleanup(func() { _ = h.Close() })
 	return h
+}
+
+// wantReopens checks that the database at root opens writable: whoever had
+// it open has let it go.
+func wantReopens(t *testing.T, root string) {
+	t.Helper()
+	h, err := dbopen.Open(context.Background(), dbopen.Request{Path: root, Mode: dbopen.ReadWrite})
+	if err != nil {
+		t.Fatalf("the database does not reopen writable: %v", err)
+	}
+	if err := h.Close(); err != nil {
+		t.Fatal(err)
+	}
 }
 
 func testLimits() Limits {
 	l := DefaultLimits()
 	l.ShutdownGrace = 300 * time.Millisecond
 	l.IdleWait = 300 * time.Millisecond
+	l.PauseLeaseWait = 300 * time.Millisecond
+	l.ResumeRetry = [resumeRetries]time.Duration{time.Millisecond, time.Millisecond, time.Millisecond}
 	return l
 }
 
@@ -61,9 +76,8 @@ func startServer(t *testing.T, cfg Config, deps Deps, setup func(*Server)) *live
 	if cfg.Limits == (Limits{}) {
 		cfg.Limits = testLimits()
 	}
-	if deps.DB == nil {
-		h := openDB(t)
-		deps.DB, deps.Root = h.DB, h.Root
+	if deps.Handle == nil {
+		deps.Handle = openDB(t)
 	}
 	s, err := New(cfg, deps)
 	if err != nil {
@@ -88,6 +102,9 @@ func startServer(t *testing.T, cfg Config, deps Deps, setup func(*Server)) *live
 	})
 	return ls
 }
+
+// db is the database the server has open now.
+func (ls *liveServer) db() *badger.DB { return ls.dbs.current().db }
 
 // stop stops the server and returns what Serve returned.
 func (ls *liveServer) stop(t *testing.T) error {
@@ -217,6 +234,38 @@ func TestHTTPServerProtocols(t *testing.T) {
 				t.Fatalf("server saw %q, want %q", body, tc.want)
 			}
 		})
+	}
+}
+
+// deadlineWriter records the read deadlines set through its
+// ResponseController.
+type deadlineWriter struct {
+	http.ResponseWriter
+	read []time.Time
+}
+
+func (w *deadlineWriter) SetReadDeadline(t time.Time) error {
+	w.read = append(w.read, t)
+	return nil
+}
+
+// TestIdleBodyClearsDeadlineAtEnd: each read of a body moves its deadline
+// on, and its end clears it, so no deadline is left to cancel a request
+// that waits long after its body, as a StreamFile through a pause does.
+func TestIdleBodyClearsDeadlineAtEnd(t *testing.T) {
+	t.Parallel()
+	w := &deadlineWriter{ResponseWriter: httptest.NewRecorder()}
+	b := &idleBody{ReadCloser: io.NopCloser(strings.NewReader("body")), rc: http.NewResponseController(w), idle: time.Minute}
+	if _, err := io.ReadAll(b); err != nil {
+		t.Fatal(err)
+	}
+	if len(w.read) < 2 || !w.read[len(w.read)-1].IsZero() {
+		t.Fatalf("read deadlines %v: want the last one cleared", w.read)
+	}
+	for _, d := range w.read[:len(w.read)-1] {
+		if d.IsZero() {
+			t.Errorf("read deadlines %v: one was cleared before the end", w.read)
+		}
 	}
 }
 
@@ -609,7 +658,7 @@ func TestShutdownWaitsForWork(t *testing.T) {
 func TestDrainingRefusesRequests(t *testing.T) {
 	t.Parallel()
 	h := openDB(t)
-	s, err := New(Config{Limits: testLimits()}, Deps{DB: h.DB, Root: h.Root})
+	s, err := New(Config{Limits: testLimits()}, Deps{Handle: h})
 	if err != nil {
 		t.Fatal(err)
 	}

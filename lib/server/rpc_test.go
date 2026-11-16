@@ -74,7 +74,7 @@ func rpcServer(t *testing.T, deps Deps, fixtures ...string) (*liveServer, pbconn
 	for _, f := range fixtures {
 		stored[f] = storeFile(t, h.DB, fixture(t, f))
 	}
-	deps.DB, deps.Root = h.DB, h.Root
+	deps.Handle = h
 	ls := startServer(t, Config{}, deps, nil)
 	return ls, pbconnect.NewDuesServiceClient(http.DefaultClient, ls.url), stored
 }
@@ -88,7 +88,7 @@ func evidenceID(raw []byte) string {
 func TestGetEviFilesPages(t *testing.T) {
 	t.Parallel()
 	ls, c, stored := rpcServer(t, Deps{}, "fat/fat12", "fat/fat16", "exfat/exfat")
-	if res := storeFile(t, ls.deps.DB, fixture(t, "fat/fat16")); string(res.EvidenceID) != string(stored["fat/fat16"].EvidenceID) {
+	if res := storeFile(t, ls.db(), fixture(t, "fat/fat16")); string(res.EvidenceID) != string(stored["fat/fat16"].EvidenceID) {
 		t.Fatal("storing fat16 again made another evidence")
 	}
 	var got []string
@@ -140,7 +140,7 @@ func TestGetEviFilesPages(t *testing.T) {
 func TestGetPartiAndIdxFiles(t *testing.T) {
 	t.Parallel()
 	ls, c, stored := rpcServer(t, Deps{}, "part/gpt_multi")
-	db := ls.deps.DB
+	db := ls.db()
 	eid := evidenceID(stored["part/gpt_multi"].EvidenceID)
 	pres, err := c.GetPartiFiles(context.Background(), connect.NewRequest(&pb.GetPartiFilesReq{EviFileId: eid}))
 	if err != nil {
@@ -315,7 +315,7 @@ func TestListingErrors(t *testing.T) {
 	if err != nil || len(parts.Msg.PartitionFile) == 0 {
 		t.Fatalf("partitions before quarantine: %v", err)
 	}
-	err = dbio.UpdateEvidence(ls.deps.DB, ev.EvidenceID, func(_ *badger.Txn, e *structs.EvidenceFile) error {
+	err = dbio.UpdateEvidence(ls.db(), ev.EvidenceID, func(_ *badger.Txn, e *structs.EvidenceFile) error {
 		e.Index.State = structs.IndexInvalid
 		return nil
 	})
@@ -338,7 +338,7 @@ func TestListingErrors(t *testing.T) {
 func TestAppendIfExistsRecordsAlias(t *testing.T) {
 	t.Parallel()
 	ls, c, stored := rpcServer(t, Deps{}, "fat/fat16")
-	db := ls.deps.DB
+	db := ls.db()
 	ev := stored["fat/fat16"]
 	img, err := os.ReadFile(fixture(t, "fat/fat16"))
 	if err != nil {
@@ -404,7 +404,7 @@ func TestSearchRPC(t *testing.T) {
 		t.Fatal(err)
 	}
 	ev := storeFile(t, h.DB, path)
-	ls := startServer(t, Config{}, Deps{DB: h.DB, Root: h.Root}, nil)
+	ls := startServer(t, Config{}, Deps{Handle: h}, nil)
 	ctx := context.Background()
 
 	// Over Connect, and over gRPC on cleartext HTTP/2.
@@ -440,7 +440,7 @@ func TestRPCErrorsAreSanitised(t *testing.T) {
 
 	defer func(f func(*badger.DB, []byte, dbio.ReadOptions) (*dbio.Logical, error)) { openLogical = f }(openLogical)
 	openLogical = func(*badger.DB, []byte, dbio.ReadOptions) (*dbio.Logical, error) {
-		return nil, fmt.Errorf("blob %s is unreadable", filepath.Join(ls.deps.Root, "blob", "secret"))
+		return nil, fmt.Errorf("blob %s is unreadable", filepath.Join(ls.root, "blob", "secret"))
 	}
 	_, err := c.GetEviFiles(ctx, connect.NewRequest(&pb.GetEviFilesReq{}))
 	if connect.CodeOf(err) != connect.CodeInternal || strings.Contains(err.Error(), "secret") || !strings.Contains(err.Error(), "request ") {

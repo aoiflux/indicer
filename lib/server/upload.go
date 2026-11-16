@@ -43,6 +43,8 @@ import (
 // maxChunk bounds one chunk of an upload.
 const maxChunk = 16 << 20
 
+const msgStoppedUpload = "the server stopped before the upload was stored; upload it again"
+
 // UploadLimits bound the uploads the server takes on.
 type UploadLimits struct {
 	MaxSessions int   // sessions receiving or finalizing at once
@@ -175,12 +177,14 @@ type uploads struct {
 	lim     UploadLimits
 	hasher  func() hash.Hash
 	hashLen int
+	// algo names the hash, kept so a refusal can name it while the database
+	// is paused.
+	algo string
 
 	mu       sync.Mutex
 	sessions map[string]*session
 
-	ingest *ingest.Session
-	queue  *ingestQueue
+	queue *ingestQueue
 
 	// Seams for tests.
 	now       func() time.Time
@@ -194,7 +198,8 @@ type uploads struct {
 // newUploads prepares <root>/uploads and removes what earlier runs left
 // there: a session lives only as long as its process.
 func newUploads(s *Server) (*uploads, error) {
-	if s.deps.Root == "" {
+	ref := s.dbs.current()
+	if s.root == "" {
 		return nil, errors.New("server: no data root")
 	}
 	lim := s.cfg.Limits.Upload
@@ -205,7 +210,7 @@ func newUploads(s *Server) (*uploads, error) {
 	if jobs < lim.Jobs {
 		s.Notes = append(s.Notes, fmt.Sprintf("%d uploads are stored at once, not %d: no more may be in progress at once", jobs, lim.Jobs))
 	}
-	if engine.For(s.deps.DB).Tuning().LowResource {
+	if engine.For(ref.db).Tuning().LowResource {
 		jobs = 1
 	}
 	// Sampled once: the memory free later is less what the uploads stored
@@ -214,17 +219,23 @@ func newUploads(s *Server) (*uploads, error) {
 	s.log.Info("upload jobs", zap.Int("jobs", jobs), zap.Int64("budget_bytes", budget))
 	m := &uploads{
 		s:        s,
-		dir:      filepath.Join(s.deps.Root, cnst.UploadsDir),
+		dir:      filepath.Join(s.root, cnst.UploadsDir),
 		lim:      lim,
-		hasher:   dbmeta.FileHasher(s.deps.DB),
+		hasher:   dbmeta.FileHasher(ref.db),
+		algo:     dbmeta.HashAlgo(ref.db),
 		sessions: map[string]*session{},
-		ingest:   ingest.NewSession(s.deps.DB),
-		queue:    newIngestQueue(jobs, budget),
 		now:      time.Now,
 		free:     diskspace.Free,
 		writeAt:  func(f *os.File, p []byte, off int64) (int, error) { return f.WriteAt(p, off) },
 	}
-	m.runIngest = m.ingest.Run
+	// Both read the database as they run, not now: a pause replaces it only
+	// while the queue admits nothing and no turn is held.
+	m.queue = newIngestQueue(jobs, budget, func(size int64) int64 {
+		return ingest.LaneMemory(s.dbs.current().db, size, m.queue.jobs, ingest.IndexedPasses)
+	})
+	m.runIngest = func(ctx context.Context, req ingest.Request) (ingest.Result, error) {
+		return s.dbs.current().sess.Run(ctx, req)
+	}
 	m.hashLen = m.hasher().Size()
 	if err := os.MkdirAll(m.dir, 0o700); err != nil {
 		return nil, fmt.Errorf("server: uploads directory: %w", err)
@@ -325,15 +336,9 @@ func (m *uploads) dropFile(s *session) {
 }
 
 // stop removes the part files of sessions still receiving. It runs once the
-// server's requests and work have stopped, or, not idle, given up waiting
-// for its work: the ingest session is then left open, as Close would wait
-// for the ingests still running.
-func (m *uploads) stop(idle bool) {
-	if idle {
-		if err := m.ingest.Close(); err != nil {
-			m.s.log.Warn("upload ingest session not closed", zap.Error(err))
-		}
-	}
+// server's requests and work have stopped, or the server gave up waiting for
+// its work.
+func (m *uploads) stop() {
 	if m.reaperDone != nil {
 		<-m.reaperDone
 	}
@@ -377,7 +382,7 @@ func (m *uploads) checkHash(h string) (string, error) {
 	}
 	b, err := base64.StdEncoding.DecodeString(h)
 	if err != nil || len(b) != m.hashLen {
-		return "", fmt.Errorf("file_hash must be the base64 of the file's %d-byte %s hash", m.hashLen, dbmeta.HashAlgo(m.s.deps.DB))
+		return "", fmt.Errorf("file_hash must be the base64 of the file's %d-byte %s hash", m.hashLen, m.algo)
 	}
 	return h, nil
 }
@@ -558,58 +563,70 @@ func (m *uploads) runFinalize(ctx context.Context, s *session) {
 		zap.String("evidence", res.EviFile.FileId))
 }
 
-// ingestUpload checks a received upload against its hash and stores it.
+// ingestUpload checks a received upload against its hash and stores it. A
+// pause may cut its ingest before it commits; it then waits for its turn
+// again, in its place, and stores what it received.
 func (m *uploads) ingestUpload(ctx context.Context, s *session) (*uploadResult, *uploadError) {
-	internal := func(what string, err error) *uploadError {
-		m.s.log.Error("upload finalize failed", zap.String("upload_id", s.id), zap.String("op", what), zap.Error(err))
-		return uploadErr(http.StatusInternalServerError, "the upload could not be stored (upload %s)", s.id)
-	}
 	err := s.f.Sync()
 	if cerr := s.f.Close(); err == nil {
 		err = cerr
 	}
 	s.f = nil
 	if err != nil {
-		return nil, internal("close", err)
+		return nil, m.internal(s, "close", err)
 	}
 	if got := base64.StdEncoding.EncodeToString(s.sum.Sum(nil)); got != s.hash {
 		m.s.log.Warn("upload hash mismatch", zap.String("upload_id", s.id), zap.String("client_hash", s.hash), zap.String("hash", got))
-		return nil, uploadErr(http.StatusUnprocessableEntity, "the uploaded bytes do not match file_hash: their %s hash is %s", dbmeta.HashAlgo(m.s.deps.DB), got)
+		return nil, uploadErr(http.StatusUnprocessableEntity, "the uploaded bytes do not match file_hash: their %s hash is %s", m.algo, got)
 	}
-	db := m.s.deps.DB
 	job, size := m.queueJob(ctx, s)
 	arrived := m.now()
-	release, err := m.queue.acquire(ctx, job, func(ahead int) {
-		m.mu.Lock()
-		s.queued = true
-		m.mu.Unlock()
+	queued := func(ahead int) {
+		m.setQueued(s, true)
 		m.s.log.Info("upload queued", zap.String("upload_id", s.id), zap.Int("ahead", ahead))
-	})
-	m.mu.Lock()
-	s.queued = false
-	m.mu.Unlock()
-	if err != nil {
-		return nil, uploadErr(http.StatusServiceUnavailable, "the server stopped before the upload was stored; upload it again")
 	}
-	defer release()
+	sl, err := m.queue.acquire(ctx, job, queued)
+	for attempt := 1; ; attempt++ {
+		m.setQueued(s, false)
+		if err != nil {
+			return nil, uploadErr(http.StatusServiceUnavailable, msgStoppedUpload)
+		}
+		res, again, uerr := m.store(ctx, sl, s, job, size, arrived)
+		if !again {
+			// After store's reads of the database: a pause waits for them.
+			sl.release()
+			return res, uerr
+		}
+		m.s.log.Info("upload requeued", zap.String("upload_id", s.id), bearerField(s.owner), zap.Int("attempt", attempt))
+		sl, err = sl.requeue(ctx, queued)
+	}
+}
+
+// store ingests an upload under its turn, and reports whether a pause cut
+// it before it committed, to be stored again in a new turn. The reads after
+// the ingest use ctx, not the turn's: a pause that cuts the turn late must
+// not fail an upload already stored.
+func (m *uploads) store(ctx context.Context, sl slot, s *session, job *queueJob, size int64, arrived time.Time) (*uploadResult, bool, *uploadError) {
+	ref := m.s.dbs.current()
 	workers := 0
 	if !job.heavy {
 		// Beside others: a share of the machine. A heavy one runs alone,
 		// with all of it.
-		workers = ingest.InnerWorkers(engine.For(db), m.queue.jobs)
+		workers = ingest.InnerWorkers(engine.For(ref.db), m.queue.jobs)
 	}
 	m.s.log.Info("upload storing", zap.String("upload_id", s.id), zap.Int64("size", size), zap.Bool("heavy", job.heavy),
 		zap.Int("workers", workers), zap.Int64("wait_ms", m.now().Sub(arrived).Milliseconds()))
 	if err := faultinject.Hit(faultinject.UploadBeforeIngest); err != nil {
-		return nil, internal("ingest", err)
+		return nil, false, m.internal(s, "ingest", err)
 	}
-	res, err := m.runIngest(ctx, ingest.Request{
-		Path:       s.path,
-		Name:       clientBase(s.clientPath),
-		SourcePath: s.clientPath,
-		Decode:     true,
-		Quiet:      true,
-		MaxWorkers: workers,
+	res, err := m.runIngest(sl.ctx(), ingest.Request{
+		Path:        s.path,
+		Name:        clientBase(s.clientPath),
+		SourcePath:  s.clientPath,
+		Decode:      true,
+		Quiet:       true,
+		MaxWorkers:  workers,
+		BeforeFlush: sl.beforeFlush,
 	})
 	if err == nil {
 		err = faultinject.Hit(faultinject.UploadAfterIngest)
@@ -622,12 +639,19 @@ func (m *uploads) ingestUpload(ctx context.Context, s *session) (*uploadResult, 
 	case errors.As(err, &mismatch) && mismatch.Stored, errors.As(err, &incomplete):
 		warning = err.Error()
 	case ctx.Err() != nil:
-		return nil, uploadErr(http.StatusServiceUnavailable, "the server stopped before the upload was stored; upload it again")
+		return nil, false, uploadErr(http.StatusServiceUnavailable, msgStoppedUpload)
+	case res.Outcome == "" && errors.Is(context.Cause(sl.ctx()), errPaused):
+		return nil, true, nil
+	case res.Outcome != "" && sl.ctx().Err() != nil:
+		// Committed: only its alias cleanup was cut, which recovery at the
+		// resume finishes.
+		warning = err.Error()
 	case diskspace.IsNoSpace(err):
-		return nil, uploadErr(http.StatusInsufficientStorage, "no space is left to store the upload")
+		return nil, false, uploadErr(http.StatusInsufficientStorage, "no space is left to store the upload")
 	default:
-		return nil, internal("ingest", err)
+		return nil, false, m.internal(s, "ingest", err)
 	}
+	db := ref.db
 	key := dbio.CanonicalEvidenceKey(res.EvidenceID)
 	// The type the client gave is set only on evidence this upload stored.
 	if res.Outcome == store.CommitStored && s.fileType != "" {
@@ -639,16 +663,16 @@ func (m *uploads) ingestUpload(ctx context.Context, s *session) (*uploadResult, 
 			return nil
 		})
 		if err != nil {
-			return nil, internal("set type", err)
+			return nil, false, m.internal(s, "set type", err)
 		}
 	}
 	e, err := dbio.GetEvidenceFile(key, db)
 	if err != nil {
-		return nil, internal("read evidence", err)
+		return nil, false, m.internal(s, "read evidence", err)
 	}
 	cm, truncated, err := chunkMap(ctx, db, key, chunkEntriesPerResponse)
 	if err != nil {
-		return nil, internal("chunk map", err)
+		return nil, false, m.internal(s, "chunk map", err)
 	}
 	out := &uploadResult{
 		Done: true, UploadID: s.id, Outcome: string(res.Outcome), Warning: warning,
@@ -657,7 +681,20 @@ func (m *uploads) ingestUpload(ctx context.Context, s *session) (*uploadResult, 
 	if e.Index != nil {
 		out.IndexState = string(e.Index.State)
 	}
-	return out, nil
+	return out, false, nil
+}
+
+// internal logs a failure to store an upload, and answers it naming only
+// the upload.
+func (m *uploads) internal(s *session, what string, err error) *uploadError {
+	m.s.log.Error("upload finalize failed", zap.String("upload_id", s.id), zap.String("op", what), zap.Error(err))
+	return uploadErr(http.StatusInternalServerError, "the upload could not be stored (upload %s)", s.id)
+}
+
+func (m *uploads) setQueued(s *session, queued bool) {
+	m.mu.Lock()
+	s.queued = queued
+	m.mu.Unlock()
 }
 
 // The keys of a queued upload. Its client path names its ingest attempt,
@@ -670,7 +707,9 @@ const (
 )
 
 // queueJob is a finalized upload as the queue sees it, with its decoded
-// size: -1 when it cannot be opened, as its ingest then fails on its own.
+// size: -1 when it cannot be opened, as its ingest then fails on its own. A
+// job not heavy is priced by the queue once it may run, as the database may
+// be paused now.
 func (m *uploads) queueJob(ctx context.Context, s *session) (j *queueJob, size int64) {
 	j = &queueJob{keys: []string{pathKey + s.clientPath}}
 	size = -1
@@ -681,9 +720,11 @@ func (m *uploads) queueJob(ctx context.Context, s *session) (j *queueJob, size i
 		}
 		_ = src.Close()
 	}
+	j.size = size
 	j.heavy = size >= ingest.HeavySize
-	if !j.heavy {
-		j.lane = ingest.LaneMemory(m.s.deps.DB, size, m.queue.jobs, ingest.IndexedPasses)
+	j.lane = laneUnknown
+	if j.heavy {
+		j.lane = 0
 	}
 	return j, size
 }
@@ -763,9 +804,9 @@ func (s *Server) uploadRoutes() {
 	s.handle("POST /web/upload/finalize", fin, http.HandlerFunc(s.handleUploadFinalize))
 }
 
-func (s *Server) stopUploads(idle bool) {
+func (s *Server) stopUploads() {
 	if s.uploads != nil {
-		s.uploads.stop(idle)
+		s.uploads.stop()
 	}
 }
 
@@ -780,7 +821,7 @@ func writeUploadError(w http.ResponseWriter, r *http.Request, e *uploadError) {
 		w.Header().Set("Upload-Offset", strconv.FormatInt(off, 10))
 	}
 	if e.status == http.StatusTooManyRequests {
-		w.Header().Set("Retry-After", "30")
+		w.Header().Set(headerRetryAfter, "30")
 	}
 	writeJSON(w, e.status, body)
 }

@@ -60,7 +60,7 @@ func uploadServer(t *testing.T, lim *UploadLimits, setup func(*uploads)) *liveSe
 	if lim != nil {
 		l.Upload = *lim
 	}
-	return startServer(t, Config{Limits: l}, Deps{DB: h.DB, Root: h.Root}, func(s *Server) {
+	return startServer(t, Config{Limits: l}, Deps{Handle: h}, func(s *Server) {
 		if setup != nil {
 			setup(s.uploads)
 		}
@@ -173,7 +173,7 @@ func TestUploadV2(t *testing.T) {
 	t.Parallel()
 	var ingests atomic.Int32
 	ls := uploadServer(t, nil, countIngests(&ingests))
-	db := ls.deps.DB
+	db := ls.db()
 	data, err := os.ReadFile(fixture(t, "fat/fat16"))
 	if err != nil {
 		t.Fatal(err)
@@ -258,7 +258,7 @@ func TestUploadV2(t *testing.T) {
 func TestUploadNeedsSizeAndOffset(t *testing.T) {
 	t.Parallel()
 	ls := uploadServer(t, nil, nil)
-	db := ls.deps.DB
+	db := ls.db()
 	data := []byte("no size")
 	r := start(t, ls, "/home/x/v1.bin", "", plainHash(db, data), -1)
 	if r.status != http.StatusBadRequest || !strings.Contains(r.str("error"), "size is required") || r.str("upload_id") != "" {
@@ -281,7 +281,7 @@ func TestUploadNeedsSizeAndOffset(t *testing.T) {
 func TestUploadHashMismatchStoresNothing(t *testing.T) {
 	t.Parallel()
 	ls := uploadServer(t, nil, nil)
-	db := ls.deps.DB
+	db := ls.db()
 	data := []byte("what the client meant to send")
 	r := start(t, ls, "/x/f.bin", "", plainHash(db, []byte("something else")), int64(len(data)))
 	id := r.str("upload_id")
@@ -318,7 +318,7 @@ func TestUploadLimits(t *testing.T) {
 	ls := uploadServer(t, &lim, func(m *uploads) {
 		m.free = func(string) (uint64, error) { return free.Load(), nil }
 	})
-	db := ls.deps.DB
+	db := ls.db()
 	h := plainHash(db, []byte("x"))
 	a := start(t, ls, "/a", "", h, 10)
 	b := start(t, ls, "/b", "", h, 10)
@@ -375,7 +375,7 @@ func TestUploadDiskFull(t *testing.T) {
 			return f.WriteAt(p, off)
 		}
 	})
-	db := ls.deps.DB
+	db := ls.db()
 	data := bytes.Repeat([]byte("0123456789"), 1000)
 	r := start(t, ls, "/x/full.bin", "", plainHash(db, data), int64(len(data)))
 	id := r.str("upload_id")
@@ -404,7 +404,7 @@ func TestUploadFinalizeOnce(t *testing.T) {
 	t.Parallel()
 	var ingests atomic.Int32
 	ls := uploadServer(t, nil, countIngests(&ingests))
-	db := ls.deps.DB
+	db := ls.db()
 	data := bytes.Repeat([]byte("once "), 10_000)
 	id := start(t, ls, "/x/once.bin", "", plainHash(db, data), int64(len(data))).str("upload_id")
 	if r := chunk(t, ls, id, 0, data); r.status != 200 {
@@ -454,7 +454,7 @@ func TestUploadFinalizePending(t *testing.T) {
 			return next(ctx, req)
 		}
 	})
-	db := ls.deps.DB
+	db := ls.db()
 	data := []byte("slow to store")
 	id := start(t, ls, "/x/slow.bin", "", plainHash(db, data), int64(len(data))).str("upload_id")
 	chunk(t, ls, id, 0, data)
@@ -490,7 +490,7 @@ func TestUploadExpiry(t *testing.T) {
 	lim := DefaultUploadLimits()
 	lim.ReapInterval = time.Hour
 	ls := uploadServer(t, &lim, func(m *uploads) { m.now = clock.Now })
-	db := ls.deps.DB
+	db := ls.db()
 	h := plainHash(db, []byte("x"))
 
 	idle := start(t, ls, "/idle", "", h, 100).str("upload_id")
@@ -542,7 +542,7 @@ func TestUploadExpiry(t *testing.T) {
 func TestUploadAbort(t *testing.T) {
 	t.Parallel()
 	ls := uploadServer(t, nil, nil)
-	h := plainHash(ls.deps.DB, []byte("x"))
+	h := plainHash(ls.db(), []byte("x"))
 	id := start(t, ls, "/x", "", h, 10).str("upload_id")
 	chunk(t, ls, id, 0, []byte("12345"))
 	if r := postJSON(t, ls, "/web/upload/abort", map[string]string{"upload_id": id}); r.status != 200 {
@@ -572,7 +572,7 @@ func TestUploadFiles(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	ls := startServer(t, Config{}, Deps{DB: h.DB, Root: h.Root}, nil)
+	ls := startServer(t, Config{}, Deps{Handle: h}, nil)
 	if files := partFiles(t, ls); len(files) != 1 || files[0] != "keep.txt" {
 		t.Errorf("after start, uploads holds %v", files)
 	}
@@ -594,7 +594,7 @@ func TestUploadFiles(t *testing.T) {
 func TestStreamFile(t *testing.T) {
 	t.Parallel()
 	ls := uploadServer(t, nil, nil)
-	db := ls.deps.DB
+	db := ls.db()
 	c := pbconnect.NewDuesServiceClient(http.DefaultClient, ls.url)
 	data := bytes.Repeat([]byte("streamed "), 100_000)
 
@@ -668,7 +668,7 @@ func TestStreamFileWithoutSizeIsCapped(t *testing.T) {
 	lim := DefaultUploadLimits()
 	lim.MaxSize = 1 << 20
 	ls := uploadServer(t, &lim, nil)
-	db := ls.deps.DB
+	db := ls.db()
 	c := pbconnect.NewDuesServiceClient(http.DefaultClient, ls.url)
 	send := func(data []byte) error {
 		stream := c.StreamFile(context.Background())
@@ -703,7 +703,7 @@ func TestStreamFileWithoutSizeIsCapped(t *testing.T) {
 func TestUploadOfStoredContent(t *testing.T) {
 	t.Parallel()
 	ls := uploadServer(t, nil, nil)
-	db := ls.deps.DB
+	db := ls.db()
 	path := fixture(t, "fat/fat12")
 	first := storeFile(t, db, path)
 	data, err := os.ReadFile(path)
@@ -751,7 +751,7 @@ func TestConcurrentUploads(t *testing.T) {
 }
 
 func concurrentUploads(t *testing.T, ls *liveServer) {
-	db := ls.deps.DB
+	db := ls.db()
 	shared := bytes.Repeat([]byte("shared content "), 20_000)
 	contents := [][]byte{shared, shared, shared}
 	for i := range 3 {

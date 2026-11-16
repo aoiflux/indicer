@@ -76,7 +76,7 @@ func FuzzUploadRequests(f *testing.F) {
 		f.Fatal(err)
 	}
 	f.Cleanup(func() { _ = h.Close() })
-	s, err := New(Config{Limits: testLimits()}, Deps{DB: h.DB, Root: h.Root})
+	s, err := New(Config{Limits: testLimits()}, Deps{Handle: h})
 	if err != nil {
 		f.Fatal(err)
 	}

@@ -42,12 +42,12 @@ func arrive(ctx context.Context, t *testing.T, q *ingestQueue, j *queueJob) *arr
 	a := &arrival{j: j, ahead: -1, release: make(chan func(), 1), err: make(chan error, 1)}
 	waiting := make(chan int, 1)
 	go func() {
-		release, err := q.acquire(ctx, j, func(ahead int) { waiting <- ahead })
+		sl, err := q.acquire(ctx, j, func(ahead int) { waiting <- ahead })
 		if err != nil {
 			a.err <- err
 			return
 		}
-		a.release <- release
+		a.release <- sl.release
 	}()
 	select {
 	case release := <-a.release:
@@ -103,7 +103,7 @@ func wantStarted(t *testing.T, what string, as map[string]*arrival, want ...stri
 func TestQueueKeys(t *testing.T) {
 	t.Parallel()
 	ctx := t.Context()
-	q := newIngestQueue(4, 1<<40)
+	q := newIngestQueue(4, 1<<40, nil)
 	as := map[string]*arrival{}
 	as["a"] = arrive(ctx, t, q, job("path:/a", "content:1"))
 	as["b"] = arrive(ctx, t, q, job("path:/b", "content:1")) // same content
@@ -125,7 +125,7 @@ func TestQueueKeys(t *testing.T) {
 func TestQueueJobs(t *testing.T) {
 	t.Parallel()
 	ctx := t.Context()
-	q := newIngestQueue(2, 1<<40)
+	q := newIngestQueue(2, 1<<40, nil)
 	as := map[string]*arrival{}
 	for _, name := range []string{"a", "b", "c", "d"} {
 		as[name] = arrive(ctx, t, q, job("path:/"+name))
@@ -142,7 +142,7 @@ func TestQueueJobs(t *testing.T) {
 func TestQueueHeavy(t *testing.T) {
 	t.Parallel()
 	ctx := t.Context()
-	q := newIngestQueue(4, 1<<40)
+	q := newIngestQueue(4, 1<<40, nil)
 	as := map[string]*arrival{}
 	as["a"] = arrive(ctx, t, q, job("path:/a"))
 	heavy := job("path:/h")
@@ -155,7 +155,7 @@ func TestQueueHeavy(t *testing.T) {
 	as["h"].done(t)
 	wantStarted(t, "after h", as, "b")
 
-	alone := newIngestQueue(4, 1<<40)
+	alone := newIngestQueue(4, 1<<40, nil)
 	first := job("path:/x")
 	first.heavy = true
 	if a := arrive(ctx, t, alone, first); !a.started() {
@@ -168,7 +168,7 @@ func TestQueueHeavy(t *testing.T) {
 func TestQueueBudget(t *testing.T) {
 	t.Parallel()
 	ctx := t.Context()
-	q := newIngestQueue(4, 100)
+	q := newIngestQueue(4, 100, nil)
 	lane := func(name string, bytes int64) *queueJob { j := job("path:/" + name); j.lane = bytes; return j }
 	as := map[string]*arrival{}
 	as["a"] = arrive(ctx, t, q, lane("a", 60))
@@ -178,7 +178,7 @@ func TestQueueBudget(t *testing.T) {
 	as["a"].done(t)
 	wantStarted(t, "after a", as, "b", "c")
 
-	idle := newIngestQueue(4, 100)
+	idle := newIngestQueue(4, 100, nil)
 	if a := arrive(ctx, t, idle, lane("big", 1000)); !a.started() {
 		t.Error("a job over the budget waits on an idle queue")
 	}
@@ -189,7 +189,7 @@ func TestQueueBudget(t *testing.T) {
 func TestQueueCancel(t *testing.T) {
 	t.Parallel()
 	ctx := t.Context()
-	q := newIngestQueue(1, 1<<40)
+	q := newIngestQueue(1, 1<<40, nil)
 	as := map[string]*arrival{}
 	as["a"] = arrive(ctx, t, q, job("path:/a"))
 	gone, cancel := context.WithCancel(ctx)
@@ -223,7 +223,7 @@ func TestQueueCancel(t *testing.T) {
 func TestQueueAtOnce(t *testing.T) {
 	t.Parallel()
 	const jobs, n, keys = 3, 200, 5
-	q := newIngestQueue(jobs, 1<<40)
+	q := newIngestQueue(jobs, 1<<40, nil)
 	var (
 		mu      sync.Mutex
 		running int
@@ -236,7 +236,7 @@ func TestQueueAtOnce(t *testing.T) {
 		wg.Go(func() {
 			j := job(fmt.Sprintf("path:/%d", i%keys))
 			j.heavy = i%17 == 0
-			release, err := q.acquire(t.Context(), j, nil)
+			sl, err := q.acquire(t.Context(), j, nil)
 			if err != nil {
 				t.Error(err)
 				return
@@ -260,7 +260,7 @@ func TestQueueAtOnce(t *testing.T) {
 			heavy = heavy && !j.heavy
 			delete(held, j.keys[0])
 			mu.Unlock()
-			release()
+			sl.release()
 		})
 	}
 	wg.Wait()
@@ -270,6 +270,314 @@ func TestQueueAtOnce(t *testing.T) {
 	if q.running != 0 || len(q.waiting) != 0 || len(q.held) != 0 || q.lanes != 0 {
 		t.Fatalf("queue not empty: %d running, %d waiting, %d keys, %d bytes", q.running, len(q.waiting), len(q.held), q.lanes)
 	}
+}
+
+// turn is a job handed to a queue whose slot the test keeps, to cut,
+// requeue or release it.
+type turn struct {
+	slot  chan slot
+	ahead chan int
+	err   chan error
+}
+
+func newTurn() *turn {
+	return &turn{slot: make(chan slot, 1), ahead: make(chan int, 1), err: make(chan error, 1)}
+}
+
+func (tn *turn) queued(ahead int) { tn.ahead <- ahead }
+
+func (tn *turn) end(sl slot, err error) {
+	if err != nil {
+		tn.err <- err
+		return
+	}
+	tn.slot <- sl
+}
+
+// take hands j to q from its own goroutine.
+func take(ctx context.Context, q *ingestQueue, j *queueJob) *turn {
+	tn := newTurn()
+	go func() { tn.end(q.acquire(ctx, j, tn.queued)) }()
+	return tn
+}
+
+// requeueTurn requeues sl from its own goroutine.
+func requeueTurn(ctx context.Context, sl slot) *turn {
+	tn := newTurn()
+	go func() { tn.end(sl.requeue(ctx, tn.queued)) }()
+	return tn
+}
+
+// admitted waits for the turn's slot.
+func (tn *turn) admitted(t *testing.T) slot {
+	t.Helper()
+	select {
+	case sl := <-tn.slot:
+		return sl
+	case err := <-tn.err:
+		t.Fatalf("a job gave up its turn: %v", err)
+	case <-time.After(queueWait):
+		t.Fatal("a job was never admitted")
+	}
+	return slot{}
+}
+
+// waiting waits until the turn's job is queued, and returns how many
+// waited before it.
+func (tn *turn) waiting(t *testing.T) int {
+	t.Helper()
+	select {
+	case ahead := <-tn.ahead:
+		return ahead
+	case <-time.After(queueWait):
+		t.Fatal("a job was never queued")
+	}
+	return 0
+}
+
+// seqs are the seqs of the jobs running, sorted, and of the jobs waiting,
+// in their order.
+func seqs(q *ingestQueue) (running, waiting []uint64) {
+	q.mu.Lock()
+	defer q.mu.Unlock()
+	for j := range q.active {
+		running = append(running, j.seq)
+	}
+	slices.Sort(running)
+	for _, j := range q.waiting {
+		waiting = append(waiting, j.seq)
+	}
+	return running, waiting
+}
+
+// wantSettled checks that a queue whose turns all ended holds nothing.
+func wantSettled(t *testing.T, q *ingestQueue) {
+	t.Helper()
+	q.mu.Lock()
+	running, waiting, heavy, lanes, held, active := q.running, len(q.waiting), q.heavy, q.lanes, len(q.held), len(q.active)
+	q.mu.Unlock()
+	if running != 0 || waiting != 0 || heavy || lanes != 0 || held != 0 || active != 0 {
+		t.Errorf("queue not settled: %d running, %d waiting, heavy %v, %d bytes, %d keys, %d active", running, waiting, heavy, lanes, held, active)
+	}
+	if n := q.runs.count(); n != 0 {
+		t.Errorf("%d turns counted as running, want 0", n)
+	}
+}
+
+// TestQueuePauseHoldsAdmission: a paused queue admits no job, neither one
+// arriving nor one a release would let run; resumed, it admits them in the
+// order they came.
+func TestQueuePauseHoldsAdmission(t *testing.T) {
+	t.Parallel()
+	ctx := t.Context()
+	q := newIngestQueue(2, 1<<40, nil)
+	q.pause()
+	as := map[string]*arrival{}
+	for _, name := range []string{"a", "b", "c"} {
+		as[name] = arrive(ctx, t, q, job("path:/"+name))
+	}
+	wantStarted(t, "paused", as)
+	if as["a"].ahead != 0 || as["b"].ahead != 1 || as["c"].ahead != 2 {
+		t.Errorf("waiting ahead of a, b and c: %d, %d and %d; want 0, 1 and 2", as["a"].ahead, as["b"].ahead, as["c"].ahead)
+	}
+	q.resume()
+	wantStarted(t, "resumed", as, "a", "b")
+	q.pause()
+	as["a"].done(t)
+	wantStarted(t, "a released while paused", as, "b")
+	q.resume()
+	wantStarted(t, "resumed again", as, "b", "c")
+}
+
+// TestQueueRequeueKeepsPlace: a job a pause cut takes its turn again ahead
+// of the jobs that came after it.
+func TestQueueRequeueKeepsPlace(t *testing.T) {
+	t.Parallel()
+	ctx := t.Context()
+	q := newIngestQueue(1, 1<<40, nil)
+	a := take(ctx, q, job("path:/a")).admitted(t)
+	as := map[string]*arrival{}
+	as["b"] = arrive(ctx, t, q, job("path:/b"))
+	as["c"] = arrive(ctx, t, q, job("path:/c"))
+	q.pause()
+	if n := q.cancelRunning(errPaused); n != 1 {
+		t.Errorf("%d jobs cut, want 1", n)
+	}
+	if cause := context.Cause(a.ctx()); !errors.Is(cause, errPaused) {
+		t.Errorf("the cut job's cause: %v, want %v", cause, errPaused)
+	}
+	again := requeueTurn(ctx, a)
+	if ahead := again.waiting(t); ahead != 0 {
+		t.Errorf("%d jobs waiting ahead of the requeued job, want 0", ahead)
+	}
+	running, waiting := seqs(q)
+	if want := []uint64{a.j.seq, as["b"].j.seq, as["c"].j.seq}; len(running) != 0 || !slices.Equal(waiting, want) {
+		t.Errorf("running %v, waiting %v; want none running and %v waiting", running, waiting, want)
+	}
+	q.resume()
+	a2 := again.admitted(t)
+	if a2.j.seq != a.j.seq || a2.j == a.j {
+		t.Errorf("the requeued turn: seq %d, same job %v; want seq %d in a new job", a2.j.seq, a2.j == a.j, a.j.seq)
+	}
+	wantStarted(t, "requeued job admitted", as)
+	a2.release()
+	wantStarted(t, "after a", as, "b")
+	as["b"].done(t)
+	wantStarted(t, "after b", as, "c")
+	as["c"].done(t)
+	wantSettled(t, q)
+}
+
+// TestQueueCancelRunning: a pause cuts only the jobs running that have not
+// begun to commit; a cut job's flush is vetoed, and one that began to commit
+// is never cut.
+func TestQueueCancelRunning(t *testing.T) {
+	t.Parallel()
+	ctx := t.Context()
+	q := newIngestQueue(2, 1<<40, nil)
+	a := take(ctx, q, job("path:/a")).admitted(t)
+	b := take(ctx, q, job("path:/b")).admitted(t)
+	c := arrive(ctx, t, q, job("path:/c"))
+	if err := b.beforeFlush(); err != nil {
+		t.Fatalf("flush before any cut: %v", err)
+	}
+	q.pause()
+	if n := q.cancelRunning(errPaused); n != 1 {
+		t.Errorf("%d jobs cut, want 1", n)
+	}
+	if cause := context.Cause(a.ctx()); !errors.Is(cause, errPaused) {
+		t.Errorf("the running job's cause: %v, want %v", cause, errPaused)
+	}
+	if err := b.ctx().Err(); err != nil {
+		t.Errorf("the committing job was cut: %v", err)
+	}
+	if err := c.j.ctx.Err(); err != nil {
+		t.Errorf("the waiting job was cut: %v", err)
+	}
+	if err := a.beforeFlush(); !errors.Is(err, errPaused) {
+		t.Errorf("flush of a cut job: %v, want %v", err, errPaused)
+	}
+	if n := q.cancelRunning(errPaused); n != 0 {
+		t.Errorf("%d jobs cut again, want 0", n)
+	}
+	q.resume()
+	a.release()
+	b.release()
+	if !c.started() {
+		t.Error("the waiting job did not start once the others ended")
+	}
+	c.done(t)
+	wantSettled(t, q)
+}
+
+// TestQueueLaneAtAdmission: a job's lane is priced once, only once it may
+// run and never while the queue is paused; a job priced already, or heavy,
+// is not priced.
+func TestQueueLaneAtAdmission(t *testing.T) {
+	t.Parallel()
+	ctx := t.Context()
+	const perByte = 10
+	var mu sync.Mutex
+	var priced []int64
+	q := newIngestQueue(1, 1<<40, func(size int64) int64 {
+		mu.Lock()
+		priced = append(priced, size)
+		mu.Unlock()
+		return size * perByte
+	})
+	wantPriced := func(what string, want ...int64) {
+		t.Helper()
+		mu.Lock()
+		got := slices.Clone(priced)
+		mu.Unlock()
+		if !slices.Equal(got, want) {
+			t.Errorf("%s: priced sizes %v, want %v", what, got, want)
+		}
+	}
+	unpriced := func(name string, size int64) *queueJob {
+		j := job("path:/" + name)
+		j.size, j.lane = size, laneUnknown
+		return j
+	}
+	as := map[string]*arrival{}
+	q.pause()
+	as["x"] = arrive(ctx, t, q, unpriced("x", 1))
+	wantPriced("paused")
+	q.resume()
+	wantPriced("resumed", 1)
+	as["y"] = arrive(ctx, t, q, unpriced("y", 2))
+	known := job("path:/z")
+	known.size, known.lane = 3, 7
+	as["z"] = arrive(ctx, t, q, known)
+	heavy := job("path:/h")
+	heavy.size, heavy.heavy = 4, true
+	as["h"] = arrive(ctx, t, q, heavy)
+	for _, name := range []string{"x", "y", "z", "h"} {
+		as[name].done(t)
+	}
+	wantPriced("all done", 1, 2)
+	q.mu.Lock()
+	lanes := []int64{as["x"].j.lane, as["y"].j.lane, as["z"].j.lane, as["h"].j.lane}
+	q.mu.Unlock()
+	if want := []int64{1 * perByte, 2 * perByte, 7, 0}; !slices.Equal(lanes, want) {
+		t.Errorf("lanes %v, want %v", lanes, want)
+	}
+	wantSettled(t, q)
+}
+
+// TestQueueTurnsSettle: a turn given back by a requeue is not given back
+// again by its release, and once every turn ends, light or heavy, requeued
+// or not, the queue holds nothing.
+func TestQueueTurnsSettle(t *testing.T) {
+	t.Parallel()
+	ctx := t.Context()
+	q := newIngestQueue(2, 1<<40, nil)
+	lane := func(name string, bytes int64) *queueJob { j := job("path:/" + name); j.lane = bytes; return j }
+	a := take(ctx, q, lane("a", 10)).admitted(t)
+	b := take(ctx, q, lane("b", 20)).admitted(t)
+	q.pause()
+	if n := q.cancelRunning(errPaused); n != 2 {
+		t.Errorf("%d jobs cut, want 2", n)
+	}
+	again := requeueTurn(ctx, a)
+	again.waiting(t)
+	a.release()
+	b.release()
+	if running, waiting := seqs(q); len(running) != 0 || len(waiting) != 1 {
+		t.Errorf("after the requeue: running %v, waiting %v; want none and 1", running, waiting)
+	}
+	q.resume()
+	a2 := again.admitted(t)
+	a.release()
+	q.mu.Lock()
+	running, lanes := q.running, q.lanes
+	q.mu.Unlock()
+	if running != 1 || lanes != 10 {
+		t.Errorf("a stale release: %d running holding %d bytes, want 1 holding 10", running, lanes)
+	}
+	a2.release()
+
+	heavy := job("path:/h")
+	heavy.heavy = true
+	h := take(ctx, q, heavy).admitted(t)
+	q.pause()
+	if n := q.cancelRunning(errPaused); n != 1 {
+		t.Errorf("%d heavy jobs cut, want 1", n)
+	}
+	hAgain := requeueTurn(ctx, h)
+	hAgain.waiting(t)
+	h.release()
+	q.resume()
+	h2 := hAgain.admitted(t)
+	q.mu.Lock()
+	isHeavy := q.heavy
+	q.mu.Unlock()
+	if !isHeavy {
+		t.Error("the requeued heavy job runs as light")
+	}
+	h.release()
+	h2.release()
+	wantSettled(t, q)
 }
 
 // finalizeAt finalizes the upload id from its own goroutine, as a client
@@ -292,7 +600,7 @@ func finalizeAt(ls *liveServer, id string, out chan<- reply) {
 // received starts an upload of data at path and sends all of it.
 func received(t *testing.T, ls *liveServer, path string, data []byte) string {
 	t.Helper()
-	id := start(t, ls, path, "", plainHash(ls.deps.DB, data), int64(len(data))).str("upload_id")
+	id := start(t, ls, path, "", plainHash(ls.db(), data), int64(len(data))).str("upload_id")
 	if r := chunk(t, ls, id, 0, data); r.status != http.StatusOK {
 		t.Fatalf("chunk of %s: %d %v", path, r.status, r.body)
 	}
@@ -344,7 +652,7 @@ func TestParallelUploads(t *testing.T) {
 			return next(ctx, req)
 		}
 	})
-	db := ls.deps.DB
+	db := ls.db()
 	answers := make(chan reply, jobs)
 	for i := range jobs {
 		data := bytes.Repeat(fmt.Appendf(nil, "upload %d ", i), 10_000)
@@ -422,7 +730,7 @@ func TestUploadQueued(t *testing.T) {
 
 // TestUploadQueuedAtStop: an upload still waiting when the server stops
 // fails with 503 and leaves no part file, the stop is clean, and the
-// server's ingest session is closed.
+// server's ingest session and database are closed.
 func TestUploadQueuedAtStop(t *testing.T) {
 	t.Parallel()
 	holding := make(chan struct{})
@@ -443,6 +751,7 @@ func TestUploadQueuedAtStop(t *testing.T) {
 	second := received(t, ls, "/case/second.bin", []byte("stored second"))
 	finalizeAt(ls, second, answers)
 	statusUntil(t, ls, second, "queued", queued)
+	sess := ls.dbs.current().sess
 	if err := ls.stop(t); err != nil {
 		t.Fatalf("stop: %v", err)
 	}
@@ -457,13 +766,18 @@ func TestUploadQueuedAtStop(t *testing.T) {
 	if parts := partFiles(t, ls); len(parts) != 0 {
 		t.Errorf("part files left: %v", parts)
 	}
-	if _, err := m.ingest.Run(t.Context(), ingest.Request{Path: "unused"}); err == nil || !strings.Contains(err.Error(), "closed") {
+	if _, err := sess.Run(t.Context(), ingest.Request{Path: "unused"}); err == nil || !strings.Contains(err.Error(), "closed") {
 		t.Errorf("the ingest session after a clean stop: %v, want it closed", err)
 	}
+	if ls.dbs.h.DB != nil {
+		t.Error("the database is still open after a clean stop")
+	}
+	wantReopens(t, ls.root)
 }
 
 // TestUploadStuckAtStop: an ingest that ignores the stop makes it unclean,
-// and the stop returns rather than wait on the ingest session for it.
+// and the stop returns rather than wait on the ingest session for it. The
+// session and the database are left open.
 func TestUploadStuckAtStop(t *testing.T) {
 	t.Parallel()
 	holding, hold := make(chan struct{}), make(chan struct{})
@@ -482,13 +796,17 @@ func TestUploadStuckAtStop(t *testing.T) {
 	case <-time.After(queueWait):
 		t.Fatal("the upload was never stored")
 	}
+	sess := ls.dbs.current().sess
 	if err := ls.stop(t); !errors.Is(err, ErrUncleanShutdown) {
 		t.Fatalf("stop: %v, want %v", err, ErrUncleanShutdown)
 	}
 	// Left open: closing it would have waited on the stuck ingest.
 	missing := ingest.Request{Path: filepath.Join(t.TempDir(), "missing")}
-	if _, err := ls.uploads.ingest.Run(t.Context(), missing); err == nil || strings.Contains(err.Error(), "closed") {
+	if _, err := sess.Run(t.Context(), missing); err == nil || strings.Contains(err.Error(), "closed") {
 		t.Errorf("the ingest session after an unclean stop: %v, want it open", err)
+	}
+	if ls.dbs.h.DB == nil || ls.dbs.h.DB.IsClosed() {
+		t.Error("the database was closed after an unclean stop")
 	}
 }
 
@@ -545,7 +863,7 @@ func TestUploadsOfOneKeyWait(t *testing.T) {
 					t.Errorf("upload %s: outcome %q, want %q", id, got, want)
 				}
 			}
-			if n := evidenceCount(t, ls.deps.DB); n != c.evidence {
+			if n := evidenceCount(t, ls.db()); n != c.evidence {
 				t.Errorf("%d evidence records, want %d", n, c.evidence)
 			}
 			for range 2 {
@@ -602,8 +920,14 @@ func TestQueueJobKeys(t *testing.T) {
 		if !slices.Equal(j.keys, c.keys) || size != c.size || j.heavy != c.heavy {
 			t.Errorf("%s: keys %q, size %d, heavy %v; want %q, %d, %v", c.s.clientPath, j.keys, size, j.heavy, c.keys, c.size, c.heavy)
 		}
-		if j.heavy != (j.lane == 0) {
-			t.Errorf("%s: lane %d, heavy %v; a heavy job holds no lane, the others one", c.s.clientPath, j.lane, j.heavy)
+		// The queue prices a job only once it may run: the database may be
+		// paused when it is finalized.
+		want := laneUnknown
+		if j.heavy {
+			want = 0
+		}
+		if j.lane != want || j.size != size {
+			t.Errorf("%s: lane %d, size %d, heavy %v; want lane %d and size %d", c.s.clientPath, j.lane, j.size, j.heavy, want, size)
 		}
 	}
 }

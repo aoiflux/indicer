@@ -28,9 +28,11 @@ type Options struct {
 // Server serves the database db names until ctx ends. It opens it writable,
 // and first finishes or fails the ingests a crash left incomplete. A
 // configuration problem is a usage error found before the database is
-// opened. A stop that leaves work running (server.ErrUncleanShutdown) leaves
-// the database as it is, for recovery at its next open.
-func Server(ctx context.Context, db dbopen.Request, so Options) (err error) {
+// opened. Once it serves, the server owns the database: it closes it after a
+// clean stop, and a stop that leaves work running
+// (server.ErrUncleanShutdown) leaves it as it is, for recovery at its next
+// open.
+func Server(ctx context.Context, db dbopen.Request, so Options) error {
 	cfg := server.Config{Listen: so.Listen, Tokens: so.Tokens, CORSOrigins: so.CORSOrigins, Limits: server.DefaultLimits()}
 	if so.UploadJobs > 0 {
 		cfg.Limits.Upload.Jobs = so.UploadJobs
@@ -47,23 +49,13 @@ func Server(ctx context.Context, db dbopen.Request, so Options) (err error) {
 	for _, n := range h.Notices {
 		ui.Notef("%s", n)
 	}
-	unclean := false
-	defer func() {
-		if unclean {
-			return
-		}
-		if cerr := h.Close(); cerr != nil && err == nil {
-			err = cerr
-		}
-	}()
-
-	srv, err := server.New(cfg, server.Deps{DB: h.DB, Root: h.Root, Log: logging.GetLogger()})
+	srv, err := server.New(cfg, server.Deps{Handle: h, Log: logging.GetLogger()})
 	if err != nil {
-		return err
+		return errors.Join(err, h.Close())
 	}
 	if err := srv.Listen(); err != nil {
 		printErr("Server startup failed", []string{err.Error()})
-		return err
+		return errors.Join(err, h.Close())
 	}
 	lines := []string{fmt.Sprintf("Database: %s", h.Root)}
 	for _, a := range srv.Addrs() {
@@ -83,7 +75,6 @@ func Server(ctx context.Context, db dbopen.Request, so Options) (err error) {
 	err = srv.Serve(ctx)
 	switch {
 	case errors.Is(err, server.ErrUncleanShutdown):
-		unclean = true
 		printErr("Server stopped with work still running", []string{"The database was left open; it is recovered at its next open"})
 		return err
 	case err != nil:

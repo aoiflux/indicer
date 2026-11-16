@@ -36,7 +36,7 @@ func (r *rpcService) GetIdxFiles(ctx context.Context, req *connect.Request[pb.Ge
 		return nil, invalidArg("parti_file_id is not a base64 record ID")
 	}
 	pkey := dbio.CanonicalPartitionKey(raw)
-	p, err := dbio.GetPartitionFile(pkey, r.db())
+	p, err := dbio.GetPartitionFile(pkey, r.db(ctx))
 	if errors.Is(err, badger.ErrKeyNotFound) {
 		return nil, notFound("no partition %s", id)
 	}
@@ -47,7 +47,7 @@ func (r *rpcService) GetIdxFiles(ctx context.Context, req *connect.Request[pb.Ge
 	if err != nil {
 		return nil, fmt.Errorf("partition %s: %w", id, err)
 	}
-	e, err := dbio.GetEvidenceFile(dbio.CanonicalEvidenceKey(eid), r.db())
+	e, err := dbio.GetEvidenceFile(dbio.CanonicalEvidenceKey(eid), r.db(ctx))
 	if errors.Is(err, badger.ErrKeyNotFound) || (err == nil && !completed(e)) {
 		return nil, notFound("no partition %s of stored evidence", id)
 	}
@@ -58,7 +58,7 @@ func (r *rpcService) GetIdxFiles(ctx context.Context, req *connect.Request[pb.Ge
 	if quarantined(e) {
 		return connect.NewResponse(res), nil
 	}
-	ids, err := memberPage(ctx, r.db(), pkey, p, string(pg.after), pg.n+1)
+	ids, err := memberPage(ctx, r.db(ctx), pkey, p, string(pg.after), pg.n+1)
 	if err != nil {
 		return nil, err
 	}
@@ -74,7 +74,7 @@ func (r *rpcService) GetIdxFiles(ctx context.Context, req *connect.Request[pb.Ge
 			return nil, fmt.Errorf("partition member %q: %w", m, err)
 		}
 		key := dbio.CanonicalIndexedKey(rawID)
-		rec, err := dbio.GetIndexedFile(key, r.db())
+		rec, err := dbio.GetIndexedFile(key, r.db(ctx))
 		if errors.Is(err, badger.ErrKeyNotFound) {
 			// A member written before its record, by a pass that died.
 			last = m
@@ -264,7 +264,7 @@ func (r *rpcService) AppendIfExists(ctx context.Context, req *connect.Request[pb
 	if err := checkClientPath(path); err != nil {
 		return nil, invalidArg("%v", err)
 	}
-	id, e, err := evidenceByHash(r.db(), h)
+	id, e, err := evidenceByHash(r.db(ctx), h)
 	if err != nil {
 		return nil, err
 	}
@@ -272,13 +272,15 @@ func (r *rpcService) AppendIfExists(ctx context.Context, req *connect.Request[pb
 	if id == nil {
 		return connect.NewResponse(res), nil
 	}
-	if res.Appended, err = recordAlias(r.db(), id, e, path); err != nil {
-		return nil, err
-	}
-	res.Exists = true
+	// The chunk map is read first: a call cut after the alias is stored would
+	// be retried, and the retry would say the alias was there already.
 	if res.EviFile, _, err = r.baseFile(ctx, dbio.CanonicalEvidenceKey(id), path, e.Size, &chunkBudget{left: chunkEntriesPerResponse}, true); err != nil {
 		return nil, err
 	}
+	if res.Appended, err = recordAlias(r.db(ctx), id, e, path); err != nil {
+		return nil, err
+	}
+	res.Exists = true
 	return connect.NewResponse(res), nil
 }
 
@@ -298,7 +300,7 @@ func (r *rpcService) Search(ctx context.Context, req *connect.Request[pb.SearchR
 	}
 	sctx, cancel := context.WithTimeout(ctx, searchBudget)
 	defer cancel()
-	res, err := search.Run(sctx, r.db(), []string{q}, search.Options{})
+	res, err := search.Run(sctx, r.db(ctx), []string{q}, search.Options{})
 	switch {
 	case errors.Is(err, search.ErrQueryTooLong), errors.Is(err, cnst.ErrSmallQuery):
 		return nil, invalidArg("%v", err)

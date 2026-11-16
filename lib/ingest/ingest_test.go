@@ -8,6 +8,7 @@ import (
 	"os"
 	"path/filepath"
 	"sync"
+	"sync/atomic"
 	"testing"
 
 	"indicer/internal/testutil"
@@ -263,6 +264,49 @@ func TestStorageFailureResumes(t *testing.T) {
 	}
 	if e, _ := dbio.GetEvidenceFile(r2.Attempt, db); !e.Completed || e.Failed || e.LastError != "" || e.Attempt != 2 || e.Index.State != structs.IndexComplete {
 		t.Fatalf("resumed evidence: completed %v failed %v error %q attempt %d index %+v", e.Completed, e.Failed, e.LastError, e.Attempt, e.Index)
+	}
+}
+
+// TestBeforeFlushVeto: a veto just before the chunks are flushed fails the
+// attempt, which stays resumable, and the next ingest of the file resumes
+// it. A BeforeFlush that lets the ingest through is called once.
+func TestBeforeFlushVeto(t *testing.T) {
+	t.Parallel()
+	db := openDB(t)
+	path := fixture(t, "fat/fat16")
+	veto := errors.New("simulated veto")
+	var vetoes atomic.Int32
+	r1, err := Run(t.Context(), db, Request{Path: path, Decode: true, Quiet: true, BeforeFlush: func() error {
+		vetoes.Add(1)
+		return veto
+	}})
+	if !errors.Is(err, veto) || r1.Outcome != "" || vetoes.Load() != 1 {
+		t.Fatalf("vetoed ingest: %v, outcome %q, %d calls", err, r1.Outcome, vetoes.Load())
+	}
+	e, err := dbio.GetEvidenceFile(r1.Attempt, db)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !e.Failed || e.Completed || e.LastError == "" {
+		t.Fatalf("vetoed attempt: failed %v completed %v error %q", e.Failed, e.Completed, e.LastError)
+	}
+
+	var passes atomic.Int32
+	r2, err := Run(t.Context(), db, Request{Path: path, Decode: true, Quiet: true, BeforeFlush: func() error {
+		passes.Add(1)
+		return nil
+	}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !r2.Resumed || !bytes.Equal(r2.Attempt, r1.Attempt) || r2.Outcome != store.CommitStored || passes.Load() != 1 {
+		t.Fatalf("second ingest: resumed %v attempt %x (first %x) outcome %s, %d calls", r2.Resumed, r2.Attempt, r1.Attempt, r2.Outcome, passes.Load())
+	}
+	if e, err = dbio.GetEvidenceFile(r2.Attempt, db); err != nil {
+		t.Fatal(err)
+	}
+	if !e.Completed || e.Failed || e.LastError != "" {
+		t.Fatalf("resumed evidence: completed %v failed %v error %q", e.Completed, e.Failed, e.LastError)
 	}
 }
 

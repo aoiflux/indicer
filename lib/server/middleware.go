@@ -201,7 +201,7 @@ func (s *Server) withInFlight(next http.Handler) http.Handler {
 		select {
 		case s.inflight <- struct{}{}:
 		default:
-			w.Header().Set("Retry-After", "1")
+			w.Header().Set(headerRetryAfter, busyRetryAfter)
 			httpError(w, r, http.StatusServiceUnavailable, "the server is busy; retry shortly")
 			return
 		}
@@ -366,12 +366,19 @@ type route struct {
 	public bool
 	// rpc routes are answered by Connect handlers.
 	rpc bool
+	// lease routes use the database: each request holds a lease on it, and
+	// is refused while it is paused. An RPC's lease ends when its handler
+	// returns, before the response is written. A public route takes none.
+	lease bool
 }
 
 // handle registers a route on the server's mux.
 func (s *Server) handle(pattern string, rt route, h http.Handler) {
 	if rt.public == (rt.scope != 0) {
 		panic(fmt.Sprintf("server: route %q must be either public or scoped", pattern))
+	}
+	if rt.lease && rt.public {
+		panic(fmt.Sprintf("server: route %q uses the database, so it must be scoped", pattern))
 	}
 	s.registered[pattern] = rt
 	s.mux.Handle(pattern, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -389,12 +396,24 @@ func (s *Server) handle(pattern string, rt route, h http.Handler) {
 		if rt.maxBody > 0 {
 			r.Body = http.MaxBytesReader(w, r.Body, rt.maxBody)
 		}
+		if rt.lease {
+			ctx, end, ok := s.dbs.lease(r.Context())
+			if !ok {
+				s.refusePaused(w, r, rt)
+				return
+			}
+			defer end()
+			r = r.WithContext(ctx)
+		}
 		h.ServeHTTP(w, r)
 	}))
 }
 
 // idleBody moves the read deadline on before every read, so a body that
-// keeps arriving is never cut off, and one that stalls is.
+// keeps arriving is never cut off, and one that stalls is. Once the body
+// ends it clears the deadline: over HTTP/1.1 the server goes on reading the
+// connection, and a deadline hit there cancels the request, whose upload may
+// still be waiting through a pause to be stored.
 type idleBody struct {
 	io.ReadCloser
 	rc   *http.ResponseController
@@ -403,25 +422,36 @@ type idleBody struct {
 
 func (b *idleBody) Read(p []byte) (int, error) {
 	_ = b.rc.SetReadDeadline(time.Now().Add(b.idle))
-	return b.ReadCloser.Read(p)
+	n, err := b.ReadCloser.Read(p)
+	if errors.Is(err, io.EOF) {
+		_ = b.rc.SetReadDeadline(time.Time{})
+	}
+	return n, err
 }
 
 // healthz answers that the process is serving.
 func (s *Server) healthz(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "text/plain; charset=utf-8")
-	w.Header().Set("Cache-Control", "no-store")
+	w.Header().Set(headerCacheControl, cacheNoStore)
 	_, _ = io.WriteString(w, "ok\n")
 }
 
-// readyz answers whether the server takes work: not while it drains, and not
-// once its database is closed.
+// readyz answers whether the server takes work: not while it drains, not
+// while its database is paused, which says when to ask again, and not once
+// its database is closed.
 func (s *Server) readyz(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "text/plain; charset=utf-8")
-	w.Header().Set("Cache-Control", "no-store")
-	if s.draining.Load() || s.deps.DB == nil || s.deps.DB.IsClosed() {
-		w.WriteHeader(http.StatusServiceUnavailable)
-		_, _ = io.WriteString(w, "not ready\n")
-		return
+	w.Header().Set(headerCacheControl, cacheNoStore)
+	status, body := http.StatusOK, bodyReady
+	switch ref := s.dbs.current(); {
+	case s.draining.Load():
+		status, body = http.StatusServiceUnavailable, bodyNotReady
+	case s.dbs.isPaused():
+		w.Header().Set(headerRetryAfter, pausedRetryAfter)
+		status, body = http.StatusServiceUnavailable, bodyPaused
+	case ref == nil || ref.db.IsClosed():
+		status, body = http.StatusServiceUnavailable, bodyNotReady
 	}
-	_, _ = io.WriteString(w, "ready\n")
+	w.WriteHeader(status)
+	_, _ = io.WriteString(w, body)
 }

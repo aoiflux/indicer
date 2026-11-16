@@ -189,28 +189,29 @@ func TestParseTokens(t *testing.T) {
 	}
 }
 
-// Each route holds the scope D4 gives it; a route added later must be given
-// one here.
+// Each route holds the scope D4 gives it, and only the routes that read the
+// database through the request hold a lease on it; a route added later must
+// be given both here.
 func TestRouteScopes(t *testing.T) {
 	t.Parallel()
 	h := openDB(t)
-	s, err := New(Config{Limits: testLimits()}, Deps{DB: h.DB, Root: h.Root})
+	s, err := New(Config{Limits: testLimits()}, Deps{Handle: h})
 	if err != nil {
 		t.Fatal(err)
 	}
 	type rs struct {
-		scope       Scope
-		public, rpc bool
+		scope              Scope
+		public, rpc, lease bool
 	}
 	rpc := func(p string) string { return "POST " + p }
 	want := map[string]rs{
 		"GET /healthz": {public: true},
 		"GET /readyz":  {public: true},
-		rpc(pbconnect.DuesServiceGetEviFilesProcedure):    {scope: ScopeRead, rpc: true},
-		rpc(pbconnect.DuesServiceGetPartiFilesProcedure):  {scope: ScopeRead, rpc: true},
-		rpc(pbconnect.DuesServiceGetIdxFilesProcedure):    {scope: ScopeRead, rpc: true},
-		rpc(pbconnect.DuesServiceSearchProcedure):         {scope: ScopeRead, rpc: true},
-		rpc(pbconnect.DuesServiceAppendIfExistsProcedure): {scope: ScopeUpload, rpc: true},
+		rpc(pbconnect.DuesServiceGetEviFilesProcedure):    {scope: ScopeRead, rpc: true, lease: true},
+		rpc(pbconnect.DuesServiceGetPartiFilesProcedure):  {scope: ScopeRead, rpc: true, lease: true},
+		rpc(pbconnect.DuesServiceGetIdxFilesProcedure):    {scope: ScopeRead, rpc: true, lease: true},
+		rpc(pbconnect.DuesServiceSearchProcedure):         {scope: ScopeRead, rpc: true, lease: true},
+		rpc(pbconnect.DuesServiceAppendIfExistsProcedure): {scope: ScopeUpload, rpc: true, lease: true},
 		rpc(pbconnect.DuesServiceStreamFileProcedure):     {scope: ScopeUpload, rpc: true},
 		"POST /web/upload/start":                          {scope: ScopeUpload},
 		"POST /web/upload/chunk":                          {scope: ScopeUpload},
@@ -219,7 +220,7 @@ func TestRouteScopes(t *testing.T) {
 		"POST /web/upload/finalize":                       {scope: ScopeUpload},
 	}
 	for p, rt := range s.registered {
-		if got := (rs{rt.scope, rt.public, rt.rpc}); got != want[p] {
+		if got := (rs{rt.scope, rt.public, rt.rpc, rt.lease}); got != want[p] {
 			t.Errorf("%s: %+v, want %+v", p, got, want[p])
 		}
 	}
@@ -232,7 +233,7 @@ func TestRouteScopes(t *testing.T) {
 
 func TestRouteMustBePublicOrScoped(t *testing.T) {
 	t.Parallel()
-	for _, rt := range []route{{}, {public: true, scope: ScopeRead}} {
+	for _, rt := range []route{{}, {public: true, scope: ScopeRead}, {public: true, lease: true}} {
 		func() {
 			defer func() {
 				if recover() == nil {
@@ -296,7 +297,7 @@ func TestScopeMatrix(t *testing.T) {
 	}
 	ls := startServer(t, Config{Tokens: []Credential{
 		mustCredential(t, reader, ScopeRead, "reader"), mustCredential(t, uploader, ScopeUpload, "uploader"),
-	}}, Deps{DB: h.DB, Root: h.Root, Log: zap.New(core)}, nil)
+	}}, Deps{Handle: h, Log: zap.New(core)}, nil)
 	ctx := context.Background()
 	hash := plainHash(h.DB, []byte("not stored"))
 	denied := func(what string, err error, scope string) {
@@ -427,7 +428,7 @@ func TestUploadBelongsToItsToken(t *testing.T) {
 	}
 	ls := startServer(t, Config{Tokens: []Credential{
 		mustCredential(t, alice, ScopeUpload, "alice"), mustCredential(t, bob, ScopeUpload, "bob"),
-	}}, Deps{DB: h.DB, Root: h.Root, Log: zap.New(core)}, nil)
+	}}, Deps{Handle: h, Log: zap.New(core)}, nil)
 	data := bytes.Repeat([]byte("owned "), 1000)
 	js := func(v any) *bytes.Reader { b, _ := json.Marshal(v); return bytes.NewReader(b) }
 	startReq := bearer(newReq(t, "POST", ls.url+"/web/upload/start", js(map[string]any{
@@ -520,7 +521,7 @@ func TestUploadLogsWithoutToken(t *testing.T) {
 	if err := util.EnsureBlobPath(h.Root); err != nil {
 		t.Fatal(err)
 	}
-	ls := startServer(t, Config{}, Deps{DB: h.DB, Root: h.Root, Log: zap.New(core)}, nil)
+	ls := startServer(t, Config{}, Deps{Handle: h, Log: zap.New(core)}, nil)
 	upload := func(path string, data, sent []byte, outcome int) {
 		t.Helper()
 		r := start(t, ls, path, "", plainHash(h.DB, data), int64(len(sent)))

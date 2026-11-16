@@ -3,6 +3,7 @@
 package server
 
 import (
+	"cmp"
 	"context"
 	"crypto/sha256"
 	"errors"
@@ -14,8 +15,9 @@ import (
 	"sync/atomic"
 	"time"
 
+	"indicer/lib/dbopen"
+
 	"connectrpc.com/connect"
-	"github.com/dgraph-io/badger/v4"
 	"go.uber.org/zap"
 )
 
@@ -59,8 +61,19 @@ type Limits struct {
 	// server stops; then their contexts are cancelled, and they have
 	// IdleWait more to return.
 	ShutdownGrace, IdleWait time.Duration
-	Upload                  UploadLimits
+	// PauseLeaseWait is how long a pause waits for the requests using the
+	// database before it cuts them; they then have IdleWait more to return.
+	PauseLeaseWait time.Duration
+	// ResumeRetry are the waits before each retry of a database a pause
+	// could not reopen at once; when the last retry fails, the server stops.
+	// An array keeps Limits comparable.
+	ResumeRetry [resumeRetries]time.Duration
+	Upload      UploadLimits
 }
+
+// resumeRetries is how many times a pause tries again to reopen the
+// database.
+const resumeRetries = 3
 
 // DefaultLimits are the limits `dues server` runs with.
 func DefaultLimits() Limits {
@@ -74,6 +87,8 @@ func DefaultLimits() Limits {
 		PingTimeout:       15 * time.Second,
 		ShutdownGrace:     25 * time.Second,
 		IdleWait:          10 * time.Second,
+		PauseLeaseWait:    time.Minute,
+		ResumeRetry:       [resumeRetries]time.Duration{time.Second, 5 * time.Second, 15 * time.Second},
 		Upload:            DefaultUploadLimits(),
 	}
 }
@@ -140,17 +155,19 @@ func CheckOrigin(o string) error {
 
 // Deps are what the server works on.
 type Deps struct {
-	DB *badger.DB
-	// Root is the data root holding DB; uploads are kept under it.
-	Root string
-	Log  *zap.Logger
+	// Handle is the database, open writable; uploads are kept under its
+	// root. Until Serve is called, the caller closes it. Serve then owns it:
+	// it closes it after a clean stop, and leaves it as it is after
+	// ErrUncleanShutdown.
+	Handle *dbopen.Handle
+	Log    *zap.Logger
 }
 
 // Server serves one DUES database.
 type Server struct {
 	cfg     Config
-	deps    Deps
 	log     *zap.Logger
+	root    string
 	addrs   []listenAddr
 	origins map[string]bool
 	// registered holds each pattern's route, for the scope check in
@@ -165,6 +182,11 @@ type Server struct {
 
 	base       context.Context
 	cancelBase context.CancelCauseFunc
+
+	dbs *dbState
+	// fatal takes the error that must stop the server, such as a database
+	// a pause could not reopen.
+	fatal chan error
 
 	uploads *uploads
 
@@ -181,11 +203,20 @@ func New(cfg Config, deps Deps) (*Server, error) {
 	if err := cfg.Validate(); err != nil {
 		return nil, err
 	}
-	if deps.DB == nil {
+	h := deps.Handle
+	switch {
+	case h == nil || h.DB == nil:
 		return nil, errors.New("server: no database")
+	case h.ReadOnly:
+		return nil, errors.New("server: the database is open read-only")
 	}
+	def := DefaultLimits()
 	if cfg.Limits == (Limits{}) {
-		cfg.Limits = DefaultLimits()
+		cfg.Limits = def
+	}
+	cfg.Limits.PauseLeaseWait = cmp.Or(cfg.Limits.PauseLeaseWait, def.PauseLeaseWait)
+	if cfg.Limits.ResumeRetry == ([resumeRetries]time.Duration{}) {
+		cfg.Limits.ResumeRetry = def.ResumeRetry
 	}
 	if deps.Log == nil {
 		deps.Log = zap.NewNop()
@@ -193,8 +224,8 @@ func New(cfg Config, deps Deps) (*Server, error) {
 	addrs, _ := parseListen(cfg.Listen)
 	s := &Server{
 		cfg:        cfg,
-		deps:       deps,
 		log:        deps.Log,
+		root:       h.Root,
 		addrs:      addrs,
 		origins:    map[string]bool{},
 		registered: map[string]route{},
@@ -202,12 +233,14 @@ func New(cfg Config, deps Deps) (*Server, error) {
 		inflight:   make(chan struct{}, max(cfg.Limits.MaxInFlight, 1)),
 		conns:      make(chan struct{}, max(cfg.Limits.MaxConns, 1)),
 		mux:        http.NewServeMux(),
+		fatal:      make(chan error, 1),
 	}
 	for _, o := range cfg.CORSOrigins {
 		n, _ := normalizeOrigin(o)
 		s.origins[n] = true
 	}
 	s.base, s.cancelBase = context.WithCancelCause(context.Background())
+	s.dbs = newDBState(s.base, h)
 	up, err := newUploads(s)
 	if err != nil {
 		return nil, err
@@ -308,8 +341,9 @@ func (s *Server) Run(ctx context.Context) error {
 	return s.Serve(ctx)
 }
 
-// Serve serves on the listeners Listen opened until ctx ends or a listener
-// fails, then stops the server (see stop). It returns nil after a clean stop.
+// Serve serves on the listeners Listen opened until ctx ends, a listener
+// fails or the database cannot go on, then stops the server (see stop). It
+// returns nil after a clean stop. From here the server owns the database.
 func (s *Server) Serve(ctx context.Context) error {
 	s.uploads.startReaper(s.base)
 	serveErr := make(chan error, len(s.lns))
@@ -331,6 +365,8 @@ func (s *Server) Serve(ctx context.Context) error {
 			failed = errors.New("a listener stopped")
 		}
 		s.log.Error("server listener failed", zap.Error(failed))
+	case failed = <-s.fatal:
+		s.log.Error("server stopping", zap.Error(failed))
 	}
 	return errors.Join(failed, s.stop())
 }
@@ -338,7 +374,8 @@ func (s *Server) Serve(ctx context.Context) error {
 // stop drains the server (SRV-7). New requests are refused; the requests
 // being served get ShutdownGrace to finish; then their contexts, and that of
 // any work they started, are cancelled, and they get IdleWait more. Work
-// still running then is ErrUncleanShutdown.
+// still running then is ErrUncleanShutdown, and the database is left as it
+// is; otherwise it is closed, or released when a pause left it suspended.
 func (s *Server) stop() error {
 	s.draining.Store(true)
 	lim := s.cfg.Limits
@@ -349,12 +386,15 @@ func (s *Server) stop() error {
 	cancel()
 	// Requests and work still running are told to stop.
 	s.cancelBase(errStopping)
-	idle := s.work.wait(lim.IdleWait)
+	idle := s.work.wait(context.Background(), lim.IdleWait)
 	_ = s.http.Close()
-	s.stopUploads(idle)
+	s.stopUploads()
 	if !idle {
 		s.log.Error("server stopped with work still running", zap.Int("running", s.work.count()))
 		return ErrUncleanShutdown
+	}
+	if err := s.dbs.close(s.log); err != nil {
+		return fmt.Errorf("server: closing the database: %w", err)
 	}
 	return nil
 }
@@ -400,8 +440,9 @@ func (t *tracker) count() int {
 	return t.n
 }
 
-// wait reports whether the count reached zero within d.
-func (t *tracker) wait(d time.Duration) bool {
+// wait reports whether the count reached zero within d, and before ctx
+// ended.
+func (t *tracker) wait(ctx context.Context, d time.Duration) bool {
 	t.mu.Lock()
 	if t.n == 0 {
 		t.mu.Unlock()
@@ -415,6 +456,8 @@ func (t *tracker) wait(d time.Duration) bool {
 	case <-ch:
 		return true
 	case <-timer.C:
+		return false
+	case <-ctx.Done():
 		return false
 	}
 }

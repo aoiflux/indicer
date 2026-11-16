@@ -61,7 +61,9 @@ type rpcService struct {
 
 var _ pbconnect.DuesServiceHandler = (*rpcService)(nil)
 
-func (r *rpcService) db() *badger.DB { return r.s.deps.DB }
+// db is the database the request's lease holds. A route without a lease
+// has none, and the panic is answered as an internal error.
+func (r *rpcService) db(ctx context.Context) *badger.DB { return refOf(ctx).db }
 
 // rpcRoutes registers each procedure with the bounds of what it does.
 func (s *Server) rpcRoutes() {
@@ -74,7 +76,7 @@ func (s *Server) rpcRoutes() {
 	_, unary := pbconnect.NewDuesServiceHandler(svc, append(common, connect.WithReadMaxBytes(unaryReadMax))...)
 	_, stream := pbconnect.NewDuesServiceHandler(svc, append(common, connect.WithReadMaxBytes(streamReadMax))...)
 
-	listing := route{maxBody: 2 * unaryReadMax, read: 30 * time.Second, write: 5 * time.Minute, scope: ScopeRead, rpc: true}
+	listing := route{maxBody: 2 * unaryReadMax, read: 30 * time.Second, write: 5 * time.Minute, scope: ScopeRead, rpc: true, lease: true}
 	for _, p := range []string{
 		pbconnect.DuesServiceGetEviFilesProcedure,
 		pbconnect.DuesServiceGetPartiFilesProcedure,
@@ -88,9 +90,11 @@ func (s *Server) rpcRoutes() {
 	appendIfExists.scope = ScopeUpload
 	s.handle("POST "+pbconnect.DuesServiceAppendIfExistsProcedure, appendIfExists, unary)
 	s.handle("POST "+pbconnect.DuesServiceSearchProcedure,
-		route{maxBody: 2 * unaryReadMax, read: 30 * time.Second, write: searchBudget + 30*time.Second, scope: ScopeRead, rpc: true}, unary)
+		route{maxBody: 2 * unaryReadMax, read: 30 * time.Second, write: searchBudget + 30*time.Second, scope: ScopeRead, rpc: true, lease: true}, unary)
 	// An upload's body may take long, but must keep moving; its ingest may
-	// take long too, so the response has no deadline of its own.
+	// take long too, so the response has no deadline of its own. It takes no
+	// lease: a pause must not cut what it receives, and the upload queue
+	// holds its ingest through a pause.
 	s.handle("POST "+pbconnect.DuesServiceStreamFileProcedure, route{idleRead: time.Minute, scope: ScopeUpload, rpc: true}, stream)
 }
 
@@ -116,7 +120,9 @@ type rpcErrors struct{ s *Server }
 func (e rpcErrors) WrapUnary(next connect.UnaryFunc) connect.UnaryFunc {
 	return func(ctx context.Context, req connect.AnyRequest) (connect.AnyResponse, error) {
 		res, err := next(ctx, req)
-		return res, e.s.rpcError(ctx, req.Spec().Procedure, err)
+		err = e.s.rpcError(ctx, req.Spec().Procedure, err)
+		releaseLease(ctx)
+		return res, err
 	}
 }
 
@@ -138,6 +144,11 @@ func (s *Server) rpcError(ctx context.Context, op string, err error) error {
 	switch {
 	case errors.As(err, &ce):
 		return err
+	case (errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded)) && errors.Is(context.Cause(ctx), errPaused):
+		// Cut by a pause, not cancelled by its client.
+		ce = connect.NewError(connect.CodeUnavailable, errors.New(msgPaused))
+		ce.Meta().Set(headerRetryAfter, pausedRetryAfter)
+		return ce
 	case errors.Is(err, context.DeadlineExceeded):
 		return connect.NewError(connect.CodeDeadlineExceeded, errors.New("the request ran out of time"))
 	case errors.Is(err, context.Canceled):
@@ -196,7 +207,7 @@ func (r *rpcService) baseFile(ctx context.Context, key []byte, path string, size
 	if first {
 		limit = max(limit, 1)
 	}
-	m, truncated, err := chunkMap(ctx, r.db(), key, limit)
+	m, truncated, err := chunkMap(ctx, r.db(ctx), key, limit)
 	if err != nil {
 		return nil, false, fmt.Errorf("chunk map of %q: %w", path, err)
 	}
@@ -275,7 +286,7 @@ func (r *rpcService) GetEviFiles(ctx context.Context, req *connect.Request[pb.Ge
 	}
 	// One more than the page, to know whether another page follows.
 	var evs []ev
-	err = r.db().View(func(txn *badger.Txn) error {
+	err = r.db(ctx).View(func(txn *badger.Txn) error {
 		prefix := []byte(cnst.EviFileNamespace)
 		opts := badger.DefaultIteratorOptions
 		opts.Prefix = prefix
@@ -332,13 +343,13 @@ func (r *rpcService) GetEviFiles(ctx context.Context, req *connect.Request[pb.Ge
 
 // getEvidence reads the evidence a client names by its record key or raw
 // ID (base64); only stored evidence is found.
-func (r *rpcService) getEvidence(id string) ([]byte, structs.EvidenceFile, error) {
+func (r *rpcService) getEvidence(ctx context.Context, id string) ([]byte, structs.EvidenceFile, error) {
 	raw, err := base64.StdEncoding.DecodeString(id)
 	if err != nil || len(raw) == 0 {
 		return nil, structs.EvidenceFile{}, invalidArg("evi_file_id is not a base64 record ID")
 	}
 	key := dbio.CanonicalEvidenceKey(raw)
-	e, err := dbio.GetEvidenceFile(key, r.db())
+	e, err := dbio.GetEvidenceFile(key, r.db(ctx))
 	if errors.Is(err, badger.ErrKeyNotFound) || (err == nil && !completed(e)) {
 		return nil, e, notFound("no stored evidence %s", id)
 	}
@@ -355,7 +366,7 @@ func (r *rpcService) GetPartiFiles(ctx context.Context, req *connect.Request[pb.
 	if err != nil {
 		return nil, err
 	}
-	_, e, err := r.getEvidence(req.Msg.GetEviFileId())
+	_, e, err := r.getEvidence(ctx, req.Msg.GetEviFileId())
 	if err != nil {
 		return nil, err
 	}
@@ -378,7 +389,7 @@ func (r *rpcService) GetPartiFiles(ctx context.Context, req *connect.Request[pb.
 			return nil, fmt.Errorf("partition link %q: %w", id, err)
 		}
 		key := dbio.CanonicalPartitionKey(raw)
-		p, err := dbio.GetPartitionFile(key, r.db())
+		p, err := dbio.GetPartitionFile(key, r.db(ctx))
 		if errors.Is(err, badger.ErrKeyNotFound) {
 			continue
 		}

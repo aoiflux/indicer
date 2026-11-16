@@ -10,6 +10,7 @@
 package dbopen
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -125,6 +126,12 @@ type Handle struct {
 	// atClose runs when the handle closes (AtClose).
 	atClose []func()
 
+	// keys are a writable open's own copy of the badger and blob keys, kept
+	// for Resume and zeroed at close; the actor's is actorKey. suspension is
+	// set while suspended.
+	keys       dbmeta.Keys
+	suspension *Suspended
+
 	// actorKey wraps the database actor's key (dbmeta.Keys.Actor); nil for
 	// an unencrypted database. actor is Request.Actor. unsign undoes
 	// graph.SignWith. provider is what Signer resolved.
@@ -226,18 +233,25 @@ func Open(ctx context.Context, req Request) (*Handle, error) {
 		zap.String("encryption", h.Manifest.Encryption.Scheme), zap.Int("chunk_kib", h.Manifest.Layout.ChunkKiB),
 		zap.String("storage", h.Manifest.Layout.Storage), zap.Strings("notices", h.Notices))
 	if req.Recover && !h.ReadOnly {
-		report, err := store.RecoverIncompleteIngests(ctx, h.DB)
-		if err != nil {
+		if err := h.recoverIngests(ctx); err != nil {
 			return nil, errors.Join(err, h.Close())
-		}
-		if report.MarkedFailed > 0 {
-			logging.GetLogger().Warn("dbopen STARTUP_RECOVERY_MARKED_FAILED",
-				zap.Int("marked_failed", report.MarkedFailed),
-				zap.Int("incomplete_found", report.IncompleteFound),
-			)
 		}
 	}
 	return h, nil
+}
+
+func (h *Handle) recoverIngests(ctx context.Context) error {
+	report, err := store.RecoverIncompleteIngests(ctx, h.DB)
+	if err != nil {
+		return err
+	}
+	if report.MarkedFailed > 0 {
+		logging.GetLogger().Warn("dbopen STARTUP_RECOVERY_MARKED_FAILED",
+			zap.Int("marked_failed", report.MarkedFailed),
+			zap.Int("incomplete_found", report.IncompleteFound),
+		)
+	}
+	return nil
 }
 
 // containerAdviceKiB is the chunk size under which a new database that keeps
@@ -284,30 +298,41 @@ func (h *Handle) open(ctx context.Context, req Request) error {
 		}
 	}
 	h.Manifest = m
-	if err := h.checkMarker(); err != nil {
-		return err
-	}
-
 	// A failed open releases the handle, which unregisters the engine.
-	eng, err := engine.Register(h.DB, m.Layout, h.tuning)
-	if err != nil {
+	if err := h.register(keys); err != nil {
 		return err
 	}
-	codec, err := codecFor(m.Layout, keys, eng.Encoder())
-	if err != nil {
-		return err
-	}
-	blobcodec.Register(h.DB, codec)
-	dbmeta.RegisterManifest(h.DB, m)
-	h.keepBlockIndexLookup()
 	if l := m.Layout; h.Created && l.ChunkKiB < containerAdviceKiB && l.Storage == dbmeta.StorageFile {
 		h.notice("the chunk size is %d KiB (under %d KiB); --container packs small chunks into container files of up to 1 GB, which suits filesystems better", l.ChunkKiB, containerAdviceKiB)
 	}
 
 	if !h.ReadOnly {
-		h.sweepTemps()
+		// A copy: a legacy database's keys may be the caller's raw key, which
+		// zeroing at close must not touch.
+		h.keys = dbmeta.Keys{Badger: bytes.Clone(keys.Badger), Blob: bytes.Clone(keys.Blob)}
+		h.sweepTemps(false)
 	}
 	return h.startSigning(req, keys)
+}
+
+// register checks the open badger against the manifest and registers what
+// the database's readers and writers look up by it.
+func (h *Handle) register(keys dbmeta.Keys) error {
+	if err := h.checkMarker(); err != nil {
+		return err
+	}
+	eng, err := engine.Register(h.DB, h.Manifest.Layout, h.tuning)
+	if err != nil {
+		return err
+	}
+	codec, err := codecFor(h.Manifest.Layout, keys, eng.Encoder())
+	if err != nil {
+		return err
+	}
+	blobcodec.Register(h.DB, codec)
+	dbmeta.RegisterManifest(h.DB, h.Manifest)
+	h.keepBlockIndexLookup()
+	return nil
 }
 
 // hasRecords reports whether the root's badger directory holds a database.
@@ -320,14 +345,18 @@ func hasRecords(root string) bool {
 // in the root left there: the manifest's, its mirror's, the graph marker's,
 // replaced blobs', and the part files of uploads a server was receiving. A
 // writable open holds the root lock exclusively, so no other DUES process is
-// writing them, whatever their age.
-func (h *Handle) sweepTemps() {
+// writing them, whatever their age. keepUploads keeps the part files, for a
+// server resuming with uploads still coming in.
+func (h *Handle) sweepTemps(keepUploads bool) {
 	for _, dir := range []string{h.Root, filepath.Join(h.Root, cnst.KVDBDIR), filepath.Join(h.Root, cnst.BLOBSDIR), filepath.Join(h.Root, cnst.GRAPHDIR)} {
 		if n, err := fsx.SweepTemps(dir, 0); err != nil {
 			logging.GetLogger().Warn("dbopen temp sweep failed", zap.String("dir", dir), zap.Error(err))
 		} else if n > 0 {
 			logging.GetLogger().Info("dbopen removed stale temp files", zap.String("dir", dir), zap.Int("count", n))
 		}
+	}
+	if keepUploads {
+		return
 	}
 	parts, _ := filepath.Glob(filepath.Join(h.Root, cnst.UploadsDir, "*.part"))
 	for _, p := range parts {
@@ -840,8 +869,15 @@ func (h *Handle) release() {
 		h.lock.Unlock()
 		h.lock = nil
 	}
+	h.forgetKeys()
 	h.stopSigning()
 	h.runAtClose()
+}
+
+func (h *Handle) forgetKeys() {
+	clear(h.keys.Badger)
+	clear(h.keys.Blob)
+	h.keys = dbmeta.Keys{}
 }
 
 // unregister forgets what the open registered for db, as it closes.
@@ -859,20 +895,25 @@ func (h *Handle) removeShadow() {
 	}
 }
 
-// Close closes the database, then releases the root lock.
+// Close closes the database, then releases the root lock. On a suspended
+// handle it ends the suspension, as Suspended.Release.
 func (h *Handle) Close() error {
-	if h == nil || h.DB == nil {
+	if h == nil || h.DB == nil && h.suspension == nil {
 		return nil
 	}
-	db := h.DB
-	h.DB = nil
-	unregister(db)
-	err := db.Close()
+	var err error
+	if db := h.DB; db != nil {
+		h.DB = nil
+		unregister(db)
+		err = db.Close()
+	}
+	h.suspension = nil
 	h.removeShadow()
 	if h.lock != nil {
 		err = errors.Join(err, h.lock.Unlock())
 		h.lock = nil
 	}
+	h.forgetKeys()
 	h.stopSigning()
 	h.runAtClose()
 	return err

@@ -6,8 +6,10 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"path/filepath"
 
 	"indicer/internal/console"
+	"indicer/lib/cnst"
 	"indicer/lib/dbmeta"
 	"indicer/lib/graph"
 	"indicer/lib/graph/signer"
@@ -46,7 +48,9 @@ func (h *Handle) startSigning(req Request, keys dbmeta.Keys) error {
 	if h.ReadOnly {
 		return nil
 	}
-	remove, err := graph.SignWith(h.Root, h.Signer)
+	// Keyed as the ingest session opens the graph, by the badger directory,
+	// which a root itself named kvdb does not spell.
+	remove, err := graph.SignWith(filepath.Join(h.Root, cnst.KVDBDIR), h.Signer)
 	if err != nil {
 		return err
 	}

@@ -23,6 +23,7 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"slices"
 	"sort"
 	"strings"
 	"time"
@@ -76,6 +77,16 @@ type ExportOptions struct {
 	Creator duesarc.Creator
 	// Actor signs the package; nil is the database actor.
 	Actor *dbopen.Actor
+	// Held is a suspended database to package in place of Path. Its lock
+	// keeps writers out, and its actor signs unless Actor names another;
+	// Creds are not needed.
+	Held *dbopen.Suspended
+	// Stats are Held's evidence statistics, counted before it was
+	// suspended: a closed database cannot count them. Nil leaves them out.
+	Stats *duesarc.Stats
+	// Tee receives a copy of the package as it is written, whole before any
+	// split, for a hash or a byte count.
+	Tee io.Writer
 }
 
 // ExportResult is what an export made.
@@ -115,21 +126,22 @@ type entry struct {
 	mode fs.FileMode
 }
 
-// Export packs a data root. The root is held (dbopen.TakeSnapshot) from
-// before its files are listed until the package is written, so no DUES
-// writer changes it meanwhile; readers may run.
+// Export packs a data root. The root is held (dbopen.TakeSnapshot, or the
+// suspension of opts.Held) from before its files are listed until the
+// package is written, so no DUES writer changes it meanwhile. Readers may
+// run beside a snapshot; nothing opens a suspended root.
 //
 // A database actor that cannot sign leaves the package unsigned, with a
 // notice; a named actor that cannot sign fails the export, since the user
 // asked for that signature.
 func Export(ctx context.Context, opts ExportOptions) (res ExportResult, err error) {
 	var ensureErr error
-	if opts.Actor == nil {
+	if opts.Held == nil && opts.Actor == nil {
 		if ensureErr = ensureDatabaseActor(ctx, opts); isCredentialError(ensureErr) {
 			return res, ensureErr
 		}
 	}
-	snap, err := dbopen.TakeSnapshot(ctx, opts.Path)
+	snap, err := snapshot(ctx, opts)
 	if err != nil {
 		return res, err
 	}
@@ -146,8 +158,8 @@ func Export(ctx context.Context, opts ExportOptions) (res ExportResult, err erro
 		return res, err
 	}
 	res.Output = out
-	if inside(snap.Root, out) {
-		return res, lifecycle.Usagef("the package %s would be inside the database it copies, %s", out, snap.Root)
+	if inside(snap.Root, out) && !inExports(snap.Root, out) {
+		return res, lifecycle.Usagef("the package %s would be inside the database it copies, %s (only its %s folder, which packages leave out, may hold one)", out, snap.Root, cnst.ExportsDir)
 	}
 	if !opts.Force {
 		for _, p := range []string{out, out + duesarc.SidecarExt, duesarc.PartPath(out, 1)} {
@@ -169,6 +181,20 @@ func Export(ctx context.Context, opts ExportOptions) (res ExportResult, err erro
 	if opts.HostInfo {
 		host, _ := os.Hostname()
 		m.Host = &duesarc.Host{OS: runtime.GOOS, Arch: runtime.GOARCH, Hostname: host}
+	}
+
+	// Before the listing: a suspended database's signer may make the
+	// database actor, writing the keystore the package copies.
+	stats, prov, notices, err := signerFor(ctx, snap, opts, ensureErr)
+	if err != nil {
+		return res, err
+	}
+	if prov != nil {
+		defer prov.Close()
+	}
+	res.Notices = append(res.Notices, notices...)
+	if !m.Database.Encrypted {
+		m.Stats = stats
 	}
 
 	entries, err := listRoot(ctx, snap.Root, opts.WithoutDerived)
@@ -195,18 +221,6 @@ func Export(ctx context.Context, opts ExportOptions) (res ExportResult, err erro
 		}
 	}
 
-	stats, prov, notices, err := checkDatabase(ctx, snap, opts, ensureErr)
-	if err != nil {
-		return res, err
-	}
-	if prov != nil {
-		defer prov.Close()
-	}
-	res.Notices = append(res.Notices, notices...)
-	if !m.Database.Encrypted {
-		m.Stats = stats
-	}
-
 	var total int64
 	for _, e := range entries {
 		total += e.size
@@ -217,6 +231,9 @@ func Export(ctx context.Context, opts ExportOptions) (res ExportResult, err erro
 
 	ph := progress.Start(ctx, "export", progress.Bytes, total)
 	files, err := duesarc.WriteOutput(ctx, out, opts.PartSize, func(w io.Writer) error {
+		if opts.Tee != nil {
+			w = io.MultiWriter(w, opts.Tee)
+		}
 		return writePackage(ctx, w, entries, &m, created, prov, ph)
 	})
 	ph.Done(err)
@@ -230,6 +247,45 @@ func Export(ctx context.Context, opts ExportOptions) (res ExportResult, err erro
 		}
 	}
 	return res, nil
+}
+
+// snapshot holds the root to package: opts.Held's, or one TakeSnapshot
+// takes.
+func snapshot(ctx context.Context, opts ExportOptions) (*dbopen.Snapshot, error) {
+	if opts.Held == nil {
+		return dbopen.TakeSnapshot(ctx, opts.Path)
+	}
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	if opts.Path != "" {
+		return nil, errors.New("export options name the database twice: Path and Held")
+	}
+	return opts.Held.Snapshot()
+}
+
+// signerFor counts the evidence and resolves who signs the package. A
+// suspended database cannot be opened to count, so its stats are
+// opts.Stats.
+func signerFor(ctx context.Context, s *dbopen.Snapshot, opts ExportOptions, ensureErr error) (*duesarc.Stats, signer.Provider, []string, error) {
+	if opts.Held == nil {
+		return checkDatabase(ctx, s, opts, ensureErr)
+	}
+	if a := opts.Actor; a != nil {
+		prov, err := signer.NewKeystore(s.Root).Resolve(a.Name, signer.Passphrase(a.Passphrase))
+		if err != nil {
+			return nil, nil, nil, fmt.Errorf("actor %q cannot sign the package: %w", a.Name, err)
+		}
+		return opts.Stats, prov, nil, nil
+	}
+	prov, err := opts.Held.TakeSigner()
+	if err != nil {
+		if name := opts.Held.Actor(); name != "" {
+			return nil, nil, nil, fmt.Errorf("actor %q cannot sign the package: %w", name, err)
+		}
+		return opts.Stats, nil, []string{fmt.Sprintf("the package is unsigned: %v", err)}, nil
+	}
+	return opts.Stats, prov, nil, nil
 }
 
 // databaseInfo copies what the database's manifest says into the package's.
@@ -349,8 +405,8 @@ func evidenceStats(ctx context.Context, db *badger.DB) (*duesarc.Stats, error) {
 
 // listRoot lists what a package of root holds, sorted by path: every
 // directory and regular file except the locks, the temporary files a killed
-// writer left, the uploads a server was receiving, and, withoutDerived, the
-// full-text index and the graph.
+// writer left, the uploads a server was receiving, the packages it
+// exported, and, withoutDerived, the full-text index and the graph.
 func listRoot(ctx context.Context, root string, withoutDerived bool) ([]entry, error) {
 	var entries []entry
 	err := filepath.WalkDir(root, func(p string, d fs.DirEntry, err error) error {
@@ -401,7 +457,7 @@ func skip(rel string, dir, withoutDerived bool) bool {
 	top, _, _ := strings.Cut(rel, "/")
 	base := rel[strings.LastIndex(rel, "/")+1:]
 	switch {
-	case rel == cnst.UploadsDir && dir:
+	case (rel == cnst.UploadsDir || rel == cnst.ExportsDir) && dir:
 		return true
 	case withoutDerived && (top == cnst.FTSDIR || top == cnst.GRAPHDIR):
 		return true
@@ -538,6 +594,27 @@ func copyEntry(ctx context.Context, zw *zip.Writer, name string, e entry, create
 func inside(root, p string) bool {
 	rel, err := filepath.Rel(root, p)
 	return err == nil && rel != ".." && !strings.HasPrefix(rel, ".."+string(filepath.Separator))
+}
+
+// inExports reports whether the file out goes under root's exports folder,
+// which must exist with exactly the name skip leaves out: filepath.Rel folds
+// case on Windows, and a folder spelled otherwise would be packaged.
+func inExports(root, out string) bool {
+	rel, err := filepath.Rel(root, filepath.Dir(out))
+	if err != nil || rel == "." {
+		return false
+	}
+	top, _, _ := strings.Cut(filepath.ToSlash(rel), "/")
+	names, err := os.ReadDir(root)
+	if err != nil || !slices.ContainsFunc(names, func(d fs.DirEntry) bool { return d.Name() == cnst.ExportsDir && d.IsDir() }) {
+		return false
+	}
+	want, err := os.Lstat(filepath.Join(root, cnst.ExportsDir))
+	if err != nil {
+		return false
+	}
+	got, err := os.Lstat(filepath.Join(root, top))
+	return err == nil && os.SameFile(want, got)
 }
 
 func plural(n int, one, many string) string {

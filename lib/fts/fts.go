@@ -88,6 +88,15 @@ func handleKey(path string) string {
 	return key
 }
 
+// IsOpen reports whether the full-text index of the data root is open in
+// this process.
+func IsOpen(root string) bool {
+	key := handleKey(util.FTSPath(root))
+	handlesMu.Lock()
+	defer handlesMu.Unlock()
+	return handles[key] != nil
+}
+
 // acquire returns the database's full-text index, opened once and shared
 // until the last release. A database opened read-only gets the index
 // read-only. Without an index, a writable database with create gets a new

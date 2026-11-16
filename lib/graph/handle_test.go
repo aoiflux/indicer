@@ -337,3 +337,42 @@ func TestOpen_ReadOnlyHandleWillNotEscalate(t *testing.T) {
 			"the shared lock it holds does not exclude other processes from writing")
 	}
 }
+
+// TestIsOpen: a graph counts as open from the start of its open to its last
+// release, under either spelling of its root.
+func TestIsOpen(t *testing.T) {
+	cleanRegistry(t)
+	root := t.TempDir()
+	kvdb := filepath.Join(root, cnst.KVDBDIR)
+	if IsOpen(root) {
+		t.Fatal("a graph never opened is open")
+	}
+	key, err := registryKey(util.GraphPath(root))
+	if err != nil {
+		t.Fatal(err)
+	}
+	registryMu.Lock()
+	opening[key] = make(chan struct{})
+	registryMu.Unlock()
+	busy := IsOpen(kvdb)
+	registryMu.Lock()
+	delete(opening, key)
+	registryMu.Unlock()
+	if !busy {
+		t.Error("a graph being opened is not open")
+	}
+
+	h, err := Open(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !IsOpen(kvdb) {
+		t.Error("an open graph is not open")
+	}
+	if err := h.Release(); err != nil {
+		t.Fatal(err)
+	}
+	if IsOpen(root) {
+		t.Error("a released graph is still open")
+	}
+}

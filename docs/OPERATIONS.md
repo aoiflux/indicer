@@ -20,6 +20,7 @@ given. A data root holds:
 | `fts/` | The full-text index, when one was built |
 | `dues.keys/` | The actors' signing keys and the keyring of their public keys (see [Keys and signing](#keys-and-signing)) |
 | `uploads/` | Part files of server uploads in progress |
+| `exports/` | Packages written into the data root; packages of the root leave it out (see [Packages](#packages)) |
 | `.dues.lock` | The root lock (see below) |
 
 The layout is fixed when the database is created:
@@ -572,8 +573,11 @@ that holds the root's files as they are on disk, under `db/`, and a
 - It refuses a database that was not closed cleanly (run `dues repair --fix`)
   and a database made before manifests existed.
 - It leaves out the locks, temporary files a killed writer left, a graph
-  image a compaction is still writing (`graph/*.tmp`), and `uploads/`. `--without-derived` leaves out `fts/` and `graph/` too: `reindex
+  image a compaction is still writing (`graph/*.tmp`), `uploads/` and
+  `exports/`. `--without-derived` leaves out `fts/` and `graph/` too: `reindex
   --fts`, `enrich` and `micro extract` rebuild them.
+- The package may not go inside the data root, except into its `exports/`
+  folder, which must exist and be named exactly so (lowercase, not a link).
 - An encrypted database is copied as its encrypted files, so the package
   needs no password. With one (`--password-file`), it is checked first. Its
   full-text index and graph are not encrypted, on disk or in the package:
@@ -680,5 +684,6 @@ leaves a database without records, or a manifest alone. Running reset again
 finishes it.
 
 Reset keeps `dues.keys/`: keys are custody records, and the keyring lets what
-they signed be checked later. A database made again in the root gets a new
+they signed be checked later. It keeps `exports/` too: a package is a copy
+made for someone else. A database made again in the root gets a new
 database key; the old one stays in the keyring.

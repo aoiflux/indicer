@@ -221,6 +221,20 @@ func OpenWith(root string, opts OpenOptions) (*Handle, error) {
 	}
 }
 
+// IsOpen reports whether root's graph is open in this process, or opening or
+// closing.
+func IsOpen(root string) bool {
+	key, err := registryKey(util.GraphPath(root))
+	if err != nil {
+		return false
+	}
+	registryMu.Lock()
+	defer registryMu.Unlock()
+	_, open := registry[key]
+	_, busy := opening[key]
+	return open || busy
+}
+
 // registryKey names a graph directory so that two spellings of it are one
 // key: symlinks are resolved, and on Windows case is folded (GRA-8).
 func registryKey(dir string) (string, error) {

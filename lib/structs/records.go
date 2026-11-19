@@ -243,4 +243,29 @@ type AliasRecord struct {
 	Source    EvidenceSource `msgpack:"source"`
 	AttemptID []byte         `msgpack:"attempt_id,omitempty"` // the duplicate record, now deleted
 	At        int64          `msgpack:"at"`                   // Unix nanoseconds
+	Merged    *MergeInfo     `msgpack:"merged,omitempty"`
+}
+
+// MergeInfo is where a merged evidence came from.
+type MergeInfo struct {
+	Package          string     `msgpack:"package"` // the package's ContentSHA256 (hex)
+	SourceEvidenceID []byte     `msgpack:"source_evidence_id"`
+	SourceFileHash   string     `msgpack:"source_file_hash"` // as recorded, in the source's algorithm
+	SourceHashAlgo   string     `msgpack:"source_hash_algo"`
+	SourceActor      string     `msgpack:"source_actor,omitempty"`
+	SourceActorID    string     `msgpack:"source_actor_id,omitempty"`
+	SourceKeyID      string     `msgpack:"source_key_id,omitempty"`
+	Trusted          bool       `msgpack:"trusted,omitempty"` // the signature matched a pinned key
+	At               int64      `msgpack:"at"`                // Unix nanoseconds
+	Prior            *MergeInfo `msgpack:"prior,omitempty"`   // the source's own MergeInfo, one hop
+}
+
+// MergeLedgerEntry maps a merged source evidence to the target evidence that
+// holds its content.
+type MergeLedgerEntry struct {
+	Target   []byte `msgpack:"target"`    // raw ID of the target evidence
+	Root     string `msgpack:"root"`      // its ContentRoot when written; empty for legacy records
+	FileHash string `msgpack:"file_hash"` // its FileHash when written
+	Package  string `msgpack:"package"`   // the package that wrote the entry
+	At       int64  `msgpack:"at"`
 }

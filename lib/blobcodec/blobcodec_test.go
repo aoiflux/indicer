@@ -2,6 +2,7 @@ package blobcodec
 
 import (
 	"bytes"
+	"crypto/rand"
 	"crypto/sha3"
 	"errors"
 	"runtime"
@@ -232,5 +233,25 @@ func TestEncodeWithoutEncoder(t *testing.T) {
 	}
 	if got, err := decodeOnly.Decode(ckey, stored); err != nil || !bytes.Equal(got, data) {
 		t.Fatalf("decode-only codec: %v", err)
+	}
+}
+
+// TestMaxStoredSizeBoundsEveryEncoding encodes random bytes, which do not
+// compress, so each encoding stores its worst case.
+func TestMaxStoredSizeBoundsEveryEncoding(t *testing.T) {
+	for _, n := range []int{0, 1, 1000, 128<<10 - 1, 128 << 10, 256<<10 + 3} {
+		data := make([]byte, n)
+		if _, err := rand.Read(data); err != nil {
+			t.Fatal(err)
+		}
+		for name, c := range codecs(t) {
+			stored, err := c.Encode(blakeKey(data), data)
+			if err != nil {
+				t.Fatalf("%s: encode %d bytes: %v", name, n, err)
+			}
+			if limit := MaxStoredSize(int64(n)); int64(len(stored)) > limit {
+				t.Errorf("%s: %d bytes stored as %d, above MaxStoredSize %d", name, n, len(stored), limit)
+			}
+		}
 	}
 }

@@ -79,7 +79,7 @@ func (r reply) num(k string) int64 { f, _ := r.body[k].(float64); return int64(f
 
 func post(t *testing.T, req *http.Request) reply {
 	t.Helper()
-	resp, err := http.DefaultClient.Do(req)
+	resp, err := testClient.Do(req)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -417,7 +417,7 @@ func TestUploadFinalizeOnce(t *testing.T) {
 		go func() {
 			defer wg.Done()
 			b, _ := json.Marshal(map[string]string{"upload_id": id})
-			resp, err := http.Post(ls.url+"/web/upload/finalize", "application/json", bytes.NewReader(b))
+			resp, err := testClient.Post(ls.url+"/web/upload/finalize", "application/json", bytes.NewReader(b))
 			if err != nil {
 				return
 			}
@@ -595,7 +595,7 @@ func TestStreamFile(t *testing.T) {
 	t.Parallel()
 	ls := uploadServer(t, nil, nil)
 	db := ls.db()
-	c := pbconnect.NewDuesServiceClient(http.DefaultClient, ls.url)
+	c := pbconnect.NewDuesServiceClient(testClient, ls.url)
 	data := bytes.Repeat([]byte("streamed "), 100_000)
 
 	stream := c.StreamFile(context.Background())
@@ -669,7 +669,7 @@ func TestStreamFileWithoutSizeIsCapped(t *testing.T) {
 	lim.MaxSize = 1 << 20
 	ls := uploadServer(t, &lim, nil)
 	db := ls.db()
-	c := pbconnect.NewDuesServiceClient(http.DefaultClient, ls.url)
+	c := pbconnect.NewDuesServiceClient(testClient, ls.url)
 	send := func(data []byte) error {
 		stream := c.StreamFile(context.Background())
 		_ = stream.Send(&pb.StreamFileReq{Payload: &pb.StreamFileReq_FileMeta{FileMeta: &pb.StreamFileMeta{
@@ -764,7 +764,7 @@ func concurrentUploads(t *testing.T, ls *liveServer) {
 		wg.Go(func() {
 			path := fmt.Sprintf("/client-%d/file.bin", i)
 			b, _ := json.Marshal(map[string]any{"file_path": path, "file_hash": plainHash(db, data), "size": len(data)})
-			resp, err := http.Post(ls.url+"/web/upload/start", "application/json", bytes.NewReader(b))
+			resp, err := testClient.Post(ls.url+"/web/upload/start", "application/json", bytes.NewReader(b))
 			if err != nil {
 				errs[i] = err
 				return
@@ -776,13 +776,13 @@ func concurrentUploads(t *testing.T, ls *liveServer) {
 			req, _ := http.NewRequest(http.MethodPost, ls.url+"/web/upload/chunk", bytes.NewReader(data))
 			req.Header.Set("Upload-Id", id)
 			req.Header.Set("Upload-Offset", "0")
-			if resp, err = http.DefaultClient.Do(req); err != nil {
+			if resp, err = testClient.Do(req); err != nil {
 				errs[i] = err
 				return
 			}
 			resp.Body.Close()
 			b, _ = json.Marshal(map[string]string{"upload_id": id})
-			if resp, err = http.Post(ls.url+"/web/upload/finalize", "application/json", bytes.NewReader(b)); err != nil {
+			if resp, err = testClient.Post(ls.url+"/web/upload/finalize", "application/json", bytes.NewReader(b)); err != nil {
 				errs[i] = err
 				return
 			}

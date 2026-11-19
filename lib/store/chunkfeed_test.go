@@ -41,7 +41,7 @@ func TestChunkFeedDigests(t *testing.T) {
 	content := testutil.RandomBytes(3, 10*4096+123)
 	ranges := []ByteRange{{0, 512}, {4000, 9000}, {5000, 100}, {40000, 100000}}
 	for _, readers := range []int{1, 4} {
-		tap := newDigestTap(newBlake3, ranges, nil)
+		tap := newDigestTap(newBlake3, nil, ranges, nil)
 		f := startChunkFeed(context.Background(), feedOptions{src: bytes.NewReader(content), end: int64(len(content)), chunk: 4096, readers: readers, slots: 3, tap: tap})
 		got := make([]byte, len(content))
 		seen := 0

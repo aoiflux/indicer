@@ -46,6 +46,10 @@ type ChunkPass struct {
 	// Credit places the pass in a run whose passes count new chunks as one
 	// at a time would (ChunkCredits); the zero Credit counts what it stores.
 	Credit Credit
+	// SecondHash, when set, also hashes the whole with another algorithm
+	// (ChunkResult.SecondPlain), so content recorded in another layout is
+	// checked without a second read.
+	SecondHash func() hash.Hash
 
 	// materialize, when not nil, writes the chunks in place of
 	// dbio.MaterializeChonkNode; tests count the chunks a pass writes so.
@@ -69,6 +73,9 @@ type ChunkResult struct {
 	Root      []byte // the hocho root over the chunk hashes, in order
 	Ranges    []RangeDigest
 	EWF       *image.DigestResult // nil unless EWF was given
+	// SecondPlain is the hash of the whole by ChunkPass.SecondHash; nil
+	// without one.
+	SecondPlain []byte
 	// NewChunks and NewBytes are the chunks this pass stored for the first
 	// time and their raw size; every other chunk was already stored, by
 	// this pass or before it (deduplicated).
@@ -213,6 +220,9 @@ func (m *passMeter) done(err error) { m.phase.Done(err) }
 func passResult(tap *digestTap, root []byte, chunks int64, m *passMeter) ChunkResult {
 	res := ChunkResult{Chunks: chunks, PlainHash: tap.plain.Sum(nil), Root: root, Ranges: tap.rangeDigests(),
 		NewChunks: m.newChunks.Load(), NewBytes: m.newBytes.Load(), WrittenBytes: m.onDisk.Load()}
+	if tap.second != nil {
+		res.SecondPlain = tap.second.Sum(nil)
+	}
 	if tap.ewf != nil {
 		r := tap.ewf.Result()
 		res.EWF = &r

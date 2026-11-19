@@ -585,7 +585,7 @@ func TestQueueTurnsSettle(t *testing.T) {
 func finalizeAt(ls *liveServer, id string, out chan<- reply) {
 	go func() {
 		b, _ := json.Marshal(map[string]string{"upload_id": id})
-		resp, err := http.Post(ls.url+"/web/upload/finalize", "application/json", bytes.NewReader(b))
+		resp, err := testClient.Post(ls.url+"/web/upload/finalize", "application/json", bytes.NewReader(b))
 		if err != nil {
 			out <- reply{body: map[string]any{"error": err.Error()}}
 			return

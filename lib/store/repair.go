@@ -62,7 +62,7 @@ func InspectEvidenceRepairs(ctx context.Context, db *badger.DB, fix bool) (Repai
 			}
 			row := RepairEvidenceRow{
 				Hash:        base64.StdEncoding.EncodeToString(rawID),
-				Name:        firstCleanName(e.Name),
+				Name:        CleanName(e.Name),
 				Type:        e.EvidenceType,
 				Size:        e.Size,
 				Completed:   e.Completed,

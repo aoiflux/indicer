@@ -137,6 +137,8 @@ type EvidenceFile struct {
 	// DuplicateOf is the raw ID of the evidence a duplicate attempt's
 	// content belongs to.
 	DuplicateOf []byte `msgpack:"duplicate_of,omitempty"`
+	// Merged is set on evidence merged in from a package.
+	Merged *MergeInfo `msgpack:"merged,omitempty"`
 }
 
 // NewEvidenceFile creates a new EvidenceFile with optional FileHash

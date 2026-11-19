@@ -5,7 +5,8 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"regexp"
+	"iter"
+	"slices"
 
 	pdffilter "github.com/pdfcpu/pdfcpu/pkg/filter"
 )
@@ -21,6 +22,9 @@ const (
 	pdfMaxText   = 16 << 20 // text extracted from the pages
 
 	pdfRatioFloorBytes = 1 << 20
+	// pdfDictWindow is how far before its stream keyword a stream's
+	// dictionary is looked for.
+	pdfDictWindow = 1024
 )
 
 // ErrPDFTooLarge is a PDF whose streams inflate past the limits.
@@ -29,8 +33,9 @@ var ErrPDFTooLarge = errors.New("pdf: streams inflate past the limits")
 var (
 	pdfStreamKeyword = []byte("stream")
 	pdfEndstream     = []byte("endstream")
-	pdfFilterPattern = regexp.MustCompile(`/(FlateDecode|Fl|LZWDecode|LZW|RunLengthDecode|RL|ASCII85Decode|A85|ASCIIHexDecode|AHx)\b`)
 )
+
+const pdfNameFilter = "Filter"
 
 var pdfFilterNames = map[string]string{
 	"FlateDecode": pdffilter.Flate, "Fl": pdffilter.Flate,
@@ -40,53 +45,79 @@ var pdfFilterNames = map[string]string{
 	"ASCIIHexDecode": pdffilter.ASCIIHex, "AHx": pdffilter.ASCIIHex,
 }
 
+// pdfStream is one stream of a PDF as found by scanning its bytes: the names
+// of its dictionary, decoded, and its encoded data.
+type pdfStream struct {
+	names []string
+	data  []byte
+}
+
+// filters returns the filter chain s names that can expand it, and whether
+// it names a filter outside that set.
+func (s pdfStream) filters() (chain []string, other bool) {
+	for _, n := range s.names {
+		if f, ok := pdfFilterNames[n]; ok {
+			chain = append(chain, f)
+		}
+	}
+	return chain, len(chain) == 0 && slices.Contains(s.names, pdfNameFilter)
+}
+
+// pdfStreams yields the streams of a PDF in file order. A stream's dictionary
+// is taken from its object header, or from pdfDictWindow bytes before its
+// stream keyword when the header is further back.
+func pdfStreams(content []byte) iter.Seq[pdfStream] {
+	return func(yield func(pdfStream) bool) {
+		rest := content
+		for {
+			i := bytes.Index(rest, pdfStreamKeyword)
+			if i < 0 {
+				return
+			}
+			if i >= len(pdfEndPrefix) && bytes.Equal(rest[i-len(pdfEndPrefix):i], pdfEndPrefix) {
+				rest = rest[i+len(pdfStreamKeyword):]
+				continue
+			}
+			dict := rest[max(0, i-pdfDictWindow):i]
+			if j := bytes.LastIndex(dict, pdfObjKeyword); j >= 0 {
+				dict = dict[j:]
+			}
+			body := rest[i+len(pdfStreamKeyword):]
+			if len(body) > 0 && body[0] == '\r' {
+				body = body[1:]
+			}
+			if len(body) > 0 && body[0] == '\n' {
+				body = body[1:]
+			}
+			end := bytes.Index(body, pdfEndstream)
+			if end < 0 {
+				end = len(body)
+			}
+			rest = body[end:]
+			if !yield(pdfStream{names: pdfNames(dict), data: body[:end]}) {
+				return
+			}
+		}
+	}
+}
+
 // checkPDFInflation decodes every stream of a PDF whose dictionary names a
 // filter that can expand it, stopping at the limits, and reports
 // ErrPDFTooLarge when one is reached. Image filters are not decoded by text
 // extraction, so their streams are not measured.
 func checkPDFInflation(content []byte) error {
 	var decoded, encoded int64
-	rest := content
-	for {
-		i := bytes.Index(rest, pdfStreamKeyword)
-		if i < 0 {
-			break
-		}
-		if i >= 3 && bytes.Equal(rest[i-3:i], []byte("end")) {
-			rest = rest[i+len(pdfStreamKeyword):]
-			continue
-		}
-		dict := rest[max(0, i-1024):i]
-		if j := bytes.LastIndex(dict, []byte("<<")); j >= 0 {
-			dict = dict[j:]
-		}
-		body := rest[i+len(pdfStreamKeyword):]
-		if len(body) > 0 && body[0] == '\r' {
-			body = body[1:]
-		}
-		if len(body) > 0 && body[0] == '\n' {
-			body = body[1:]
-		}
-		end := bytes.Index(body, pdfEndstream)
-		if end < 0 {
-			end = len(body)
-		}
-		data := body[:end]
-		rest = body[end:]
-
-		var chain []string
-		for _, m := range pdfFilterPattern.FindAllSubmatch(dict, -1) {
-			chain = append(chain, pdfFilterNames[string(m[1])])
-		}
+	for s := range pdfStreams(content) {
+		chain, _ := s.filters()
 		if len(chain) == 0 {
 			continue
 		}
-		n := decodedSize(data, chain)
+		n := int64(len(decodeBounded(s.data, chain)))
 		if n > pdfMaxStream {
 			return fmt.Errorf("%w: a stream inflates past %d MiB", ErrPDFTooLarge, pdfMaxStream>>20)
 		}
 		decoded += n
-		encoded += int64(len(data))
+		encoded += int64(len(s.data))
 		if decoded > pdfMaxTotal {
 			return fmt.Errorf("%w: its streams inflate past %d MiB", ErrPDFTooLarge, pdfMaxTotal>>20)
 		}
@@ -97,10 +128,10 @@ func checkPDFInflation(content []byte) error {
 	return nil
 }
 
-// decodedSize decodes data through the filter chain, each stage stopping just
-// past the per-stream limit. A stage that fails ends the chain with the size
-// reached; pdfcpu meets the same failure when it reads the stream.
-func decodedSize(data []byte, chain []string) int64 {
+// decodeBounded decodes data through the filter chain, each stage stopping
+// just past the per-stream limit. A stage that fails ends the chain with what
+// it reached; pdfcpu meets the same failure when it reads the stream.
+func decodeBounded(data []byte, chain []string) []byte {
 	cur := data
 	for _, name := range chain {
 		f, err := pdffilter.NewFilter(name, nil)
@@ -120,5 +151,5 @@ func decodedSize(data []byte, chain []string) int64 {
 			break
 		}
 	}
-	return int64(len(cur))
+	return cur
 }

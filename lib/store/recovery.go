@@ -95,7 +95,7 @@ func RecoverEvidence(ctx context.Context, db *badger.DB, id []byte, e structs.Ev
 			return actions, context.Cause(ctx)
 		}
 		if err != nil && !errors.Is(err, ErrMaterialMissing) {
-			return actions, fmt.Errorf("validate flushed evidence %s: %w", firstCleanName(e.Name), err)
+			return actions, fmt.Errorf("validate flushed evidence %s: %w", CleanName(e.Name), err)
 		}
 		if err != nil {
 			if err := failAttempt(db, id, "recovery: "+err.Error()); err != nil {
@@ -233,7 +233,7 @@ func RecoverIncompleteIngests(ctx context.Context, db *badger.DB) (RecoveryRepor
 		}
 		if len(actions) > 0 {
 			logging.GetLogger().Info("RecoverIncompleteIngests RECOVERED",
-				zap.String("file_name", firstCleanName(c.e.Name)),
+				zap.String("file_name", CleanName(c.e.Name)),
 				zap.String("actions", strings.Join(actions, ",")))
 		}
 		if err != nil {

@@ -41,6 +41,16 @@ func forEachEvidenceRecord(txn *badger.Txn, fn func(key []byte, evidenceFile str
 }
 
 func decodeEvidenceRecord(value []byte) (structs.EvidenceFile, bool, error) {
+	evidenceFile, ok, err := decodeEvidence(value)
+	if err != nil {
+		return evidenceFile, false, nil
+	}
+	return evidenceFile, ok, nil
+}
+
+// decodeEvidence is decodeEvidenceRecord returning the error of a value
+// that does not decode.
+func decodeEvidence(value []byte) (structs.EvidenceFile, bool, error) {
 	var evidenceFile structs.EvidenceFile
 
 	decoded, decodeErr := zstdx.DecodeAll(value, nil)
@@ -49,7 +59,7 @@ func decodeEvidenceRecord(value []byte) (structs.EvidenceFile, bool, error) {
 	}
 
 	if err := msgpackx.Unmarshal(value, &evidenceFile); err != nil {
-		return evidenceFile, false, nil
+		return evidenceFile, false, err
 	}
 
 	// UUID-keyed layout has no namespace marker. Filter probable evidence records.

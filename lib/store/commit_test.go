@@ -28,16 +28,29 @@ func flushedEvidence(t *testing.T, db *badger.DB, path string, content []byte) [
 // flushEvidence is flushedEvidence, writing reverse relations when revrel.
 func flushEvidence(t *testing.T, db *badger.DB, path string, content []byte, revrel bool) []byte {
 	t.Helper()
-	if err := util.EnsureBlobPath(db.Opts().Dir); err != nil {
+	eid, _, err := BeginAttempt(db, path, attemptRecord(db, path, content))
+	if err != nil {
 		t.Fatal(err)
 	}
+	flushChunks(t, db, eid, content, revrel)
+	return eid
+}
+
+// attemptRecord is the PENDING record an ingest of content from path begins.
+func attemptRecord(db *badger.DB, path string, content []byte) structs.EvidenceFile {
 	rec := structs.NewEvidenceFile("evidence", 0, int64(len(content)), nil, cnst.UnknownEvidenceType, "")
 	rec.ContentModel = structs.ContentModelV2
 	rec.ChunkSize = dbmeta.ChunkSize(db)
 	rec.Source = &structs.EvidenceSource{Format: structs.SourceRaw, Members: []structs.SourceMember{{Path: path, Size: int64(len(content))}}}
 	rec.Fingerprint = "fp-" + base64.StdEncoding.EncodeToString(sum(content))
-	eid, _, err := BeginAttempt(db, path, rec)
-	if err != nil {
+	return rec
+}
+
+// flushChunks stores content as the chunks of the attempt eid and leaves it
+// FLUSHED.
+func flushChunks(t *testing.T, db *badger.DB, eid, content []byte, revrel bool) {
+	t.Helper()
+	if err := util.EnsureBlobPath(db.Opts().Dir); err != nil {
 		t.Fatal(err)
 	}
 	res, err := IngestChunks(t.Context(), ChunkPass{DB: db, ID: eid, Source: bytes.NewReader(content), Size: int64(len(content)), Quiet: true, RevRel: revrel})
@@ -54,7 +67,6 @@ func flushEvidence(t *testing.T, db *badger.DB, path string, content []byte, rev
 	if err != nil {
 		t.Fatal(err)
 	}
-	return eid
 }
 
 func countPrefix(t *testing.T, db *badger.DB, prefix []byte) int {

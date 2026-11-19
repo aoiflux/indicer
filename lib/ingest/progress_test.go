@@ -130,6 +130,29 @@ func TestIngestPlansItsSteps(t *testing.T) {
 	}
 }
 
+// TestMergePlansNoIdentify: a merge into a sync database does not look its
+// content up first, so it plans no identify step to leave behind unrun.
+func TestMergePlansNoIdentify(t *testing.T) {
+	t.Parallel()
+	source, target := openDB(t), openDBStrategy(t, cnst.SyncHashStrategy)
+	path := testutil.WriteRandomFile(t, t.TempDir(), "m.bin", 6, 256<<10)
+	sid := storeIn(t, source, Request{Path: path, NoIndex: true}).EvidenceID
+	r := progress.New(t.Context(), nil)
+	s := NewSession(target)
+	res, err := s.Merge(progress.With(t.Context(), r), MergeRequest{Source: source, SourceID: sid, Origin: mergeOrigin(mergePackage)})
+	if err := s.closeWith(err); err != nil || res.Outcome != store.CommitStored {
+		t.Fatalf("merge: %+v, %v", res, err)
+	}
+	if got, want := planned(r), "[store index]"; got != want {
+		t.Errorf("planned %s, want %s", got, want)
+	}
+	for _, v := range r.Snapshot(0).Phases {
+		if v.State == progress.Pending {
+			t.Errorf("phase %s left pending", v.Name)
+		}
+	}
+}
+
 // TestIngestAliasDropsItsPlan: content already stored ends after identify,
 // leaving none of the planned steps behind as "not run".
 func TestIngestAliasDropsItsPlan(t *testing.T) {

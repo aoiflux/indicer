@@ -5,6 +5,7 @@ import (
 	"compress/zlib"
 	"errors"
 	"fmt"
+	"strings"
 	"testing"
 
 	"indicer/lib/microartefact/model"
@@ -69,6 +70,47 @@ func TestPDFInflationIsBounded(t *testing.T) {
 	}
 	if !bytes.Contains(got, []byte("https://example.org/page")) {
 		t.Errorf("page text %q", got)
+	}
+}
+
+// A PDF declaring stream lengths past what it holds is refused before pdfcpu,
+// which allocates a declared length before reading the stream, sees it.
+func TestPDFLengthsAreBounded(t *testing.T) {
+	t.Parallel()
+	const huge = "10000000000000"
+	objStm := func(body string) string {
+		return fmt.Sprintf("5 0 obj << /Type /ObjStm /N 1 /First 4 /Length %d >> stream\n%s\nendstream endobj\n", len(body), body)
+	}
+	refused := map[string]string{
+		"found by fuzzing":          "%PDF-1.0\n1 0 obj<</Length " + huge + "/00000000/00>>stream 00000",
+		"direct":                    "%PDF-1.4\n4 0 obj << /Length " + huge + " >> stream\nx\nendstream endobj",
+		"escaped name":              "%PDF-1.4\n4 0 obj << /Le#6Egth " + huge + " >> stream\nx\nendstream endobj",
+		"after a comment":           "%PDF-1.4\n4 0 obj << /Length % c\n " + huge + " >> stream\nx\nendstream endobj",
+		"by reference":              "%PDF-1.4\n4 0 obj << /Length 9 0 R >> stream\nx\nendstream endobj\n9 0 obj " + huge + " endobj",
+		"shadowed by object stream": "%PDF-1.5\n4 0 obj << /Length 9 0 R >> stream\nx\nendstream endobj\n9 0 obj 1 endobj\n" + objStm("9 0 "+huge),
+		"encrypted object stream":   "%PDF-1.5\n4 0 obj << /Length 9 0 R >> stream\nx\nendstream endobj\n9 0 obj 1 endobj\n" + objStm("9 0 1") + "trailer << /Encrypt 7 0 R >>",
+		"object stream unread":      "%PDF-1.5\n4 0 obj << /Length 9 0 R >> stream\nx\nendstream endobj\n9 0 obj 1 endobj\n" + objStm("9 0 1") + "/ObjStm",
+		"many lengths":              "%PDF-1.4\n" + strings.Repeat("/Length 40000000\n", 4),
+	}
+	for name, pdf := range refused {
+		if err := checkPDFLengths([]byte(pdf)); !errors.Is(err, ErrPDFLength) {
+			t.Errorf("%s: %v, want ErrPDFLength", name, err)
+		}
+	}
+	if _, err := parsePDFContent([]byte(refused["found by fuzzing"])); !errors.Is(err, ErrPDFLength) {
+		t.Errorf("parsing the fuzzed PDF: %v, want ErrPDFLength", err)
+	}
+
+	allowed := map[string]string{
+		"ordinary":           string(pdfWithStream(t, []byte("BT (x) Tj ET"))),
+		"by reference":       "%PDF-1.4\n4 0 obj << /Length 9 0 R >> stream\nx\nendstream endobj\n9 0 obj 1 endobj",
+		"with object stream": "%PDF-1.5\n4 0 obj << /Length 9 0 R >> stream\nx\nendstream endobj\n9 0 obj 1 endobj\n" + objStm("9 0 1"),
+		"truncated":          "%PDF-1.4\n4 0 obj << /Length 1000000 >> stream\nx",
+	}
+	for name, pdf := range allowed {
+		if err := checkPDFLengths([]byte(pdf)); err != nil {
+			t.Errorf("%s: %v", name, err)
+		}
 	}
 }
 

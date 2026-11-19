@@ -66,7 +66,7 @@ func VerifyEvidence(ctx context.Context, db *badger.DB) (report VerifyReport, er
 	for _, e := range all {
 		r := VerifyResult{
 			ID:   base64.StdEncoding.EncodeToString(e.id),
-			Name: firstCleanName(e.rec.Name),
+			Name: CleanName(e.rec.Name),
 			Size: e.rec.Size,
 		}
 		verr := ValidateEvidence(progress.Within(ctx, ph), db, e.id, e.rec, ValidateContent)

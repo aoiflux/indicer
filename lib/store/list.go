@@ -82,7 +82,7 @@ func listOutput(db *badger.DB, statusFilter string) (map[string]interface{}, err
 			eviFile := map[string]interface{}{
 				"id":             evidenceID,
 				"hash":           hashStr,
-				"name":           normalizeEvidenceFileName(firstCleanName(evidata.Name)),
+				"name":           normalizeEvidenceFileName(CleanName(evidata.Name)),
 				"type":           evidata.EvidenceType,
 				"size":           evidata.Size,
 				"completed":      evidata.Completed,

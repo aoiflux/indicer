@@ -549,6 +549,8 @@ func (m *uploads) finalize(ctx context.Context, s *session, wait time.Duration) 
 func (m *uploads) runFinalize(ctx context.Context, s *session) {
 	defer close(s.done)
 	res, uerr := m.ingestUpload(ctx, s)
+	// A client told the upload ended may look for its part file next.
+	m.dropFile(s)
 	m.mu.Lock()
 	s.result, s.err = res, uerr
 	s.state = stateDone
@@ -557,7 +559,6 @@ func (m *uploads) runFinalize(ctx context.Context, s *session) {
 	}
 	s.finished = m.now()
 	m.mu.Unlock()
-	m.dropFile(s)
 	if uerr != nil {
 		m.s.log.Warn("upload failed", zap.String("upload_id", s.id), bearerField(s.owner), zap.Int("status", uerr.status), zap.String("error", uerr.msg))
 		return

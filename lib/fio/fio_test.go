@@ -4,12 +4,14 @@ import (
 	"bytes"
 	"errors"
 	"hash"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"sync"
 	"testing"
 	"time"
 
+	"indicer/lib/blobcodec"
 	"indicer/lib/cnst"
 	"indicer/lib/fsx"
 
@@ -198,3 +200,33 @@ func TestWriteChonkCreatesAndReplaces(t *testing.T) {
 
 // blobHash is the chunk hash the tests name blobs with.
 func blobHash() hash.Hash { return blake3.New() }
+
+func TestReadChonkLimit(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+	const limit = 64
+	blob := filepath.Join(dir, "ok.blob")
+	data := bytes.Repeat([]byte{0xA5}, limit)
+	if err := os.WriteFile(blob, data, cnst.BlobPerm); err != nil {
+		t.Fatal(err)
+	}
+	got, err := ReadChonkLimit(blob, limit)
+	if err != nil || !bytes.Equal(got, data) {
+		t.Fatalf("a blob at the limit read %d bytes, %v", len(got), err)
+	}
+	if _, err := ReadChonkLimit(blob, limit-1); !errors.Is(err, blobcodec.ErrCorrupt) {
+		t.Errorf("a blob over the limit: %v, want ErrCorrupt", err)
+	}
+	if _, err := ReadChonkLimit(dir, limit); !errors.Is(err, blobcodec.ErrCorrupt) {
+		t.Errorf("a directory: %v, want ErrCorrupt", err)
+	}
+	link := filepath.Join(dir, "link.blob")
+	if err := os.Symlink(blob, link); err != nil {
+		t.Logf("symlink not creatable here: %v", err)
+	} else if _, err := ReadChonkLimit(link, limit); !errors.Is(err, blobcodec.ErrCorrupt) {
+		t.Errorf("a symlink: %v, want ErrCorrupt", err)
+	}
+	if _, err := ReadChonkLimit(filepath.Join(dir, "missing.blob"), limit); !errors.Is(err, fs.ErrNotExist) {
+		t.Errorf("a missing blob: %v, want ErrNotExist", err)
+	}
+}

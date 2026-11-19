@@ -98,7 +98,7 @@ func (s *Session) Reindex(ctx context.Context, eid []byte, opts ReindexOptions) 
 	if err != nil {
 		return res, err
 	}
-	req := Request{FTS: opts.FTS || hasFeature(e, "fts"), Enrich: opts.Enrich || hasFeature(e, "enrich"), RevRel: revrel, Simhash: simhash}
+	req := Request{FTS: opts.FTS || hasFeature(e, store.FeatureFTS), Enrich: opts.Enrich || hasFeature(e, store.FeatureEnrich), RevRel: revrel, Simhash: simhash}
 	progress.PlanSteps(ctx, append([]progress.Step{
 		{Name: "delete old index", Unit: progress.Files, Total: progress.Unknown},
 		{Name: "index", Unit: progress.Files, Total: progress.Unknown},

@@ -67,7 +67,9 @@ func buildPartitionData(phash string, txn *badger.Txn) (map[string]interface{}, 
 	return partData, nil
 }
 
-func firstCleanName(name string) string {
+// CleanName is an evidence name without the prefix legacy records joined to
+// it with DataSeperator.
+func CleanName(name string) string {
 	if name == "" {
 		return ""
 	}

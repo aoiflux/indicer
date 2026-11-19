@@ -296,28 +296,8 @@ func TestHandle_CompressFile_AsyncCancel(t *testing.T) {
 		t.Fatalf("cancel compress_file task failed: %v", cancelErr)
 	}
 
-	deadline := time.Now().Add(asyncTaskDeadline)
-	for {
-		progressParams, _ := json.Marshal(map[string]any{"task_id": taskID})
-		progressRes, progressErr := svc.Handle(context.Background(), testOpGetProgress, progressParams)
-		if progressErr != nil {
-			t.Fatalf("get_progress failed: %v", progressErr)
-		}
-		pm, ok := structToMap(progressRes)
-		if !ok {
-			t.Fatalf("progress parse failed")
-		}
-		status, _ := pm["status"].(string)
-		if status == "canceled" || status == "completed" || status == "failed" {
-			if status == "failed" {
-				t.Fatalf("unexpected failed status after compress_file cancel: %v", pm["error"])
-			}
-			break
-		}
-		if time.Now().After(deadline) {
-			t.Fatalf("timed out waiting for compress_file cancel terminal state")
-		}
-		time.Sleep(50 * time.Millisecond)
+	if p := waitTask(t, svc, taskID); p.Status == statusFailed {
+		t.Fatalf("unexpected failed status after compress_file cancel: %v", p.Error)
 	}
 }
 
@@ -467,28 +447,8 @@ func TestHandle_DecompressFile_AsyncCancel(t *testing.T) {
 		t.Fatalf("cancel decompress_file task failed: %v", cancelErr)
 	}
 
-	deadline := time.Now().Add(asyncTaskDeadline)
-	for {
-		progressParams, _ := json.Marshal(map[string]any{"task_id": taskID})
-		progressRes, progressErr := svc.Handle(context.Background(), testOpGetProgress, progressParams)
-		if progressErr != nil {
-			t.Fatalf("get_progress failed: %v", progressErr)
-		}
-		pm, ok := structToMap(progressRes)
-		if !ok {
-			t.Fatalf("progress parse failed")
-		}
-		status, _ := pm["status"].(string)
-		if status == "canceled" || status == "completed" || status == "failed" {
-			if status == "failed" {
-				t.Fatalf("unexpected failed status after decompress_file cancel: %v", pm["error"])
-			}
-			break
-		}
-		if time.Now().After(deadline) {
-			t.Fatalf("timed out waiting for decompress_file cancel terminal state")
-		}
-		time.Sleep(50 * time.Millisecond)
+	if p := waitTask(t, svc, taskID); p.Status == statusFailed {
+		t.Fatalf("unexpected failed status after decompress_file cancel: %v", p.Error)
 	}
 }
 
@@ -878,28 +838,8 @@ func TestHandle_CreateArchive_AsyncCancel(t *testing.T) {
 		t.Fatalf("unexpected cancel task id: %q", gotTask)
 	}
 
-	deadline := time.Now().Add(asyncTaskDeadline)
-	for {
-		progressParams, _ := json.Marshal(map[string]any{"task_id": taskID})
-		progressRes, progressErr := svc.Handle(context.Background(), testOpGetProgress, progressParams)
-		if progressErr != nil {
-			t.Fatalf("get_progress failed: %v", progressErr)
-		}
-		pm, ok := structToMap(progressRes)
-		if !ok {
-			t.Fatalf("progress parse failed")
-		}
-		status, _ := pm["status"].(string)
-		if status == "canceled" || status == "completed" || status == "failed" {
-			if status == "failed" {
-				t.Fatalf("unexpected failed status after cancellation: %v", pm["error"])
-			}
-			break
-		}
-		if time.Now().After(deadline) {
-			t.Fatalf("timed out waiting for cancel terminal state")
-		}
-		time.Sleep(50 * time.Millisecond)
+	if p := waitTask(t, svc, taskID); p.Status == statusFailed {
+		t.Fatalf("unexpected failed status after cancellation: %v", p.Error)
 	}
 }
 
@@ -1065,28 +1005,8 @@ func TestHandle_ListArchive_AsyncCancel(t *testing.T) {
 		t.Fatalf("cancel list task failed: %v", cancelErr)
 	}
 
-	deadline := time.Now().Add(asyncTaskDeadline)
-	for {
-		progressParams, _ := json.Marshal(map[string]any{"task_id": taskID})
-		progressRes, progressErr := svc.Handle(context.Background(), testOpGetProgress, progressParams)
-		if progressErr != nil {
-			t.Fatalf("get_progress failed: %v", progressErr)
-		}
-		pm, ok := structToMap(progressRes)
-		if !ok {
-			t.Fatalf("progress parse failed")
-		}
-		status, _ := pm["status"].(string)
-		if status == "canceled" || status == "completed" || status == "failed" {
-			if status == "failed" {
-				t.Fatalf("unexpected failed status after list cancellation: %v", pm["error"])
-			}
-			break
-		}
-		if time.Now().After(deadline) {
-			t.Fatalf("timed out waiting for list cancel terminal state")
-		}
-		time.Sleep(50 * time.Millisecond)
+	if p := waitTask(t, svc, taskID); p.Status == statusFailed {
+		t.Fatalf("unexpected failed status after list cancellation: %v", p.Error)
 	}
 }
 
@@ -1288,28 +1208,8 @@ func TestHandle_VerifyArchive_AsyncCancel(t *testing.T) {
 		t.Fatalf("cancel verify task failed: %v", cancelErr)
 	}
 
-	deadline := time.Now().Add(asyncTaskDeadline)
-	for {
-		progressParams, _ := json.Marshal(map[string]any{"task_id": taskID})
-		progressRes, progressErr := svc.Handle(context.Background(), testOpGetProgress, progressParams)
-		if progressErr != nil {
-			t.Fatalf("get_progress failed: %v", progressErr)
-		}
-		pm, ok := structToMap(progressRes)
-		if !ok {
-			t.Fatalf("progress parse failed")
-		}
-		status, _ := pm["status"].(string)
-		if status == "canceled" || status == "completed" || status == "failed" {
-			if status == "failed" {
-				t.Fatalf("unexpected failed status after verify cancellation: %v", pm["error"])
-			}
-			break
-		}
-		if time.Now().After(deadline) {
-			t.Fatalf("timed out waiting for verify cancel terminal state")
-		}
-		time.Sleep(50 * time.Millisecond)
+	if p := waitTask(t, svc, taskID); p.Status == statusFailed {
+		t.Fatalf("unexpected failed status after verify cancellation: %v", p.Error)
 	}
 }
 

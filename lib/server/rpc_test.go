@@ -76,7 +76,7 @@ func rpcServer(t *testing.T, deps Deps, fixtures ...string) (*liveServer, pbconn
 	}
 	deps.Handle = h
 	ls := startServer(t, Config{}, deps, nil)
-	return ls, pbconnect.NewDuesServiceClient(http.DefaultClient, ls.url), stored
+	return ls, pbconnect.NewDuesServiceClient(testClient, ls.url), stored
 }
 
 func evidenceID(raw []byte) string {
@@ -412,7 +412,7 @@ func TestSearchRPC(t *testing.T) {
 	p.SetUnencryptedHTTP2(true)
 	h2 := &http.Client{Transport: &http.Transport{Protocols: &p}}
 	for name, c := range map[string]pbconnect.DuesServiceClient{
-		"connect": pbconnect.NewDuesServiceClient(http.DefaultClient, ls.url),
+		"connect": pbconnect.NewDuesServiceClient(testClient, ls.url),
 		"grpc":    pbconnect.NewDuesServiceClient(h2, ls.url, connect.WithGRPC()),
 	} {
 		res, err := c.Search(ctx, connect.NewRequest(&pb.SearchReq{Keyword: "  needle "}))
@@ -476,7 +476,7 @@ func TestRPCMessageLimit(t *testing.T) {
 		t.Errorf("a 2 MiB request: %v", err)
 	}
 	// Gzipped, the same request is a few kilobytes on the wire.
-	gz := pbconnect.NewDuesServiceClient(http.DefaultClient, url, connect.WithSendGzip())
+	gz := pbconnect.NewDuesServiceClient(testClient, url, connect.WithSendGzip())
 	if _, err := gz.AppendIfExists(ctx, connect.NewRequest(big)); connect.CodeOf(err) != connect.CodeResourceExhausted {
 		t.Errorf("a 2 MiB request, gzipped: %v", err)
 	}

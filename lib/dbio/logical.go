@@ -180,7 +180,9 @@ func (e *EvidenceChunks) Spans(ctx context.Context, start, end int64, batch int,
 		if err := ctx.Err(); err != nil {
 			return err
 		}
-		spans := make([]ChunkSpan, 0, batch)
+		// A sector-sized ReadAt spans one chunk; a full batch would be
+		// allocated for every one.
+		spans := make([]ChunkSpan, 0, int(min(int64(batch), (end-off+e.stride-1)/e.stride)))
 		err := e.db.View(func(txn *badger.Txn) error {
 			for ; off < end && len(spans) < batch; off += e.stride {
 				chash, err := e.relationTxn(txn, off)
@@ -265,7 +267,7 @@ func (e *EvidenceChunks) chunk(s ChunkSpan) ([]byte, error) {
 	if s.Loc.Container {
 		stored, err = fio.ReadChunkFromContainer(path, s.Loc.Offset, s.Loc.EncodedSize)
 	} else {
-		stored, err = fio.ReadChonk(path)
+		stored, err = fio.ReadChonkLimit(path, blobcodec.MaxStoredSize(e.ChunkLen(s.Chunk)))
 	}
 	if err != nil {
 		return nil, fmt.Errorf("chunk %x at offset %d of evidence %x: %w", s.Hash, s.Chunk, e.id, err)

@@ -181,7 +181,7 @@ func wantLive(t *testing.T, ls *liveServer) {
 	if ls.dbs.isPaused() || queuePaused(ls.uploads.queue) {
 		t.Errorf("gate shut %v, queue paused %v; want both open", ls.dbs.isPaused(), queuePaused(ls.uploads.queue))
 	}
-	c := pbconnect.NewDuesServiceClient(http.DefaultClient, ls.url)
+	c := pbconnect.NewDuesServiceClient(testClient, ls.url)
 	if _, err := c.GetEviFiles(context.Background(), connect.NewRequest(&pb.GetEviFilesReq{})); err != nil {
 		t.Errorf("a read: %v", err)
 	}
@@ -242,7 +242,7 @@ func leaseRoute(h http.HandlerFunc) func(*Server) {
 func sendAsync(req *http.Request) <-chan int {
 	out := make(chan int, 1)
 	go func() {
-		resp, err := http.DefaultClient.Do(req)
+		resp, err := testClient.Do(req)
 		if err != nil {
 			out <- 0
 			return
@@ -263,7 +263,7 @@ func TestPauseGatesDatabaseRoutes(t *testing.T) {
 	lim := testLimits()
 	lim.Upload.FinalizeWait = finalizeWait
 	ls, _ := pauseServer(t, lim, nil)
-	c := pbconnect.NewDuesServiceClient(http.DefaultClient, ls.url)
+	c := pbconnect.NewDuesServiceClient(testClient, ls.url)
 	before := ls.db()
 	keptData, queuedData, abortedData := []byte("received while paused"), []byte("stored after the pause"), []byte("aborted while paused")
 	keptHash, queuedHash, abortedHash := plainHash(before, keptData), plainHash(before, queuedData), plainHash(before, abortedData)
@@ -392,7 +392,7 @@ func TestPauseCutsLease(t *testing.T) {
 		}, connect.WithInterceptors(rpcErrors{s}))
 		s.handle("POST "+holdProcedure, route{scope: ScopeRead, rpc: true, lease: true}, h)
 	})
-	hold := connect.NewClient[pb.GetEviFilesReq, pb.GetEviFilesRes](http.DefaultClient, ls.url+holdProcedure)
+	hold := connect.NewClient[pb.GetEviFilesReq, pb.GetEviFilesRes](testClient, ls.url+holdProcedure)
 	answered := make(chan error, 1)
 	go func() {
 		_, err := hold.CallUnary(context.Background(), connect.NewRequest(&pb.GetEviFilesReq{}))
@@ -551,7 +551,7 @@ func TestPauseDrainsIngest(t *testing.T) {
 	})
 	unblock := sync.OnceFunc(func() { close(proceed) })
 	t.Cleanup(unblock)
-	c := pbconnect.NewDuesServiceClient(http.DefaultClient, ls.url)
+	c := pbconnect.NewDuesServiceClient(testClient, ls.url)
 	data := []byte("stored before the pause")
 	id := receive(t, ls, "/case/drained.bin", plainHash(ls.db(), data), data)
 	answers := make(chan reply, 1)
@@ -1043,7 +1043,7 @@ func TestPauseUnderLease(t *testing.T) {
 func TestStreamFileAcrossPause(t *testing.T) {
 	t.Parallel()
 	ls, _ := pauseServer(t, testLimits(), nil)
-	c := pbconnect.NewDuesServiceClient(http.DefaultClient, ls.url)
+	c := pbconnect.NewDuesServiceClient(testClient, ls.url)
 	data := bytes.Repeat([]byte("streamed across a pause "), 10_000)
 	hash := plainHash(ls.db(), data)
 	u := newHoldUse(t)
@@ -1166,7 +1166,7 @@ func TestPauseResumeStress(t *testing.T) {
 	lim.Upload.Jobs = 2
 	lim.Upload.FinalizeWait = finalizeWait
 	ls, logs := pauseServer(t, lim, nil)
-	c := pbconnect.NewDuesServiceClient(http.DefaultClient, ls.url)
+	c := pbconnect.NewDuesServiceClient(testClient, ls.url)
 	ids := make([]string, uploads)
 	for i := range uploads {
 		data := bytes.Repeat(fmt.Appendf(nil, "stress upload %d ", i), 10_000)

@@ -21,6 +21,7 @@ func FuzzExtract(f *testing.F) {
 		[]byte("MZ\x90\x00\x03\x00\x00\x00\x04\x00\x00\x00\xff\xffPE\x00\x00"),
 		[]byte("\x7fELF\x02\x01\x01\x00"),
 		[]byte("%PDF-1.4\n1 0 obj << /Length 5 /Filter /FlateDecode >> stream\nx\x9c\x03\x00endstream endobj"),
+		[]byte("%PDF-1.0\n1 0 obj<</Length 10000000000000/00000000/00>>stream 00000"),
 		[]byte("ElfFile\x00"),
 		[]byte("regf\x00\x00\x00\x00"),
 		[]byte("visit http://example.com/a?b=c from 10.0.0.1 user=alice"),

@@ -20,6 +20,8 @@ import (
 const (
 	FeatureRevrel  = "revrel"
 	FeatureSimhash = "simhash"
+	FeatureFTS     = "fts"
+	FeatureEnrich  = "enrich"
 )
 
 // HasReverseRelations reports whether the chunks of the stored evidence eid

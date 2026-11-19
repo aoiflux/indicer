@@ -30,6 +30,9 @@ const (
 	// CommitAliased: the content was already stored; the evidence is a
 	// duplicate whose records are being removed, and an alias records it.
 	CommitAliased CommitOutcome = "aliased"
+	// CommitPresent: a merged evidence the database already holds; nothing
+	// was stored or committed.
+	CommitPresent CommitOutcome = "present"
 )
 
 // CommitResult says how a commit ended and which evidence holds the content.
@@ -75,6 +78,17 @@ func CommitEvidence(db *badger.DB, eid []byte) (CommitResult, error) {
 			if err := putAliasTxn(db, txn, winner, aliasOf(e, eid)); err != nil {
 				return err
 			}
+			if e.Merged != nil {
+				// A winner found by its legacy EH entry has no content root,
+				// so the entry records the winner's identity, never e's.
+				w, err := dbio.GetEvidenceTxn(txn, winner)
+				if err != nil {
+					return fmt.Errorf("commit evidence %x: winner %x: %w", eid, winner, err)
+				}
+				if err := putMergeLedgerTxn(db, txn, e, winner, w); err != nil {
+					return err
+				}
+			}
 			res = CommitResult{Outcome: CommitAliased, Winner: winner}
 			return dbio.SetEvidenceTxn(db, txn, eid, e)
 		}
@@ -95,6 +109,9 @@ func CommitEvidence(db *badger.DB, eid []byte) (CommitResult, error) {
 			if err := dbio.AppendHashLookupUUIDByKeyTxn(txn, dbio.QuickLookupKey(e.Size, e.Fingerprint), member); err != nil {
 				return err
 			}
+		}
+		if err := putMergeLedgerTxn(db, txn, e, eid, e); err != nil {
+			return err
 		}
 		if err := faultinject.Hit(faultinject.IngestInCommit); err != nil {
 			return err
@@ -176,9 +193,19 @@ func completedEvidenceTxn(txn *badger.Txn, w, self []byte, size int64) (bool, er
 	return completed && e.Size == size, nil
 }
 
+// putMergeLedgerTxn maps the merged evidence e to target, the evidence
+// holding its content, whose record is w. A local evidence has no entry.
+func putMergeLedgerTxn(db *badger.DB, txn *badger.Txn, e structs.EvidenceFile, target []byte, w structs.EvidenceFile) error {
+	if e.Merged == nil {
+		return nil
+	}
+	entry := structs.MergeLedgerEntry{Target: append([]byte(nil), target...), Root: w.ContentRoot, FileHash: w.FileHash, Package: e.Merged.Package, At: time.Now().UnixNano()}
+	return dbio.PutRecordTxn(db, txn, dbio.MergeLedgerKey(*e.Merged, e.Size), entry)
+}
+
 // aliasOf is the alias record of the attempt e (raw ID attempt).
 func aliasOf(e structs.EvidenceFile, attempt []byte) structs.AliasRecord {
-	a := structs.AliasRecord{Name: e.Name, Path: e.Name, Size: e.Size, AttemptID: append([]byte(nil), attempt...), At: time.Now().UnixNano()}
+	a := structs.AliasRecord{Name: e.Name, Path: e.Name, Size: e.Size, AttemptID: append([]byte(nil), attempt...), At: time.Now().UnixNano(), Merged: e.Merged}
 	if e.Source != nil {
 		a.Source = *e.Source
 		if len(e.Source.Members) > 0 {
@@ -189,7 +216,16 @@ func aliasOf(e structs.EvidenceFile, attempt []byte) structs.AliasRecord {
 }
 
 func putAliasTxn(db *badger.DB, txn *badger.Txn, winner []byte, a structs.AliasRecord) error {
-	return dbio.PutRecordTxn(db, txn, dbio.AliasKey(winner, a.Path), a)
+	return dbio.PutRecordTxn(db, txn, aliasKeyOf(winner, a), a)
+}
+
+// aliasKeyOf keys a merged alias apart from a local one at the same path, so
+// neither overwrites the other.
+func aliasKeyOf(winner []byte, a structs.AliasRecord) []byte {
+	if a.Merged != nil {
+		return dbio.MergeAliasKey(winner, *a.Merged, a.Size, a.Path)
+	}
+	return dbio.AliasKey(winner, a.Path)
 }
 
 // WriteAlias records a, an ingest whose content winner already holds, found
@@ -256,11 +292,17 @@ func QuickCandidates(db *badger.DB, size int64, fingerprint string) ([]Candidate
 // are not stored again. It returns the evidence's raw ID and whether it
 // resumed.
 func BeginAttempt(db *badger.DB, path string, rec structs.EvidenceFile) ([]byte, bool, error) {
+	return BeginAttemptID(db, dbio.AttemptKey(path), nil, rec)
+}
+
+// BeginAttemptID is BeginAttempt under the attempt key key. A new attempt
+// takes the raw ID preferred when it is a UUID no record or relation uses,
+// and a new UUIDv7 otherwise; a resumed attempt keeps its own ID.
+func BeginAttemptID(db *badger.DB, key, preferred []byte, rec structs.EvidenceFile) ([]byte, bool, error) {
 	var eid []byte
 	var resumed bool
 	err := dbio.UpdateTxn(db, func(txn *badger.Txn) error {
 		eid, resumed = nil, false
-		key := dbio.AttemptKey(path)
 		item, err := txn.Get(key)
 		switch {
 		case err == nil:
@@ -276,18 +318,17 @@ func BeginAttempt(db *badger.DB, path string, rec structs.EvidenceFile) ([]byte,
 				e.Attempt++
 				e.Failed, e.LastError = false, ""
 				e.IngestState = structs.IngestStatePending
-				e.Name, e.Source, e.Features, e.Index = rec.Name, rec.Source, rec.Features, rec.Index
+				e.Name, e.Source, e.Features, e.Index, e.Merged = rec.Name, rec.Source, rec.Features, rec.Index, rec.Merged
 				eid, resumed = prev, true
 				return dbio.SetEvidenceTxn(db, txn, eid, e)
 			}
 		case !errors.Is(err, badger.ErrKeyNotFound):
 			return err
 		}
-		id, err := uuid.NewV7()
+		eid, err = newAttemptIDTxn(txn, preferred)
 		if err != nil {
 			return err
 		}
-		eid = id[:]
 		rec.Attempt = 1
 		if err := dbio.SetEvidenceTxn(db, txn, eid, rec); err != nil {
 			return err
@@ -295,6 +336,45 @@ func BeginAttempt(db *badger.DB, path string, rec structs.EvidenceFile) ([]byte,
 		return txn.Set(key, append([]byte(nil), eid...))
 	})
 	return eid, resumed, err
+}
+
+// newAttemptIDTxn is preferred when it is an unused UUID, else a new UUIDv7.
+func newAttemptIDTxn(txn *badger.Txn, preferred []byte) ([]byte, error) {
+	if len(preferred) == len(uuid.UUID{}) {
+		used, err := idInUseTxn(txn, preferred)
+		if err != nil {
+			return nil, err
+		}
+		if !used {
+			return append([]byte(nil), preferred...), nil
+		}
+	}
+	id, err := uuid.NewV7()
+	if err != nil {
+		return nil, err
+	}
+	return id[:], nil
+}
+
+// idInUseTxn reports whether an evidence record id exists, in any state, or
+// relations keyed by id remain. Only the record's Get enters the read set:
+// two attempts preferring one ID conflict on it and one retries, and leftover
+// relations come only from cleanups that already finished.
+func idInUseTxn(txn *badger.Txn, id []byte) (bool, error) {
+	_, err := txn.Get(dbio.CanonicalEvidenceKey(id))
+	switch {
+	case err == nil:
+		return true, nil
+	case !errors.Is(err, badger.ErrKeyNotFound):
+		return false, err
+	}
+	opts := badger.DefaultIteratorOptions
+	opts.Prefix = dbio.RelationPrefix(id)
+	opts.PrefetchValues = false
+	it := txn.NewIterator(opts)
+	defer it.Close()
+	it.Rewind()
+	return it.Valid(), nil
 }
 
 // resumable reports whether the unfinished attempt e can carry on as rec: the
@@ -306,13 +386,24 @@ func resumable(e, rec structs.EvidenceFile) bool {
 		e.Size == rec.Size && e.Fingerprint == rec.Fingerprint && e.ChunkSize == rec.ChunkSize
 }
 
-// clearAttemptTxn removes the attempt key of e's source when it names eid:
-// a committed evidence is no longer resumed.
+// attemptKeyOf is the attempt key the ingest of e began under, or nil.
+func attemptKeyOf(e structs.EvidenceFile) []byte {
+	switch {
+	case e.Merged != nil:
+		return dbio.MergeAttemptKey(*e.Merged, e.Size)
+	case e.Source != nil && len(e.Source.Members) > 0:
+		return dbio.AttemptKey(e.Source.Members[0].Path)
+	}
+	return nil
+}
+
+// clearAttemptTxn removes the attempt key of e when it names eid: a
+// committed evidence is no longer resumed.
 func clearAttemptTxn(txn *badger.Txn, e structs.EvidenceFile, eid []byte) error {
-	if e.Source == nil || len(e.Source.Members) == 0 {
+	key := attemptKeyOf(e)
+	if key == nil {
 		return nil
 	}
-	key := dbio.AttemptKey(e.Source.Members[0].Path)
 	item, err := txn.Get(key)
 	if errors.Is(err, badger.ErrKeyNotFound) {
 		return nil

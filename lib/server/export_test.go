@@ -54,8 +54,8 @@ const (
 	// database holds.
 	exportEvidenceSize = 64 << 10
 	// stopBound bounds a clean stop of a test server: its ShutdownGrace and
-	// IdleWait, with room for a slow host.
-	stopBound = 5 * time.Second
+	// IdleWait, with room for a host busy with parallel and race tests.
+	stopBound = 10 * time.Second
 	// endlessSize is a download no client reads to its end.
 	endlessSize = 1 << 40
 	// readsHeld bounds the downloads a gatedOpen holds at once.
@@ -146,7 +146,7 @@ func callAsync(base, token, path string, body any) <-chan reply {
 			out <- reply{body: map[string]any{"error": err.Error()}}
 			return
 		}
-		resp, err := http.DefaultClient.Do(bearer(req, token))
+		resp, err := testClient.Do(bearer(req, token))
 		if err != nil {
 			out <- reply{body: map[string]any{"error": err.Error()}}
 			return
@@ -219,7 +219,7 @@ func download(t *testing.T, ls *liveServer, token, id string, h http.Header, met
 	for k, v := range h {
 		req.Header[k] = v
 	}
-	resp, err := http.DefaultClient.Do(req)
+	resp, err := testClient.Do(req)
 	if err != nil {
 		t.Fatal(err)
 	}

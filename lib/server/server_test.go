@@ -126,7 +126,7 @@ func (ls *liveServer) stop(t *testing.T) error {
 
 func do(t *testing.T, req *http.Request) (*http.Response, string) {
 	t.Helper()
-	resp, err := http.DefaultClient.Do(req)
+	resp, err := testClient.Do(req)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -542,7 +542,7 @@ func TestInFlightLimit(t *testing.T) {
 	wg.Add(1)
 	go func() {
 		defer wg.Done()
-		resp, err := http.Get(ls.url + "/test/block")
+		resp, err := testClient.Get(ls.url + "/test/block")
 		if err == nil {
 			resp.Body.Close()
 		}
@@ -669,7 +669,7 @@ func TestShutdownCancelsRequests(t *testing.T) {
 		})
 	})
 	go func() {
-		if resp, err := http.Get(ls.url + "/test/wait"); err == nil {
+		if resp, err := testClient.Get(ls.url + "/test/wait"); err == nil {
 			resp.Body.Close()
 		}
 	}()
@@ -678,7 +678,7 @@ func TestShutdownCancelsRequests(t *testing.T) {
 	if err := ls.stop(t); err != nil {
 		t.Fatalf("stop: %v", err)
 	}
-	if took := time.Since(start); took > 3*time.Second {
+	if took := time.Since(start); took > stopBound {
 		t.Errorf("stop took %v", took)
 	}
 	if ls.work.count() != 0 {
@@ -700,7 +700,7 @@ func TestShutdownWithStuckWorkIsUnclean(t *testing.T) {
 	})
 	defer close(release)
 	go func() {
-		if resp, err := http.Get(ls.url + "/test/stuck"); err == nil {
+		if resp, err := testClient.Get(ls.url + "/test/stuck"); err == nil {
 			resp.Body.Close()
 		}
 	}()

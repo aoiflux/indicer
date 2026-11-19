@@ -75,6 +75,7 @@ const (
 	EviQuickLookupNamespace         = "EQ|||:" // size and fingerprint to candidate evidence (D1)
 	EviAliasNamespace               = "EA|||:" // later ingests of stored content (D1)
 	EviAttemptNamespace             = "EP|||:" // source path to its unfinished attempt
+	EviMergeNamespace               = "EM|||:" // merged source evidence to the target evidence holding it
 	ObjectNamespace                 = "X|||:"  // materialised content objects (D10)
 	ExtentPageNamespace             = "XE|||:" // extents of very fragmented indexed files
 	PartitionReportNamespace        = "PR|||:" // a partition's index report

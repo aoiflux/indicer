@@ -14,6 +14,7 @@ import (
 	"encoding/base64"
 	"errors"
 	"fmt"
+	"hash"
 	"io"
 	"runtime/trace"
 	"sync"
@@ -27,6 +28,7 @@ import (
 	"indicer/lib/engine"
 	"indicer/lib/evidence"
 	"indicer/lib/index"
+	"indicer/lib/parser/core"
 	"indicer/lib/parser/image"
 	"indicer/lib/store"
 	"indicer/lib/structs"
@@ -180,9 +182,6 @@ func (s *Session) Run(ctx context.Context, req Request) (Result, error) {
 		return Result{}, err
 	}
 	defer end()
-	db := s.db
-	// One strategy for the whole ingest: its plan, record and lookup agree.
-	strategy := engine.For(db).Tuning().HashStrategy
 	if req.Quiet {
 		ctx = progress.Without(ctx)
 	}
@@ -201,38 +200,76 @@ func (s *Session) Run(ctx context.Context, req Request) (Result, error) {
 		name = src.Name()
 	}
 	region = trace.StartRegion(ctx, "fingerprint")
-	fp, err := src.Fingerprint(dbmeta.FileHasher(db))
+	fp, err := src.Fingerprint(dbmeta.FileHasher(s.db))
 	region.End()
 	if err != nil {
 		return res, fmt.Errorf("fingerprint %s: %w", req.Path, err)
 	}
-	rec, err := newRecord(db, src, res.Source, name, fp, strategy, req)
+	aliasPath := src.Path()
+	if req.SourcePath != "" {
+		aliasPath = req.SourcePath
+	}
+	in := input{
+		img: src.Image(), size: src.Size(), parallel: src.Parallel(),
+		info: res.Source, ewf: src.EWF(), skip: src.SkipIndex(),
+		name: name, fingerprint: fp, aliasPath: aliasPath, lookup: true,
+		attemptKey: dbio.AttemptKey(attemptPath(res.Source, src)),
+	}
+	return s.ingestPrepared(ctx, in, req, res)
+}
+
+// input is what an ingest stores, however it was opened: a file read by Run,
+// or a stored evidence of another database read by Merge.
+type input struct {
+	img          core.Image
+	size         int64
+	parallel     bool
+	info         structs.EvidenceSource // the source the evidence records
+	ewf          *image.EWFMeta         // nil: no stored digests to verify
+	skip         string                 // why the content is not indexed; "" indexes it
+	name         string
+	evidenceType string // "": detected from the name and head
+	fingerprint  string
+	aliasPath    string // the path an alias of content found stored records
+	lookup       bool   // look for the content among the stored evidence first
+	attemptKey   []byte
+	preferredID  []byte
+	merged       *structs.MergeInfo
+	secondHash   func() hash.Hash                               // passed to the chunk pass
+	check        func(context.Context, store.ChunkResult) error // nil: none
+}
+
+// ingestPrepared stores, indexes and commits in, from its record to its
+// commit.
+func (s *Session) ingestPrepared(ctx context.Context, in input, req Request, res Result) (Result, error) {
+	db := s.db
+	// One strategy for the whole ingest: its plan, record and lookup agree.
+	strategy := engine.For(db).Tuning().HashStrategy
+	rec, err := newRecord(db, in, strategy, req)
 	if err != nil {
 		return res, err
 	}
 
-	planned := planIngest(ctx, src, strategy, req)
-	// D1: content already stored is an alias, and nothing is stored again.
-	winner, err := findStored(ctx, db, src, fp, strategy)
-	if err != nil {
-		return res, err
-	}
-	if winner != nil {
-		progress.Unplan(ctx, planned...)
-		path := src.Path()
-		if req.SourcePath != "" {
-			path = req.SourcePath
-		}
-		a := structs.AliasRecord{Name: name, Path: path, Size: src.Size(), Source: res.Source}
-		if err := store.WriteAlias(db, winner, a); err != nil {
+	planned := planIngest(ctx, in, strategy, req)
+	if in.lookup {
+		// Content already stored is an alias, and nothing is stored again.
+		winner, err := findStored(ctx, db, in, strategy)
+		if err != nil {
 			return res, err
 		}
-		res.EvidenceID, res.Outcome = winner, store.CommitAliased
-		return res, nil
+		if winner != nil {
+			progress.Unplan(ctx, planned...)
+			a := structs.AliasRecord{Name: in.name, Path: in.aliasPath, Size: in.size, Source: res.Source}
+			if err := store.WriteAlias(db, winner, a); err != nil {
+				return res, err
+			}
+			res.EvidenceID, res.Outcome = winner, store.CommitAliased
+			return res, nil
+		}
 	}
 
-	region = trace.StartRegion(ctx, "begin")
-	eid, resumed, err := store.BeginAttempt(db, attemptPath(res.Source, src), rec)
+	region := trace.StartRegion(ctx, "begin")
+	eid, resumed, err := store.BeginAttemptID(db, in.attemptKey, in.preferredID, rec)
 	region.End()
 	if err != nil {
 		return res, err
@@ -241,22 +278,22 @@ func (s *Session) Run(ctx context.Context, req Request) (Result, error) {
 	if err := faultinject.Hit(faultinject.IngestAfterPending); err != nil {
 		return res, fail(db, eid, err)
 	}
-	return s.run(ctx, src, eid, name, req, res)
+	return s.run(ctx, in, eid, req, res)
 }
 
-// planIngest lists the steps an ingest of src with the hash strategy
+// planIngest lists the steps an ingest of in with the hash strategy
 // strategy will run, with the work each expects, before the first starts, so
 // the overall measure weighs them from the beginning. It returns their names.
-func planIngest(ctx context.Context, src *evidence.Source, strategy string, req Request) []string {
-	size := src.Size()
+func planIngest(ctx context.Context, in input, strategy string, req Request) []string {
+	size := in.size
 	var steps []progress.Step
-	if strategy == cnst.SyncHashStrategy {
+	if in.lookup && strategy == cnst.SyncHashStrategy {
 		steps = append(steps, progress.Step{Name: "identify", Unit: progress.Bytes, Total: size})
 	}
 	steps = append(steps,
 		progress.Step{Name: "store", Unit: progress.Bytes, Total: size},
 		progress.Step{Name: "index", Unit: progress.Files, Total: progress.Unknown})
-	if indexSkipReason(src, req) == "" {
+	if indexSkipReason(in, req) == "" {
 		steps = append(steps, featureSteps(req, size)...)
 	}
 	progress.PlanSteps(ctx, steps...)
@@ -311,24 +348,30 @@ func recordedSource(src *evidence.Source, req Request) structs.EvidenceSource {
 
 // newRecord builds the evidence record an ingest with the hash strategy
 // strategy starts from.
-func newRecord(db *badger.DB, src *evidence.Source, info structs.EvidenceSource, name, fp, strategy string, req Request) (structs.EvidenceFile, error) {
+func newRecord(db *badger.DB, in input, strategy string, req Request) (structs.EvidenceFile, error) {
 	switch strategy {
 	case cnst.SyncHashStrategy, cnst.AsyncHashStrategy, cnst.HochoHashStrategy:
 	default:
 		return structs.EvidenceFile{}, fmt.Errorf("unsupported store hash strategy: %s", strategy)
 	}
-	head := make([]byte, 4096)
-	n, err := src.ReadAt(head, 0)
-	if err != nil && !errors.Is(err, io.EOF) {
-		return structs.EvidenceFile{}, fmt.Errorf("read %s: %w", src.Path(), err)
+	evidenceType := in.evidenceType
+	if evidenceType == "" {
+		head := make([]byte, 4096)
+		n, err := in.img.ReadAt(head, 0)
+		if err != nil && !errors.Is(err, io.EOF) {
+			return structs.EvidenceFile{}, fmt.Errorf("read %s: %w", in.aliasPath, err)
+		}
+		evidenceType = util.DetectEvidenceType(in.name, head[:n])
 	}
-	rec := structs.NewEvidenceFile(name, 0, src.Size(), nil, util.DetectEvidenceType(name, head[:n]), "")
+	rec := structs.NewEvidenceFile(in.name, 0, in.size, nil, evidenceType, "")
 	rec.ContentModel = structs.ContentModelV2
 	rec.ChunkSize = dbmeta.ChunkSize(db)
 	rec.ChunkHashAlgo, rec.FileHashAlgo = hashNames(db)
 	rec.HashStrategy = strategy
-	rec.Fingerprint = fp
+	rec.Fingerprint = in.fingerprint
+	info := in.info
 	rec.Source = &info
+	rec.Merged = in.merged
 	if req.RevRel {
 		rec.Features = append(rec.Features, store.FeatureRevrel)
 	}
@@ -336,41 +379,41 @@ func newRecord(db *badger.DB, src *evidence.Source, info structs.EvidenceSource,
 		rec.Features = append(rec.Features, store.FeatureSimhash)
 	}
 	if req.FTS {
-		rec.Features = append(rec.Features, "fts")
+		rec.Features = append(rec.Features, store.FeatureFTS)
 	}
 	if req.Enrich {
-		rec.Features = append(rec.Features, "enrich")
+		rec.Features = append(rec.Features, store.FeatureEnrich)
 	}
 	return rec, nil
 }
 
 func hashNames(db *badger.DB) (chunk, file string) {
 	if dbmeta.HashAlgo(db) == dbmeta.HashSHA3 {
-		return "sha3-512", "sha3-256"
+		return dbmeta.ChunkHashSHA3, dbmeta.FileHashSHA3
 	}
-	return "blake3", "blake3"
+	return dbmeta.HashBLAKE3, dbmeta.FileHashBLAKE3
 }
 
-// findStored returns the COMPLETED evidence that already holds src's
+// findStored returns the COMPLETED evidence that already holds in's
 // content, or nil. The sync strategy hashes the content first and looks the
 // hashes up. The others look up evidence of the same size and fingerprint,
 // which identifies small content exactly and is confirmed for larger content
 // by computing its root.
-func findStored(ctx context.Context, db *badger.DB, src *evidence.Source, fp, strategy string) ([]byte, error) {
+func findStored(ctx context.Context, db *badger.DB, in input, strategy string) ([]byte, error) {
 	defer trace.StartRegion(ctx, "identify").End()
 	if strategy == cnst.SyncHashStrategy {
-		sums, err := identify(ctx, db, src)
+		sums, err := identify(ctx, db, in)
 		if err != nil {
 			return nil, err
 		}
 		enc := base64.StdEncoding.EncodeToString
-		return store.StoredByIdentity(db, src.Size(), enc(sums.Root), enc(sums.Plain))
+		return store.StoredByIdentity(db, in.size, enc(sums.Root), enc(sums.Plain))
 	}
-	cands, err := store.QuickCandidates(db, src.Size(), fp)
+	cands, err := store.QuickCandidates(db, in.size, in.fingerprint)
 	if err != nil || len(cands) == 0 {
 		return nil, err
 	}
-	if src.Size() <= evidence.FingerprintFullLimit {
+	if in.size <= evidence.FingerprintFullLimit {
 		return cands[0].ID, nil
 	}
 	var root string
@@ -379,7 +422,7 @@ func findStored(ctx context.Context, db *badger.DB, src *evidence.Source, fp, st
 			continue
 		}
 		if root == "" {
-			sums, err := identify(ctx, db, src)
+			sums, err := identify(ctx, db, in)
 			if err != nil {
 				return nil, err
 			}
@@ -401,19 +444,19 @@ func findStored(ctx context.Context, db *badger.DB, src *evidence.Source, fp, st
 // nor crawls through it.
 const identifyCost = 0.25
 
-// identify hashes src's content to find it among the stored evidence.
-func identify(ctx context.Context, db *badger.DB, src *evidence.Source) (store.ContentSums, error) {
-	ph := progress.Start(ctx, "identify", progress.Bytes, src.Size())
+// identify hashes in's content to find it among the stored evidence.
+func identify(ctx context.Context, db *badger.DB, in input) (store.ContentSums, error) {
+	ph := progress.Start(ctx, "identify", progress.Bytes, in.size)
 	ph.Cost(identifyCost)
-	sums, err := store.HashContent(progress.Within(ctx, ph), db, src, src.Size(), src.Parallel())
+	sums, err := store.HashContent(progress.Within(ctx, ph), db, in.img, in.size, in.parallel)
 	ph.Done(err)
 	return sums, err
 }
 
 // run stores and indexes the attempt eid, then commits it.
-func (s *Session) run(ctx context.Context, src *evidence.Source, eid []byte, name string, req Request, res Result) (Result, error) {
+func (s *Session) run(ctx context.Context, in input, eid []byte, req Request, res Result) (Result, error) {
 	db := s.db
-	reason := indexSkipReason(src, req)
+	reason := indexSkipReason(in, req)
 	indexing := reason == ""
 	info := &structs.IndexInfo{State: structs.IndexSkipped, Reason: reason}
 	if indexing {
@@ -435,21 +478,21 @@ func (s *Session) run(ctx context.Context, src *evidence.Source, eid []byte, nam
 	var idxErr error
 	var wg sync.WaitGroup
 	if indexing {
-		ranges = index.PartitionRanges(src.Image())
+		ranges = index.PartitionRanges(in.img)
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
 			defer trace.StartRegion(idxCtx, "index").End()
-			idx, idxErr = s.passes.index(idxCtx, index.Options{DB: db, EvidenceID: eid, EvidenceName: name, Image: src.Image(), Entropy: req.Enrich, RevRel: req.RevRel, Simhash: req.Simhash, MaxWorkers: req.MaxWorkers, Credit: req.Credit})
+			idx, idxErr = s.passes.index(idxCtx, index.Options{DB: db, EvidenceID: eid, EvidenceName: in.name, Image: in.img, Entropy: req.Enrich, RevRel: req.RevRel, Simhash: req.Simhash, MaxWorkers: req.MaxWorkers, Credit: req.Credit})
 		}()
 	}
 
 	region := trace.StartRegion(ctx, "chunks")
 	chunks, err := s.passes.chunks(ctx, store.ChunkPass{
-		DB: db, ID: eid, Source: src.Image(), Size: src.Size(),
-		Parallel: src.Parallel(), Ranges: ranges, EWF: src.EWF(), Quiet: req.Quiet,
+		DB: db, ID: eid, Source: in.img, Size: in.size,
+		Parallel: in.parallel, Ranges: ranges, EWF: in.ewf, Quiet: req.Quiet,
 		RevRel: req.RevRel, Simhash: req.Simhash, MaxWorkers: req.MaxWorkers,
-		Credit: req.Credit,
+		Credit: req.Credit, SecondHash: in.secondHash,
 	})
 	region.End()
 	if err != nil {
@@ -458,7 +501,7 @@ func (s *Session) run(ctx context.Context, src *evidence.Source, eid []byte, nam
 		return res, fail(db, eid, err)
 	}
 
-	res.Bytes = Bytes{Read: src.Size(), New: chunks.NewBytes, Written: chunks.WrittenBytes}
+	res.Bytes = Bytes{Read: in.size, New: chunks.NewBytes, Written: chunks.WrittenBytes}
 	check := ewfCheck(res.Source.EWF, chunks.EWF)
 	if check != nil {
 		res.Source.EWF = check
@@ -468,6 +511,13 @@ func (s *Session) run(ctx context.Context, src *evidence.Source, eid []byte, nam
 		wg.Wait()
 		mis := &DigestMismatchError{EvidenceID: eid, Check: *check}
 		return res, fail(db, eid, mis)
+	}
+	if in.check != nil {
+		if err := in.check(ctx, chunks); err != nil {
+			stopIndex(err)
+			wg.Wait()
+			return res, fail(db, eid, err)
+		}
 	}
 	if err := faultinject.Hit(faultinject.IngestBeforeFlushed); err != nil {
 		stopIndex(err)
@@ -525,7 +575,7 @@ func (s *Session) run(ctx context.Context, src *evidence.Source, eid []byte, nam
 			info.State, info.Reason = structs.IndexFailed, idxErr.Error()
 		default:
 			info.State, info.Reason = idx.State, idx.Reason
-			if err := setPartitionHashes(ctx, db, src, chunks, idx.Partitions); err != nil {
+			if err := setPartitionHashes(ctx, db, in, chunks, idx.Partitions); err != nil {
 				info.State, info.Reason, idxErr = structs.IndexFailed, err.Error(), err
 			}
 		}
@@ -560,12 +610,12 @@ func nilIfNone(e *IndexIncompleteError) error {
 	return e
 }
 
-func indexSkipReason(src *evidence.Source, req Request) string {
+func indexSkipReason(in input, req Request) string {
 	switch {
-	case src.SkipIndex() != "":
-		return src.SkipIndex()
+	case in.skip != "":
+		return in.skip
 	case req.NoIndex:
-		return "not_requested"
+		return evidence.SkipNotRequested
 	}
 	return ""
 }
@@ -634,13 +684,13 @@ func setIndexInfo(db *badger.DB, eid []byte, info *structs.IndexInfo) error {
 // setPartitionHashes records each partition's plain hash: from the chunk
 // pass's range digests, the evidence's own hash for a filesystem spanning
 // the whole device, and otherwise by reading the partition's range.
-func setPartitionHashes(ctx context.Context, db *badger.DB, src *evidence.Source, chunks store.ChunkResult, parts []index.Partition) (err error) {
+func setPartitionHashes(ctx context.Context, db *badger.DB, in input, chunks store.ChunkResult, parts []index.Partition) (err error) {
 	defer trace.StartRegion(ctx, "partition-hashes").End()
-	digests := map[store.ByteRange][]byte{{Offset: 0, Length: src.Size()}: chunks.PlainHash}
+	digests := map[store.ByteRange][]byte{{Offset: 0, Length: in.size}: chunks.PlainHash}
 	for _, r := range chunks.Ranges {
 		digests[r.ByteRange] = r.Hash
 	}
-	usable := func(p index.Partition) bool { return p.Size > 0 && p.Offset >= 0 && p.Size <= src.Size()-p.Offset }
+	usable := func(p index.Partition) bool { return p.Size > 0 && p.Offset >= 0 && p.Size <= in.size-p.Offset }
 	var need int64
 	for _, p := range parts {
 		if _, ok := digests[store.ByteRange{Offset: p.Offset, Length: p.Size}]; usable(p) && !ok {
@@ -658,7 +708,7 @@ func setPartitionHashes(ctx context.Context, db *badger.DB, src *evidence.Source
 		}
 		h, ok := digests[store.ByteRange{Offset: p.Offset, Length: p.Size}]
 		if !ok {
-			sums, err := store.HashContent(progress.Within(ctx, ph), db, io.NewSectionReader(src, p.Offset, p.Size), p.Size, src.Parallel())
+			sums, err := store.HashContent(progress.Within(ctx, ph), db, io.NewSectionReader(in.img, p.Offset, p.Size), p.Size, in.parallel)
 			if err != nil {
 				return fmt.Errorf("hash partition at %d: %w", p.Offset, err)
 			}

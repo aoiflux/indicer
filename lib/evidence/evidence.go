@@ -28,11 +28,13 @@ type Options struct {
 	Decode bool
 }
 
-// Index skip reasons a Source can carry.
+// Index skip reasons a Source can carry, and the one an ingest asked not to
+// index records.
 const (
 	SkipUnsupportedContainer = "unsupported_container"
 	SkipNotDecoded           = "container_not_decoded"
 	SkipEmpty                = "empty"
+	SkipNotRequested         = "not_requested"
 )
 
 // Source is an evidence opened for ingest. It is safe for concurrent reads.

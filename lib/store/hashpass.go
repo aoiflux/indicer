@@ -2,10 +2,12 @@ package store
 
 import (
 	"context"
+	"fmt"
 	"io"
 	"sync"
 
 	"indicer/internal/progress"
+	"indicer/lib/dbmeta"
 
 	"github.com/dgraph-io/badger/v4"
 )
@@ -22,11 +24,22 @@ type ContentSums struct {
 // storing, to find content already stored; fingerprint candidates are
 // confirmed with it (D1).
 func HashContent(parent context.Context, db *badger.DB, src io.ReaderAt, size int64, parallel bool) (ContentSums, error) {
+	return HashContentChunked(parent, db, src, size, dbmeta.ChunkSize(db), parallel)
+}
+
+// HashContentChunked is HashContent at chunk size chunk in place of db's.
+// Evidence of a database whose layout was inferred keeps the chunk size of
+// the run that stored it, and its content root was computed at that size.
+func HashContentChunked(parent context.Context, db *badger.DB, src io.ReaderAt, size, chunk int64, parallel bool) (ContentSums, error) {
+	if chunk <= 0 {
+		return ContentSums{}, fmt.Errorf("hash content: chunk size %d", chunk)
+	}
 	shape := shapeFor(ChunkPass{DB: db, Parallel: parallel})
+	shape.chunk = chunk
 	ctx, cancel := context.WithCancel(parent)
 	defer cancel()
 
-	tap := newDigestTap(shape.fileHash, nil, nil)
+	tap := newDigestTap(shape.fileHash, nil, nil, nil)
 	feed := shape.feed(ctx, ChunkPass{Source: src, Size: size}, tap)
 
 	read := progress.CurrentIn(parent, progress.Bytes)

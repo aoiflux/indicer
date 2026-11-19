@@ -3,10 +3,13 @@ package fio
 import (
 	"encoding/base64"
 	"errors"
+	"fmt"
 	"hash"
+	"indicer/lib/blobcodec"
 	"indicer/lib/cnst"
 	"indicer/lib/fsx"
 	"indicer/lib/util"
+	"io"
 	"io/fs"
 	"os"
 	"path/filepath"
@@ -105,4 +108,55 @@ var (
 // lib/blobcodec decodes them.
 func ReadChonk(cfpath string) ([]byte, error) {
 	return os.ReadFile(cfpath)
+}
+
+// ReadChonkLimit is ReadChonk for a blob whose path comes from a record that
+// may be crafted: it reads only a regular file of at most limit bytes, so a
+// link or an oversized file is refused before it is read. Either is
+// blobcodec.ErrCorrupt.
+func ReadChonkLimit(cfpath string, limit int64) ([]byte, error) {
+	named, err := os.Lstat(cfpath)
+	if err != nil {
+		return nil, err
+	}
+	if !named.Mode().IsRegular() {
+		return nil, fmt.Errorf("%w: %s is not a regular file", blobcodec.ErrCorrupt, cfpath)
+	}
+	if named.Size() > limit {
+		return nil, fmt.Errorf("%w: %s holds %d bytes, more than the %d its chunk can take", blobcodec.ErrCorrupt, cfpath, named.Size(), limit)
+	}
+	f, err := os.Open(cfpath)
+	if err != nil {
+		return nil, err
+	}
+	data, err := readOpenedBlob(f, limit)
+	if cerr := f.Close(); err == nil && cerr != nil {
+		err = fmt.Errorf("close %s: %w", cfpath, cerr)
+	}
+	return data, err
+}
+
+// readOpenedBlob reads at most limit bytes of f. It checks the opened handle
+// rather than comparing it with the Lstat: on Windows that comparison opens
+// the path again, which costs a second open per chunk and sees the same
+// swapped file anyway.
+func readOpenedBlob(f *os.File, limit int64) ([]byte, error) {
+	opened, err := f.Stat()
+	if err != nil {
+		return nil, fmt.Errorf("stat %s: %w", f.Name(), err)
+	}
+	if !opened.Mode().IsRegular() {
+		return nil, fmt.Errorf("%w: %s is not a regular file", blobcodec.ErrCorrupt, f.Name())
+	}
+	if opened.Size() > limit {
+		return nil, fmt.Errorf("%w: %s holds %d bytes, more than the %d its chunk can take", blobcodec.ErrCorrupt, f.Name(), opened.Size(), limit)
+	}
+	data, err := io.ReadAll(io.LimitReader(f, limit+1))
+	if err != nil {
+		return nil, err
+	}
+	if int64(len(data)) > limit {
+		return nil, fmt.Errorf("%w: %s grew past the %d bytes its chunk can take", blobcodec.ErrCorrupt, f.Name(), limit)
+	}
+	return data, nil
 }

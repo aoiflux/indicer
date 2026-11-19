@@ -133,7 +133,7 @@ func ingestChunksBatchOwner(parentCtx context.Context, p ChunkPass) (res ChunkRe
 	writerResCh := make(chan writerResult, 1)
 	go runBatchOwnerWriter(p.ID, shape, p.DB, writes.containers(), taskCh, cancel, writerResCh)
 
-	tap := newDigestTap(shape.fileHash, p.Ranges, p.EWF)
+	tap := newDigestTap(shape.fileHash, p.SecondHash, p.Ranges, p.EWF)
 	feed := shape.feed(ctx, p, tap)
 	seenChunks := newShardedChunkSet()
 

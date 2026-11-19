@@ -58,9 +58,9 @@ func QuarantineRawContainerIndexes(ctx context.Context, db *badger.DB) ([]Quaran
 		if err := ctx.Err(); err != nil {
 			return out, err
 		}
-		format, err := storedContainerFormat(db, c.id)
+		format, err := StoredContainerFormat(db, c.id)
 		if err != nil {
-			return out, fmt.Errorf("evidence %s: %w", firstCleanName(c.e.Name), err)
+			return out, fmt.Errorf("evidence %s: %w", CleanName(c.e.Name), err)
 		}
 		if format == core.FormatRaw {
 			continue
@@ -75,15 +75,15 @@ func QuarantineRawContainerIndexes(ctx context.Context, db *badger.DB) ([]Quaran
 		if err != nil {
 			return out, err
 		}
-		out = append(out, QuarantinedEvidence{ID: c.id, Name: firstCleanName(c.e.Name), Format: format})
+		out = append(out, QuarantinedEvidence{ID: c.id, Name: CleanName(c.e.Name), Format: format})
 	}
 	return out, nil
 }
 
-// storedContainerFormat sniffs the head of a stored evidence: EWF, or a
+// StoredContainerFormat sniffs the head of a stored evidence: EWF, or a
 // VHD/VHDX whose disk does not start at offset 0. Only the head is read, so a
 // fixed VHD (its footer is at the end) reads as raw.
-func storedContainerFormat(db *badger.DB, id []byte) (core.ImageFormat, error) {
+func StoredContainerFormat(db *badger.DB, id []byte) (core.ImageFormat, error) {
 	ec, err := dbio.OpenEvidenceChunks(db, id, dbio.ReadOptions{CacheBytes: -1})
 	if err != nil {
 		return "", err

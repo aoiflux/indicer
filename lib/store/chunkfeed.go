@@ -254,6 +254,7 @@ type RangeDigest struct {
 // stores (MD5, SHA-1), so none needs a second read of the evidence.
 type digestTap struct {
 	plain  hash.Hash
+	second hash.Hash // nil: none
 	ranges []rangeHasher
 	ewf    *image.Digester
 }
@@ -263,8 +264,11 @@ type rangeHasher struct {
 	h hash.Hash
 }
 
-func newDigestTap(newHash func() hash.Hash, ranges []ByteRange, ewf *image.EWFMeta) *digestTap {
+func newDigestTap(newHash, second func() hash.Hash, ranges []ByteRange, ewf *image.EWFMeta) *digestTap {
 	t := &digestTap{plain: newHash()}
+	if second != nil {
+		t.second = second()
+	}
 	for _, r := range ranges {
 		t.ranges = append(t.ranges, rangeHasher{r: r, h: newHash()})
 	}
@@ -276,6 +280,9 @@ func newDigestTap(newHash func() hash.Hash, ranges []ByteRange, ewf *image.EWFMe
 
 func (t *digestTap) write(off int64, p []byte) {
 	t.plain.Write(p)
+	if t.second != nil {
+		t.second.Write(p)
+	}
 	if t.ewf != nil {
 		t.ewf.Write(p)
 	}

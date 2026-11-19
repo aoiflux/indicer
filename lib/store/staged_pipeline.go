@@ -149,7 +149,7 @@ func ingestChunksStaged(parentCtx context.Context, p ChunkPass) (res ChunkResult
 		}()
 	}
 
-	tap := newDigestTap(shape.fileHash, p.Ranges, p.EWF)
+	tap := newDigestTap(shape.fileHash, p.SecondHash, p.Ranges, p.EWF)
 	feed := shape.feed(ctx, p, tap)
 	var chunks int64
 	var ingestWG sync.WaitGroup

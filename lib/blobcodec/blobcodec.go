@@ -101,7 +101,26 @@ const (
 	knownFlags  = flagZstd | flagSealed
 	headerLen   = 2
 	gcmNonceLen = 12
+	gcmTagLen   = 16
 )
+
+// zstd's ZSTD_COMPRESSBOUND: the most a frame of n input bytes can take.
+const (
+	zstdBoundShift = 8
+	zstdSmallInput = 128 << 10
+	zstdSmallShift = 11
+)
+
+// MaxStoredSize is the most any encoding stores for a chunk of plainLen
+// bytes, so a reader can refuse a stored file no honest writer made before
+// reading it whole.
+func MaxStoredSize(plainLen int64) int64 {
+	bound := plainLen + plainLen>>zstdBoundShift
+	if plainLen < zstdSmallInput {
+		bound += (zstdSmallInput - plainLen) >> zstdSmallShift
+	}
+	return bound + headerLen + gcmNonceLen + gcmTagLen
+}
 
 // v2 is the current encoding. aead is nil for unencrypted databases.
 type v2 struct {

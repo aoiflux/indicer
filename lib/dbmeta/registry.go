@@ -2,6 +2,8 @@ package dbmeta
 
 import (
 	"crypto/sha3"
+	"errors"
+	"fmt"
 	"hash"
 	"sync"
 
@@ -10,6 +12,16 @@ import (
 	"github.com/dgraph-io/badger/v4"
 	"github.com/zeebo/blake3"
 )
+
+// Hash names an evidence record carries in FileHashAlgo and ChunkHashAlgo.
+const (
+	FileHashBLAKE3 = HashBLAKE3
+	FileHashSHA3   = "sha3-256"
+	ChunkHashSHA3  = "sha3-512"
+)
+
+// ErrUnknownFileHash reports a file hash name this build cannot compute.
+var ErrUnknownFileHash = errors.New("unknown file hash algorithm")
 
 var layouts sync.Map // *badger.DB -> registered
 
@@ -81,4 +93,16 @@ func FileHasher(db *badger.DB) func() hash.Hash {
 		return func() hash.Hash { return sha3.New256() }
 	}
 	return func() hash.Hash { return blake3.New() }
+}
+
+// FileHasherNamed returns the constructor of the file hash a record names in
+// FileHashAlgo.
+func FileHasherNamed(name string) (func() hash.Hash, error) {
+	switch name {
+	case FileHashBLAKE3:
+		return func() hash.Hash { return blake3.New() }, nil
+	case FileHashSHA3:
+		return func() hash.Hash { return sha3.New256() }, nil
+	}
+	return nil, fmt.Errorf("%w: %q", ErrUnknownFileHash, name)
 }

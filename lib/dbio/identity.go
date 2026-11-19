@@ -54,6 +54,36 @@ func AttemptKey(path string) []byte {
 	return util.AppendToBytesSlice(cnst.EviAttemptNamespace, PathDigest(path))
 }
 
+// Domains that keep merge keys apart from local ones: a NUL never appears in
+// a path, so no AttemptKey or AliasKey input can start with one.
+const (
+	mergeAttemptDomain = "\x00dues-merge-attempt"
+	mergeAliasDomain   = "\x00dues-merge-alias"
+)
+
+// MergeLedgerKey is EM|||:<source raw ID>|||<sha256(algo|||hash|||size)>: one
+// entry per source evidence and content, so sources that reuse an ID never
+// share one.
+func MergeLedgerKey(m structs.MergeInfo, size int64) []byte {
+	content := sha256.Sum256(util.AppendToBytesSlice(m.SourceHashAlgo, cnst.DataSeperator, m.SourceFileHash, cnst.DataSeperator, size))
+	return util.AppendToBytesSlice(cnst.EviMergeNamespace, m.SourceEvidenceID, cnst.DataSeperator, content[:])
+}
+
+// MergeAttemptKey is the EP key of a merge attempt, never equal to the
+// AttemptKey of any path.
+func MergeAttemptKey(m structs.MergeInfo, size int64) []byte {
+	d := sha256.Sum256(util.AppendToBytesSlice(mergeAttemptDomain, MergeLedgerKey(m, size)))
+	return util.AppendToBytesSlice(cnst.EviAttemptNamespace, d[:])
+}
+
+// MergeAliasKey is the key of a merged alias of winner. It has AliasKey's
+// length, so AliasPrefix scans find it, and never equals a local alias key, so
+// local and merged aliases at one path never overwrite each other.
+func MergeAliasKey(winner []byte, m structs.MergeInfo, size int64, path string) []byte {
+	d := sha256.Sum256(util.AppendToBytesSlice(mergeAliasDomain, MergeLedgerKey(m, size), path))
+	return util.AppendToBytesSlice(cnst.EviAliasNamespace, winner, d[:])
+}
+
 // ObjectKey is X|||:<object raw ID>, a materialised object's record.
 func ObjectKey(oid []byte) []byte {
 	return util.AppendToBytesSlice(cnst.ObjectNamespace, oid)
@@ -138,9 +168,15 @@ func Aliases(db *badger.DB, winner []byte) ([]structs.AliasRecord, error) {
 	err := db.View(func(txn *badger.Txn) error {
 		opts := badger.DefaultIteratorOptions
 		opts.Prefix = AliasPrefix(winner)
+		// The prefix has no delimiter: a longer ID that starts with winner
+		// shares it, and only the key length tells its aliases apart.
+		keyLen := len(opts.Prefix) + sha256.Size
 		it := txn.NewIterator(opts)
 		defer it.Close()
 		for it.Rewind(); it.Valid(); it.Next() {
+			if len(it.Item().Key()) != keyLen {
+				continue
+			}
 			data, err := it.Item().ValueCopy(nil)
 			if err != nil {
 				return err

@@ -48,3 +48,25 @@ func TestResolveLegacyBlobPaths(t *testing.T) {
 		}
 	}
 }
+
+// TestResolveBlobPathConfined checks that a stored path climbing out of the
+// blob directory still names a file inside it.
+func TestResolveBlobPathConfined(t *testing.T) {
+	t.Parallel()
+	root := t.TempDir()
+	blobDir := filepath.Join(root, "blob")
+	for _, stored := range []string{"blob/../../x", "blob/a/../../x", `blob/..\..\x`} {
+		got := ResolveBlobPath(root, stored)
+		if filepath.Dir(got) != blobDir {
+			t.Errorf("ResolveBlobPath(%q) = %s, want a file in %s", stored, got, blobDir)
+		}
+	}
+	for stored, want := range map[string]string{
+		"blob/Zm9v.blob":        filepath.Join(blobDir, "Zm9v.blob"),
+		"blob/sub/../Zm9v.blob": filepath.Join(blobDir, "Zm9v.blob"),
+	} {
+		if got := ResolveBlobPath(root, stored); got != want {
+			t.Errorf("ResolveBlobPath(%q) = %s, want %s", stored, got, want)
+		}
+	}
+}

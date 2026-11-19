@@ -4,8 +4,9 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"errors"
-	"indicer/internal/console"
+	"time"
 
+	"indicer/internal/console"
 	"indicer/lib/structs"
 
 	"github.com/dgraph-io/badger/v4"
@@ -92,6 +93,9 @@ func listOutput(db *badger.DB, statusFilter string) (map[string]interface{}, err
 				"partitions":     partitions,
 				"partitionCount": len(partitions),
 			}
+			if m := evidata.Merged; m != nil {
+				eviFile["merged"] = mergedListing(*m)
+			}
 			if evidata.Index != nil {
 				eviFile["indexState"] = string(evidata.Index.State)
 				if evidata.Index.Reason != "" {
@@ -134,4 +138,18 @@ func listOutput(db *badger.DB, statusFilter string) (map[string]interface{}, err
 		return nil
 	})
 	return output, err
+}
+
+// mergedListing is where a merged evidence came from, as list shows it.
+func mergedListing(m structs.MergeInfo) map[string]any {
+	out := map[string]any{
+		"package":          m.Package,
+		"sourceEvidenceId": base64.StdEncoding.EncodeToString(m.SourceEvidenceID),
+		"at":               time.Unix(0, m.At).UTC().Format(time.RFC3339),
+	}
+	if m.SourceActor != "" {
+		out["sourceActor"] = m.SourceActor
+		out["trusted"] = m.Trusted
+	}
+	return out
 }

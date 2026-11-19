@@ -48,3 +48,11 @@ func SyncDir(dir string) error {
 // isBusy is always false off Windows: an open file never blocks a rename or a
 // removal there.
 func isBusy(error) bool { return false }
+
+// PrivateDir reports whether info, of the directory at path, is a directory
+// only this process's user can use: owned by the effective user, with
+// exactly perm.
+func PrivateDir(_ string, info fs.FileInfo, perm fs.FileMode) bool {
+	st, ok := info.Sys().(*syscall.Stat_t)
+	return ok && info.IsDir() && info.Mode().Perm() == perm && int(st.Uid) == os.Geteuid()
+}

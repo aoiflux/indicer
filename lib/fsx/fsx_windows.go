@@ -6,6 +6,7 @@ import (
 	"errors"
 	"io/fs"
 	"os"
+	"unsafe"
 
 	"golang.org/x/sys/windows"
 )
@@ -56,3 +57,46 @@ func isBusy(err error) bool {
 		errors.Is(err, windows.ERROR_LOCK_VIOLATION) ||
 		errors.Is(err, windows.ERROR_ACCESS_DENIED)
 }
+
+// PrivateDir reports whether info, of the directory at path, is a directory
+// this process's user owns. Who else may use it is in its ACL, which it
+// inherits from its parent.
+func PrivateDir(path string, info fs.FileInfo, _ fs.FileMode) bool {
+	if !info.IsDir() {
+		return false
+	}
+	sd, err := windows.GetNamedSecurityInfo(path, windows.SE_FILE_OBJECT, windows.OWNER_SECURITY_INFORMATION)
+	if err != nil {
+		return false
+	}
+	owner, _, err := sd.Owner()
+	if err != nil || owner == nil {
+		return false
+	}
+	token := windows.GetCurrentProcessToken()
+	if user, err := token.GetTokenUser(); err == nil && owner.Equals(user.User.Sid) {
+		return true
+	}
+	// An elevated administrator's new objects may be owned by the
+	// Administrators group, the token's default owner.
+	def, err := tokenOwner(token)
+	return err == nil && owner.Equals(def)
+}
+
+// tokenOwner is the owner the token gives the objects it makes.
+func tokenOwner(t windows.Token) (*windows.SID, error) {
+	n := uint32(tokenOwnerSize)
+	for {
+		buf := make([]byte, n)
+		err := windows.GetTokenInformation(t, windows.TokenOwner, &buf[0], n, &n)
+		if err == nil {
+			return (*struct{ Owner *windows.SID })(unsafe.Pointer(&buf[0])).Owner, nil
+		}
+		if !errors.Is(err, windows.ERROR_INSUFFICIENT_BUFFER) {
+			return nil, err
+		}
+	}
+}
+
+// tokenOwnerSize fits a TOKEN_OWNER and the SID it points to.
+const tokenOwnerSize = 64

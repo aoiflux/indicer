@@ -14,6 +14,7 @@ import (
 	"indicer/lib/cnst"
 	"indicer/lib/dbmeta"
 	"indicer/lib/dbopen"
+	"indicer/lib/dbpackage"
 	"indicer/lib/graph/signer"
 	"indicer/lib/server"
 	"io"
@@ -106,6 +107,46 @@ func readSecret(path string, stdin io.Reader, flagFile, flagStdin, origin, what 
 		return nil, lifecycle.Usagef("--%s: no %s on standard input", flagStdin, what)
 	}
 	return []byte(line), nil
+}
+
+// checkOneStdin refuses a run that would read two secrets from standard
+// input: only its first line is a secret.
+func checkOneStdin(f cliFlags) error {
+	var on []string
+	for _, s := range []struct {
+		name string
+		set  bool
+	}{
+		{flagPasswordStdin, *f.pwdStdin},
+		{flagActorKeyPasswordStdin, *f.actorPwdStdin},
+		{dbpackage.SourcePasswordStdinFlag, *f.pkgMergeSourcePwdStdin},
+	} {
+		if s.set {
+			on = append(on, s.name)
+		}
+	}
+	if len(on) > 1 {
+		return lifecycle.Usagef("--%s and --%s both read standard input; give one of them as a file", on[0], on[1])
+	}
+	return nil
+}
+
+// resolveSourceCredentials returns the password of the database in the
+// package dues package merge reads, from --source-password-file or
+// --source-password-stdin; neither is no password.
+func resolveSourceCredentials(f cliFlags, stdin io.Reader) (dbmeta.Credentials, error) {
+	file, fromStdin := *f.pkgMergeSourcePwdFile, *f.pkgMergeSourcePwdStdin
+	switch {
+	case file != "" && fromStdin:
+		return dbmeta.Credentials{}, lifecycle.Usagef("--%s and --%s both give the package's password; give one", dbpackage.SourcePasswordFileFlag, dbpackage.SourcePasswordStdinFlag)
+	case file == "" && !fromStdin:
+		return dbmeta.NoPassword(), nil
+	}
+	pw, err := readSecret(file, stdin, dbpackage.SourcePasswordFileFlag, dbpackage.SourcePasswordStdinFlag, "", "password")
+	if err != nil {
+		return dbmeta.Credentials{}, err
+	}
+	return dbmeta.Password(string(pw)), nil
 }
 
 // checkActorFlag checks the name --actor gives.

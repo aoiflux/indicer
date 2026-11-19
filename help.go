@@ -250,6 +250,9 @@ func printHelpForPath(path []string) {
 			case cmdPackageImport:
 				printPackageImportHelp()
 				return
+			case cmdPackageMerge:
+				printPackageMergeHelp()
+				return
 			}
 		}
 		printPackageHelp()
@@ -432,7 +435,7 @@ func printRootHelp() {
 	fmt.Fprintf(helpOut, "  %s %s\n", cmd(pad(cnst.CmdStats, 20)), "Show stats about data")
 	fmt.Fprintf(helpOut, "  %s %s\n", cmd(pad(cnst.CmdRepair, 20)), "Inspect, finish, verify or upgrade the database")
 	fmt.Fprintf(helpOut, "  %s %s\n", cmd(pad(cmdReindex, 20)), "Rebuild the index of stored evidence")
-	fmt.Fprintf(helpOut, "  %s %s\n", cmd(pad(cmdPackage, 20)), "Export the database as a package; inspect, verify or import one")
+	fmt.Fprintf(helpOut, "  %s %s\n", cmd(pad(cmdPackage, 20)), "Export the database as a package; inspect, verify, import or merge one")
 	fmt.Fprintf(helpOut, "  %s %s\n", cmd(pad(cmdGraph, 20)), "Compact the graph store, or describe it")
 	fmt.Fprintf(helpOut, "  %s %s\n", cmd(pad(cmdActor, 20)), "Manage the actors that sign graph commits")
 
@@ -807,7 +810,7 @@ func printGraphStatusHelp() {
 
 func printPackageHelp() {
 	printHelpHeader(cmdPackage)
-	fmt.Fprintln(helpOut, "Usage: dues package <export|inspect|verify|import> ... [global options]")
+	fmt.Fprintln(helpOut, "Usage: dues package <export|inspect|verify|import|merge> ... [global options]")
 	fmt.Fprintln(helpOut, "A package is a .duesarc holding a copy of the database's files as they are on")
 	fmt.Fprintln(helpOut, "disk, and a manifest with each file's size and SHA-256. Move it, keep it, and")
 	fmt.Fprintln(helpOut, "check it later; its content hash names the database state it holds. An actor")
@@ -817,6 +820,7 @@ func printPackageHelp() {
 	fmt.Fprintln(helpOut, "  package inspect  Describe a package from its manifest")
 	fmt.Fprintln(helpOut, "  package verify   Check every file of a package against its manifest")
 	fmt.Fprintln(helpOut, "  package import   Make a new database from a package")
+	fmt.Fprintln(helpOut, "  package merge    Copy the evidence of a package into a database")
 	fmt.Fprintln(helpOut)
 	fmt.Fprintln(helpOut, "Try: dues help package export")
 	printExamples(
@@ -824,6 +828,7 @@ func printPackageHelp() {
 		"dues package inspect caseA.duesarc",
 		"dues package verify caseA.duesarc",
 		"dues package import caseA.duesarc --dbpath ./caseA-copy",
+		"dues package merge caseA.duesarc --dbpath ./caseB",
 	)
 }
 
@@ -901,7 +906,7 @@ func printPackageImportHelp() {
 	printHelpHeader("package import")
 	fmt.Fprintln(helpOut, "Usage: dues package import PACKAGE [--trusted-key FILE] [global options]")
 	fmt.Fprintln(helpOut, "Makes a new database at --dbpath (default ~/.dues) from a package. The folder")
-	fmt.Fprintln(helpOut, "must be missing or empty: an import never merges into a database. The files")
+	fmt.Fprintln(helpOut, "must be missing or empty; dues package merge copies into a database. The files")
 	fmt.Fprintln(helpOut, "are written into a folder beside it and checked against the manifest as they")
 	fmt.Fprintln(helpOut, "are written; the database is opened to check it, and only then does the folder")
 	fmt.Fprintln(helpOut, "take the --dbpath name. A failure or an interruption leaves nothing behind.")
@@ -914,6 +919,46 @@ func printPackageImportHelp() {
 		"dues package import caseA.duesarc --dbpath ./caseA",
 		"dues package import caseA.duesarc --dbpath ./caseA --trusted-key ./caseA.pub",
 		"dues package import caseB.duesarc.001 --dbpath ./caseB --password-file ./pw",
+	)
+}
+
+func printPackageMergeHelp() {
+	printHelpHeader("package merge")
+	fmt.Fprintln(helpOut, "Usage: dues package merge PACKAGE [--trusted-key FILE]")
+	fmt.Fprintln(helpOut, "         [--source-password-file FILE | --source-password-stdin]")
+	fmt.Fprintln(helpOut, "         [--stage-dir DIR] [--allow-plaintext] [--require-verified]")
+	fmt.Fprintln(helpOut, "         [--store-jobs N] [global options]")
+	fmt.Fprintln(helpOut, "Copies the evidence of a package into the database at --dbpath (default")
+	fmt.Fprintln(helpOut, "~/.dues), made with the global layout flags when it is missing. The package is")
+	fmt.Fprintln(helpOut, "checked against its manifest and signature first; its files are copied beside")
+	fmt.Fprintln(helpOut, "the database, which stays locked meanwhile. Each evidence is stored again in")
+	fmt.Fprintln(helpOut, "this database's layout, checked against the hash the package records for it,")
+	fmt.Fprintln(helpOut, "and indexed here, with its full-text index and graph when the package had")
+	fmt.Fprintln(helpOut, "them; content this database holds becomes an alias. Private keys never come")
+	fmt.Fprintln(helpOut, "with a package, and graph commits are signed by this database's actor.")
+	fmt.Fprintln(helpOut)
+	fmt.Fprintln(helpOut, "A rerun of the same package resumes: evidence already merged is reported as")
+	fmt.Fprintln(helpOut, "present, and the copied files are checked again, not copied again. The copy")
+	fmt.Fprintln(helpOut, "is removed once every evidence is resolved.")
+	fmt.Fprintln(helpOut)
+	fmt.Fprintln(helpOut, "  --trusted-key FILE           refuse a package that key did not sign")
+	fmt.Fprintln(helpOut, "  --source-password-file FILE  the package database's password (first line)")
+	fmt.Fprintln(helpOut, "  --source-password-stdin      read the package database's password from stdin")
+	fmt.Fprintln(helpOut, "  --stage-dir DIR              where the package is copied (default: beside")
+	fmt.Fprintln(helpOut, "                               the database)")
+	fmt.Fprintln(helpOut, "  --allow-plaintext            allow an encrypted package into an unencrypted")
+	fmt.Fprintln(helpOut, "                               database")
+	fmt.Fprintln(helpOut, "  --require-verified           fail an E01 whose stored MD5/SHA-1 does not")
+	fmt.Fprintln(helpOut, "                               match, instead of storing it flagged")
+	fmt.Fprintln(helpOut, "  --store-jobs N               evidence merged at once (0 = auto; default 1)")
+	fmt.Fprintln(helpOut)
+	fmt.Fprintln(helpOut, "Exit 0 when done; 1 on a failed evidence or a damaged or untrusted package;")
+	fmt.Fprintln(helpOut, "2 on a usage error, a stored digest mismatch, or an index that did not finish")
+	fmt.Fprintln(helpOut, "(run dues reindex).")
+	printExamples(
+		"dues package merge caseA.duesarc --dbpath ./caseB",
+		"dues package merge caseA.duesarc --dbpath ./caseB --trusted-key ./caseA.pub",
+		"dues package merge caseC.duesarc --source-password-file pwC --password-file pw",
 	)
 }
 

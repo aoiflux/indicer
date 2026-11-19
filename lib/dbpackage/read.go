@@ -9,6 +9,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"slices"
 	"strings"
 
 	"indicer/internal/duesarc"
@@ -256,12 +257,44 @@ func (p *Package) entries() (map[string]*zip.File, *DamagedError) {
 			bad.add(prefix+d+"/", "missing")
 		}
 	}
+	checkFoldedNames(m, bad)
 	checkGraphImage(listed, bad)
 	return listed, bad
 }
 
+// checkFoldedNames adds a problem for each directory or file whose name is
+// another's on this filesystem, which folds case on Windows and macOS: both
+// would be written to one file.
+func checkFoldedNames(m duesarc.DatabaseManifest, bad *DamagedError) {
+	prefix := duesarc.DatabaseDir + "/"
+	folded := map[string]string{}
+	names := slices.Clone(m.Dirs)
+	for _, f := range m.Files {
+		names = append(names, f.Path)
+	}
+	for _, name := range names {
+		local, err := duesarc.LocalName(name)
+		if err != nil {
+			continue
+		}
+		key := duesarc.FoldName(local)
+		if other, dup := folded[key]; dup {
+			bad.add(prefix+name, "the same name as "+prefix+other+" on this filesystem")
+			continue
+		}
+		folded[key] = name
+	}
+}
+
+// isPrivateKey reports whether rel is an actor's private key, in any case:
+// a filesystem that folds case would open it as one.
 func isPrivateKey(rel string) bool {
-	return strings.HasPrefix(rel, cnst.KEYSDIR+"/") && strings.HasSuffix(rel, signer.KeyFileExt)
+	top, rest, ok := strings.Cut(rel, "/")
+	if !ok || !strings.EqualFold(top, cnst.KEYSDIR) {
+		return false
+	}
+	_, key := duesarc.CutSuffixFold(rest, signer.KeyFileExt)
+	return key
 }
 
 // checkGraphImage adds a problem when the graph's schema marker records a

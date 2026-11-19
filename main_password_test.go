@@ -84,3 +84,55 @@ func TestPasswordFileErrors(t *testing.T) {
 		t.Fatal("empty stdin accepted as a password")
 	}
 }
+
+// TestStdinSecretsExclusive: only the first line of standard input is a
+// secret, so two flags that each read one from it are refused; the
+// package's password comes from its own file or stdin flag.
+func TestStdinSecretsExclusive(t *testing.T) {
+	stdinFlags := []string{"--password-stdin", "--actor-key-password-stdin", "--source-password-stdin"}
+	for i, a := range stdinFlags {
+		for _, b := range stdinFlags[i+1:] {
+			cliDef := newCLIDefinition()
+			args := []string{"package", "merge", "p.duesarc", a, b}
+			if _, err := cliDef.app.Parse(args); err != nil {
+				t.Fatalf("parse %q: %v", args, err)
+			}
+			if err := checkOneStdin(cliDef.flags); lifecycle.ExitCode(err) != lifecycle.ExitUsage {
+				t.Errorf("%s with %s: %v", a, b, err)
+			}
+		}
+	}
+
+	pwFile := filepath.Join(t.TempDir(), "pw")
+	if err := os.WriteFile(pwFile, []byte("from-file\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	for _, c := range []struct {
+		stdin string
+		args  []string
+		want  dbmeta.Credentials
+		usage bool
+	}{
+		{"", nil, dbmeta.NoPassword(), false},
+		{"", []string{"--source-password-file", pwFile}, dbmeta.Password("from-file"), false},
+		{"from-stdin\n", []string{"--source-password-stdin"}, dbmeta.Password("from-stdin"), false},
+		{"", []string{"--source-password-stdin"}, dbmeta.Credentials{}, true},
+		{"x\n", []string{"--source-password-file", pwFile, "--source-password-stdin"}, dbmeta.Credentials{}, true},
+	} {
+		cliDef := newCLIDefinition()
+		args := append([]string{"package", "merge", "p.duesarc"}, c.args...)
+		if _, err := cliDef.app.Parse(args); err != nil {
+			t.Fatalf("parse %q: %v", args, err)
+		}
+		got, err := resolveSourceCredentials(cliDef.flags, strings.NewReader(c.stdin))
+		if c.usage {
+			if lifecycle.ExitCode(err) != lifecycle.ExitUsage {
+				t.Errorf("%q: %v, want a usage error", c.args, err)
+			}
+			continue
+		}
+		if err != nil || !got.Equal(c.want) {
+			t.Errorf("%q: %v", c.args, err)
+		}
+	}
+}

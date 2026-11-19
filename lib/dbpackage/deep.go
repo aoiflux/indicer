@@ -69,7 +69,7 @@ func (p *Package) VerifyDeep(ctx context.Context, opts DeepOptions) (res VerifyR
 	if err != nil {
 		return res, err
 	}
-	if err := diskspace.Check(base, uint64(m.Bytes())+uint64(len(m.Files))*4096); err != nil {
+	if err := diskspace.Check(base, uint64(m.Bytes())+uint64(len(m.Files))*perFileSlack); err != nil {
 		return res, err
 	}
 	sweepLocked(base, deepStagePrefix, deepLockName)

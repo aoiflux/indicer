@@ -59,3 +59,12 @@ func TestIsNoSpaceOnRealDevice(t *testing.T) {
 		t.Fatalf("real disk-full error %v not recognised", err)
 	}
 }
+
+func TestSameVolume(t *testing.T) {
+	t.Parallel()
+	a, b := t.TempDir(), t.TempDir()
+	same, err := SameVolume(a, b)
+	if err != nil || !same {
+		t.Errorf("two temporary folders: %v, %v", same, err)
+	}
+}

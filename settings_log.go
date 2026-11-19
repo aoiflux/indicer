@@ -5,6 +5,7 @@ import (
 	"indicer/internal/ui"
 	"indicer/lib/cnst"
 	"indicer/lib/dbopen"
+	"indicer/lib/dbpackage"
 	"indicer/lib/logging"
 
 	"go.uber.org/zap"
@@ -42,6 +43,14 @@ func logSettings(f cliFlags, src sources, conf runConfig) {
 		actorUnlock, actorUnlockFrom = flagActorKeyPasswordStdin, logging.FromFlag
 	}
 
+	sourceUnlock, sourceUnlockFrom := "none", logging.FromDefault
+	switch {
+	case *f.pkgMergeSourcePwdFile != "":
+		sourceUnlock, sourceUnlockFrom = dbpackage.SourcePasswordFileFlag, logging.FromFlag
+	case *f.pkgMergeSourcePwdStdin:
+		sourceUnlock, sourceUnlockFrom = dbpackage.SourcePasswordStdinFlag, logging.FromFlag
+	}
+
 	logging.GetLogger().Info("settings",
 		conf.Setting(),
 		setting(ui.FlagColor, *f.color),
@@ -58,5 +67,6 @@ func logSettings(f cliFlags, src sources, conf runConfig) {
 		logging.Setting("unlock", unlock, unlockFrom),
 		setting(flagActor, *f.actor),
 		logging.Setting("actor_unlock", actorUnlock, actorUnlockFrom),
+		logging.Setting("source_unlock", sourceUnlock, sourceUnlockFrom),
 	)
 }

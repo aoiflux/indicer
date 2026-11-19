@@ -150,7 +150,7 @@ func TestCreateEncrypted(t *testing.T) {
 		creds dbmeta.Credentials
 		want  string
 	}{
-		{dbmeta.NoPassword(), "pass --password"},
+		{dbmeta.NoPassword(), "--password-file or --password-stdin"},
 		{dbmeta.Password("wrong"), "wrong password"},
 		{dbmeta.Password(""), "wrong password"},
 	} {

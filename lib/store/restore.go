@@ -16,6 +16,7 @@ import (
 	"indicer/internal/progress"
 	"indicer/lib/cnst"
 	"indicer/lib/dbio"
+	"indicer/lib/dbmeta"
 	"indicer/lib/engine"
 	"indicer/lib/fio"
 	"indicer/lib/structs"
@@ -481,7 +482,7 @@ func (d *digester) add(s dbio.ChunkSpan, data []byte) {
 		// Holes and inline bytes: only an indexed file recorded since W6 has
 		// them, and its hash is a plain one.
 		if d.algos == nil {
-			d.algos = []fileHashAlgo{newFileHashAlgo("blake3", newBLAKE3), newFileHashAlgo("sha3-256", newSHA3256)}
+			d.algos = []fileHashAlgo{newFileHashAlgo(dbmeta.FileHashBLAKE3, newBLAKE3), newFileHashAlgo(dbmeta.FileHashSHA3, newSHA3256)}
 		}
 		for _, a := range d.algos {
 			a.plain.Write(data)
@@ -491,11 +492,11 @@ func (d *digester) add(s dbio.ChunkSpan, data []byte) {
 	if d.algos == nil {
 		switch len(s.Hash) {
 		case 64:
-			d.algos = []fileHashAlgo{newFileHashAlgo("sha3-256", newSHA3256)}
+			d.algos = []fileHashAlgo{newFileHashAlgo(dbmeta.FileHashSHA3, newSHA3256)}
 		case 32:
-			d.algos = []fileHashAlgo{newFileHashAlgo("blake3", newBLAKE3)}
+			d.algos = []fileHashAlgo{newFileHashAlgo(dbmeta.FileHashBLAKE3, newBLAKE3)}
 		default:
-			d.algos = []fileHashAlgo{newFileHashAlgo("blake3", newBLAKE3), newFileHashAlgo("sha3-256", newSHA3256)}
+			d.algos = []fileHashAlgo{newFileHashAlgo(dbmeta.FileHashBLAKE3, newBLAKE3), newFileHashAlgo(dbmeta.FileHashSHA3, newSHA3256)}
 		}
 	}
 	whole := s.Lo == 0 && s.Hi == d.chunks.ChunkLen(s.Chunk)
@@ -532,7 +533,7 @@ func (d *digester) result() (DigestStatus, string) {
 	}
 	if d.algos == nil {
 		// An empty object: only the plain hash of nothing is defined.
-		d.algos = []fileHashAlgo{newFileHashAlgo("blake3", newBLAKE3), newFileHashAlgo("sha3-256", newSHA3256)}
+		d.algos = []fileHashAlgo{newFileHashAlgo(dbmeta.FileHashBLAKE3, newBLAKE3), newFileHashAlgo(dbmeta.FileHashSHA3, newSHA3256)}
 	}
 	for _, a := range d.algos {
 		switch {

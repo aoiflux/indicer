@@ -73,3 +73,37 @@ func (l *Lock) Unlock() error {
 func isReadOnlyErr(err error) bool {
 	return errors.Is(err, fs.ErrPermission) || isReadOnlyFS(err)
 }
+
+// stableLockTries bounds how often TryLockStable takes a lock again on a
+// file that was replaced as it locked it.
+const stableLockTries = 8
+
+// TryLockStable is TryLock on a lock file that its holders remove when they
+// finish. A lock taken on a file another process removed just before, and a
+// third then made again, would let both hold "the" lock: the file locked
+// must still be the one at path. A link at path is refused: whoever can
+// write its folder could point it anywhere.
+func TryLockStable(path string, shared bool) (*Lock, error) {
+	for range stableLockTries {
+		if info, err := os.Lstat(path); err == nil && !info.Mode().IsRegular() {
+			return nil, fmt.Errorf("fsx: lock %s: not a plain file", path)
+		}
+		l, err := TryLock(path, shared)
+		if err != nil {
+			return nil, err
+		}
+		held, herr := l.f.Stat()
+		cur, cerr := os.Lstat(path)
+		if herr == nil && cerr == nil && os.SameFile(held, cur) {
+			return l, nil
+		}
+		_ = l.Unlock()
+		switch {
+		case herr != nil:
+			return nil, fmt.Errorf("fsx: lock %s: %w", path, herr)
+		case cerr != nil && !errors.Is(cerr, fs.ErrNotExist):
+			return nil, fmt.Errorf("fsx: lock %s: %w", path, cerr)
+		}
+	}
+	return nil, fmt.Errorf("fsx: lock %s: the file was replaced each time it was locked", path)
+}

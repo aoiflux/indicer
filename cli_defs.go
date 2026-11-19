@@ -8,6 +8,7 @@ import (
 
 	"indicer/internal/ui"
 	"indicer/lib/cnst"
+	"indicer/lib/dbpackage"
 	"indicer/lib/server"
 
 	"github.com/alecthomas/kingpin/v2"
@@ -41,6 +42,7 @@ const (
 	cmdPackageInspect = "inspect"
 	cmdPackageVerify  = "verify"
 	cmdPackageImport  = "import"
+	cmdPackageMerge   = "merge"
 )
 
 const (
@@ -205,6 +207,15 @@ type cliFlags struct {
 	pkgImportPath     *string
 	pkgImportTrusted  *string
 
+	pkgMergePath            *string
+	pkgMergeTrusted         *string
+	pkgMergeSourcePwdFile   *string
+	pkgMergeSourcePwdStdin  *bool
+	pkgMergeStageDir        *string
+	pkgMergeAllowPlaintext  *bool
+	pkgMergeRequireVerified *bool
+	pkgMergeJobs            *int
+
 	graphRequireSigned *bool
 
 	actorCreateName   *string
@@ -241,6 +252,7 @@ type cliCommands struct {
 	pkgInspect   *kingpin.CmdClause
 	pkgVerify    *kingpin.CmdClause
 	pkgImport    *kingpin.CmdClause
+	pkgMerge     *kingpin.CmdClause
 	graph        *kingpin.CmdClause
 	graphCompact *kingpin.CmdClause
 	graphStatus  *kingpin.CmdClause
@@ -437,6 +449,15 @@ func newCLIDefinition() cliDefinition {
 	commands.pkgImport = commands.pkg.Command(cmdPackageImport, "Make a new database, at --dbpath, from a package")
 	flags.pkgImportPath = commands.pkgImport.Arg("package", "The package, or a part or the sidecar of a split one").Required().String()
 	flags.pkgImportTrusted = commands.pkgImport.Flag(flagTrustedKey, trustedKeyHelp).PlaceHolder("FILE").String()
+	commands.pkgMerge = commands.pkg.Command(cmdPackageMerge, "Copy the evidence of a package into the database at --dbpath")
+	flags.pkgMergePath = commands.pkgMerge.Arg("package", "The package, or a part or the sidecar of a split one").Required().String()
+	flags.pkgMergeTrusted = commands.pkgMerge.Flag(flagTrustedKey, trustedKeyHelp).PlaceHolder("FILE").String()
+	flags.pkgMergeSourcePwdFile = commands.pkgMerge.Flag(dbpackage.SourcePasswordFileFlag, "Read the password of the package's database from the first line of this file").PlaceHolder("FILE").String()
+	flags.pkgMergeSourcePwdStdin = commands.pkgMerge.Flag(dbpackage.SourcePasswordStdinFlag, "Read the password of the package's database from the first line of standard input").Bool()
+	flags.pkgMergeStageDir = commands.pkgMerge.Flag(dbpackage.StageDirFlag, "Copy the package's files into this folder (default: beside the database)").PlaceHolder("DIR").String()
+	flags.pkgMergeAllowPlaintext = commands.pkgMerge.Flag(dbpackage.AllowPlaintextFlag, "Allow an encrypted package into an unencrypted database").Bool()
+	flags.pkgMergeRequireVerified = commands.pkgMerge.Flag("require-verified", "Fail an E01 whose stored MD5/SHA-1 does not match the merged image, instead of storing it flagged").Default("false").Bool()
+	flags.pkgMergeJobs = commands.pkgMerge.Flag(cnst.FlagStoreJobs, "Evidence merged at once (default 1; 0 = chosen for this machine)").Default("1").Int()
 
 	commands.graph = app.Command(cmdGraph, "Compact the graph store, or describe it")
 	commands.graphCompact = commands.graph.Command(cmdGraphCompact, "Fold the graph's log into its image, keeping the log as a segment")

@@ -264,6 +264,9 @@ func run(args []string, conf runConfig, cliDef cliDefinition) error {
 
 	// dues config says where the password comes from; it does not read it.
 	creds := dbmeta.NoPassword()
+	if err := checkOneStdin(cliDef.flags); err != nil {
+		return err
+	}
 	if parsed != cliDef.commands.config.FullCommand() {
 		if creds, err = resolveCredentials(cliDef.flags, src, os.Stdin); err != nil {
 			return err
@@ -348,7 +351,7 @@ func showsProgress(parsed string, cliDef cliDefinition) bool {
 	switch parsed {
 	case c.store.FullCommand(), c.restore.FullCommand(), c.reindex.FullCommand(), c.enrich.FullCommand(),
 		c.nearIn.FullCommand(), c.nearOut.FullCommand(), c.microExtract.FullCommand(), c.search.FullCommand(),
-		c.pkgExport.FullCommand(), c.pkgVerify.FullCommand(), c.pkgImport.FullCommand():
+		c.pkgExport.FullCommand(), c.pkgVerify.FullCommand(), c.pkgImport.FullCommand(), c.pkgMerge.FullCommand():
 		return true
 	case c.repair.FullCommand():
 		return *f.repairFix || *f.repairUpg || *f.repairVfy
@@ -556,6 +559,28 @@ func buildCommandHandlers(cliDef cliDefinition, dbOpts cli.DBOptions, tuning pip
 		cliDef.commands.pkgImport.FullCommand(): func(ctx context.Context) error {
 			logging.GetLogger().Info("Command: package import", zap.String("package", *cliDef.flags.pkgImportPath), zap.String("dbpath", *cliDef.flags.dbpath))
 			return cli.PackageImport(ctx, dbOpts, *cliDef.flags.pkgImportPath, *cliDef.flags.pkgImportTrusted)
+		},
+		cliDef.commands.pkgMerge.FullCommand(): func(ctx context.Context) error {
+			f := cliDef.flags
+			logging.GetLogger().Info("Command: package merge", zap.String("package", *f.pkgMergePath), zap.String("dbpath", *f.dbpath),
+				zap.Int("store_jobs", *f.pkgMergeJobs), zap.Bool("allow_plaintext", *f.pkgMergeAllowPlaintext))
+			jobs, err := cli.Jobs(cnst.FlagStoreJobs, *f.pkgMergeJobs, tuning.engine.LowResource)
+			if err != nil {
+				return err
+			}
+			sourceCreds, err := resolveSourceCredentials(f, os.Stdin)
+			if err != nil {
+				return err
+			}
+			return cli.PackageMerge(ctx, dbOpts, *f.pkgMergePath, cli.PackageMergeOptions{
+				TrustedKey:      *f.pkgMergeTrusted,
+				SourceCreds:     sourceCreds,
+				StageDir:        *f.pkgMergeStageDir,
+				AllowPlaintext:  *f.pkgMergeAllowPlaintext,
+				RequireVerified: *f.pkgMergeRequireVerified,
+				Jobs:            jobs,
+				AutoJobs:        *f.pkgMergeJobs == 0,
+			})
 		},
 		cliDef.commands.graphCompact.FullCommand(): func(ctx context.Context) error {
 			logging.GetLogger().Info("Command: graph compact", zap.String("dbpath", *cliDef.flags.dbpath), zap.Bool("require_signed", *cliDef.flags.graphRequireSigned))

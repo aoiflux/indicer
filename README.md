@@ -405,7 +405,7 @@ Core commands:
 - dues enrich
 - dues micro extract
 - dues micro list
-- dues package export|inspect|verify|import
+- dues package export|inspect|verify|import|merge
 - dues graph compact|status
 - dues actor create|list|export-public|rotate|revoke
 - dues server
@@ -622,8 +622,12 @@ See [docs/CLI_UX.md](docs/CLI_UX.md).
 - package export --without-derived: leave out the full-text index and graph
 - package export --split-size-mb N: write parts of N MiB
 - package verify --deep: also read every evidence back from a copy
-- package verify|import --trusted-key FILE: require a signature by this
-  public key (`dues actor export-public`)
+- package verify|import|merge --trusted-key FILE: require a signature by
+  this public key (`dues actor export-public`)
+- package merge PACKAGE: copy a package's evidence into this database, in its
+  layout; --source-password-file|--source-password-stdin unlock the package's
+  database, --allow-plaintext lets an encrypted one into an unencrypted
+  database, --stage-dir DIR moves the copy, --store-jobs N merges N at once
 - graph compact --require-signed: from now on, refuse unsigned commits
 - actor create|rotate NAME --actor-key-password-file FILE: make an actor, or
   give it a new key

@@ -416,7 +416,7 @@ func (h *Handle) keyError(err error, creds dbmeta.Credentials) error {
 	switch {
 	case errors.Is(err, dbmeta.ErrPasswordRequired), errors.Is(err, dbmeta.ErrWrongPassword) && !creds.IsSet():
 		return &lifecycle.UsageError{Err: &credentialError{
-			msg: fmt.Sprintf("database %s is encrypted; pass --password", h.Root), cause: dbmeta.ErrPasswordRequired}}
+			msg: fmt.Sprintf("database %s is encrypted; give its password with --password-file or --password-stdin", h.Root), cause: dbmeta.ErrPasswordRequired}}
 	case errors.Is(err, dbmeta.ErrWrongPassword):
 		return &lifecycle.UsageError{Err: &credentialError{
 			msg: fmt.Sprintf("wrong password for database %s", h.Root), cause: dbmeta.ErrWrongPassword}}

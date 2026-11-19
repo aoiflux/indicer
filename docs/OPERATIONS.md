@@ -723,8 +723,8 @@ evidence.
 
 `dues package import PACKAGE --dbpath TARGET` makes a new database from a
 package:
-- TARGET must be missing or an empty folder. An import never merges into a
-  database.
+- TARGET must be missing or an empty folder. To add a package's evidence to
+  a database that exists, use `dues package merge`.
 - A package from a newer DUES (a later manifest version, database format or
   graph schema) is refused before anything is written.
 - The files are written into `.<target>.dues-import-*` beside TARGET, each
@@ -742,7 +742,59 @@ package:
   folder left by a killed import is removed by the next import of the same
   TARGET.
 
-All four take the package, any of its parts, or its sidecar. The format is
+`dues package merge PACKAGE --dbpath TARGET` copies the evidence of a
+package into a database, which is made, with the layout flags given, when it
+is missing. Use it to bring a case exported elsewhere into one you work on;
+use import to restore a database as it was.
+- The package's listing and signature are checked first; `--trusted-key FILE`
+  merges only a package that key signed. Without it, a signature says only
+  that the package is self-consistent: anyone can make one that is. The
+  records inside a package are not trusted either: every merged evidence is
+  checked against the hash its record holds before it is committed.
+- TARGET is then opened for writing, with recovery, and stays locked until
+  the merge ends: no server or store can use it meanwhile.
+- The package's files, except its full-text index and graph, are copied to
+  `.<target>.dues-merge-<16 hex digits of its content hash>` beside TARGET
+  (`--stage-dir DIR` puts it elsewhere, never inside TARGET), each checked
+  against the manifest as it is written. The full-text index and graph are
+  only checked: TARGET builds its own. A package that does not match its
+  manifest is refused before any evidence is stored. Plan on free space for
+  the copy and about as much again for what TARGET stores.
+- The copy is opened read-only (an encrypted one with `--source-password-file`
+  or `--source-password-stdin`). Each evidence is read from it, checked
+  against its chunk hashes and its recorded content hash, stored again in
+  TARGET's chunk size, hash and encryption, indexed, and committed with where
+  it came from: the package's content hash, the source evidence ID, and who
+  signed the package. `dues list` shows it as `merged`. Its full-text index
+  and graph are built when the source had them, and the graph commits are
+  signed by TARGET's actor. An E01 is checked again against its stored MD5 and
+  SHA-1; `--require-verified` fails one that does not match.
+- Content TARGET already holds becomes an alias of the evidence holding it.
+  The source's aliases come along, marked as merged; local aliases are never
+  replaced. A source evidence keeps its ID when TARGET does not use it.
+- An encrypted package goes into an unencrypted TARGET only with
+  `--allow-plaintext`. Private keys never come with a package.
+- `--store-jobs N` merges N evidence at once, as for a folder store.
+- stdout gets one line per evidence, in the package's order (`merged`,
+  `aliased`, `present`, `skipped` with its reason, or `failed` with the
+  error), then a summary. Exit 1 when an evidence failed or the package is
+  damaged or untrusted; 2 on a stored digest mismatch or an index that did
+  not finish (run `dues reindex`).
+- A rerun of the same package resumes. Evidence already merged is `present`,
+  and the copy is checked file by file and only what differs is copied again.
+  The copy is removed when every evidence is resolved, or failed in a way a
+  rerun would repeat (damaged bytes, a content hash that does not match). An
+  interruption, or a failure a rerun may not repeat, keeps it, with a notice.
+- A folder at the copy's name that a merge of this package did not make (no
+  marker naming it, a link, not yours, or, on Linux and macOS, not mode 0700)
+  is refused and left alone. Whoever can write beside TARGET can change the
+  copy between runs; the rerun's check finds what they changed.
+- On Windows the copy takes its ACL from the folder it is in, as the
+  database does. Keep it in a folder only you can write.
+- Restoring merged evidence by hash takes TARGET's hash of it, which
+  `dues list` shows, not the source's.
+
+All five take the package, any of its parts, or its sidecar. The format is
 in `docs/COMPRESSION_ABI_REFERENCE.md` (Database packages).
 
 **Server exports.** A token with the `export` scope can have `dues server`

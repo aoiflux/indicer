@@ -92,7 +92,28 @@ func (s *Session) Merge(ctx context.Context, req MergeRequest) (Result, error) {
 	case present:
 		return Result{EvidenceID: target, Outcome: store.CommitPresent, Size: srcRec.Size}, nil
 	}
-	return s.merge(ctx, req, sid, srcRec, m)
+	return s.mergeAndCarry(ctx, req, sid, srcRec, m)
+}
+
+// mergeAndCarry merges the source evidence sid and carries its aliases onto
+// the evidence that then holds its content.
+func (s *Session) mergeAndCarry(ctx context.Context, req MergeRequest, sid []byte, srcRec structs.EvidenceFile, m structs.MergeInfo) (Result, error) {
+	res, err := s.merge(ctx, req, sid, srcRec, m)
+	if res.Outcome != store.CommitStored && res.Outcome != store.CommitAliased {
+		return res, err
+	}
+	return res, errors.Join(err, s.carryAliases(req, sid, res.EvidenceID, srcRec.Size, m))
+}
+
+// carryAliases records the aliases of the source evidence sid as merged
+// aliases of target.
+func (s *Session) carryAliases(req MergeRequest, sid, target []byte, size int64, m structs.MergeInfo) error {
+	aliases, err := dbio.Aliases(req.Source, sid)
+	if err != nil {
+		return fmt.Errorf("aliases of evidence %s: %w", b64(sid), err)
+	}
+	_, err = store.CarryAliases(s.db, target, m, size, aliases)
+	return err
 }
 
 // merge stores the source evidence sid, whose record is srcRec, as the
@@ -175,7 +196,7 @@ func (s *Session) MergePresent(ctx context.Context, req MergeRequest) (Result, e
 		return res, err
 	}
 	if !present {
-		return s.merge(ctx, req, sid, srcRec, m)
+		return s.mergeAndCarry(ctx, req, sid, srcRec, m)
 	}
 	res.EvidenceID, res.Outcome = target, store.CommitPresent
 	if verify {
@@ -183,14 +204,7 @@ func (s *Session) MergePresent(ctx context.Context, req MergeRequest) (Result, e
 			return res, err
 		}
 	}
-	aliases, err := dbio.Aliases(req.Source, sid)
-	if err != nil {
-		return res, fmt.Errorf("aliases of evidence %s: %w", b64(sid), err)
-	}
-	if _, err := store.CarryAliases(s.db, target, m, srcRec.Size, aliases); err != nil {
-		return res, err
-	}
-	return res, nil
+	return res, s.carryAliases(req, sid, target, srcRec.Size, m)
 }
 
 // mergeSource reads the source evidence sid and the MergeInfo its merge

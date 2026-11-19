@@ -34,6 +34,9 @@ const (
 	// staleStageAge is how old an unlocked import directory must be before
 	// an import of the same target removes it.
 	staleStageAge = 10 * time.Minute
+	// perFileSlack is what one file is counted to take on disk beyond its
+	// bytes, when the space a package needs is checked.
+	perFileSlack = 4096
 )
 
 // ImportOptions say what to import and where.
@@ -106,7 +109,7 @@ func Import(ctx context.Context, opts ImportOptions) (res ImportResult, err erro
 	if err := os.MkdirAll(parent, cnst.DirPerm); err != nil {
 		return res, err
 	}
-	if err := diskspace.Check(parent, uint64(m.Bytes())+uint64(len(m.Files))*4096); err != nil {
+	if err := diskspace.Check(parent, uint64(m.Bytes())+uint64(len(m.Files))*perFileSlack); err != nil {
 		return res, err
 	}
 	sweepStages(root)
@@ -171,7 +174,7 @@ func checkTarget(root string) error {
 		}
 		return err
 	case len(entries) > 0:
-		return lifecycle.Usagef("%s is not empty; import only into a new or empty folder (an import never merges into a database)", root)
+		return lifecycle.Usagef("%s is not empty; import only into a new or empty folder (an import makes a new database; dues package merge copies a package into an existing one)", root)
 	}
 	return nil
 }
@@ -292,7 +295,7 @@ func writeFiles(ctx context.Context, p *Package, entries map[string]*zip.File, s
 	return syncDirs(stage, m.Dirs)
 }
 
-// writeFile writes one file and says what does not match the manifest.
+// writeFile writes one new file and says what does not match the manifest.
 func writeFile(ctx context.Context, r *os.Root, zf *zip.File, f duesarc.File, ph *progress.Phase) (string, error) {
 	local, err := duesarc.LocalName(f.Path)
 	if err != nil {

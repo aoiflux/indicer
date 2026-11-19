@@ -2,6 +2,7 @@ package cli
 
 import (
 	"context"
+	"encoding/base64"
 	"errors"
 	"fmt"
 	"io"
@@ -15,10 +16,17 @@ import (
 	"indicer/internal/lifecycle"
 	"indicer/internal/termsafe"
 	"indicer/internal/ui"
+	"indicer/internal/workpool"
+	"indicer/lib/dbmeta"
+	"indicer/lib/dbopen"
 	"indicer/lib/dbpackage"
 	"indicer/lib/graph/signer"
+	"indicer/lib/ingest"
 	"indicer/lib/logging"
+	"indicer/lib/store"
+	"indicer/lib/util"
 
+	"github.com/dgraph-io/badger/v4"
 	"go.uber.org/zap"
 )
 
@@ -288,4 +296,142 @@ func PackageImport(ctx context.Context, opts DBOptions, path, trustedKey string)
 	fmt.Fprintf(w, "  content sha256 %s\n", termsafe.Line(m.ContentSHA256))
 	describeSignature(w, res.Signature, trustedKey)
 	return nil
+}
+
+// PackageMergeOptions are dues package merge's flags.
+type PackageMergeOptions struct {
+	TrustedKey      string
+	SourceCreds     dbmeta.Credentials
+	StageDir        string
+	AllowPlaintext  bool
+	RequireVerified bool
+	Jobs            int
+	// AutoJobs says Jobs was chosen for this machine, as for a store.
+	AutoJobs bool
+}
+
+// PackageMerge copies the evidence of a package into the database at
+// --dbpath, creating it when it is missing, and reports each evidence on
+// stdout in the package's order.
+func PackageMerge(ctx context.Context, opts DBOptions, path string, mo PackageMergeOptions) error {
+	start := time.Now()
+	trusted, err := LoadTrustedKey(mo.TrustedKey)
+	if err != nil {
+		return err
+	}
+	w := console.Out()
+	res, err := dbpackage.Merge(ctx, dbpackage.MergeOptions{
+		Package:         path,
+		Path:            opts.Path,
+		Open:            func(ctx context.Context) (dbpackage.MergeTarget, error) { return openMergeTarget(ctx, opts) },
+		SourceCreds:     mo.SourceCreds,
+		TargetCreds:     opts.Creds.IsSet(),
+		StageDir:        mo.StageDir,
+		AllowPlaintext:  mo.AllowPlaintext,
+		RequireVerified: mo.RequireVerified,
+		TrustedKey:      trusted,
+		Jobs:            mo.Jobs,
+		Fit: func(db *badger.DB, jobs int, items []workpool.Item, sizes []int64) (int, error) {
+			return jobsInMemory(db, jobs, mo.AutoJobs, items, sizes, ingest.IndexedPasses)
+		},
+		TempDir: opts.TempDir,
+		Tuning:  opts.Tuning,
+		Out:     func(it dbpackage.MergeItem) { printMergeItem(w, it) },
+	})
+	for _, n := range res.Notices {
+		ui.Notef("%s", termsafe.Line(n))
+	}
+	if bad, ok := errors.AsType[*dbpackage.DamagedError](err); ok {
+		for _, pr := range bad.Problems {
+			ui.Errorf("%s: %s", termsafe.Line(pr.Name), termsafe.Line(pr.Reason))
+		}
+		logging.GetLogger().Error("PackageMerge DAMAGED", zap.String("package", path), zap.Int("problems", bad.Count))
+		return fmt.Errorf("package %s does not match its manifest: %s; nothing was merged", path, problems(bad.Count))
+	}
+	if _, ok := errors.AsType[*dbpackage.SignatureError](err); ok {
+		logging.GetLogger().Error("PackageMerge SIGNATURE", zap.String("package", path), zap.Error(err))
+		return fmt.Errorf("package %s: %w; nothing was merged", path, err)
+	}
+	took := time.Since(start)
+	m := res.Manifest
+	fields := []zap.Field{zap.String("package", path), zap.String("root", res.Root), zap.String("content_sha256", m.ContentSHA256),
+		zap.Int("merged", res.Merged), zap.Int("aliased", res.Aliased), zap.Int("present", res.Present),
+		zap.Int("skipped", res.Skipped), zap.Int("failed", res.Failed), zap.Int("warned", res.Warned),
+		zap.Int64("read_bytes", res.Bytes.Read), zap.Int64("new_bytes", res.Bytes.New), zap.Int64("written_bytes", res.Bytes.Written),
+		zap.Bool("created", res.Created), zap.Bool("stage_kept", res.StageKept), zap.Int64("duration_ms", took.Milliseconds())}
+	if s := res.Signature; s != nil {
+		fields = append(fields, zap.String("signed_by", s.Actor), zap.String("key_id", signer.FormatID(s.KeyID)), zap.Bool("trusted", s.Trusted))
+	}
+	if err != nil {
+		logging.GetLogger().Error("PackageMerge ERROR", append(fields, zap.Error(err))...)
+		return err
+	}
+	logging.GetLogger().Info("PackageMerge COMPLETE", fields...)
+
+	fmt.Fprintln(w)
+	fmt.Fprintf(w, "Merged package %s into database %s in %s\n", path, res.Root, ui.Duration(took))
+	fmt.Fprintf(w, "  %d merged, %d aliased, %d present, %d skipped, %d failed\n", res.Merged, res.Aliased, res.Present, res.Skipped, res.Failed)
+	if line := storageLine(res.Bytes); line != "" {
+		fmt.Fprintln(w, " ", line)
+	}
+	fmt.Fprintf(w, "  content sha256 %s\n", termsafe.Line(m.ContentSHA256))
+	describeSignature(w, res.Signature, mo.TrustedKey)
+	if res.StageKept {
+		fmt.Fprintf(w, "  copy of the package kept at %s\n", res.Stage)
+	}
+	switch {
+	case res.Failed > 0:
+		return fmt.Errorf("%d evidence of package %s did not merge", res.Failed, path)
+	case res.Warned > 0:
+		return &lifecycle.WarningError{Err: fmt.Errorf("%d evidence of package %s merged with warnings", res.Warned, path)}
+	}
+	return nil
+}
+
+// openMergeTarget opens the database a merge writes into, as a store does,
+// and closes it with what a store does after it.
+func openMergeTarget(ctx context.Context, opts DBOptions) (dbpackage.MergeTarget, error) {
+	h, err := Common(ctx, opts, dbopen.ReadWrite, true)
+	if err != nil {
+		return dbpackage.MergeTarget{}, err
+	}
+	if err := util.EnsureBlobPath(h.Root); err != nil {
+		return dbpackage.MergeTarget{}, errors.Join(err, h.Close())
+	}
+	for _, n := range h.Notices {
+		ui.Notef("%s", n)
+	}
+	if h.Created {
+		ui.Notef("created database %s", h.Root)
+	}
+	sess := ingest.NewSession(h.DB)
+	return dbpackage.MergeTarget{Handle: h, Session: sess, Close: func() (err error) {
+		compactValueLog(ctx, h, "PackageMerge")
+		closeSession(sess, &err)
+		closeDB(h, &err)
+		return err
+	}}, nil
+}
+
+// printMergeItem says how one evidence of a package ended, on one line;
+// names and reasons come from the package, so they are made safe to print.
+func printMergeItem(w io.Writer, it dbpackage.MergeItem) {
+	id := base64.StdEncoding.EncodeToString
+	name := termsafe.Line(it.Name)
+	switch it.Outcome {
+	case dbpackage.MergeMerged:
+		fmt.Fprintf(w, "%-8s %s  %s  %s -> %s\n", it.Outcome, name, ui.Bytes(it.Size), id(it.SourceID), id(it.TargetID))
+	case string(store.CommitAliased):
+		fmt.Fprintf(w, "%-8s %s  %s  of %s\n", it.Outcome, name, ui.Bytes(it.Size), id(it.TargetID))
+	case string(store.CommitPresent):
+		fmt.Fprintf(w, "%-8s %s  %s  %s\n", it.Outcome, name, ui.Bytes(it.Size), id(it.TargetID))
+	case dbpackage.MergeSkipped:
+		fmt.Fprintf(w, "%-8s %s  %s\n", it.Outcome, name, termsafe.Line(it.Reason))
+	default:
+		fmt.Fprintf(w, "%-8s %s  %s\n", it.Outcome, name, termsafe.Line(fmt.Sprint(it.Err)))
+		return
+	}
+	if it.Warned {
+		fmt.Fprintf(w, "  warning: %s\n", termsafe.Line(it.Err.Error()))
+	}
 }

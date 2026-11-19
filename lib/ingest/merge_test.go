@@ -679,8 +679,17 @@ func TestMergePresentOtherPackageVerifies(t *testing.T) {
 	if _, err := mergeInto(t, target, source, sid, mergePackage); err != nil {
 		t.Fatal(err)
 	}
+	if a, ok := aliasRecordAt(t, target, dbio.MergeAliasKey(sid, mergedInfo(src, sid, mergePackage), src.Size, copyPath)); !ok || a.Merged == nil || a.Merged.Package != mergePackage {
+		t.Fatalf("the merge carried the source's alias as %+v, found %v", a, ok)
+	}
+	// A copy stored in the source later, which only the other package names.
+	laterPath := filepath.Join(dir, "claimed-later.bin")
+	if err := os.WriteFile(laterPath, content, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	storeIn(t, source, Request{Path: laterPath, NoIndex: true})
 	other := MergeRequest{Source: source, SourceID: sid, Origin: mergeOrigin(otherMergePackage), Quiet: true}
-	aliasKey := dbio.MergeAliasKey(sid, mergedInfo(src, sid, otherMergePackage), src.Size, copyPath)
+	aliasKey := dbio.MergeAliasKey(sid, mergedInfo(src, sid, otherMergePackage), src.Size, laterPath)
 
 	swapRelations(t, source, sid, 0, mergeChunk)
 	_, err := mergePresentWith(t, target, other)

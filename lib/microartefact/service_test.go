@@ -5,9 +5,10 @@ import (
 	"path/filepath"
 	"testing"
 
+	duesgraph "indicer/lib/graph"
+	"indicer/lib/graph/schema"
 	specpkg "indicer/lib/microartefact/spec"
 
-	"github.com/aoiflux/graphene"
 	graphstore "github.com/aoiflux/graphene/store"
 	"github.com/vmihailenco/msgpack/v5"
 )
@@ -32,6 +33,7 @@ func (r *captureRepository) Close() error {
 }
 
 func TestServiceProcessDetectsSimpleArtefacts(t *testing.T) {
+	t.Parallel()
 	repo := &captureRepository{}
 	service := NewService(repo)
 
@@ -61,6 +63,7 @@ func TestServiceProcessDetectsSimpleArtefacts(t *testing.T) {
 }
 
 func TestServiceSkipsUnsupportedFileType(t *testing.T) {
+	t.Parallel()
 	repo := &captureRepository{}
 	service := NewService(repo)
 
@@ -76,6 +79,7 @@ func TestServiceSkipsUnsupportedFileType(t *testing.T) {
 }
 
 func TestServiceWithSpecCanDisableDetectionMethod(t *testing.T) {
+	t.Parallel()
 	repo := &captureRepository{}
 	sheet := specpkg.Default()
 	sheet.RemoveDetectionRule("text.url")
@@ -107,6 +111,7 @@ func TestServiceWithSpecCanDisableDetectionMethod(t *testing.T) {
 }
 
 func TestGrapheneRepositoryStoresNodesAndEdges(t *testing.T) {
+	t.Parallel()
 	root := t.TempDir()
 	enrichmentRepo, err := enrichment.OpenGrapheneRepository(root)
 	if err != nil {
@@ -171,11 +176,12 @@ func TestGrapheneRepositoryStoresNodesAndEdges(t *testing.T) {
 		t.Fatalf("Close: %v", err)
 	}
 
-	graph, err := graphene.Open(filepath.Join(root, grapheneStoreDir))
+	handle, err := duesgraph.Open(root)
 	if err != nil {
-		t.Fatalf("graphene.Open: %v", err)
+		t.Fatalf("graph.Open: %v", err)
 	}
-	defer graph.Close()
+	defer handle.Release()
+	graph := handle.Graph()
 
 	// Check for FILE node with "evidence.bin" name at indexed_file level
 	fileHits, err := graph.NodesByProperty("name", []byte("evidence.bin"))
@@ -202,9 +208,15 @@ func TestGrapheneRepositoryStoresNodesAndEdges(t *testing.T) {
 		t.Fatalf("expected 5 contains edges (disk->partition->indexed_file->file + 2 artefacts), got %d", len(edgeHits))
 	}
 
-	relationEdgeHits, err := graph.EdgesByType(graphstore.EdgeType(100))
+	// Resolve the relation edge type through the store's own registry rather
+	// than the bare EdgeType(100) this used to assert. That literal is the
+	// graphene v0.1.3 encoding; a store written by this build uses the current
+	// custom band, and hard-coding either value is what made the vocabulary
+	// shift silent in the first place.
+	relationEdgeHits, err := graph.EdgesByAnyType(
+		handle.Schema().MatchEdgeTypes(schema.EdgeKindRelation))
 	if err != nil {
-		t.Fatalf("EdgesByType relation: %v", err)
+		t.Fatalf("EdgesByAnyType relation: %v", err)
 	}
 	if len(relationEdgeHits) != 1 {
 		t.Fatalf("expected 1 relation edge, got %d", len(relationEdgeHits))
@@ -233,36 +245,5 @@ func TestGrapheneRepositoryStoresNodesAndEdges(t *testing.T) {
 		t.Fatalf("NodesByProperty artefact_kind: %v", err)
 	} else if len(kindHits) != 1 {
 		t.Fatalf("expected 1 url artefact hit, got %d", len(kindHits))
-	}
-}
-
-func asInt(value any) int {
-	switch num := value.(type) {
-	case int:
-		return num
-	case int8:
-		return int(num)
-	case int16:
-		return int(num)
-	case int32:
-		return int(num)
-	case int64:
-		return int(num)
-	case uint:
-		return int(num)
-	case uint8:
-		return int(num)
-	case uint16:
-		return int(num)
-	case uint32:
-		return int(num)
-	case uint64:
-		return int(num)
-	case float32:
-		return int(num)
-	case float64:
-		return int(num)
-	default:
-		return 0
 	}
 }

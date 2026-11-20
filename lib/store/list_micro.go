@@ -2,7 +2,7 @@ package store
 
 import (
 	"encoding/json"
-	"fmt"
+	"indicer/internal/console"
 
 	"indicer/lib/microartefact"
 )
@@ -12,7 +12,11 @@ func ListMicroArtefacts(repo *microartefact.GrapheneRepository) error {
 	if err != nil {
 		return err
 	}
+	return PrintMicroArtefacts(tree)
+}
 
+// PrintMicroArtefacts prints a micro-artefact hierarchy as JSON.
+func PrintMicroArtefacts(tree *microartefact.EvidenceFileHierarchy) error {
 	// Build output structure
 	output := map[string]interface{}{
 		"totalArtefacts":         tree.TotalArtefacts,
@@ -27,7 +31,7 @@ func ListMicroArtefacts(repo *microartefact.GrapheneRepository) error {
 		return err
 	}
 
-	fmt.Println(string(jsonData))
+	console.Println(string(jsonData))
 	return nil
 }
 

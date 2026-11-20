@@ -1,0 +1,209 @@
+// Package lifecycle owns the process-level context and exit codes.
+//
+// The root context is cancelled by the first interrupt or termination signal,
+// with a SignalError as its cause, so every command can stop at a safe point,
+// remove its temporary files and close the database. A second signal means the
+// user does not want to wait, and exits at once.
+package lifecycle
+
+import (
+	"context"
+	"errors"
+	"fmt"
+	"os"
+	"os/signal"
+	"slices"
+	"sync"
+	"time"
+)
+
+// Exit codes. Scripts and the FFI rely on these values; they never change.
+const (
+	ExitOK         = 0   // success
+	ExitFailure    = 1   // the operation failed
+	ExitUsage      = 2   // bad flags or arguments, or completed with warnings that need attention
+	ExitInternal   = 70  // an internal error (recovered panic); see the crash file
+	ExitInterrupt  = 130 // stopped by SIGINT or Ctrl-C/Ctrl-Break
+	ExitTerminated = 143 // stopped by SIGTERM
+)
+
+// SignalError is the cancellation cause when a signal stops the process.
+type SignalError struct{ Signal os.Signal }
+
+func (e *SignalError) Error() string { return signalName(e.Signal) }
+
+// UsageError marks an error caused by how DUES was invoked. It exits with
+// ExitUsage.
+type UsageError struct{ Err error }
+
+func (e *UsageError) Error() string { return e.Err.Error() }
+func (e *UsageError) Unwrap() error { return e.Err }
+
+// Usagef returns a UsageError.
+func Usagef(format string, args ...any) error {
+	return &UsageError{Err: fmt.Errorf(format, args...)}
+}
+
+// WarningError marks an operation that completed but needs the user's
+// attention, such as evidence stored while its index is incomplete. It exits
+// with ExitUsage, not ExitFailure, because the main work did succeed.
+type WarningError struct{ Err error }
+
+func (e *WarningError) Error() string { return e.Err.Error() }
+func (e *WarningError) Unwrap() error { return e.Err }
+
+// InternalError marks an internal failure such as a recovered panic.
+type InternalError struct{ Err error }
+
+func (e *InternalError) Error() string { return e.Err.Error() }
+func (e *InternalError) Unwrap() error { return e.Err }
+
+// forceExit ends the process on a second signal. Tests replace it.
+var forceExit = os.Exit
+
+// forceExitBudget is how long the force-exit hooks may take in all.
+var forceExitBudget = 200 * time.Millisecond
+
+var (
+	hooksMu   sync.Mutex
+	exitHooks []*func()
+)
+
+// OnForceExit registers fn to run when a second signal ends the process at
+// once, so the terminal is left usable: cursor shown, console modes back.
+// Hooks run last registered first, and get forceExitBudget in all before
+// the process exits anyway. remove unregisters fn.
+func OnForceExit(fn func()) (remove func()) {
+	h := &fn
+	hooksMu.Lock()
+	exitHooks = append(exitHooks, h)
+	hooksMu.Unlock()
+	return func() {
+		hooksMu.Lock()
+		defer hooksMu.Unlock()
+		exitHooks = slices.DeleteFunc(exitHooks, func(x *func()) bool { return x == h })
+	}
+}
+
+func runForceExitHooks() {
+	hooksMu.Lock()
+	hooks := slices.Clone(exitHooks)
+	hooksMu.Unlock()
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		for _, h := range slices.Backward(hooks) {
+			(*h)()
+		}
+	}()
+	select {
+	case <-done:
+	case <-time.After(forceExitBudget):
+	}
+}
+
+// Context returns a context cancelled by the first interrupt or termination
+// signal, and a stop function that releases the signal handlers. A second
+// signal runs the OnForceExit hooks and exits the process at once with the
+// matching code.
+func Context(parent context.Context) (context.Context, func()) {
+	ctx, cancel := context.WithCancelCause(parent)
+	ch := make(chan os.Signal, 2)
+	signal.Notify(ch, shutdownSignals...)
+
+	done := make(chan struct{})
+	var once sync.Once
+	go watch(ch, cancel, done)
+	return ctx, func() {
+		once.Do(func() {
+			signal.Stop(ch)
+			close(done)
+			cancel(nil)
+		})
+	}
+}
+
+// watch cancels the command on the first signal and ends the process on the
+// second.
+func watch(ch <-chan os.Signal, cancel context.CancelCauseFunc, done <-chan struct{}) {
+	var first os.Signal
+	for {
+		select {
+		case sig := <-ch:
+			if first == nil {
+				first = sig
+				cancel(&SignalError{Signal: sig})
+				continue
+			}
+			runForceExitHooks()
+			forceExit(CodeForSignal(sig))
+			return
+		case <-done:
+			return
+		}
+	}
+}
+
+// ExitCode maps the error a command returned to the process exit code.
+func ExitCode(err error) int {
+	if err == nil {
+		return ExitOK
+	}
+	var sig *SignalError
+	if errors.As(err, &sig) {
+		return CodeForSignal(sig.Signal)
+	}
+	var internal *InternalError
+	if errors.As(err, &internal) {
+		return ExitInternal
+	}
+	var usage *UsageError
+	var warning *WarningError
+	if errors.As(err, &usage) || errors.As(err, &warning) {
+		return ExitUsage
+	}
+	return ExitFailure
+}
+
+// IsWarning reports whether err only says that a completed operation needs
+// attention: it exits with ExitUsage because of a WarningError, not because
+// of how DUES was invoked.
+func IsWarning(err error) bool {
+	if ExitCode(err) != ExitUsage {
+		return false
+	}
+	var usage *UsageError
+	var warning *WarningError
+	return errors.As(err, &warning) && !errors.As(err, &usage)
+}
+
+// Cause returns the reason ctx ended: the SignalError for a signal, or err
+// unchanged. Commands return Cause(ctx, err) so a cancelled operation exits
+// with the signal's code rather than ExitFailure.
+func Cause(ctx context.Context, err error) error {
+	if err == nil {
+		return nil
+	}
+	var sig *SignalError
+	if errors.As(context.Cause(ctx), &sig) && !errors.As(err, &sig) {
+		return &interruptedError{sig: sig, err: err}
+	}
+	return err
+}
+
+// interruptedError is the error of work a signal stopped. It reads as the
+// signal, then what the work said, unless that was only that it was
+// cancelled, which the signal already says.
+type interruptedError struct {
+	sig *SignalError
+	err error
+}
+
+func (e *interruptedError) Error() string {
+	if e.err.Error() == context.Canceled.Error() {
+		return e.sig.Error()
+	}
+	return e.sig.Error() + ": " + e.err.Error()
+}
+
+func (e *interruptedError) Unwrap() []error { return []error{e.sig, e.err} }

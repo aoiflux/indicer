@@ -7,6 +7,7 @@ import (
 )
 
 func TestEngineRelateAppliesEnabledMethods(t *testing.T) {
+	t.Parallel()
 	engine := NewEngine(DefaultBuilders(), []Method{
 		{ID: "hash_match", BuilderName: "same-identifier", RelationType: "same_identifier", Deterministic: true, Enabled: true, Confidence: 1},
 		{ID: "tx_match", BuilderName: "transaction-propagation", RelationType: "references_transaction", Deterministic: true, Enabled: true, Confidence: 1},

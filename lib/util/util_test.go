@@ -8,7 +8,40 @@ import (
 	"testing"
 )
 
+func TestHashPasswordAlways32Bytes(t *testing.T) {
+	t.Parallel()
+	cases := []string{"", "a", "short", "this-is-a-longer-password-with-symbols-123"}
+
+	for _, input := range cases {
+		hash, err := HashPassword(input)
+		if err != nil {
+			t.Fatalf("HashPassword(%q) error: %v", input, err)
+		}
+		if len(hash) != 32 {
+			t.Fatalf("HashPassword(%q) length = %d, want 32", input, len(hash))
+		}
+	}
+}
+
+func TestHashPasswordIsDeterministic(t *testing.T) {
+	t.Parallel()
+	const password = "case-sensitive-password"
+	a, err := HashPassword(password)
+	if err != nil {
+		t.Fatalf("HashPassword first call: %v", err)
+	}
+	b, err := HashPassword(password)
+	if err != nil {
+		t.Fatalf("HashPassword second call: %v", err)
+	}
+
+	if !bytes.Equal(a, b) {
+		t.Fatal("HashPassword returned different digests for same input")
+	}
+}
+
 func TestSealAESUsesRandomNonce(t *testing.T) {
+	t.Parallel()
 	key := bytes.Repeat([]byte{1}, 32)
 	plaintext := []byte("forensic payload")
 
@@ -41,6 +74,7 @@ func TestSealAESUsesRandomNonce(t *testing.T) {
 }
 
 func TestUnsealAESReadsLegacyCiphertext(t *testing.T) {
+	t.Parallel()
 	key := bytes.Repeat([]byte{2}, 32)
 	plaintext := []byte("legacy payload")
 
@@ -55,6 +89,7 @@ func TestUnsealAESReadsLegacyCiphertext(t *testing.T) {
 }
 
 func TestUnsealAESRejectsMalformedCiphertext(t *testing.T) {
+	t.Parallel()
 	key := bytes.Repeat([]byte{3}, 32)
 	if _, err := UnsealAES(key, []byte("not-valid-ciphertext")); err == nil {
 		t.Fatal("UnsealAES accepted malformed ciphertext")

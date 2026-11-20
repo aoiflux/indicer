@@ -30,7 +30,7 @@ func BenchmarkInspectEvidenceRepairs(b *testing.B) {
 			b.ReportAllocs()
 			b.ResetTimer()
 			for i := 0; i < b.N; i++ {
-				report, err := InspectEvidenceRepairs(db, false)
+				report, err := InspectEvidenceRepairs(b.Context(), db, false)
 				if err != nil {
 					b.Fatalf("InspectEvidenceRepairs: %v", err)
 				}
@@ -60,7 +60,7 @@ func seedRepairBenchmarkData(tb testing.TB, db *badger.DB, total, pendingEvery, 
 		hash[3] = byte(i >> 24)
 
 		infile := newTestInputFile(db, "bench-evidence", hash)
-		evidenceFile := structs.NewEvidenceFile(infile.GetName(), infile.GetStartIndex(), infile.GetSize(), infile.GetInternalObjects(), "dd")
+		evidenceFile := structs.NewEvidenceFile(infile.GetName(), infile.GetStartIndex(), infile.GetSize(), infile.GetInternalObjects(), "dd", "")
 
 		if i%pendingEvery == 0 {
 			evidenceFile.Completed = false

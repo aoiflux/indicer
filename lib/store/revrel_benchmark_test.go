@@ -5,27 +5,19 @@ import (
 	"os"
 	"testing"
 
+	"indicer/internal/testutil/testdb"
 	"indicer/lib/cnst"
 	"indicer/lib/dbio"
 	"indicer/lib/util"
 
 	"github.com/dgraph-io/badger/v4"
-	"github.com/klauspost/compress/zstd"
 )
 
 const revRelSyntheticAppendShards = 16
 
 func BenchmarkProcessRevRel(b *testing.B) {
-	ensureBenchmarkCodecs(b)
-
-	oldQuickOpt := cnst.QUICKOPT
-	cnst.QUICKOPT = true
-	defer func() {
-		cnst.QUICKOPT = oldQuickOpt
-	}()
-
 	b.Run("existing_same_file_noop", func(b *testing.B) {
-		db := openRevRelBenchDB(b)
+		db := openRevRelBenchDB(b, testdb.Quick)
 		defer db.Close()
 
 		index := int64(0)
@@ -33,7 +25,7 @@ func BenchmarkProcessRevRel(b *testing.B) {
 		fhash := []byte("bench-file-fixed")
 
 		seedBatch := db.NewWriteBatch()
-		if err := dbio.SetReverseRelationAppendMember(chash, index, fhash, seedBatch); err != nil {
+		if err := dbio.SetReverseRelationAppendMember(db, chash, index, fhash, seedBatch); err != nil {
 			b.Fatalf("seed reverse relation: %v", err)
 		}
 		if err := seedBatch.Flush(); err != nil {
@@ -43,7 +35,7 @@ func BenchmarkProcessRevRel(b *testing.B) {
 		b.ResetTimer()
 		for i := 0; i < b.N; i++ {
 			batch := db.NewWriteBatch()
-			err := processRevRel(index, fhash, chash, batch, nil)
+			err := processRevRel(true, index, fhash, chash, db, batch)
 			if err != nil {
 				batch.Cancel()
 				b.Fatalf("processRevRel noop path failed: %v", err)
@@ -55,14 +47,14 @@ func BenchmarkProcessRevRel(b *testing.B) {
 	})
 
 	b.Run("existing_new_file_write", func(b *testing.B) {
-		db := openRevRelBenchDB(b)
+		db := openRevRelBenchDB(b, testdb.Quick)
 		defer db.Close()
 
 		index := int64(0)
 		chash := []byte("bench-chash-fixed")
 
 		seedBatch := db.NewWriteBatch()
-		if err := dbio.SetReverseRelationAppendMember(chash, index, []byte("seed-file"), seedBatch); err != nil {
+		if err := dbio.SetReverseRelationAppendMember(db, chash, index, []byte("seed-file"), seedBatch); err != nil {
 			b.Fatalf("seed reverse relation: %v", err)
 		}
 		if err := seedBatch.Flush(); err != nil {
@@ -73,7 +65,7 @@ func BenchmarkProcessRevRel(b *testing.B) {
 		for i := 0; i < b.N; i++ {
 			batch := db.NewWriteBatch()
 			fhash := []byte(fmt.Sprintf("bench-file-%d", i))
-			err := processRevRel(index, fhash, chash, batch, nil)
+			err := processRevRel(true, index, fhash, chash, db, batch)
 			if err != nil {
 				batch.Cancel()
 				b.Fatalf("processRevRel write path failed: %v", err)
@@ -85,7 +77,7 @@ func BenchmarkProcessRevRel(b *testing.B) {
 	})
 
 	b.Run("synthetic_append_shard_new_file_write", func(b *testing.B) {
-		db := openRevRelBenchDB(b)
+		db := openRevRelBenchDB(b, testdb.Quick)
 		defer db.Close()
 
 		index := int64(0)
@@ -106,7 +98,7 @@ func BenchmarkProcessRevRel(b *testing.B) {
 	})
 
 	b.Run("append_collect_32_members", func(b *testing.B) {
-		db := openRevRelBenchDB(b)
+		db := openRevRelBenchDB(b, testdb.Quick)
 		defer db.Close()
 
 		index := int64(0)
@@ -116,7 +108,7 @@ func BenchmarkProcessRevRel(b *testing.B) {
 		seedBatch := db.NewWriteBatch()
 		for i := 0; i < 32; i++ {
 			fhash := []byte(fmt.Sprintf("seed-file-%02d", i))
-			if err := dbio.SetReverseRelationAppendMember(chash, index, fhash, seedBatch); err != nil {
+			if err := dbio.SetReverseRelationAppendMember(db, chash, index, fhash, seedBatch); err != nil {
 				b.Fatalf("seed reverse relation append: %v", err)
 			}
 		}
@@ -137,7 +129,7 @@ func BenchmarkProcessRevRel(b *testing.B) {
 	})
 
 	b.Run("synthetic_append_shard_collect_32_members", func(b *testing.B) {
-		db := openRevRelBenchDB(b)
+		db := openRevRelBenchDB(b, testdb.Quick)
 		defer db.Close()
 
 		index := int64(0)
@@ -167,34 +159,10 @@ func BenchmarkProcessRevRel(b *testing.B) {
 	})
 }
 
-func ensureBenchmarkCodecs(b *testing.B) {
-	if cnst.DECODER == nil {
-		decoder, err := zstd.NewReader(nil, zstd.WithDecoderConcurrency(0))
-		if err != nil {
-			b.Fatalf("init zstd decoder: %v", err)
-		}
-		cnst.DECODER = decoder
-	}
-	if cnst.ENCODER == nil {
-		encoder, err := zstd.NewWriter(nil, zstd.WithEncoderLevel(zstd.EncoderLevel(zstd.SpeedBestCompression)))
-		if err != nil {
-			b.Fatalf("init zstd encoder: %v", err)
-		}
-		cnst.ENCODER = encoder
-	}
-}
-
-func openRevRelBenchDB(b *testing.B) *badger.DB {
-	tempDir := b.TempDir()
-	encryptionKey := make([]byte, cnst.KeySize)
-	for i := range encryptionKey {
-		encryptionKey[i] = byte(i + 1)
-	}
-
-	db, err := dbio.ConnectDB(tempDir, encryptionKey)
-	if err != nil {
-		b.Fatalf("open badger: %v", err)
-	}
+// openRevRelBenchDB opens a benchmark database of mode m, registered with its
+// own layout, tuning and encoder, with its blob directory made.
+func openRevRelBenchDB(b *testing.B, m testdb.Mode) *badger.DB {
+	db := testdb.Open(b, m).DB
 	if err := os.MkdirAll(util.BlobPath(db.Opts().Dir), cnst.DirPerm); err != nil {
 		b.Fatalf("create blob dir: %v", err)
 	}

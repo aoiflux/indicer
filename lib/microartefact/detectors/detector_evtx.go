@@ -19,6 +19,9 @@ func (d EVTXDetector) Name() string {
 	return "evtx-native"
 }
 
+// WantsRaw: the detector parses the EVTX file itself.
+func (d EVTXDetector) WantsRaw() bool { return true }
+
 func (d EVTXDetector) Detect(_ model.FileRecord, content []byte) ([]model.Artefact, error) {
 	reader := bytes.NewReader(content)
 	var header evtx.EVTXHeader

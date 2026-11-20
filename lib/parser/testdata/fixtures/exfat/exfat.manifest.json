@@ -1,0 +1,75 @@
+{
+ "format": "raw",
+ "generator": "gen_fixtures.sh unknown",
+ "image": "exfat.img",
+ "partitions": [
+  {
+   "deleted": [
+    {
+     "deleted": true,
+     "kind": "file",
+     "path": "/deleted.bin",
+     "recoverable": "full",
+     "sha256": "485f940b0b23a72bb1d5686a3750733749ebc3c7c110d15549be0ec9752bdda1",
+     "size": 3000
+    }
+   ],
+   "files": [
+    {
+     "extents": 0,
+     "kind": "file",
+     "path": "/empty.txt",
+     "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+     "size": 0
+    },
+    {
+     "extents": 1,
+     "kind": "file",
+     "path": "/f1.bin",
+     "sha256": "7beb5fa617e783c583dca543380645cf44036c30ea7ba7e1526c1077ead8ddcc",
+     "size": 40000
+    },
+    {
+     "extents": 1,
+     "kind": "file",
+     "path": "/f2.bin",
+     "sha256": "e95bcaf772e58cb1d7a3f5a8fea9b6f366aa0d8fb6231577b6ecbc605e78dab1",
+     "size": 40000
+    },
+    {
+     "extents": 1,
+     "kind": "file",
+     "path": "/frag.bin",
+     "sha256": "7998d197e3f3cb5c68b1bf181b098f3563331b36ecc7e8b5fcf146b6724d0656",
+     "size": 60000
+    },
+    {
+     "extents": 1,
+     "kind": "file",
+     "path": "/hello.txt",
+     "sha256": "904ac5f381eac585b1fff97fdb25b7fe4513c0c3e80a952f87e73489d014d489",
+     "size": 11
+    },
+    {
+     "kind": "dir",
+     "path": "/sub"
+    },
+    {
+     "extents": 1,
+     "kind": "file",
+     "path": "/sub/a.bin",
+     "sha256": "e36d3b908c71a90688c3a844579aa2507de44c5bfb7d713c99af61fe09f0cb08",
+     "size": 5000
+    }
+   ],
+   "fs": "exfat",
+   "offset": 0
+  }
+ ],
+ "schema": 1,
+ "segments": [
+  "exfat.img"
+ ],
+ "sha256": "78d86831d53c7b7def594bc68adf23d456393884e63cfbe997c5ca6812441885",
+ "size": 8388608
+}

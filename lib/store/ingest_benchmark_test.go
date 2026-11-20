@@ -9,11 +9,16 @@ import (
 	"sync"
 	"testing"
 
+	"indicer/internal/console"
+	"indicer/internal/testutil/testdb"
 	"indicer/lib/cnst"
 	"indicer/lib/dbio"
+	"indicer/lib/dbmeta"
+	"indicer/lib/engine"
 	"indicer/lib/util"
 
 	"github.com/dgraph-io/badger/v4"
+	"github.com/zeebo/blake3"
 )
 
 // BenchmarkIngestDataPath benchmarks the core ingest synchronous probe path:
@@ -37,20 +42,7 @@ func BenchmarkIngestDataPath(b *testing.B) {
 		{name: "half_duplicate/chunks_64", chunks: 64, uniqueChunks: 0.5, description: "~50% unique chunks"},
 	}
 
-	devNull, err := os.OpenFile(os.DevNull, os.O_WRONLY, 0)
-	if err != nil {
-		b.Fatalf("open os.DevNull: %v", err)
-	}
-	defer devNull.Close()
-
-	oldStderr := os.Stderr
-	oldStdout := os.Stdout
-	os.Stderr = devNull
-	os.Stdout = devNull
-	defer func() {
-		os.Stderr = oldStderr
-		os.Stdout = oldStdout
-	}()
+	defer console.Quiet()()
 
 	for _, bm := range benchmarks {
 		bm := bm
@@ -75,8 +67,6 @@ func BenchmarkIngestDataPath(b *testing.B) {
 // across many files that share the same chunk sequence. This better
 // approximates real ingest pressure than isolated microbenchmarks.
 func BenchmarkIngestMetadataPath(b *testing.B) {
-	ensureBenchmarkCodecs(b)
-
 	workloads := []struct {
 		name   string
 		files  int
@@ -93,7 +83,7 @@ func BenchmarkIngestMetadataPath(b *testing.B) {
 
 		b.Run("append_primary/"+workload.name, func(b *testing.B) {
 			for i := 0; i < b.N; i++ {
-				db := openRevRelBenchDB(b)
+				db := openRevRelBenchDB(b, testdb.Default)
 				if err := ingestMetadataWorkload(db, workload.files, chunkHashes); err != nil {
 					db.Close()
 					b.Fatalf("ingest metadata workload failed: %v", err)
@@ -110,18 +100,10 @@ func BenchmarkIngestMetadataPath(b *testing.B) {
 // metadata workload so we can identify whether regressions come from key
 // construction, relation writes, append-member writes, or batch overhead.
 func BenchmarkIngestMetadataPathHotspots(b *testing.B) {
-	ensureBenchmarkCodecs(b)
-
 	const fileCount = 32
 	const chunkCount = 16
 
 	chunkHashes := buildBenchmarkChunkHashes(chunkCount)
-
-	oldQuickOpt := cnst.QUICKOPT
-	cnst.QUICKOPT = true
-	defer func() {
-		cnst.QUICKOPT = oldQuickOpt
-	}()
 
 	b.Run("key_construction_only/files_32/chunks_16", func(b *testing.B) {
 		for i := 0; i < b.N; i++ {
@@ -132,7 +114,7 @@ func BenchmarkIngestMetadataPathHotspots(b *testing.B) {
 					shard = int(fhash[len(fhash)-1]) % cnst.ReverseRelationAppendShardCount
 				}
 				for chunkIdx, chash := range chunkHashes {
-					index := int64(chunkIdx) * cnst.ChonkSize
+					index := int64(chunkIdx) * cnst.DefaultChonkSize
 					_ = util.AppendToBytesSlice(cnst.RelationNamespace, fhash, cnst.DataSeperator, index)
 					_ = util.AppendToBytesSlice(cnst.ReverseRelationNamespace, chash, cnst.DataSeperator, index)
 					_ = util.AppendToBytesSlice(
@@ -151,7 +133,7 @@ func BenchmarkIngestMetadataPathHotspots(b *testing.B) {
 	})
 
 	b.Run("process_rel_only/files_32/chunks_16", func(b *testing.B) {
-		db := openRevRelBenchDB(b)
+		db := openRevRelBenchDB(b, testdb.Quick)
 		defer db.Close()
 
 		for i := 0; i < b.N; i++ {
@@ -162,7 +144,7 @@ func BenchmarkIngestMetadataPathHotspots(b *testing.B) {
 	})
 
 	b.Run("process_revrel_append_primary/files_32/chunks_16", func(b *testing.B) {
-		db := openRevRelBenchDB(b)
+		db := openRevRelBenchDB(b, testdb.Quick)
 		defer db.Close()
 
 		for i := 0; i < b.N; i++ {
@@ -173,7 +155,7 @@ func BenchmarkIngestMetadataPathHotspots(b *testing.B) {
 	})
 
 	b.Run("append_member_only/files_32/chunks_16", func(b *testing.B) {
-		db := openRevRelBenchDB(b)
+		db := openRevRelBenchDB(b, testdb.Quick)
 		defer db.Close()
 
 		for i := 0; i < b.N; i++ {
@@ -207,7 +189,7 @@ func setupIngestBenchmarkDataset(b *testing.B, chunkCount int, uniqueChunks floa
 	for i := 0; i < chunkCount; i++ {
 		// Cycle through a pool of unique chunks based on the deduplication ratio.
 		sourceIdx := i % uniqueCount
-		chunkData[i] = make([]byte, cnst.ChonkSize)
+		chunkData[i] = make([]byte, cnst.DefaultChonkSize)
 		binary.LittleEndian.PutUint64(chunkData[i][0:8], uint64(sourceIdx))
 		copy(chunkData[i][8:], []byte("benchmark-chunk"))
 	}
@@ -218,10 +200,10 @@ func setupIngestBenchmarkDataset(b *testing.B, chunkCount int, uniqueChunks floa
 func buildBenchmarkChunkHashes(chunkCount int) [][]byte {
 	chunkHashes := make([][]byte, chunkCount)
 	for i := 0; i < chunkCount; i++ {
-		chunk := make([]byte, cnst.ChonkSize)
+		chunk := make([]byte, cnst.DefaultChonkSize)
 		binary.LittleEndian.PutUint64(chunk[0:8], uint64(i))
 		copy(chunk[8:], []byte("metadata-benchmark-chunk"))
-		chunkHashes[i], _ = util.GetChonkHash(chunk, cnst.GetHashAlgo())
+		chunkHashes[i], _ = util.GetChonkHash(chunk, blake3.New())
 	}
 	return chunkHashes
 }
@@ -229,7 +211,7 @@ func buildBenchmarkChunkHashes(chunkCount int) [][]byte {
 func buildBenchmarkChunkData(chunkCount int) [][]byte {
 	chunkData := make([][]byte, chunkCount)
 	for i := 0; i < chunkCount; i++ {
-		chunkData[i] = make([]byte, cnst.ChonkSize)
+		chunkData[i] = make([]byte, cnst.DefaultChonkSize)
 		binary.LittleEndian.PutUint64(chunkData[i][0:8], uint64(i))
 		copy(chunkData[i][8:], []byte("simhash-benchmark-chunk"))
 	}
@@ -259,58 +241,11 @@ func ingestBatchOwnerWorkerWorkload(db *badger.DB, mappedFile []byte, fileCount 
 }
 
 func ingestBatchOwnerWorkerOnce(db *badger.DB, fhash, mappedFile []byte, enableSimhash bool) error {
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
-
-	workerCount := cnst.GetMaxThreadCount()
-	taskCh := make(chan chunkTask, workerCount*2)
-	workerResCh := make(chan workerRes, workerCount+1)
-	writerErrCh := make(chan error, 1)
-
-	var simhashWriter *simhashAsyncWriter
-	if enableSimhash {
-		simhashWriter = newSimhashAsyncWriter(db, workerCount)
-		defer func() {
-			_ = simhashWriter.wait()
-		}()
-	}
-
-	go runBatchOwnerWriter(fhash, db, taskCh, cancel, writerErrCh)
-	seenChunks := newShardedChunkSet()
-
-	active := 0
-	for idx := int64(0); idx < int64(len(mappedFile)); idx += cnst.ChonkSize {
-		chonkEnd := idx + cnst.ChonkSize
-		if chonkEnd > int64(len(mappedFile)) {
-			chonkEnd = int64(len(mappedFile))
-		}
-
-		go batchOwnerHashWorker(ctx, mappedFile, idx, chonkEnd, db, nil, nil, seenChunks, taskCh, workerResCh, simhashWriter)
-		active++
-
-		if active > workerCount {
-			res := <-workerResCh
-			if res.err != nil {
-				return res.err
-			}
-			active--
-		}
-	}
-
-	for active > 0 {
-		res := <-workerResCh
-		if res.err != nil {
-			return res.err
-		}
-		active--
-	}
-
-	close(taskCh)
-	if writerErr := <-writerErrCh; writerErr != nil {
-		return writerErr
-	}
-
-	return nil
+	_, err := ingestChunksBatchOwner(context.Background(), ChunkPass{
+		DB: db, ID: fhash, Source: byteReaderAt(mappedFile), Size: int64(len(mappedFile)), Quiet: true,
+		Simhash: enableSimhash,
+	})
+	return err
 }
 
 func ingestMetadataWorkload(db *badger.DB, fileCount int, chunkHashes [][]byte) error {
@@ -318,29 +253,20 @@ func ingestMetadataWorkload(db *badger.DB, fileCount int, chunkHashes [][]byte) 
 }
 
 func ingestMetadataWorkloadWithOffset(db *badger.DB, fileCount int, chunkHashes [][]byte, fileOffset int) error {
+	cs := dbmeta.ChunkSize(db)
 	for fileIdx := 0; fileIdx < fileCount; fileIdx++ {
 		fhash := []byte(fmt.Sprintf("ingest-file-%06d", fileOffset+fileIdx))
-		batch, err := util.InitBatch(db)
-		if err != nil {
-			return err
-		}
-		revRelBuffer := newRevRelAppendBuffer(len(chunkHashes))
-
+		batch := util.InitBatch(db, engine.For(db).MaxBatchCount())
 		for chunkIdx, chash := range chunkHashes {
-			index := int64(chunkIdx) * cnst.ChonkSize
+			index := int64(chunkIdx) * cs
 			if err := processRel(index, fhash, chash, db, batch); err != nil {
 				batch.Cancel()
 				return err
 			}
-			if err := processRevRel(index, fhash, chash, batch, revRelBuffer); err != nil {
+			if err := processRevRel(false, index, fhash, chash, db, batch); err != nil {
 				batch.Cancel()
 				return err
 			}
-		}
-
-		if err := revRelBuffer.flush(fhash, batch); err != nil {
-			batch.Cancel()
-			return err
 		}
 
 		if err := batch.Flush(); err != nil {
@@ -352,12 +278,13 @@ func ingestMetadataWorkloadWithOffset(db *badger.DB, fileCount int, chunkHashes 
 }
 
 func ingestProcessRelOnlyWorkload(db *badger.DB, fileCount int, chunkHashes [][]byte, fileOffset int) error {
+	cs := dbmeta.ChunkSize(db)
 	for fileIdx := 0; fileIdx < fileCount; fileIdx++ {
 		fhash := []byte(fmt.Sprintf("ingest-rel-file-%06d", fileOffset+fileIdx))
 		batch := db.NewWriteBatch()
 
 		for chunkIdx, chash := range chunkHashes {
-			index := int64(chunkIdx) * cnst.ChonkSize
+			index := int64(chunkIdx) * cs
 			if err := processRel(index, fhash, chash, db, batch); err != nil {
 				batch.Cancel()
 				return err
@@ -373,28 +300,17 @@ func ingestProcessRelOnlyWorkload(db *badger.DB, fileCount int, chunkHashes [][]
 }
 
 func ingestProcessRevRelWorkload(db *badger.DB, fileCount int, chunkHashes [][]byte, fileOffset int) error {
-	return ingestProcessRevRelWorkloadMode(db, fileCount, chunkHashes, fileOffset, false)
+	return ingestProcessRevRelWorkloadMode(db, fileCount, chunkHashes, fileOffset)
 }
 
-func ingestProcessRevRelWorkloadMode(db *badger.DB, fileCount int, chunkHashes [][]byte, fileOffset int, buffered bool) error {
+func ingestProcessRevRelWorkloadMode(db *badger.DB, fileCount int, chunkHashes [][]byte, fileOffset int) error {
+	cs := dbmeta.ChunkSize(db)
 	for fileIdx := 0; fileIdx < fileCount; fileIdx++ {
 		fhash := []byte(fmt.Sprintf("ingest-rev-file-%06d", fileOffset+fileIdx))
 		batch := db.NewWriteBatch()
-		var revRelBuffer *revRelAppendBuffer
-		if buffered {
-			revRelBuffer = newRevRelAppendBuffer(len(chunkHashes))
-		}
-
 		for chunkIdx, chash := range chunkHashes {
-			index := int64(chunkIdx) * cnst.ChonkSize
-			if err := processRevRel(index, fhash, chash, batch, revRelBuffer); err != nil {
-				batch.Cancel()
-				return err
-			}
-		}
-
-		if revRelBuffer != nil {
-			if err := revRelBuffer.flush(fhash, batch); err != nil {
+			index := int64(chunkIdx) * cs
+			if err := processRevRel(true, index, fhash, chash, db, batch); err != nil {
 				batch.Cancel()
 				return err
 			}
@@ -409,17 +325,18 @@ func ingestProcessRevRelWorkloadMode(db *badger.DB, fileCount int, chunkHashes [
 }
 
 func ingestAppendMemberOnlyWorkload(db *badger.DB, fileCount int, chunkHashes [][]byte, fileOffset int) error {
+	cs := dbmeta.ChunkSize(db)
 	for fileIdx := 0; fileIdx < fileCount; fileIdx++ {
 		fhash := []byte(fmt.Sprintf("ingest-app-file-%06d", fileOffset+fileIdx))
 		batch := db.NewWriteBatch()
 		members := make([]dbio.ReverseRelationAppendMember, 0, len(chunkHashes))
 
 		for chunkIdx, chash := range chunkHashes {
-			index := int64(chunkIdx) * cnst.ChonkSize
+			index := int64(chunkIdx) * cs
 			members = append(members, dbio.ReverseRelationAppendMember{Chash: chash, Index: index})
 		}
 
-		if err := dbio.SetReverseRelationAppendMembers(fhash, members, batch); err != nil {
+		if err := dbio.SetReverseRelationAppendMembers(db, fhash, members, batch); err != nil {
 			batch.Cancel()
 			return err
 		}
@@ -440,7 +357,7 @@ func simulateIngestProbes(db *badger.DB, chunkData [][]byte) error {
 	seenChunks := &sync.Map{}
 
 	for i, cdata := range chunkData {
-		chash, err := util.GetChonkHash(cdata, cnst.GetHashAlgo())
+		chash, err := util.GetChonkHash(cdata, dbmeta.ChunkHasher(db)())
 		if err != nil {
 			return err
 		}
@@ -462,49 +379,6 @@ func simulateIngestProbes(db *badger.DB, chunkData [][]byte) error {
 	}
 
 	return nil
-}
-
-// processChonkHotpath is a write-path simulation helper retained for hotspot
-// attribution. The active benchmark path uses probe-only helpers below.
-func processChonkHotpath(chash []byte, db *badger.DB, batch *badger.WriteBatch) error {
-	// First PingNode: check simhash namespace.
-	sigKey := util.AppendToBytesSlice(cnst.ChonkSimhashNamespace, chash)
-	err := dbio.PingNode(sigKey, db)
-	if err == badger.ErrKeyNotFound {
-		// Skip simhash enqueue for benchmark; focus on chunk write.
-	} else if err != nil {
-		return err
-	}
-
-	// Second PingNode: check chunk namespace (hot-path probe to measure).
-	ckey := util.AppendToBytesSlice(cnst.ChonkNamespace, chash)
-	err = dbio.PingNode(ckey, db)
-	if err == badger.ErrKeyNotFound {
-		// Instead of calling SetBatchChonkNode (which requires full encryption setup),
-		// directly write the chunk hash to batch to measure just the DB write cost.
-		return dbio.SetBatchNode(ckey, chash, batch)
-	}
-
-	return err
-}
-
-// processRelHotpath is a write-path simulation helper retained for attribution.
-func processRelHotpath(index int64, fhash, chash []byte, db *badger.DB, batch *badger.WriteBatch) error {
-	relKey := util.AppendToBytesSlice(cnst.RelationNamespace, fhash, cnst.DataSeperator, index)
-
-	err := dbio.PingNode(relKey, db)
-	if err == badger.ErrKeyNotFound {
-		return dbio.SetBatchNode(relKey, chash, batch)
-	}
-
-	return err
-}
-
-// processRevRelHotpath is a write-path simulation helper retained for
-// append-member write attribution.
-func processRevRelHotpath(index int64, fhash, chash []byte, db *badger.DB, batch *badger.WriteBatch) error {
-	_ = db
-	return dbio.SetReverseRelationAppendMember(chash, index, fhash, batch)
 }
 
 // Probe-only versions (no writes) to measure just the read cost.
@@ -553,19 +427,16 @@ func probeRevRelHotpath(chash []byte, db *badger.DB) error {
 	return nil
 }
 
-// BenchmarkIngestBatchOwnership compares the metadata write throughput of the
-// current shared-batch fan-out path against the single-writer batch-owner path.
+// BenchmarkIngestBatchOwnership measures the metadata write throughput of the
+// single-writer batch-owner path. (The shared-batch fan-out path it was once
+// compared with is gone.)
 //
-// Both modes use the same workload: N files each with M chunks, where every
-// file shares the same set of chunk hashes so reverse-relation map merges are
-// exercised on every write.
+// The workload is N files each with M chunks, where every file shares the
+// same set of chunk hashes.
 //
 // The benchmark measures only the write-loop side (processRel + processRevRel
-// issued directly, as in BenchmarkIngestMetadataPath) so the two modes differ
-// only in their batch-ownership model, not in hashing work.
+// issued directly, as in BenchmarkIngestMetadataPath), not hashing work.
 func BenchmarkIngestBatchOwnership(b *testing.B) {
-	ensureBenchmarkCodecs(b)
-
 	workloads := []struct {
 		name   string
 		files  int
@@ -582,7 +453,7 @@ func BenchmarkIngestBatchOwnership(b *testing.B) {
 
 		b.Run("batch_owner/"+workload.name, func(b *testing.B) {
 			for i := 0; i < b.N; i++ {
-				db := openRevRelBenchDB(b)
+				db := openRevRelBenchDB(b, testdb.Default)
 				if err := ingestBatchOwnerMetadataWorkload(db, workload.files, chunkHashes); err != nil {
 					db.Close()
 					b.Fatalf("batch_owner workload failed: %v", err)
@@ -600,8 +471,6 @@ func BenchmarkIngestBatchOwnership(b *testing.B) {
 // unique file-id range so relation/reverse-relation writes continue to exercise
 // merge/update behavior instead of degenerating into no-op duplicates.
 func BenchmarkIngestBatchOwnershipSteadyState(b *testing.B) {
-	ensureBenchmarkCodecs(b)
-
 	workloads := []struct {
 		name   string
 		files  int
@@ -617,7 +486,7 @@ func BenchmarkIngestBatchOwnershipSteadyState(b *testing.B) {
 		chunkHashes := buildBenchmarkChunkHashes(workload.chunks)
 
 		b.Run("batch_owner_via_metadata_helper/"+workload.name, func(b *testing.B) {
-			db := openRevRelBenchDB(b)
+			db := openRevRelBenchDB(b, testdb.Default)
 			defer db.Close()
 
 			b.ResetTimer()
@@ -629,7 +498,7 @@ func BenchmarkIngestBatchOwnershipSteadyState(b *testing.B) {
 		})
 
 		b.Run("batch_owner/"+workload.name, func(b *testing.B) {
-			db := openRevRelBenchDB(b)
+			db := openRevRelBenchDB(b, testdb.Default)
 			defer db.Close()
 
 			b.ResetTimer()
@@ -643,11 +512,9 @@ func BenchmarkIngestBatchOwnershipSteadyState(b *testing.B) {
 }
 
 // BenchmarkIngestBatchOwnershipSimhashToggle measures the live batch-owner
-// worker path with ENABLESIMHASH flipped on and off. This makes the simhash
+// worker path with signatures on and off. This makes the simhash
 // cost visible in the same ingest shape the production code uses.
 func BenchmarkIngestBatchOwnershipSimhashToggle(b *testing.B) {
-	ensureBenchmarkCodecs(b)
-
 	workloads := []struct {
 		name   string
 		files  int
@@ -664,14 +531,8 @@ func BenchmarkIngestBatchOwnershipSimhashToggle(b *testing.B) {
 		mappedFile := concatBenchmarkChunkData(chunkData)
 
 		b.Run("simhash_off/"+workload.name, func(b *testing.B) {
-			db := openRevRelBenchDB(b)
+			db := openRevRelBenchDB(b, testdb.Default)
 			defer db.Close()
-
-			oldEnableSimhash := cnst.ENABLESIMHASH
-			cnst.ENABLESIMHASH = false
-			defer func() {
-				cnst.ENABLESIMHASH = oldEnableSimhash
-			}()
 
 			b.ResetTimer()
 			for i := 0; i < b.N; i++ {
@@ -682,14 +543,8 @@ func BenchmarkIngestBatchOwnershipSimhashToggle(b *testing.B) {
 		})
 
 		b.Run("simhash_on/"+workload.name, func(b *testing.B) {
-			db := openRevRelBenchDB(b)
+			db := openRevRelBenchDB(b, testdb.Default)
 			defer db.Close()
-
-			oldEnableSimhash := cnst.ENABLESIMHASH
-			cnst.ENABLESIMHASH = true
-			defer func() {
-				cnst.ENABLESIMHASH = oldEnableSimhash
-			}()
 
 			b.ResetTimer()
 			for i := 0; i < b.N; i++ {
@@ -704,18 +559,18 @@ func BenchmarkIngestBatchOwnershipSimhashToggle(b *testing.B) {
 // ingestBatchOwnerMetadataWorkload drives batchOwnerWriteLoop directly,
 // feeding pre-computed chunk hashes through the task channel so we measure
 // the writer's DB throughput in isolation from hashing work.
-// cdata is set to nil so batchOwnerProcessChonk skips the chunk existence
-// probe and store, making this directly comparable to ingestMetadataWorkload
-// which only exercises processRel + processRevRel.
+// No chunk is stored, making this directly comparable to
+// ingestMetadataWorkload which only exercises processRel + processRevRel.
 func ingestBatchOwnerMetadataWorkload(db *badger.DB, fileCount int, chunkHashes [][]byte) error {
 	return ingestBatchOwnerMetadataWorkloadWithOffset(db, fileCount, chunkHashes, 0)
 }
 
 func ingestBatchOwnerMetadataWorkloadWithOffset(db *badger.DB, fileCount int, chunkHashes [][]byte, fileOffset int) error {
+	cs := dbmeta.ChunkSize(db)
 	baseTasks := make([]chunkTask, len(chunkHashes))
 	for chunkIdx, chash := range chunkHashes {
-		index := int64(chunkIdx) * cnst.ChonkSize
-		baseTasks[chunkIdx] = chunkTask{index: index, chash: chash, cdata: nil}
+		index := int64(chunkIdx) * cs
+		baseTasks[chunkIdx] = chunkTask{index: index, chash: chash}
 	}
 
 	for fileIdx := 0; fileIdx < fileCount; fileIdx++ {
@@ -732,36 +587,14 @@ func ingestBatchOwnerMetadataWorkloadWithOffset(db *badger.DB, fileCount int, ch
 // metadata-only tasks without channel/plumbing overhead, so the benchmark
 // focuses on relation/reverse-relation write behavior.
 func batchOwnerWriteLoopBenchmarkDirect(fhash []byte, db *badger.DB, tasks []chunkTask) error {
-	batch, err := util.InitBatch(db)
-	if err != nil {
-		return err
-	}
-
-	var seenChunks map[string]struct{}
-	revRelBuffer := newRevRelAppendBuffer(len(tasks))
+	batch := util.InitBatch(db, engine.For(db).MaxBatchCount())
 
 	for _, task := range tasks {
-		if len(task.cdata) != 0 {
-			if seenChunks == nil {
-				seenChunks = make(map[string]struct{}, len(tasks))
-			}
-			if err := batchOwnerProcessChonk(task.cdata, task.chash, db, batch, nil, nil, seenChunks); err != nil {
-				batch.Cancel()
-				return err
-			}
-		}
 		if err := processRel(task.index, fhash, task.chash, db, batch); err != nil {
 			batch.Cancel()
 			return err
 		}
-		if err := processRevRel(task.index, fhash, task.chash, batch, revRelBuffer); err != nil {
-			batch.Cancel()
-			return err
-		}
-	}
-
-	if revRelBuffer != nil {
-		if err := revRelBuffer.flush(fhash, batch); err != nil {
+		if err := processRevRel(false, task.index, fhash, task.chash, db, batch); err != nil {
 			batch.Cancel()
 			return err
 		}

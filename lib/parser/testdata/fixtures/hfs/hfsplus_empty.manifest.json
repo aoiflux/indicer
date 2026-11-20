@@ -1,0 +1,19 @@
+{
+ "format": "raw",
+ "generator": "gen_fixtures.sh unknown",
+ "image": "hfsplus_empty.img",
+ "partitions": [
+  {
+   "deleted": [],
+   "files": [],
+   "fs": "hfs",
+   "offset": 0
+  }
+ ],
+ "schema": 1,
+ "segments": [
+  "hfsplus_empty.img"
+ ],
+ "sha256": "84687ad3e0fb3597e6617c970d7ea6afee9353e8260c3fd1fce9ec51a3a5c2ff",
+ "size": 8388608
+}

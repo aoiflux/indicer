@@ -3,6 +3,7 @@ package enrichment
 import "testing"
 
 func TestClassifyFileAssignsExpectedTags(t *testing.T) {
+	t.Parallel()
 	tests := []struct {
 		name        string
 		path        string

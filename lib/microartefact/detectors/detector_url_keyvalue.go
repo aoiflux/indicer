@@ -16,7 +16,8 @@ func (d URLDetector) Name() string {
 
 func (d URLDetector) Detect(_ model.FileRecord, content []byte) ([]model.Artefact, error) {
 	maxResults := resolveMaxResults(d.MaxResults, defaultURLResults)
-	matches := urlPattern.FindAllStringIndex(string(content), maxResults)
+	// Matched on the bytes: converting a 4 MiB window to a string copied it.
+	matches := urlPattern.FindAllIndex(content, maxResults)
 	results := make([]model.Artefact, 0, len(matches))
 	for _, match := range matches {
 		value := trimMatchPunctuation(string(content[match[0]:match[1]]))
@@ -46,7 +47,7 @@ func (d KeyValueDetector) Name() string {
 
 func (d KeyValueDetector) Detect(_ model.FileRecord, content []byte) ([]model.Artefact, error) {
 	maxResults := resolveMaxResults(d.MaxResults, defaultKeyValueResults)
-	matches := keyValuePattern.FindAllStringSubmatchIndex(string(content), maxResults)
+	matches := keyValuePattern.FindAllSubmatchIndex(content, maxResults)
 	results := make([]model.Artefact, 0, len(matches))
 	for _, match := range matches {
 		if len(match) < 6 {

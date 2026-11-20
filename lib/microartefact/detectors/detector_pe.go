@@ -16,6 +16,9 @@ func (d PEMetadataDetector) Name() string {
 	return "pe-metadata"
 }
 
+// WantsRaw: the detector parses the PE itself.
+func (d PEMetadataDetector) WantsRaw() bool { return true }
+
 func (d PEMetadataDetector) Detect(_ model.FileRecord, content []byte) ([]model.Artefact, error) {
 	reader := bytes.NewReader(content)
 	peFile, err := pe.NewFile(reader)
@@ -39,11 +42,10 @@ func (d PEMetadataDetector) Detect(_ model.FileRecord, content []byte) ([]model.
 	}
 
 	for _, section := range peFile.Sections {
-		start := int64(section.Offset)
-		end := start + int64(section.Size)
-		if end > int64(len(content)) {
-			end = int64(len(content))
-		}
+		// The section table is evidence: a section past the end of the file
+		// sliced out of range and panicked (GRA-13).
+		start := min(int64(section.Offset), int64(len(content)))
+		end := min(start+int64(section.Size), int64(len(content)))
 		entropy := estimateEntropy(content[start:end])
 		value := fmt.Sprintf("%s size=%d entropy=%.2f", section.Name, section.Size, entropy)
 		results = append(results, model.Artefact{

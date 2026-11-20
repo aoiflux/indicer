@@ -1,0 +1,140 @@
+package e2e
+
+import (
+	"encoding/json"
+	"fmt"
+	"os"
+	"path/filepath"
+	"testing"
+	"time"
+
+	"indicer/internal/testutil"
+	"indicer/internal/testutil/fsfixture"
+	"indicer/internal/testutil/leakcheck"
+)
+
+func TestMain(m *testing.M) {
+	code := leakcheck.Run(m)
+	fsfixture.Cleanup()
+	if err := testutil.RemoveBuilds(); err != nil {
+		fmt.Fprintln(os.Stderr, "remove the test builds:", err)
+	}
+	os.Exit(code)
+}
+
+// listedFile is one indexed file in `dues list` output.
+type listedFile struct {
+	Path      string `json:"path"`
+	Hash      string `json:"hash"`
+	Size      int64  `json:"size"`
+	IsDeleted bool   `json:"isDeleted"`
+}
+
+type listOutput struct {
+	Evidence []struct {
+		Name       string `json:"name"`
+		Hash       string `json:"hash"`
+		Completed  bool   `json:"completed"`
+		Partitions []struct {
+			FileName     string       `json:"fileName"`
+			IndexedFiles []listedFile `json:"indexedFiles"`
+		} `json:"partitions"`
+	} `json:"evidence"`
+}
+
+// parseList parses the stdout of `dues list`, which is one JSON document
+// and nothing else.
+func parseList(stdout string) (listOutput, error) {
+	var doc listOutput
+	if err := json.Unmarshal([]byte(stdout), &doc); err != nil {
+		return doc, fmt.Errorf("list stdout is not one JSON document: %w", err)
+	}
+	return doc, nil
+}
+
+// ingestKnownDefects maps "<fixture>|<path>" (or "<fixture>|*") to the
+// inventory ID that keeps a ground-truth file from being indexed and
+// restored correctly today. The fix for each ID removes its entries.
+//
+// W6 removed the last entries: ING-7 (containers indexed over their raw
+// bytes), PAR-3 (empty, inline, resident, sparse, unwritten and fragmented
+// files not indexed) and PAR-20 (compressed content not indexed).
+var ingestKnownDefects = map[string]string{}
+
+func ingestDefect(fixture string, f fsfixture.File) (string, bool) {
+	if id, ok := ingestKnownDefects[fixture+"|"+f.Path]; ok {
+		return id, true
+	}
+	if id, ok := ingestKnownDefects[fixture+"|*"]; ok {
+		return id, true
+	}
+	return "", false
+}
+
+// TestIngestFixtures stores every fixture image with default settings, then
+// checks that each live file in the ground truth is listed as an indexed
+// file and restores to its true content.
+func TestIngestFixtures(t *testing.T) {
+	t.Parallel()
+	if testing.Short() {
+		t.Skip("builds and runs the dues binary")
+	}
+	bin := testutil.BuildDues(t)
+	for _, m := range fsfixture.All(t) {
+		t.Run(m.Name, func(t *testing.T) {
+			image := fsfixture.Open(t, m)
+			work := t.TempDir()
+			db := filepath.Join(work, "db")
+
+			store := testutil.RunDues(t, bin, work, 5*time.Minute, "store", image, "--dbpath", db)
+			list := testutil.RunDues(t, bin, work, time.Minute, "list", "--dbpath", db)
+			doc, err := parseList(list.Stdout)
+			if err != nil {
+				t.Fatalf("list: %v (exit %d)\nstore: %s\nlist: %s", err, list.ExitCode, store.LastLine(), list.LastLine())
+			}
+			indexed := map[string]listedFile{}
+			for _, e := range doc.Evidence {
+				for _, p := range e.Partitions {
+					for _, f := range p.IndexedFiles {
+						if !f.IsDeleted {
+							indexed[f.Path] = f
+						}
+					}
+				}
+			}
+
+			for _, part := range m.Partitions {
+				for _, want := range part.Files {
+					if want.Kind != "file" {
+						continue
+					}
+					t.Run(want.Path, func(t *testing.T) {
+						got, ok := indexed[want.Path]
+						if !ok {
+							if id, known := ingestDefect(m.Name, want); known {
+								t.Skipf("known defect %s: not indexed (store exit %d: %s)", id, store.ExitCode, store.LastLine())
+							}
+							t.Fatalf("not indexed (store exit %d: %s)", store.ExitCode, store.LastLine())
+						}
+						out := filepath.Join(work, "restored.bin")
+						_ = os.Remove(out)
+						res := testutil.RunDues(t, bin, work, time.Minute, "restore", got.Hash, "-f", out, "--dbpath", db)
+						outcome := fmt.Sprintf("restore exit %d: %s", res.ExitCode, res.LastLine())
+						if res.ExitCode == 0 {
+							if sum := testutil.FileSHA256(t, out); sum == want.SHA256 {
+								return
+							}
+							if fi, err := os.Stat(out); err == nil {
+								outcome = fmt.Sprintf("restored %d bytes, want %d, content differs", fi.Size(), want.Size)
+							}
+						}
+						if id, known := ingestDefect(m.Name, want); known {
+							t.Skipf("known defect %s: %s", id, outcome)
+						}
+						t.Fatal(outcome)
+					})
+				}
+			}
+		})
+	}
+}

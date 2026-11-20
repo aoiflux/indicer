@@ -2,34 +2,55 @@ package fileparser
 
 import (
 	"bytes"
+	"errors"
+	"fmt"
 	"io"
+	"sync"
 
 	pdfapi "github.com/pdfcpu/pdfcpu/pkg/api"
 	pdfcpu "github.com/pdfcpu/pdfcpu/pkg/pdfcpu"
 	pdfmodel "github.com/pdfcpu/pdfcpu/pkg/pdfcpu/model"
 )
 
-func parsePDFContent(content []byte) ([]byte, bool) {
+// pdfcpu writes a configuration directory under the user's configuration
+// directory the first time a default configuration is made, unless told not
+// to (GRA-23).
+var disablePDFConfigDir sync.Once
+
+// parsePDFContent extracts the text of a PDF's pages. The streams are measured
+// against the inflation limits, their declared lengths against the file and
+// the file's declared counts against the limits first (GRA-14); the file is
+// read and validated,
+// not optimised, which decoded every stream to deduplicate them; and the text
+// kept is capped.
+func parsePDFContent(content []byte) ([]byte, error) {
 	if len(content) == 0 {
-		return nil, false
+		return nil, errors.New("pdf: empty")
+	}
+	if err := checkPDFInflation(content); err != nil {
+		return nil, err
+	}
+	if err := checkPDFLengths(content); err != nil {
+		return nil, err
+	}
+	if err := checkPDFCounts(content); err != nil {
+		return nil, err
 	}
 
+	disablePDFConfigDir.Do(pdfapi.DisableConfigDir)
 	conf := pdfmodel.NewDefaultConfiguration()
-	ctx, err := pdfapi.ReadValidateAndOptimize(bytes.NewReader(content), conf)
+	ctx, err := pdfapi.ReadAndValidate(bytes.NewReader(content), conf)
 	if err != nil {
-		return nil, false
+		return nil, fmt.Errorf("pdf: %w", err)
 	}
 
 	buf := bytes.NewBuffer(nil)
-	for page := 1; page <= ctx.PageCount; page++ {
+	for page := 1; page <= ctx.PageCount && buf.Len() < pdfMaxText; page++ {
 		r, err := pdfcpu.ExtractPageContent(ctx, page)
-		if err != nil {
+		if err != nil || r == nil {
 			continue
 		}
-		if r == nil {
-			continue
-		}
-		b, err := io.ReadAll(r)
+		b, err := io.ReadAll(io.LimitReader(r, int64(pdfMaxText-buf.Len())))
 		if err != nil {
 			continue
 		}
@@ -38,8 +59,7 @@ func parsePDFContent(content []byte) ([]byte, bool) {
 	}
 
 	if buf.Len() == 0 {
-		return nil, false
+		return nil, errors.New("pdf: no page text")
 	}
-
-	return buf.Bytes(), true
+	return buf.Bytes(), nil
 }

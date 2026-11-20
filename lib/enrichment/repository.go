@@ -10,8 +10,21 @@ type Repository interface {
 	UpsertEvidence(record EvidenceRecord) error
 	UpsertPartition(record PartitionRecord) error
 	UpsertFile(record FileRecord) error
+
 	ReadHierarchy() (*EnrichmentHierarchy, error)
 	Close() error
+}
+
+// FileBatchRepository is an optional capability: a repository that can write
+// many file records in one durable, attributed commit.
+//
+// It is a separate interface rather than a method on Repository so that a
+// backend which cannot batch stays usable — the service falls back to
+// per-record writes. On the graph backend the difference is one fsync per
+// batch instead of one per file, and one attribution record instead of
+// thousands.
+type FileBatchRepository interface {
+	UpsertFiles(records []FileRecord) error
 }
 
 type EnrichmentHierarchy = hierarchy.ContainerHierarchy[*EnrichmentEvidenceFileNode]
@@ -45,6 +58,9 @@ type FileLevelArtefactNode struct {
 type IndexedFileArtefactView struct {
 	IndexedFileProjection
 	Artefacts []*FileLevelArtefactNode
+	// ArtefactCount is how many artefacts the file holds; Artefacts holds
+	// fewer when a bounded read cut them.
+	ArtefactCount int
 }
 
 // EnrichmentFileNode represents one indexed/file-level node in enrichment hierarchy output.

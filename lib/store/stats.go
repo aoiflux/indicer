@@ -1,20 +1,23 @@
 package store
 
 import (
-	"bytes"
+	"context"
 	"fmt"
+	"indicer/internal/console"
+	"indicer/internal/ui"
 	"os"
 	"path/filepath"
 	"strings"
 
 	"indicer/lib/cnst"
+	"indicer/lib/dbio"
+	"indicer/lib/dbmeta"
+	"indicer/lib/fio"
 	"indicer/lib/structs"
 	"indicer/lib/util"
 
 	"github.com/dgraph-io/badger/v4"
 	"github.com/dustin/go-humanize"
-	"github.com/fatih/color"
-	"github.com/vmihailenco/msgpack/v5"
 )
 
 type DBStats struct {
@@ -30,12 +33,18 @@ type DBStats struct {
 	FragmentedIndexedNames int64
 	UniqueChunks           int64
 	TotalChunkRefs         int64
-	SharedChunks           int64 // chunk positions referenced by more than 1 file
-	OnDiskBytes            int64
+	// SharedChunks counts the chunks whose reverse relations name more than
+	// one object. Without reverse relations (stored without --revrel) it is
+	// 0.
+	SharedChunks int64
+	OnDiskBytes  int64
+	// ChunkSize is the database's chunk size, in bytes.
+	ChunkSize int64
 }
 
-func Stats(db *badger.DB) error {
-	s, err := gatherStats(db)
+// Stats prints the database's statistics.
+func Stats(ctx context.Context, db *badger.DB) error {
+	s, err := GatherStats(ctx, db)
 	if err != nil {
 		return err
 	}
@@ -43,164 +52,102 @@ func Stats(db *badger.DB) error {
 	return nil
 }
 
-func GatherStats(db *badger.DB) (*DBStats, error) {
-	return gatherStats(db)
-}
-
-func gatherStats(db *badger.DB) (*DBStats, error) {
-	s := &DBStats{}
+// GatherStats reads the database's statistics in one read transaction,
+// stopping when ctx ends. Its memory does not grow with the database.
+func GatherStats(ctx context.Context, db *badger.DB) (*DBStats, error) {
+	s := &DBStats{ChunkSize: dbmeta.ChunkSize(db)}
 
 	err := db.View(func(txn *badger.Txn) error {
-		valOpts := badger.DefaultIteratorOptions
-		valOpts.PrefetchSize = 1000
-
-		keyOpts := badger.DefaultIteratorOptions
-		keyOpts.PrefetchValues = false
-		keyOpts.PrefetchSize = 1000
-
-		// --- Evidence files (need values to get size + completed flag) ---
-		eviPrefix := []byte(cnst.EviFileNamespace)
-		it := txn.NewIterator(valOpts)
-		for it.Seek(eviPrefix); it.ValidForPrefix(eviPrefix); it.Next() {
-			v, err := it.Item().ValueCopy(nil)
+		// count calls fn for each key under prefix, checking ctx as it goes.
+		count := func(prefix string, values bool, fn func(*badger.Item) error) error {
+			opts := badger.DefaultIteratorOptions
+			opts.PrefetchValues = values
+			opts.PrefetchSize = 1000
+			it := txn.NewIterator(opts)
+			defer it.Close()
+			n := 0
+			for it.Seek([]byte(prefix)); it.ValidForPrefix([]byte(prefix)); it.Next() {
+				if n%4096 == 0 {
+					if err := ctx.Err(); err != nil {
+						return err
+					}
+				}
+				n++
+				if err := fn(it.Item()); err != nil {
+					return err
+				}
+			}
+			return nil
+		}
+		record := func(item *badger.Item, v any) error {
+			data, err := item.ValueCopy(nil)
 			if err != nil {
-				it.Close()
 				return err
 			}
-			if dec, err := cnst.DECODER.DecodeAll(v, nil); err == nil {
-				v = dec
+			if err := dbio.DecodeRecord(data, v); err != nil {
+				return fmt.Errorf("record %q: %w", item.Key(), err)
 			}
+			return nil
+		}
+
+		err := count(cnst.EviFileNamespace, true, func(item *badger.Item) error {
 			var ef structs.EvidenceFile
-			if err := msgpack.Unmarshal(v, &ef); err != nil {
-				it.Close()
+			if err := record(item, &ef); err != nil {
 				return err
 			}
 			s.TotalFiles++
-			if ef.Completed {
+			if ef.Completed && ef.IngestState != structs.IngestStateDuplicate {
 				s.CompletedFiles++
 				s.TotalLogicalSize += ef.Size
 			}
+			return nil
+		})
+		if err != nil {
+			return err
 		}
-		it.Close()
-
-		// --- Partitions (keys only) ---
-		partiPrefix := []byte(cnst.PartiFileNamespace)
-		it = txn.NewIterator(keyOpts)
-		for it.Seek(partiPrefix); it.ValidForPrefix(partiPrefix); it.Next() {
-			s.TotalPartitions++
+		if err := count(cnst.PartiFileNamespace, false, func(*badger.Item) error { s.TotalPartitions++; return nil }); err != nil {
+			return err
 		}
-		it.Close()
-
-		// --- Indexed files (values for metadata-aware stats) ---
-		idxPrefix := []byte(cnst.IdxFileNamespace)
-		it = txn.NewIterator(valOpts)
-		for it.Seek(idxPrefix); it.ValidForPrefix(idxPrefix); it.Next() {
-			v, err := it.Item().ValueCopy(nil)
-			if err != nil {
-				it.Close()
-				return err
-			}
-			if dec, err := cnst.DECODER.DecodeAll(v, nil); err == nil {
-				v = dec
-			}
-
+		err = count(cnst.IdxFileNamespace, true, func(item *badger.Item) error {
 			var ifile structs.IndexedFile
-			if err := msgpack.Unmarshal(v, &ifile); err != nil {
-				it.Close()
+			if err := record(item, &ifile); err != nil {
 				return err
 			}
-
 			s.TotalIndexedFiles++
-			s.TotalIndexedNames += int64(len(ifile.Names))
-
-			objDeleted := ifile.IsDeleted
-			var objFragmented bool
-			for name := range ifile.Names {
-				meta, ok := ifile.NameMeta[name]
-				if !ok {
-					meta = structs.IndexedNameMeta{IsDeleted: ifile.IsDeleted}
-				}
-				if meta.IsDeleted {
-					s.DeletedIndexedNames++
-					objDeleted = true
-				}
-				if meta.IsFragmented {
-					s.FragmentedIndexedNames++
-					objFragmented = true
-				}
+			if ifile.Name != "" {
+				s.TotalIndexedNames++
 			}
-
-			if objDeleted {
+			if ifile.IsDeleted {
 				s.DeletedIndexedFiles++
+				s.DeletedIndexedNames++
 			}
-			if objFragmented {
+			if ifile.IsFragmented {
 				s.FragmentedIndexedFiles++
+				s.FragmentedIndexedNames++
 			}
+			return nil
+		})
+		if err != nil {
+			return err
 		}
-		it.Close()
-
-		// --- Unique chunks (keys only) ---
-		chonkPrefix := []byte(cnst.ChonkNamespace)
-		it = txn.NewIterator(keyOpts)
-		for it.Seek(chonkPrefix); it.ValidForPrefix(chonkPrefix); it.Next() {
-			s.UniqueChunks++
+		if err := count(cnst.ChonkNamespace, false, func(*badger.Item) error { s.UniqueChunks++; return nil }); err != nil {
+			return err
 		}
-		it.Close()
-
-		// --- Total chunk references / file→chunk mappings (keys only) ---
-		relPrefix := []byte(cnst.RelationNamespace)
-		it = txn.NewIterator(keyOpts)
-		for it.Seek(relPrefix); it.ValidForPrefix(relPrefix); it.Next() {
-			s.TotalChunkRefs++
+		if err := count(cnst.RelationNamespace, false, func(*badger.Item) error { s.TotalChunkRefs++; return nil }); err != nil {
+			return err
 		}
-		it.Close()
-
-		// --- Shared chunks: logical rev-rel entries referenced by more than 1 file ---
-		sharedByRelation := make(map[string]map[string]struct{})
-
-		appendPrefix := []byte(cnst.ReverseRelationAppendNamespace)
-		it = txn.NewIterator(valOpts)
-		for it.Seek(appendPrefix); it.ValidForPrefix(appendPrefix); it.Next() {
-			memberKey := it.Item().KeyCopy(nil)
-			split := bytes.Split(memberKey, []byte(cnst.DataSeperator))
-			if len(split) < 4 {
-				it.Close()
-				return fmt.Errorf("invalid reverse-relation append key: %q", string(memberKey))
-			}
-			chash := bytes.TrimPrefix(split[1], []byte(":"))
-			logicalKey := string(util.AppendToBytesSlice(cnst.ReverseRelationNamespace, chash, cnst.DataSeperator, split[2]))
-
-			v, err := it.Item().ValueCopy(nil)
-			if err != nil {
-				it.Close()
-				return err
-			}
-			if dec, err := cnst.DECODER.DecodeAll(v, nil); err == nil {
-				v = dec
-			}
-
-			memberSet := sharedByRelation[logicalKey]
-			if memberSet == nil {
-				memberSet = make(map[string]struct{}, 1)
-				sharedByRelation[logicalKey] = memberSet
-			}
-			memberSet[string(v)] = struct{}{}
-		}
-		it.Close()
-
-		for _, memberSet := range sharedByRelation {
-			if len(memberSet) > 1 {
-				s.SharedChunks++
-			}
-		}
-
-		return nil
+		// Reverse relations are counted in every form they were kept in,
+		// one chunk at a time. Stats used to split their keys on the
+		// separator and hold every one in a map; the one-key-per-occurrence
+		// form written since W3 has fewer parts, and failed (STO-24).
+		s.SharedChunks, err = dbio.CountSharedChunks(ctx, txn, dbmeta.ChunkHasher(db)().Size())
+		return err
 	})
 	if err != nil {
 		return nil, err
 	}
 
-	s.OnDiskBytes = calcBlobDirBytes(db.Opts().Dir)
+	s.OnDiskBytes = calcBlobDirBytes(dbio.KVDir(db))
 	return s, nil
 }
 
@@ -217,44 +164,56 @@ func calcBlobDirBytes(dbDir string) int64 {
 }
 
 func printStats(s *DBStats) {
-	sep := strings.Repeat("─", 46)
-	dim := color.New(color.FgHiBlack)
-	sectionHdr := color.New(color.FgMagenta, color.Bold)
-	lbl := color.New(color.FgWhite)
-	val := color.New(color.FgYellow, color.Bold)
-	good := color.New(color.FgGreen, color.Bold)
-	warn := color.New(color.FgRed)
+	p := ui.For(console.Out())
+	g := p.Glyphs()
+	sep := strings.Repeat(g.Rule, 46)
+	dim := func(s string) string { return p.Paint(ui.Muted, s) }
+	val := p.Bold
+	good := func(s string) string { return p.Strong(ui.Success, s) }
+	warn := func(s string) string { return p.Strong(ui.Warning, s) }
+	sectionHdr := func(name string) { console.Println(p.Strong(ui.Forensics, name)) }
 
-	statRow := func(label string, formatted string, c *color.Color) {
-		lbl.Printf("    %-30s", label+":")
-		c.Println(formatted)
+	statRow := func(label string, formatted string, style func(string) string) {
+		console.Printf("    %-30s", label+":")
+		console.Println(style(formatted))
 	}
 
-	color.New(color.FgCyan, color.Bold).Println()
-	color.New(color.FgCyan, color.Bold).Println("  ╔══════════════════════════════════════════════╗")
-	color.New(color.FgCyan, color.Bold).Println("  ║       DUES  Database  Statistics             ║")
-	color.New(color.FgCyan, color.Bold).Println("  ╚══════════════════════════════════════════════╝")
+	box := []string{
+		"  ╔══════════════════════════════════════════════╗",
+		"  ║       DUES  Database  Statistics             ║",
+		"  ╚══════════════════════════════════════════════╝",
+	}
+	if p.GlyphSet() == ui.GlyphsASCII {
+		box = []string{
+			"  +----------------------------------------------+",
+			"  |       DUES  Database  Statistics             |",
+			"  +----------------------------------------------+",
+		}
+	}
+	console.Println()
+	for _, l := range box {
+		console.Println(p.Strong(ui.Forensics, l))
+	}
 
 	// ── FILES ──────────────────────────────────────────────────────────────
-	fmt.Println()
-	sectionHdr.Println("  FILES")
-	fmt.Println("  ", dim.Sprint(sep))
+	console.Println()
+	sectionHdr("  FILES")
+	console.Println("  ", dim(sep))
 
 	statRow("Total files", humanize.Comma(s.TotalFiles), val)
 	statRow("Completed", humanize.Comma(s.CompletedFiles), good)
 	if inc := s.TotalFiles - s.CompletedFiles; inc > 0 {
 		statRow("Incomplete", humanize.Comma(inc), warn)
 	}
-	statRow("Total logical size", humanize.Bytes(uint64(s.TotalLogicalSize)), val)
+	statRow("Total logical size", ui.Bytes(s.TotalLogicalSize), val)
 	if s.CompletedFiles > 0 {
-		avg := uint64(s.TotalLogicalSize) / uint64(s.CompletedFiles)
-		statRow("Avg file size", humanize.Bytes(avg), val)
+		statRow("Avg file size", ui.Bytes(s.TotalLogicalSize/s.CompletedFiles), val)
 	}
 
 	// ── CHUNKS ─────────────────────────────────────────────────────────────
-	fmt.Println()
-	sectionHdr.Println("  CHUNKS")
-	fmt.Println("  ", dim.Sprint(sep))
+	console.Println()
+	sectionHdr("  CHUNKS")
+	console.Println("  ", dim(sep))
 
 	statRow("Unique chunks stored", humanize.Comma(s.UniqueChunks), val)
 	statRow("Total chunk references", humanize.Comma(s.TotalChunkRefs), val)
@@ -263,15 +222,14 @@ func printStats(s *DBStats) {
 		statRow("Avg chunks per file", fmt.Sprintf("%.1f", avgChunks), val)
 	}
 	if s.TotalChunkRefs > 0 && s.TotalLogicalSize > 0 {
-		avgSize := uint64(s.TotalLogicalSize) / uint64(s.TotalChunkRefs)
-		statRow("Avg chunk size", humanize.Bytes(avgSize), val)
+		statRow("Avg chunk size", ui.Bytes(s.TotalLogicalSize/s.TotalChunkRefs), val)
 	}
-	statRow("Configured chunk size", humanize.Bytes(uint64(cnst.ChonkSize)), dim)
+	statRow("Chunk size", ui.Bytes(s.ChunkSize), dim)
 
 	if s.SharedChunks > 0 {
-		statRow("Chunks shared across files", humanize.Comma(s.SharedChunks), good)
+		statRow("Chunks shared by objects", humanize.Comma(s.SharedChunks), good)
 	} else {
-		statRow("Chunks shared across files", "0 (no cross-file duplicates)", dim)
+		statRow("Chunks shared by objects", "0 (or stored without --revrel)", dim)
 	}
 
 	deduped := s.TotalChunkRefs - s.UniqueChunks
@@ -286,9 +244,9 @@ func printStats(s *DBStats) {
 	}
 
 	// ── STRUCTURE ──────────────────────────────────────────────────────────
-	fmt.Println()
-	sectionHdr.Println("  STRUCTURE")
-	fmt.Println("  ", dim.Sprint(sep))
+	console.Println()
+	sectionHdr("  STRUCTURE")
+	console.Println("  ", dim(sep))
 
 	statRow("Partition files", humanize.Comma(s.TotalPartitions), val)
 	statRow("Indexed FS objects", humanize.Comma(s.TotalIndexedFiles), val)
@@ -301,7 +259,7 @@ func printStats(s *DBStats) {
 		if s.FragmentedIndexedFiles > 0 {
 			statRow("Fragmented indexed objects", fmt.Sprintf("%s (%.1f%%)", humanize.Comma(s.FragmentedIndexedFiles), fragmentedPct), warn)
 		} else {
-			statRow("Fragmented indexed objects", "0 (currently skipped by parser)", dim)
+			statRow("Fragmented indexed objects", "0", dim)
 		}
 	}
 
@@ -312,28 +270,57 @@ func printStats(s *DBStats) {
 		if s.FragmentedIndexedNames > 0 {
 			statRow("Fragmented indexed names", fmt.Sprintf("%s (%.1f%%)", humanize.Comma(s.FragmentedIndexedNames), fragmentedNamePct), warn)
 		} else {
-			statRow("Fragmented indexed names", "0 (currently skipped by parser)", dim)
+			statRow("Fragmented indexed names", "0", dim)
 		}
 	}
 
 	// ── STORAGE ────────────────────────────────────────────────────────────
-	fmt.Println()
-	sectionHdr.Println("  STORAGE")
-	fmt.Println("  ", dim.Sprint(sep))
+	console.Println()
+	sectionHdr("  STORAGE")
+	console.Println("  ", dim(sep))
 
-	statRow("Logical size", humanize.Bytes(uint64(s.TotalLogicalSize)), val)
-	statRow("On-disk size (blobs)", humanize.Bytes(uint64(s.OnDiskBytes)), val)
+	statRow("Logical size", ui.Bytes(s.TotalLogicalSize), val)
+	statRow("On-disk size (blobs)", ui.Bytes(s.OnDiskBytes), val)
 
 	if s.TotalLogicalSize > 0 && s.OnDiskBytes > 0 {
 		if s.OnDiskBytes < s.TotalLogicalSize {
 			saved := s.TotalLogicalSize - s.OnDiskBytes
 			pct := float64(saved) / float64(s.TotalLogicalSize) * 100
-			statRow("Space saved", fmt.Sprintf("%s (%.1f%%)", humanize.Bytes(uint64(saved)), pct), good)
+			statRow("Space saved", fmt.Sprintf("%s (%.1f%%)", ui.Bytes(saved), pct), good)
 		} else {
 			ratio := float64(s.OnDiskBytes) / float64(s.TotalLogicalSize)
-			statRow("Storage overhead", fmt.Sprintf("%.2fx (encrypted+compressed)", ratio), dim)
+			statRow("Storage overhead", fmt.Sprintf("%.2fx", ratio), dim)
 		}
 	}
 
-	fmt.Println()
+	// ── WRITE ENGINE ───────────────────────────────────────────────────────
+	// The counters are this process's. dues stats writes nothing, so they
+	// mean something only in a process that also stored data (the TUI).
+	fioStats := fio.GetWriteBackendStats()
+
+	console.Println()
+	sectionHdr("  WRITE ENGINE (this process)")
+	console.Println("  ", dim(sep))
+
+	statRow("Requested engine", fioStats.RequestedEngine, val)
+	statRow("Selected engine", fioStats.SelectedEngine, val)
+	statRow("Fallback count", humanize.Comma(int64(fioStats.FallbackCount)), val)
+	if fioStats.RequestedEngine == cnst.StoreIOEngineUring || fioStats.SelectedEngine == cnst.StoreIOEngineUring {
+		statRow("io_uring queue depth", humanize.Comma(int64(fioStats.IOUringQueueDepth)), val)
+		statRow("io_uring submits", humanize.Comma(int64(fioStats.IOUringSubmitCount)), val)
+		statRow("io_uring waits", humanize.Comma(int64(fioStats.IOUringSubmitWaits)), val)
+		statRow("io_uring completions", humanize.Comma(int64(fioStats.IOUringCompletions)), val)
+		if fioStats.IOUringQueueFull > 0 {
+			statRow("io_uring queue-full", humanize.Comma(int64(fioStats.IOUringQueueFull)), warn)
+		} else {
+			statRow("io_uring queue-full", "0", dim)
+		}
+		if fioStats.IOUringSubmitErrors > 0 {
+			statRow("io_uring submit errors", humanize.Comma(int64(fioStats.IOUringSubmitErrors)), warn)
+		} else {
+			statRow("io_uring submit errors", "0", dim)
+		}
+	}
+
+	console.Println()
 }

@@ -1,34 +1,60 @@
 package fio
 
 /*
-Lock-Free Container Architecture:
+Container files (container mode)
 
-This implementation uses a channel-based approach to eliminate mutex contention
-when multiple goroutines write chunks concurrently to containers.
+Chunks are appended to container files by a single writer goroutine; worker
+goroutines hand their encoded chunks to it over a buffered channel and wait
+for the location it assigns.
 
-Architecture:
-  - Multiple worker goroutines enqueue write requests via buffered channel
-  - Single dedicated writer goroutine processes writes sequentially
-  - No mutex locks needed (Go channels use lock-free operations internally)
-  - Natural rate limiting via channel buffer (1000 requests)
+Format v2 (STO-1/2/3). Every container is a new file, blob/ctr-<uuidv7>.blob,
+created exclusively, so no manager ever appends to a file another manager
+wrote, and the offsets it hands out are offsets in a file it created. The
+chunk passes of one database running at once in a process share a manager
+(lib/store chunk_writes.go).
+The file starts with a 64-byte header:
 
-Benefits:
-  ✓ Eliminates lock contention between workers
-  ✓ Better throughput under high concurrency (N workers)
-  ✓ Potential for future batching optimizations
-  ✓ Simpler reasoning (single writer = no race conditions)
-  ✓ Graceful shutdown with request draining
+	[0:8]   magic "DUESCTR2"
+	[8:10]  format version (2), little endian
+	[10:16] zero
+	[16:32] container id (the UUID in the name)
+	[32:40] creation time, Unix nanoseconds
+	[40:60] zero
+	[60:64] CRC-32C of bytes 0-59
 
-Performance:
-  - Mutex approach: Workers contend for lock, context switches
-  - Channel approach: Lock-free enqueue, sequential processing
-  - Expected: 20-40% throughput improvement with 8+ workers
+Each chunk follows as one frame:
+
+	[0:4]   magic "DCR2"
+	[4]     length of the chunk hash, h
+	[5:8]   zero
+	[8:16]  payload length, little endian
+	[16:20] CRC-32C of the payload
+	[20:24] CRC-32C of bytes 0-19 and the hash
+	[24:24+h] chunk hash
+	payload: the encoded chunk (lib/blobcodec)
+
+C||| metadata records the payload's offset and length, so a reader reads the
+encoded chunk directly, as it did from legacy containers, and the frames
+alone are enough to rebuild the chunk index (ScanContainer).
+
+Frames are written with WriteAt at the writer's own offset, which advances
+only after a complete write. A failed write truncates the container back to
+the last complete frame and rotates to a new container, so a short write or
+a full disk never shifts a later chunk's offset. Containers are synced when
+they rotate or close, and through Sync, which the ingest's durability
+barrier calls before chunk metadata becomes visible (STO-5).
+
+Legacy containers (named from a per-manager counter, possibly compressed to
+.blob.zst in quick mode) are still read, but never written.
 */
 
 import (
-	"encoding/base64"
+	"bytes"
+	"encoding/binary"
 	"errors"
 	"fmt"
+	"hash/crc32"
+	"indicer/internal/faultinject"
 	"indicer/lib/cnst"
 	"indicer/lib/util"
 	"io"
@@ -36,20 +62,43 @@ import (
 	"path/filepath"
 	"strings"
 	"sync"
+	"time"
 
-	"github.com/klauspost/compress/zstd"
+	"github.com/google/uuid"
 )
 
-const MaxContainerSize = 1 * cnst.GB // 1GB max per container file
+const (
+	containerMagic      = "DUESCTR2"
+	containerVersion    = 2
+	containerHeaderSize = 64
+	containerPrefix     = "ctr-"
 
-// WriteRequest represents a lock-free write request
+	frameMagic      = "DCR2"
+	frameHeaderSize = 24
+	maxFrameHash    = 64
+)
+
+// maxContainerSize is the size at which a container is closed and a new one
+// started. It is a variable so tests can force rotation.
+var maxContainerSize int64 = 1 * cnst.GB
+
+var crc32c = crc32.MakeTable(crc32.Castagnoli)
+
+// ErrContainerCorrupt reports a container whose header or frames fail their
+// checks.
+var ErrContainerCorrupt = errors.New("container is corrupt")
+
+// WriteRequest is one request to the writer goroutine: a chunk to append, or
+// a sync.
 type WriteRequest struct {
+	hash       []byte
 	data       []byte
-	key        []byte
+	sync       bool // sync the open container instead of writing data
 	responseCh chan WriteResponse
 }
 
-// WriteResponse contains the result of a write operation
+// WriteResponse is the writer goroutine's answer: where the chunk's payload
+// went, or the error.
 type WriteResponse struct {
 	containerPath string
 	offset        int64
@@ -57,188 +106,193 @@ type WriteResponse struct {
 	err           error
 }
 
-// ContainerManager handles writing chunks to container files using lock-free channels
+// ContainerManager writes chunks to container files through a single writer
+// goroutine.
 type ContainerManager struct {
 	currentContainer string
 	currentFile      *os.File
 	currentOffset    int64
 	dbpath           string
-	containerIndex   int
-	writeQueue       chan *WriteRequest // Lock-free write queue
-	writerDone       chan struct{}      // Signal writer goroutine finished
+	writeBackend     writeBackend
+	writeQueue       chan *WriteRequest
+	writerDone       chan struct{}
 	acceptMu         sync.RWMutex
-	seenMu           sync.RWMutex
-	seen             map[string]WriteResponse // in-run dedup by chunk hash
 	closed           bool
 	closeOnce        sync.Once
 }
 
-// NewContainerManager creates a new container manager with lock-free writer
+// NewContainerManager returns a manager writing containers into the blob
+// directory of the database at dbpath, and starts its writer goroutine.
 func NewContainerManager(dbpath string) *ContainerManager {
 	cm := &ContainerManager{
-		dbpath:         dbpath,
-		containerIndex: 0,
-		writeQueue:     make(chan *WriteRequest, 1000), // Buffered channel for batching
-		writerDone:     make(chan struct{}),
-		seen:           make(map[string]WriteResponse),
+		dbpath:       dbpath,
+		writeBackend: getWriteBackend(),
+		writeQueue:   make(chan *WriteRequest, 1000),
+		writerDone:   make(chan struct{}),
 	}
-
-	// Start dedicated writer goroutine (lock-free single writer)
 	go cm.writerLoop()
-
 	return cm
 }
 
-// WriteChunkToContainer writes a chunk to a container file using lock-free queue
-func (cm *ContainerManager) WriteChunkToContainer(data, ckey, key []byte) (containerPath string, offset int64, size int64, err error) {
-	hashKey := base64.RawURLEncoding.EncodeToString(ckey)
-	cm.seenMu.RLock()
-	if cached, ok := cm.seen[hashKey]; ok {
-		cm.seenMu.RUnlock()
-		return cached.containerPath, cached.offset, cached.size, cached.err
+// WriteChunkToContainer appends the chunk ckey to a container. encode returns
+// the bytes to store (see lib/blobcodec); it runs in the caller's goroutine.
+// The returned offset and size locate the encoded bytes. Whether a chunk
+// needs writing is the caller's to decide: lib/store stores each chunk once
+// among the passes sharing a manager.
+func (cm *ContainerManager) WriteChunkToContainer(ckey []byte, encode func() ([]byte, error)) (containerPath string, offset int64, size int64, err error) {
+	hash := bytes.TrimPrefix(ckey, []byte(cnst.ChonkNamespace))
+	if len(hash) > maxFrameHash {
+		return "", 0, 0, fmt.Errorf("chunk hash of %d bytes exceeds the container limit of %d", len(hash), maxFrameHash)
 	}
-	cm.seenMu.RUnlock()
-
-	// Create write request with response channel
-	req := &WriteRequest{
-		data:       data,
-		key:        key,
-		responseCh: make(chan WriteResponse, 1),
-	}
-
-	cm.acceptMu.RLock()
-	if cm.closed {
-		cm.acceptMu.RUnlock()
-		return "", 0, 0, errors.New("container manager is closed")
-	}
-
-	// Send to lock-free queue
-	cm.writeQueue <- req
-	cm.acceptMu.RUnlock()
-
-	// Wait for response from writer goroutine
-	resp := <-req.responseCh
-	if resp.err == nil {
-		cm.seenMu.Lock()
-		if _, exists := cm.seen[hashKey]; !exists {
-			cm.seen[hashKey] = resp
-		}
-		cm.seenMu.Unlock()
-	}
-
-	return resp.containerPath, resp.offset, resp.size, resp.err
-}
-
-// writerLoop is the dedicated writer goroutine that processes all writes sequentially
-// This eliminates lock contention by having a single writer
-func (cm *ContainerManager) writerLoop() {
-	defer close(cm.writerDone)
-
-	for req := range cm.writeQueue {
-		// Process write request
-		path, offset, size, err := cm.doWrite(req.data, req.key)
-
-		// Send response back to caller
-		req.responseCh <- WriteResponse{
-			containerPath: path,
-			offset:        offset,
-			size:          size,
-			err:           err,
-		}
-	}
-}
-
-// doWrite performs the actual write operation (called only by writer goroutine)
-func (cm *ContainerManager) doWrite(data, key []byte) (containerPath string, offset int64, size int64, err error) {
-	// Encrypt and compress data
-	var processedData []byte
-	if !cnst.QUICKOPT {
-		processedData = cnst.ENCODER.EncodeAll(data, make([]byte, 0, len(data)))
-		processedData, err = util.SealAES(key, processedData)
-		if err != nil {
-			return "", 0, 0, err
-		}
-	} else {
-		processedData = data
-	}
-
-	dataSize := int64(len(processedData))
-
-	// Check if we need a new container (first time, or current won't fit)
-	if cm.currentFile == nil || cm.currentOffset+dataSize > MaxContainerSize {
-		err = cm.createNewContainer()
-		if err != nil {
-			return "", 0, 0, err
-		}
-	}
-
-	// Write data to current container
-	n, err := cm.currentFile.Write(processedData)
+	data, err := encode()
 	if err != nil {
 		return "", 0, 0, err
 	}
-	if n != len(processedData) {
-		return "", 0, 0, io.ErrShortWrite
+
+	resp, err := cm.submit(&WriteRequest{hash: hash, data: data})
+	if err != nil {
+		return "", 0, 0, err
 	}
-
-	// Record current position
-	containerPath = cm.currentContainer
-	offset = cm.currentOffset
-	size = int64(n)
-
-	// Update offset for next write
-	cm.currentOffset += size
-
-	return containerPath, offset, size, nil
+	return resp.containerPath, resp.offset, resp.size, resp.err
 }
 
-// createNewContainer creates a new container file
-func (cm *ContainerManager) createNewContainer() error {
-	// Close and compress previous container if open
-	if cm.currentFile != nil {
-		if err := cm.currentFile.Sync(); err != nil {
-			return err
-		}
-		if err := cm.currentFile.Close(); err != nil {
-			return err
-		}
-
-		// Compress the previous container
-		if err := cm.compressContainer(cm.currentContainer); err != nil {
-			return fmt.Errorf("failed to compress container: %w", err)
-		}
-	}
-
-	// Generate unique container filename
-	cm.containerIndex++
-	ckhash, err := util.GetChonkHash([]byte(fmt.Sprintf("container_%d", cm.containerIndex)), cnst.GetHashAlgo())
+// Sync makes every chunk this manager has already written durable. The writer
+// goroutine orders it after those writes; a container it rotated away from
+// was synced when it was closed.
+func (cm *ContainerManager) Sync() error {
+	resp, err := cm.submit(&WriteRequest{sync: true})
 	if err != nil {
 		return err
 	}
-	cfname := base64.RawURLEncoding.EncodeToString(ckhash)[:cnst.FileNameLen] + cnst.BLOBEXT
-	cfpath := filepath.Join(util.BlobPath(cm.dbpath), cfname)
+	return resp.err
+}
 
-	// Ensure BLOBS directory exists
-	blobsDir := util.BlobPath(cm.dbpath)
-	err = os.MkdirAll(blobsDir, cnst.DirPerm)
+// submit hands req to the writer goroutine and waits for its answer.
+func (cm *ContainerManager) submit(req *WriteRequest) (WriteResponse, error) {
+	req.responseCh = make(chan WriteResponse, 1)
+	cm.acceptMu.RLock()
+	if cm.closed {
+		cm.acceptMu.RUnlock()
+		return WriteResponse{}, errors.New("container manager is closed")
+	}
+	cm.writeQueue <- req
+	cm.acceptMu.RUnlock()
+	return <-req.responseCh, nil
+}
+
+// writerLoop is the writer goroutine: it alone touches the open container.
+func (cm *ContainerManager) writerLoop() {
+	defer close(cm.writerDone)
+	for req := range cm.writeQueue {
+		if req.sync {
+			var err error
+			if cm.currentFile != nil {
+				err = cm.currentFile.Sync()
+			}
+			req.responseCh <- WriteResponse{err: err}
+			continue
+		}
+		path, offset, size, err := cm.doWrite(req.hash, req.data)
+		req.responseCh <- WriteResponse{containerPath: path, offset: offset, size: size, err: err}
+	}
+}
+
+// doWrite appends one frame holding payload and returns where the payload
+// went. Only the writer goroutine calls it.
+func (cm *ContainerManager) doWrite(hash, payload []byte) (containerPath string, offset int64, size int64, err error) {
+	frame := encodeFrameHeader(hash, payload)
+	frameSize := int64(len(frame) + len(payload))
+	if cm.currentFile != nil && cm.currentOffset+frameSize > maxContainerSize {
+		if err := cm.closeCurrent(); err != nil {
+			return "", 0, 0, err
+		}
+	}
+	if cm.currentFile == nil {
+		if err := cm.createNewContainer(); err != nil {
+			return "", 0, 0, err
+		}
+	}
+
+	start := cm.currentOffset
+	if err := cm.writeAt(frame, start); err != nil {
+		return "", 0, 0, cm.abandonFrame(start, err)
+	}
+	if err := faultinject.Hit(faultinject.ContainerMidRecord); err != nil {
+		return "", 0, 0, cm.abandonFrame(start, err)
+	}
+	if err := cm.writeAt(payload, start+int64(len(frame))); err != nil {
+		return "", 0, 0, cm.abandonFrame(start, err)
+	}
+	cm.currentOffset = start + frameSize
+	return cm.currentContainer, start + int64(len(frame)), int64(len(payload)), nil
+}
+
+// writeAt writes all of data at off in the open container.
+func (cm *ContainerManager) writeAt(data []byte, off int64) error {
+	n, err := cm.writeBackend.WriteAt(cm.currentFile, data, off)
 	if err != nil {
 		return err
 	}
-
-	// Open new container file
-	file, err := os.OpenFile(cfpath, os.O_CREATE|os.O_WRONLY|os.O_APPEND, cnst.FilePerm)
-	if err != nil {
-		return err
+	if n != len(data) {
+		return io.ErrShortWrite
 	}
-
-	cm.currentFile = file
-	cm.currentContainer = cfpath
-	cm.currentOffset = 0
-
 	return nil
 }
 
-// Close gracefully shuts down the writer goroutine and closes the container
+// abandonFrame handles a failed frame write at start: it cuts the container
+// back to its last complete frame and closes it, so the next chunk starts a
+// new container (STO-3). It returns cause, joined with any cleanup error.
+func (cm *ContainerManager) abandonFrame(start int64, cause error) error {
+	err := cm.currentFile.Truncate(start)
+	err = errors.Join(err, cm.closeCurrent())
+	if err != nil {
+		return fmt.Errorf("%w (and cleaning up the container failed: %v)", cause, err)
+	}
+	return cause
+}
+
+// closeCurrent syncs and closes the open container.
+func (cm *ContainerManager) closeCurrent() error {
+	if cm.currentFile == nil {
+		return nil
+	}
+	f := cm.currentFile
+	cm.currentFile, cm.currentContainer, cm.currentOffset = nil, "", 0
+	if err := f.Sync(); err != nil {
+		_ = f.Close()
+		return err
+	}
+	return f.Close()
+}
+
+// createNewContainer creates a new container file and writes its header.
+func (cm *ContainerManager) createNewContainer() error {
+	id, err := uuid.NewV7()
+	if err != nil {
+		return err
+	}
+	blobsDir := util.BlobPath(cm.dbpath)
+	if err := os.MkdirAll(blobsDir, cnst.DirPerm); err != nil {
+		return err
+	}
+	path := filepath.Join(blobsDir, containerPrefix+id.String()+cnst.BLOBEXT)
+	f, err := os.OpenFile(path, os.O_CREATE|os.O_EXCL|os.O_WRONLY, cnst.BlobPerm)
+	if err != nil {
+		return err
+	}
+	cm.currentFile, cm.currentContainer, cm.currentOffset = f, path, 0
+	if err := cm.writeAt(encodeContainerHeader(id, time.Now()), 0); err != nil {
+		cm.currentFile, cm.currentContainer = nil, ""
+		_ = f.Close()
+		_ = os.Remove(path)
+		return err
+	}
+	cm.currentOffset = containerHeaderSize
+	return nil
+}
+
+// Close stops the writer goroutine once the queued writes are done, then
+// syncs and closes the open container.
 func (cm *ContainerManager) Close() error {
 	var closeErr error
 	cm.closeOnce.Do(func() {
@@ -246,128 +300,110 @@ func (cm *ContainerManager) Close() error {
 		cm.closed = true
 		close(cm.writeQueue)
 		cm.acceptMu.Unlock()
-
-		// Wait for writer goroutine to finish pending writes
 		<-cm.writerDone
-
-		// Close remaining resources
-		if cm.currentFile != nil {
-			if err := cm.currentFile.Sync(); err != nil {
-				closeErr = err
-				return
-			}
-			if err := cm.currentFile.Close(); err != nil {
-				closeErr = err
-				return
-			}
-
-			// Compress the final container
-			if err := cm.compressContainer(cm.currentContainer); err != nil {
-				closeErr = fmt.Errorf("failed to compress final container: %w", err)
-				return
-			}
-		}
+		closeErr = cm.closeCurrent()
 	})
-
 	return closeErr
 }
 
-// compressContainer compresses a container file using zstd
-func (cm *ContainerManager) compressContainer(containerPath string) error {
-	if containerPath == "" {
-		return nil
-	}
+func encodeContainerHeader(id uuid.UUID, created time.Time) []byte {
+	h := make([]byte, containerHeaderSize)
+	copy(h, containerMagic)
+	binary.LittleEndian.PutUint16(h[8:], containerVersion)
+	copy(h[16:32], id[:])
+	binary.LittleEndian.PutUint64(h[32:], uint64(created.UnixNano()))
+	binary.LittleEndian.PutUint32(h[60:], crc32.Checksum(h[:60], crc32c))
+	return h
+}
 
-	// Skip if already compressed
-	if strings.HasSuffix(containerPath, cnst.BLOBZSTEXT) {
-		return nil
-	}
+func encodeFrameHeader(hash, payload []byte) []byte {
+	h := make([]byte, frameHeaderSize+len(hash))
+	copy(h, frameMagic)
+	h[4] = byte(len(hash))
+	binary.LittleEndian.PutUint64(h[8:], uint64(len(payload)))
+	binary.LittleEndian.PutUint32(h[16:], crc32.Checksum(payload, crc32c))
+	copy(h[frameHeaderSize:], hash)
+	sum := crc32.Update(crc32.Checksum(h[:20], crc32c), crc32c, hash)
+	binary.LittleEndian.PutUint32(h[20:], sum)
+	return h
+}
 
-	// In non-QUICKOPT mode each chunk is already zstd-compressed then AES-GCM
-	// encrypted before being written to the container.  AES-GCM output is
-	// statistically indistinguishable from random bytes and cannot be further
-	// compressed.  Running a full container-level zstd pass would read and
-	// rewrite the entire file for zero compression benefit while burning
-	// significant CPU and I/O.  Skip it and keep the plain .blob file.
-	if !cnst.QUICKOPT {
-		return nil
-	}
+// ContainerFrame is one chunk found by ScanContainer: its hash and where its
+// encoded bytes are.
+type ContainerFrame struct {
+	Hash         []byte
+	Offset, Size int64
+}
 
-	// Open source file
-	srcFile, err := os.Open(containerPath)
+// ScanContainer reads the v2 container at path frame by frame, checks each
+// frame, and calls fn for it. It stops at the first frame that fails a check
+// with an error wrapping ErrContainerCorrupt, and returns fn's error if fn
+// fails.
+func ScanContainer(path string, fn func(ContainerFrame) error) error {
+	f, err := os.Open(path)
 	if err != nil {
 		return err
 	}
-
-	// Create compressed file (temp + rename for safer replacement)
-	compressedPath := strings.TrimSuffix(containerPath, cnst.BLOBEXT) + cnst.BLOBZSTEXT
-	tempCompressedPath := compressedPath + ".tmp"
-	dstFile, err := os.OpenFile(tempCompressedPath, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, cnst.FilePerm)
-	if err != nil {
-		srcFile.Close()
-		return err
-	}
-
-	encoder, err := zstd.NewWriter(dstFile, zstd.WithEncoderLevel(zstd.EncoderLevel(zstd.SpeedBestCompression)))
-	if err != nil {
-		dstFile.Close()
-		srcFile.Close()
-		os.Remove(tempCompressedPath)
-		return err
-	}
-
-	if _, err = io.Copy(encoder, srcFile); err != nil {
-		encoder.Close()
-		dstFile.Close()
-		srcFile.Close()
-		os.Remove(tempCompressedPath)
-		return err
-	}
-	if err = encoder.Close(); err != nil {
-		dstFile.Close()
-		srcFile.Close()
-		os.Remove(tempCompressedPath)
-		return err
-	}
-
-	// Sync output file
-	if err = dstFile.Sync(); err != nil {
-		dstFile.Close()
-		srcFile.Close()
-		os.Remove(tempCompressedPath)
-		return err
-	}
-	if err = dstFile.Close(); err != nil {
-		srcFile.Close()
-		os.Remove(tempCompressedPath)
-		return err
-	}
-	if err = srcFile.Close(); err != nil {
-		os.Remove(tempCompressedPath)
-		return err
-	}
-
-	// Replace any stale compressed target and atomically move temp into place.
-	if err = os.Remove(compressedPath); err != nil && !os.IsNotExist(err) {
-		os.Remove(tempCompressedPath)
-		return err
-	}
-	if err = os.Rename(tempCompressedPath, compressedPath); err != nil {
-		os.Remove(tempCompressedPath)
-		return err
-	}
-
-	// Remove original uncompressed file
-	err = os.Remove(containerPath)
+	defer f.Close()
+	fi, err := f.Stat()
 	if err != nil {
 		return err
 	}
+	size := fi.Size()
 
-	// Update the current container path to point to compressed file
-	if cm.currentContainer == containerPath {
-		cm.currentContainer = compressedPath
+	header := make([]byte, containerHeaderSize)
+	if _, err := f.ReadAt(header, 0); err != nil {
+		return fmt.Errorf("%w: %s: header: %v", ErrContainerCorrupt, path, err)
+	}
+	if string(header[:len(containerMagic)]) != containerMagic ||
+		binary.LittleEndian.Uint32(header[60:]) != crc32.Checksum(header[:60], crc32c) {
+		return fmt.Errorf("%w: %s: not a v2 container header", ErrContainerCorrupt, path)
 	}
 
+	fh := make([]byte, frameHeaderSize+maxFrameHash)
+	var payload []byte
+	for off := int64(containerHeaderSize); off < size; {
+		corrupt := func(what string) error {
+			return fmt.Errorf("%w: %s: frame at %d: %s", ErrContainerCorrupt, path, off, what)
+		}
+		if size-off < frameHeaderSize {
+			return corrupt("truncated header")
+		}
+		if _, err := f.ReadAt(fh[:frameHeaderSize], off); err != nil {
+			return err
+		}
+		if string(fh[:4]) != frameMagic {
+			return corrupt("bad magic")
+		}
+		hlen := int64(fh[4])
+		plen := binary.LittleEndian.Uint64(fh[8:])
+		if hlen > maxFrameHash || size-off-frameHeaderSize < hlen ||
+			plen > uint64(size-off-frameHeaderSize-hlen) {
+			return corrupt("length past the end of the container")
+		}
+		if _, err := f.ReadAt(fh[frameHeaderSize:frameHeaderSize+hlen], off+frameHeaderSize); err != nil {
+			return err
+		}
+		hash := fh[frameHeaderSize : frameHeaderSize+hlen]
+		if binary.LittleEndian.Uint32(fh[20:]) != crc32.Update(crc32.Checksum(fh[:20], crc32c), crc32c, hash) {
+			return corrupt("header checksum mismatch")
+		}
+		start := off + frameHeaderSize + hlen
+		if uint64(cap(payload)) < plen {
+			payload = make([]byte, plen)
+		}
+		payload = payload[:plen]
+		if _, err := f.ReadAt(payload, start); err != nil {
+			return err
+		}
+		if binary.LittleEndian.Uint32(fh[16:]) != crc32.Checksum(payload, crc32c) {
+			return corrupt("payload checksum mismatch")
+		}
+		if err := fn(ContainerFrame{Hash: bytes.Clone(hash), Offset: start, Size: int64(plen)}); err != nil {
+			return err
+		}
+		off = start + int64(plen)
+	}
 	return nil
 }
 
@@ -384,54 +420,50 @@ func resolveContainerPath(containerPath string) string {
 	return containerPath
 }
 
-// ReadChunkFromContainer reads a chunk from a container file at the specified offset
-func ReadChunkFromContainer(containerPath string, offset, size int64, key []byte) ([]byte, error) {
+// ContainerHolds reports whether the container at containerPath exists and
+// is long enough to hold size bytes at offset. A compressed legacy container
+// cannot be measured without decompressing it, so its presence is enough.
+func ContainerHolds(containerPath string, offset, size int64) bool {
+	resolved := resolveContainerPath(containerPath)
+	fi, err := os.Stat(resolved)
+	if err != nil || !fi.Mode().IsRegular() {
+		return false
+	}
+	if strings.HasSuffix(resolved, cnst.BLOBZSTEXT) {
+		return true
+	}
+	return offset >= 0 && size > 0 && offset <= fi.Size()-size
+}
+
+// ReadChunkFromContainer returns the stored (still encoded) bytes of the chunk
+// at offset; lib/blobcodec decodes them.
+func ReadChunkFromContainer(containerPath string, offset, size int64) ([]byte, error) {
 	if size < 0 || offset < 0 {
 		return nil, fmt.Errorf("invalid offset/size: offset=%d size=%d", offset, size)
 	}
 
 	containerPath = resolveContainerPath(containerPath)
-
-	encoded := make([]byte, size)
-
 	if strings.HasSuffix(containerPath, cnst.BLOBZSTEXT) {
-		encodedData, err := readFromCompressedContainer(containerPath, offset, size)
-		if err != nil {
-			return nil, err
-		}
-		copy(encoded, encodedData)
-	} else {
-		file, err := os.Open(containerPath)
-		if err != nil {
-			return nil, err
-		}
-		defer file.Close()
-
-		if _, err = file.ReadAt(encoded, offset); err != nil {
-			if errors.Is(err, io.EOF) {
-				return nil, fmt.Errorf("offset %d + size %d exceeds container size", offset, size)
-			}
-			return nil, err
-		}
+		return readFromCompressedContainer(containerPath, offset, size)
 	}
 
-	// Decrypt and decompress
-	var data []byte
-	if !cnst.QUICKOPT {
-		decrypted, err := util.UnsealAES(key, encoded)
-		if err != nil {
-			return nil, err
-		}
-		data = decrypted
-
-		decoded, err := cnst.DECODER.DecodeAll(data, nil)
-		if err != nil {
-			return nil, err
-		}
-		data = decoded
-	} else {
-		data = encoded
+	file, err := os.Open(containerPath)
+	if err != nil {
+		return nil, err
 	}
-
-	return data, nil
+	defer file.Close()
+	// The size comes from chunk metadata; check it against the file before
+	// allocating it (STO-16).
+	fi, err := file.Stat()
+	if err != nil {
+		return nil, err
+	}
+	if offset > fi.Size() || size > fi.Size()-offset {
+		return nil, fmt.Errorf("offset %d + size %d exceeds container size %d", offset, size, fi.Size())
+	}
+	encoded := make([]byte, size)
+	if _, err = file.ReadAt(encoded, offset); err != nil {
+		return nil, err
+	}
+	return encoded, nil
 }

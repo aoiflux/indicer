@@ -2,39 +2,41 @@ package fileparser
 
 import (
 	"bytes"
+	"errors"
 	"fmt"
-	"os"
+	"io"
 	"strings"
 
 	saferpe "github.com/saferwall/pe"
+	pelog "github.com/saferwall/pe/log"
 )
 
-func parsePEContent(content []byte) ([]byte, bool) {
+// parsePEContent parses a PE image from memory. It used to copy the evidence
+// bytes to a temporary file and map it, and never closed the result, so the
+// mapping and handle leaked and, on Windows, the temporary file with evidence
+// content was left behind (GRA-15).
+//
+// The parsed file is not closed. Close unmaps the data even for a file made
+// by NewBytes (GRA-22). For a heap buffer like this one the unmap fails and
+// Close drops the error, so nothing happens, but memory the caller had mapped
+// itself would be unmapped under it. The file holds nothing else.
+func parsePEContent(content []byte) ([]byte, error) {
 	if len(content) == 0 {
-		return nil, false
+		return nil, errors.New("pe: empty")
 	}
-
-	tmpFile, err := os.CreateTemp("", "indicer-pe-*.bin")
+	parsed, err := saferpe.NewBytes(content, &saferpe.Options{
+		// The library logs parse problems to stdout unless given a logger.
+		Logger:                     pelog.NewStdLogger(io.Discard),
+		DisableCertValidation:      true,
+		DisableSignatureValidation: true,
+	})
 	if err != nil {
-		return nil, false
-	}
-	tmpPath := tmpFile.Name()
-	defer os.Remove(tmpPath)
-	defer tmpFile.Close()
-
-	if _, err := tmpFile.Write(content); err != nil {
-		return nil, false
-	}
-
-	parsed, err := saferpe.New(tmpPath, &saferpe.Options{})
-	if err != nil {
-		return nil, false
+		return nil, fmt.Errorf("pe: %w", err)
 	}
 	if err := parsed.Parse(); err != nil {
-		return nil, false
+		return nil, fmt.Errorf("pe: %w", err)
 	}
-
-	return combineParsedPayload(extractPrintableText(content), buildPEMetadataText(parsed)), true
+	return combineParsedPayload(extractPrintableText(content), buildPEMetadataText(parsed)), nil
 }
 
 func buildPEMetadataText(parsed *saferpe.File) string {

@@ -1,6 +1,8 @@
 package cli
 
 import (
+	"context"
+	"indicer/lib/dbopen"
 	"indicer/lib/logging"
 	"indicer/lib/store"
 	"time"
@@ -8,29 +10,24 @@ import (
 	"go.uber.org/zap"
 )
 
-func StatsData(chonkSize int, dbpath string, key []byte) error {
+func StatsData(ctx context.Context, opts DBOptions) (err error) {
 	start := time.Now()
 	logging.GetLogger().Info("StatsData START",
-		zap.Int("chonk_size", chonkSize),
-		zap.String("db_path", dbpath),
+		zap.String("db_path", opts.Path),
 	)
 
-	db, _, err := Common(chonkSize, dbpath, key)
+	h, err := Common(ctx, opts, dbopen.ReadOnly, false)
 	if err != nil {
 		logging.GetLogger().Error("StatsData DB_CONNECT_ERROR", zap.Error(err))
 		return err
 	}
+	defer closeDB(h, &err)
+	encryptionNotice(h)
 
 	logging.GetLogger().Info("StatsData STATS_EXECUTE")
-	err = store.Stats(db)
+	err = store.Stats(ctx, h.DB)
 	if err != nil {
 		logging.GetLogger().Error("StatsData STATS_ERROR", zap.Error(err))
-		return err
-	}
-
-	err = db.Close()
-	if err != nil {
-		logging.GetLogger().Error("StatsData DB_CLOSE_ERROR", zap.Error(err))
 		return err
 	}
 

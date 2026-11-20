@@ -1,28 +1,36 @@
 package store
 
 import (
-	"bytes"
+	"context"
 	"encoding/base64"
-	"encoding/json"
-	"fmt"
+	"errors"
+	"strings"
 
-	"indicer/lib/cnst"
 	"indicer/lib/dbio"
 	"indicer/lib/structs"
 
 	"github.com/dgraph-io/badger/v4"
-	"github.com/vmihailenco/msgpack/v5"
 )
 
+// RepairReport is what InspectEvidenceRepairs found. `dues repair` prints it
+// as the top of its document.
 type RepairReport struct {
-	TotalProblematic   int                 `json:"totalProblematic"`
-	PendingCount       int                 `json:"pendingCount"`
-	FlushedCount       int                 `json:"flushedCount"`
-	FailedCount        int                 `json:"failedCount"`
-	RepairedCount      int                 `json:"repairedCount"`
-	AutoCompletedCount int                 `json:"autoCompletedCount"`
-	Fixed              bool                `json:"fixed"`
-	Evidence           []RepairEvidenceRow `json:"evidence"`
+	TotalProblematic   int `json:"totalProblematic"`
+	PendingCount       int `json:"pendingCount"`
+	FlushedCount       int `json:"flushedCount"`
+	FailedCount        int `json:"failedCount"`
+	RepairedCount      int `json:"repairedCount"`
+	AutoCompletedCount int `json:"autoCompletedCount"`
+	// DuplicateCount counts duplicate attempts whose records are not all
+	// removed; AliasedCount, FLUSHED attempts --fix found to be aliases.
+	DuplicateCount int `json:"duplicateCount"`
+	AliasedCount   int `json:"aliasedCount"`
+	// IndexRunningCount counts evidence whose index pass is still marked
+	// running; --fix marks it interrupted (IndexInterruptedCount).
+	IndexRunningCount     int                 `json:"indexRunningCount"`
+	IndexInterruptedCount int                 `json:"indexInterruptedCount"`
+	Fixed                 bool                `json:"fixed"`
+	Evidence              []RepairEvidenceRow `json:"evidence"`
 }
 
 type RepairEvidenceRow struct {
@@ -33,127 +41,115 @@ type RepairEvidenceRow struct {
 	Completed   bool   `json:"completed"`
 	Failed      bool   `json:"failed"`
 	IngestState string `json:"ingestState"`
+	IndexState  string `json:"indexState,omitempty"`
 	Action      string `json:"action"`
 
 	id []byte
 }
 
-func Repair(db *badger.DB, fix bool) error {
-	report, err := InspectEvidenceRepairs(db, fix)
-	if err != nil {
-		return err
-	}
-
-	jsonData, err := json.MarshalIndent(report, "", "  ")
-	if err != nil {
-		return err
-	}
-
-	fmt.Println(string(jsonData))
-	return nil
-}
-
-func InspectEvidenceRepairs(db *badger.DB, fix bool) (RepairReport, error) {
+// InspectEvidenceRepairs lists the evidence an unfinished ingest left, and
+// with fix recovers each one as a writable open does (RecoverEvidence).
+func InspectEvidenceRepairs(ctx context.Context, db *badger.DB, fix bool) (RepairReport, error) {
 	var report RepairReport
 	report.Fixed = fix
 
+	// Only evidence records are inspected; decoding every key in the
+	// database as one reported whatever happened to decode (ING-10).
 	err := db.View(func(txn *badger.Txn) error {
-		opts := badger.DefaultIteratorOptions
-		opts.PrefetchSize = 1000
-		it := txn.NewIterator(opts)
-		defer it.Close()
-
-		eviPrefix := []byte(cnst.EviFileNamespace)
-		for it.Seek(eviPrefix); it.ValidForPrefix(eviPrefix); it.Next() {
-			item := it.Item()
-			key := item.KeyCopy(nil)
-			value, err := item.ValueCopy(nil)
-			if err != nil {
-				return err
+		return forEachEvidenceRecord(txn, func(rawID []byte, e structs.EvidenceFile) error {
+			if e.Completed && !NeedsRecovery(e) {
+				return nil
 			}
-
-			decoded, err := cnst.DECODER.DecodeAll(value, nil)
-			if err == nil {
-				value = decoded
-			}
-
-			var evidenceFile structs.EvidenceFile
-			if err := msgpack.Unmarshal(value, &evidenceFile); err != nil {
-				return err
-			}
-			if evidenceFile.Completed {
-				continue
-			}
-
 			row := RepairEvidenceRow{
-				Hash:        base64.StdEncoding.EncodeToString(bytes.TrimPrefix(key, eviPrefix)),
-				Name:        firstCleanNameFromMap(evidenceFile.Names),
-				Type:        evidenceFile.EvidenceType,
-				Size:        evidenceFile.Size,
-				Completed:   evidenceFile.Completed,
-				Failed:      evidenceFile.Failed,
-				IngestState: string(evidenceFile.IngestState),
-				Action:      "inspect",
-				id:          key,
+				Hash:        base64.StdEncoding.EncodeToString(rawID),
+				Name:        CleanName(e.Name),
+				Type:        e.EvidenceType,
+				Size:        e.Size,
+				Completed:   e.Completed,
+				Failed:      e.Failed,
+				IngestState: string(e.IngestState),
+				id:          rawID,
 			}
-			if evidenceFile.Failed {
+			if e.Index != nil {
+				row.IndexState = string(e.Index.State)
+			}
+			switch {
+			case e.IngestState == structs.IngestStateDuplicate:
+				report.DuplicateCount++
+				row.Action = "duplicate"
+			case e.Completed:
+				report.IndexRunningCount++
+				row.Action = "index_running"
+			case e.Failed:
 				report.FailedCount++
 				row.Action = "already_failed"
-			} else if evidenceFile.IngestState == structs.IngestStateFlushed {
+				if e.Index != nil && e.Index.State == structs.IndexRunning {
+					report.IndexRunningCount++
+				}
+			case e.IngestState == structs.IngestStateFlushed:
 				report.FlushedCount++
 				row.Action = "flushed"
-			} else {
+			default:
 				report.PendingCount++
 				row.Action = "pending"
 			}
 			report.Evidence = append(report.Evidence, row)
-		}
-		return nil
+			return nil
+		})
 	})
 	if err != nil {
 		return report, err
 	}
 
 	if fix {
-		for index := range report.Evidence {
-			if report.Evidence[index].Failed {
+		for i := range report.Evidence {
+			if err := ctx.Err(); err != nil {
+				return report, context.Cause(ctx)
+			}
+			row := &report.Evidence[i]
+			e, err := dbio.GetEvidenceFile(row.id, db)
+			if errors.Is(err, badger.ErrKeyNotFound) {
 				continue
 			}
-			if report.Evidence[index].IngestState == string(structs.IngestStateFlushed) {
-				evidenceFile, err := dbio.GetEvidenceFile(report.Evidence[index].id, db)
-				if err != nil {
-					return report, err
-				}
-				if err := ValidateFlushedEvidenceMaterialized(report.Evidence[index].id, evidenceFile, db); err != nil {
-					if err := MarkEvidenceFileFailed(report.Evidence[index].id, db); err != nil {
-						return report, err
-					}
-					report.Evidence[index].Failed = true
-					report.Evidence[index].Action = "flushed_invalid_marked_failed"
+			if err != nil {
+				return report, err
+			}
+			if !NeedsRecovery(e) {
+				continue
+			}
+			before := row.Action
+			actions, err := RecoverEvidence(ctx, db, row.id, e)
+			for _, a := range actions {
+				switch a {
+				case ActionMarkedFailed, ActionFlushedInvalid:
 					report.RepairedCount++
-					report.FlushedCount--
 					report.FailedCount++
-					continue
+					row.Failed = true
+				case ActionCompleted:
+					report.AutoCompletedCount++
+					row.Completed, row.IngestState = true, string(structs.IngestStateCompleted)
+				case ActionAliased:
+					report.AliasedCount++
+					row.IngestState = string(structs.IngestStateDuplicate)
+				case ActionDuplicateCleaned:
+					report.DuplicateCount--
+				case ActionIndexInterrupted:
+					report.IndexRunningCount--
+					report.IndexInterruptedCount++
+					row.IndexState = string(structs.IndexInterrupted)
 				}
-
-				// FLUSHED with readable chunk material: auto-complete marker write.
-				if err := CompleteEvidenceFile(report.Evidence[index].id, db); err != nil {
-					return report, err
+			}
+			if len(actions) > 0 {
+				switch before {
+				case "pending":
+					report.PendingCount--
+				case "flushed":
+					report.FlushedCount--
 				}
-				report.Evidence[index].Completed = true
-				report.Evidence[index].IngestState = string(structs.IngestStateCompleted)
-				report.Evidence[index].Action = "auto_completed"
-				report.AutoCompletedCount++
-				report.FlushedCount--
-			} else {
-				if err := MarkEvidenceFileFailed(report.Evidence[index].id, db); err != nil {
-					return report, err
-				}
-				report.Evidence[index].Failed = true
-				report.Evidence[index].Action = "marked_failed"
-				report.RepairedCount++
-				report.PendingCount--
-				report.FailedCount++
+				row.Action = strings.Join(actions, ",")
+			}
+			if err != nil {
+				return report, err
 			}
 		}
 	}

@@ -1,14 +1,19 @@
 param(
+    # The release, such as 0.39.0 or 0.40.0-rc.1; a leading "v" is dropped.
+    [string]$Version,
     [string]$BinaryName = "dues",
     [string]$MainPackage = ".",
     [string]$OutputDir = "dist",
+    # The binary is pure Go (no CGO, no libtusk), so one host cross-compiles the
+    # whole matrix with no C toolchain. Override -Targets to build a subset.
     [string[]]$Targets = @(
-        "windows/amd64"
+        "windows/amd64",
+        "windows/arm64",
+        "linux/amd64",
+        "linux/arm64",
+        "darwin/amd64",
+        "darwin/arm64"
     ),
-    # C cross-compiler used when building windows/amd64 with CGO enabled.
-    # Must be a MinGW-w64 cross-compiler targeting x86_64-windows.
-    [string]$WindowsCrossCC = "x86_64-w64-mingw32-gcc",
-    # To compile for Linux, run build.sh on Linux instead.
     [switch]$NoClean
 )
 
@@ -44,6 +49,16 @@ if (-not (Get-Command go -ErrorAction SilentlyContinue)) {
     throw "Go compiler not found in PATH. Install Go and retry."
 }
 
+# Semantic versioning without build metadata: the commit is appended as that.
+$semverPattern = '\A(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)(-[0-9A-Za-z-]+(\.[0-9A-Za-z-]+)*)?\z'
+if ([string]::IsNullOrWhiteSpace($Version)) {
+    throw "Give the release version: -Version 0.39.0 (pre-release: -Version 0.40.0-rc.1)."
+}
+$Version = $Version.Trim() -replace '\A[vV]', ''
+if ($Version -cnotmatch $semverPattern) {
+    throw "Version '$Version' is not MAJOR.MINOR.PATCH or MAJOR.MINOR.PATCH-PRERELEASE (example: 0.40.0-rc.1)."
+}
+
 $repoRoot = Split-Path -Parent $PSCommandPath
 Set-Location $repoRoot
 
@@ -59,7 +74,23 @@ $prevCgo = $env:CGO_ENABLED
 $prevCC = $env:CC
 $prevGoamd64 = $env:GOAMD64
 
-$ldflags = "-s -w -buildid= -extldflags '-static'"
+$ldflags = "-s -w -buildid= -X main.duesVersion=$Version"
+# The commit the build comes from, shown by the banner and `dues --version`;
+# "-dirty" marks uncommitted changes. A tree without git builds without it.
+$commit = ""
+try {
+    $commit = (& git -C $repoRoot rev-parse --short HEAD 2>$null)
+    if ($LASTEXITCODE -ne 0) {
+        $commit = ""
+    } elseif (& git -C $repoRoot status --porcelain 2>$null) {
+        $commit = "$commit-dirty"
+    }
+} catch {
+    $commit = ""
+}
+if ($commit) {
+    $ldflags = "$ldflags -X main.buildCommit=$commit"
+}
 $baseArgs = @(
     "build",
     "-trimpath",
@@ -72,10 +103,11 @@ $buildStart = Get-Date
 $targetCount = $Targets.Count
 
 Write-Banner -Title "DUES Release Build"
+Write-Label -Label "Version" -Value $Version -ValueColor Green
 Write-Label -Label "Repository" -Value $repoRoot -ValueColor Cyan
 Write-Label -Label "Output Dir" -Value (Resolve-Path $OutputDir).Path -ValueColor Cyan
 Write-Label -Label "Targets" -Value ($Targets -join ", ") -ValueColor Yellow
-Write-Label -Label "Mode" -Value "Optimized static-style release build" -ValueColor Green
+Write-Label -Label "Mode" -Value "Pure-Go static release build (CGO=0)" -ValueColor Green
 
 $pgoFile = Join-Path $repoRoot "default.pgo"
 if (Test-Path $pgoFile) {
@@ -86,6 +118,7 @@ else {
     Write-Label -Label "PGO" -Value "Not found (building without -pgo)" -ValueColor DarkYellow
 }
 
+$built = @()
 try {
     for ($i = 0; $i -lt $targetCount; $i++) {
         $target = $Targets[$i]
@@ -104,18 +137,10 @@ try {
         $env:GOOS = $goos
         $env:GOARCH = $goarch
 
-        # CGO is required for windows/amd64 (libtusk).
-        # All other targets build without CGO.
-        $cgoLabel = "CGO=0"
-        if ($goos -eq "windows" -and $goarch -eq "amd64") {
-            $env:CGO_ENABLED = "1"
-            $env:CC = $WindowsCrossCC
-            $cgoLabel = "CGO=1, CC=$WindowsCrossCC"
-        }
-        else {
-            $env:CGO_ENABLED = "0"
-            Remove-Item Env:CC -ErrorAction SilentlyContinue
-        }
+        # Pure Go on every target — no CGO, no C toolchain (libtusk removed).
+        $cgoLabel = "CGO=0 (pure Go)"
+        $env:CGO_ENABLED = "0"
+        Remove-Item Env:CC -ErrorAction SilentlyContinue
 
         # Reset amd64 tuning unless the target is amd64.
         Remove-Item Env:GOAMD64 -ErrorAction SilentlyContinue
@@ -128,7 +153,7 @@ try {
             $ext = ".exe"
         }
 
-        $outputName = "$BinaryName-$goos-$goarch$ext"
+        $outputName = "$BinaryName-$Version-$goos-$goarch$ext"
         $outputPath = Join-Path $OutputDir $outputName
 
         $percent = [int](($i / [double]$targetCount) * 100)
@@ -150,7 +175,9 @@ try {
         }
 
         $duration = ((Get-Date) - $stepStart).TotalSeconds
-        $sizeMb = [math]::Round(((Get-Item $outputPath).Length / 1MB), 2)
+        $artifact = Get-Item -LiteralPath $outputPath
+        $built += $artifact
+        $sizeMb = [math]::Round(($artifact.Length / 1MB), 2)
         Write-Host "  OK" -NoNewline -ForegroundColor Green
         Write-Host ("  " + $sizeMb + " MB") -NoNewline -ForegroundColor Cyan
         Write-Host ("  " + ([math]::Round($duration, 2)) + "s") -ForegroundColor DarkGray
@@ -182,15 +209,26 @@ finally {
 }
 
 $buildSeconds = [math]::Round(((Get-Date) - $buildStart).TotalSeconds, 2)
-$artifacts = Get-ChildItem $OutputDir | Where-Object { $_.Name -ilike "*.exe" }
-$count = 0;
-foreach ($artifact in $artifacts) {
-    $count++;
+# Only this run's binaries: with -NoClean, the output folder may still hold
+# another version's.
+$artifacts = @($built | Sort-Object Name)
+
+# SHA-256 sums of the binaries, to publish with them. The format is the one
+# `sha256sum -c` and `shasum -a 256 -c` read: lowercase hex, two spaces, the
+# file name, LF line endings, no BOM. build.sh writes the same file.
+$sumsPath = Join-Path (Resolve-Path $OutputDir).Path "SHA256SUMS"
+$sumLines = foreach ($artifact in $artifacts) {
+    $hash = (Get-FileHash -Algorithm SHA256 -LiteralPath $artifact.FullName).Hash.ToLowerInvariant()
+    $hash + "  " + $artifact.Name
 }
+$sumText = ($sumLines -join "`n") + "`n"
+[System.IO.File]::WriteAllText($sumsPath, $sumText, (New-Object System.Text.UTF8Encoding $false))
 
 Write-Banner -Title "Build Complete" -Color Green
 Write-Label -Label "Duration" -Value ($buildSeconds.ToString() + "s") -ValueColor Green
-Write-Label -Label "Artifacts" -Value $count -ValueColor Green
+Write-Label -Label "Version" -Value $Version -ValueColor Green
+Write-Label -Label "Artifacts" -Value $artifacts.Count -ValueColor Green
+Write-Label -Label "Checksums" -Value $sumsPath -ValueColor Green
 Write-Host ""
 
 $artifacts |
@@ -203,4 +241,8 @@ Select-Object @{
 }, LastWriteTime |
 Format-Table -AutoSize
 
-Write-Host "NOTE: This script builds for Windows only. To compile for Linux, run build.sh on Linux." -ForegroundColor DarkYellow
+Write-Host "SHA256SUMS" -ForegroundColor DarkGray
+Write-Host $sumText -NoNewline -ForegroundColor White
+Write-Host ""
+
+Write-Host "NOTE: Pure-Go cross-compile — every target above is produced from this one host (build.sh is the shell equivalent)." -ForegroundColor DarkYellow

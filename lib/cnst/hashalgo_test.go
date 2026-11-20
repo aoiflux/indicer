@@ -3,6 +3,7 @@ package cnst
 import "testing"
 
 func TestNormalizeHashAlgo(t *testing.T) {
+	t.Parallel()
 	tests := []struct {
 		name string
 		in   string
@@ -23,23 +24,45 @@ func TestNormalizeHashAlgo(t *testing.T) {
 	}
 }
 
-func TestSetHashAlgo(t *testing.T) {
-	original := HASHALGO
-	t.Cleanup(func() {
-		HASHALGO = original
-	})
+func TestParseHashAlgo(t *testing.T) {
+	t.Parallel()
+	if got, err := ParseHashAlgo("sha3"); err != nil || got != SHA3 {
+		t.Fatalf("ParseHashAlgo(sha3) = %q, %v; want %q", got, err, SHA3)
+	}
+	if _, err := ParseHashAlgo("md5"); err == nil {
+		t.Fatal("ParseHashAlgo accepted an invalid algorithm")
+	}
+}
 
-	if err := SetHashAlgo("sha3"); err != nil {
-		t.Fatalf("SetHashAlgo returned unexpected error: %v", err)
-	}
-	if HASHALGO != SHA3 {
-		t.Fatalf("HASHALGO = %q, want %q", HASHALGO, SHA3)
+func TestNormalizeHashStrategy(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name string
+		in   string
+		want string
+	}{
+		{name: "default empty", in: "", want: SyncHashStrategy},
+		{name: "sync lower", in: "sync", want: SyncHashStrategy},
+		{name: "async upper trimmed", in: "  ASYNCHASH ", want: AsyncHashStrategy},
+		{name: "hocho lower", in: "hocho", want: HochoHashStrategy},
+		{name: "invalid", in: "chunkhash", want: ""},
 	}
 
-	if err := SetHashAlgo("md5"); err == nil {
-		t.Fatal("SetHashAlgo accepted an invalid algorithm")
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := NormalizeHashStrategy(tt.in); got != tt.want {
+				t.Fatalf("NormalizeHashStrategy(%q) = %q, want %q", tt.in, got, tt.want)
+			}
+		})
 	}
-	if HASHALGO != SHA3 {
-		t.Fatalf("HASHALGO changed after invalid input: got %q, want %q", HASHALGO, SHA3)
+}
+
+func TestParseHashStrategy(t *testing.T) {
+	t.Parallel()
+	if got, err := ParseHashStrategy("async"); err != nil || got != AsyncHashStrategy {
+		t.Fatalf("ParseHashStrategy(async) = %q, %v; want %q", got, err, AsyncHashStrategy)
+	}
+	if _, err := ParseHashStrategy("merkle"); err == nil {
+		t.Fatal("ParseHashStrategy accepted an invalid strategy")
 	}
 }

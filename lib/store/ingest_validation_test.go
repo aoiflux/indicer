@@ -6,6 +6,7 @@ import (
 
 	"indicer/lib/cnst"
 	"indicer/lib/dbio"
+	"indicer/lib/dbmeta"
 	"indicer/lib/fio"
 	"indicer/lib/structs"
 	"indicer/lib/util"
@@ -14,17 +15,18 @@ import (
 	"github.com/vmihailenco/msgpack/v5"
 )
 
-func seedFlushedEvidenceWithChunk(t testing.TB, db *badger.DB, name string, hashSeed byte) structs.InputFile {
+func seedFlushedEvidenceWithChunk(t testing.TB, db *badger.DB, name string, hashSeed byte) testEvidence {
 	t.Helper()
 
 	infile := newTestInputFile(db, name, bytes.Repeat([]byte{hashSeed}, 32))
-	evidenceFile := structs.NewEvidenceFile(infile.GetName(), infile.GetStartIndex(), infile.GetSize(), infile.GetInternalObjects(), "dd")
+	evidenceFile := structs.NewEvidenceFile(infile.GetName(), infile.GetStartIndex(), infile.GetSize(), infile.GetInternalObjects(), "dd", "")
 	evidenceFile.IngestState = structs.IngestStateFlushed
 	if err := dbio.SetFile(infile.GetID(), evidenceFile, db); err != nil {
 		t.Fatalf("seed flushed evidence: %v", err)
 	}
 
-	restoreIndex := util.GetDBStartOffset(evidenceFile.Start)
+	cs := dbmeta.ChunkSize(db)
+	restoreIndex := evidenceFile.Start / cs * cs
 	chunkHash := bytes.Repeat([]byte{hashSeed + 1}, 32)
 	relKey := util.AppendToBytesSlice(cnst.RelationNamespace, infile.GetHash(), cnst.DataSeperator, restoreIndex)
 	if err := dbio.SetNode(relKey, chunkHash, db); err != nil {
@@ -36,7 +38,7 @@ func seedFlushedEvidenceWithChunk(t testing.TB, db *badger.DB, name string, hash
 	if err := util.EnsureBlobPath(db.Opts().Dir); err != nil {
 		t.Fatalf("ensure blob path: %v", err)
 	}
-	chunkPath, err := fio.WriteChonk(db.Opts().Dir, payload, chunkKey, db.Opts().EncryptionKey)
+	chunkPath, err := fio.WriteChonk(db.Opts().Dir, payload, chunkKey, dbmeta.ChunkHasher(db))
 	if err != nil {
 		t.Fatalf("seed chunk file: %v", err)
 	}

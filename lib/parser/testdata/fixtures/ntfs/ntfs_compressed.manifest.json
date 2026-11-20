@@ -1,0 +1,75 @@
+{
+ "format": "raw",
+ "generator": "gen_fixtures.sh unknown",
+ "image": "ntfs_compressed.img",
+ "partitions": [
+  {
+   "deleted": [],
+   "files": [
+    {
+     "extents": 0,
+     "kind": "file",
+     "path": "/plain.bin",
+     "sha256": "6f56a858055b54769ae8f9a0d7352e0e733ad7f984e579e632364e09c1b7955c",
+     "size": 50000
+    },
+    {
+     "extents": 0,
+     "flags": [
+      "sparse"
+     ],
+     "kind": "file",
+     "path": "/sparse.bin",
+     "sha256": "567eaee4b17da8dabb2812f8a66fbdcecc0b8755af0404bbde39f05ca2f6f7e5",
+     "size": 1048576
+    },
+    {
+     "kind": "dir",
+     "path": "/z"
+    },
+    {
+     "extents": 0,
+     "flags": [
+      "sparse"
+     ],
+     "kind": "file",
+     "path": "/z/mixed.bin",
+     "sha256": "60079d06dcd4e4a0fa2f9022a70cd95caec380ed4dba0490368b179028522541",
+     "size": 211608
+    },
+    {
+     "extents": 0,
+     "kind": "file",
+     "path": "/z/random.bin",
+     "sha256": "fe1bf4deb2432f878f3bf351b378445cd63cea98240b7fff06f0716fa0ed9890",
+     "size": 70000
+    },
+    {
+     "extents": 0,
+     "kind": "file",
+     "path": "/z/small.txt",
+     "sha256": "efda1cf969a402c2ca9cd704c1b0e085e3a4cdfcefac9635efd94c510800f0a7",
+     "size": 19
+    },
+    {
+     "extents": 0,
+     "flags": [
+      "sparse"
+     ],
+     "kind": "file",
+     "path": "/z/text.txt",
+     "sha256": "45225aef98ef11fbf951cc1d5cee7d15ce8df4b7d290b7ed80ea40c79aa99903",
+     "size": 200000
+    }
+   ],
+   "fs": "ntfs",
+   "offset": 0
+  }
+ ],
+ "schema": 1,
+ "segments": [
+  "ntfs_compressed.img"
+ ],
+ "sha256": "1fd871e8245fee056d9ca1fdd62c2c8f5dd41354e355e2d482175ef396394e31",
+ "size": 8388608
+}

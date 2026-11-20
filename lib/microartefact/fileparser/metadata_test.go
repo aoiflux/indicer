@@ -9,6 +9,7 @@ import (
 )
 
 func TestBuildPEMetadataTextIncludesSectionsImportsAndAnomalies(t *testing.T) {
+	t.Parallel()
 	parsed := &saferpe.File{
 		Sections: []saferpe.Section{
 			{
@@ -48,6 +49,7 @@ func TestBuildPEMetadataTextIncludesSectionsImportsAndAnomalies(t *testing.T) {
 }
 
 func TestBuildELFMetadataTextIncludesSectionsAndSymbols(t *testing.T) {
+	t.Parallel()
 	parsed := &saferelf.Parser{
 		F: &saferelf.File{
 			ELFBin32: saferelf.ELFBin32{
@@ -80,6 +82,7 @@ func TestBuildELFMetadataTextIncludesSectionsAndSymbols(t *testing.T) {
 }
 
 func TestExtractELFMetadataBuildsStructuredPayload(t *testing.T) {
+	t.Parallel()
 	parsed := &saferelf.Parser{
 		F: &saferelf.File{
 			ELFBin32: saferelf.ELFBin32{
@@ -121,6 +124,7 @@ func TestExtractELFMetadataBuildsStructuredPayload(t *testing.T) {
 }
 
 func TestCombineParsedPayloadAppendsMetadata(t *testing.T) {
+	t.Parallel()
 	combined := combineParsedPayload([]byte("token-one\n"), "__pe_metadata__\npe.section_count=1")
 	if !strings.Contains(string(combined), "token-one") {
 		t.Fatalf("expected printable content preserved, got: %s", string(combined))

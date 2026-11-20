@@ -1,0 +1,273 @@
+// Package blobcodec encodes chunk payloads for blob and container storage.
+//
+// A database's encoding is fixed when it is created and recorded in its
+// manifest (lib/dbmeta). Three encodings exist:
+//
+//   - legacy-sealed: zstd, then AES-GCM with a random nonce prepended. Blobs
+//     written before the nonce was randomised used a key-derived nonce; Decode
+//     still accepts them. Nothing binds a payload to its chunk, so a payload
+//     read from the wrong place decrypts without error.
+//   - legacy-raw: the chunk bytes as they are (legacy quick mode).
+//   - v2: a two-byte header (version, flags), zstd, and for encrypted
+//     databases AES-GCM whose additional data is the header and the chunk key.
+//     Decode checks the plaintext against the chunk hash, so a payload read at
+//     the wrong offset or a damaged blob is an error, never wrong content.
+//
+// The codec for a database is registered when dbopen opens it, with the
+// database's own encoder. A database opened another way (tests, older call
+// paths) gets the legacy codec its globals imply, which is what every caller
+// did before codecs existed.
+package blobcodec
+
+import (
+	"bytes"
+	"crypto/aes"
+	"crypto/cipher"
+	"crypto/rand"
+	"crypto/sha3"
+	"errors"
+	"fmt"
+	"sync"
+
+	"indicer/lib/cnst"
+	"indicer/lib/util"
+	"indicer/lib/zstdx"
+
+	"github.com/dgraph-io/badger/v4"
+	"github.com/zeebo/blake3"
+)
+
+// Encoding names, as recorded in the manifest.
+const (
+	LegacySealed = "legacy-sealed"
+	LegacyRaw    = "legacy-raw"
+	V2           = "v2"
+)
+
+// errNoEncoder reports an Encode on a codec built only to decode.
+var errNoEncoder = errors.New("blobcodec: the codec has no encoder")
+
+// ErrCorrupt reports a stored chunk that does not decode to the chunk its key
+// names: damaged, truncated, read from the wrong offset, or encrypted under a
+// different key.
+var ErrCorrupt = errors.New("stored chunk is corrupt")
+
+// Codec turns chunk bytes into what is stored, and back. ckey is the chunk's
+// database key (cnst.ChonkNamespace followed by the chunk hash).
+type Codec interface {
+	Name() string
+	Encode(ckey, plain []byte) ([]byte, error)
+	Decode(ckey, stored []byte) ([]byte, error)
+}
+
+// legacySealed is zstd + AES-GCM, as written before manifests existed.
+type legacySealed struct {
+	key []byte
+	enc *zstdx.Encoder
+}
+
+func (legacySealed) Name() string { return LegacySealed }
+
+func (c legacySealed) Encode(_, plain []byte) ([]byte, error) {
+	if c.enc == nil {
+		return nil, errNoEncoder
+	}
+	return util.SealAES(c.key, c.enc.EncodeAll(plain, make([]byte, 0, len(plain))))
+}
+
+func (c legacySealed) Decode(_, stored []byte) ([]byte, error) {
+	compressed, err := util.UnsealAES(c.key, stored)
+	if err != nil {
+		return nil, fmt.Errorf("%w: %v", ErrCorrupt, err)
+	}
+	plain, err := zstdx.DecodeAll(compressed, nil)
+	if err != nil {
+		return nil, fmt.Errorf("%w: %v", ErrCorrupt, err)
+	}
+	return plain, nil
+}
+
+// legacyRaw stores chunks unencoded, as legacy quick mode did.
+type legacyRaw struct{}
+
+func (legacyRaw) Name() string                            { return LegacyRaw }
+func (legacyRaw) Encode(_, plain []byte) ([]byte, error)  { return plain, nil }
+func (legacyRaw) Decode(_, stored []byte) ([]byte, error) { return stored, nil }
+
+const (
+	v2Version   = 2
+	flagZstd    = 1 << 0
+	flagSealed  = 1 << 1
+	knownFlags  = flagZstd | flagSealed
+	headerLen   = 2
+	gcmNonceLen = 12
+	gcmTagLen   = 16
+)
+
+// zstd's ZSTD_COMPRESSBOUND: the most a frame of n input bytes can take.
+const (
+	zstdBoundShift = 8
+	zstdSmallInput = 128 << 10
+	zstdSmallShift = 11
+)
+
+// MaxStoredSize is the most any encoding stores for a chunk of plainLen
+// bytes, so a reader can refuse a stored file no honest writer made before
+// reading it whole.
+func MaxStoredSize(plainLen int64) int64 {
+	bound := plainLen + plainLen>>zstdBoundShift
+	if plainLen < zstdSmallInput {
+		bound += (zstdSmallInput - plainLen) >> zstdSmallShift
+	}
+	return bound + headerLen + gcmNonceLen + gcmTagLen
+}
+
+// v2 is the current encoding. aead is nil for unencrypted databases.
+type v2 struct {
+	aead cipher.AEAD
+	enc  *zstdx.Encoder
+}
+
+// NewV2 returns the v2 codec. key is the blob key (32 bytes) of an encrypted
+// database, or nil for an unencrypted one. enc compresses what Encode
+// stores; a codec that only decodes may have none.
+func NewV2(key []byte, enc *zstdx.Encoder) (Codec, error) {
+	if key == nil {
+		return v2{enc: enc}, nil
+	}
+	block, err := aes.NewCipher(key)
+	if err != nil {
+		return nil, err
+	}
+	aead, err := cipher.NewGCM(block)
+	if err != nil {
+		return nil, err
+	}
+	return v2{aead: aead, enc: enc}, nil
+}
+
+// NewLegacySealed returns the legacy sealed codec for key, compressing with
+// enc; a codec that only decodes may have none.
+func NewLegacySealed(key []byte, enc *zstdx.Encoder) Codec {
+	return legacySealed{key: append([]byte(nil), key...), enc: enc}
+}
+
+// NewLegacyRaw returns the legacy raw codec.
+func NewLegacyRaw() Codec { return legacyRaw{} }
+
+func (v2) Name() string { return V2 }
+
+func aad(header, ckey []byte) []byte {
+	return append(append(make([]byte, 0, len(header)+len(ckey)), header...), ckey...)
+}
+
+func (c v2) Encode(ckey, plain []byte) ([]byte, error) {
+	if c.enc == nil {
+		return nil, errNoEncoder
+	}
+	flags := byte(flagZstd)
+	if c.aead != nil {
+		flags |= flagSealed
+	}
+	header := []byte{v2Version, flags}
+	payload := c.enc.EncodeAll(plain, make([]byte, 0, len(plain)))
+	if c.aead == nil {
+		return append(header, payload...), nil
+	}
+	out := make([]byte, headerLen+gcmNonceLen, headerLen+gcmNonceLen+len(payload)+c.aead.Overhead())
+	copy(out, header)
+	nonce := out[headerLen : headerLen+gcmNonceLen]
+	if _, err := rand.Read(nonce); err != nil {
+		return nil, err
+	}
+	return c.aead.Seal(out, nonce, payload, aad(header, ckey)), nil
+}
+
+func (c v2) Decode(ckey, stored []byte) ([]byte, error) {
+	if len(stored) < headerLen || stored[0] != v2Version || stored[1]&^knownFlags != 0 {
+		return nil, fmt.Errorf("%w: not a v2 chunk", ErrCorrupt)
+	}
+	header, flags := stored[:headerLen], stored[1]
+	// A sealed database never accepts an unsealed chunk, and the reverse:
+	// either would let a substituted blob through.
+	if (flags&flagSealed != 0) != (c.aead != nil) {
+		return nil, fmt.Errorf("%w: chunk encryption does not match the database", ErrCorrupt)
+	}
+	payload := stored[headerLen:]
+	if c.aead != nil {
+		if len(payload) < gcmNonceLen+c.aead.Overhead() {
+			return nil, fmt.Errorf("%w: truncated", ErrCorrupt)
+		}
+		var err error
+		payload, err = c.aead.Open(nil, payload[:gcmNonceLen], payload[gcmNonceLen:], aad(header, ckey))
+		if err != nil {
+			return nil, fmt.Errorf("%w: authentication failed", ErrCorrupt)
+		}
+	}
+	plain := payload
+	if flags&flagZstd != 0 {
+		var err error
+		if plain, err = zstdx.DecodeAll(payload, nil); err != nil {
+			return nil, fmt.Errorf("%w: %v", ErrCorrupt, err)
+		}
+	}
+	if err := Verify(ckey, plain); err != nil {
+		return nil, err
+	}
+	return plain, nil
+}
+
+// Verify checks plain against the hash in ckey. The hash length names the
+// algorithm: 32 bytes is BLAKE3 (or SHA3-256), 64 bytes SHA3-512. A key whose
+// hash length is unknown is not checked.
+func Verify(ckey, plain []byte) error {
+	hash := bytes.TrimPrefix(ckey, []byte(cnst.ChonkNamespace))
+	switch len(hash) {
+	case 32:
+		b := blake3.Sum256(plain)
+		if bytes.Equal(b[:], hash) {
+			return nil
+		}
+		s := sha3.Sum256(plain)
+		if bytes.Equal(s[:], hash) {
+			return nil
+		}
+	case 64:
+		s := sha3.Sum512(plain)
+		if bytes.Equal(s[:], hash) {
+			return nil
+		}
+	default:
+		return nil
+	}
+	return fmt.Errorf("%w: content does not match its chunk hash", ErrCorrupt)
+}
+
+var registry sync.Map // *badger.DB -> Codec
+
+// Register sets the codec for db. dbopen calls it when it opens a database.
+func Register(db *badger.DB, c Codec) { registry.Store(db, c) }
+
+// Unregister forgets db's codec. dbopen calls it when the database closes.
+func Unregister(db *badger.DB) { registry.Delete(db) }
+
+// Sealed reports whether db's chunks are encrypted.
+func Sealed(db *badger.DB) bool {
+	switch c := For(db).(type) {
+	case v2:
+		return c.aead != nil
+	case legacySealed:
+		return len(c.key) > 0
+	}
+	return false
+}
+
+// For returns db's codec. A database dbopen did not open gets the legacy
+// sealed codec with badger's key, which reads its chunks but writes none
+// (errNoEncoder).
+func For(db *badger.DB) Codec {
+	if c, ok := registry.Load(db); ok {
+		return c.(Codec)
+	}
+	return legacySealed{key: db.Opts().EncryptionKey}
+}

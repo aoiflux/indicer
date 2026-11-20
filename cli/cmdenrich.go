@@ -1,7 +1,12 @@
 package cli
 
 import (
-	"fmt"
+	"context"
+	"errors"
+	"indicer/internal/console"
+	"indicer/internal/lifecycle"
+	"indicer/internal/termsafe"
+	"indicer/lib/dbopen"
 	"indicer/lib/enrichment"
 	"indicer/lib/logging"
 	"time"
@@ -9,37 +14,52 @@ import (
 	"go.uber.org/zap"
 )
 
-func EnrichData(chonkSize int, dbpath string, key []byte) error {
+func EnrichData(ctx context.Context, opts DBOptions) (err error) {
 	start := time.Now()
 	logging.GetLogger().Info("EnrichData START",
-		zap.Int("chonk_size", chonkSize),
-		zap.String("db_path", dbpath),
+		zap.String("db_path", opts.Path),
 	)
 
-	db, dbpath, err := Common(chonkSize, dbpath, key)
+	h, err := Common(ctx, opts, dbopen.ReadWrite, true)
 	if err != nil {
 		logging.GetLogger().Error("EnrichData DB_CONNECT_ERROR", zap.Error(err))
 		return err
 	}
-	defer db.Close()
+	defer closeDB(h, &err)
+	db := h.DB
 
 	logging.GetLogger().Debug("EnrichData OPEN_GRAPH_REPOSITORY")
-	repo, err := enrichment.OpenGrapheneRepository(dbpath)
+	repo, err := enrichment.OpenGrapheneRepository(h.Root)
 	if err != nil {
 		logging.GetLogger().Error("EnrichData OPEN_GRAPH_REPOSITORY_ERROR", zap.Error(err))
 		return err
 	}
 
 	service := enrichment.NewService(db, repo)
-	defer service.Close()
+	defer func() {
+		if cerr := service.Close(); err == nil {
+			err = cerr
+		}
+	}()
 
 	logging.GetLogger().Info("EnrichData ENRICH_ALL_EXECUTE")
-	if err := service.EnrichAll(); err != nil {
+	rep, err := service.EnrichAll(ctx)
+	var incomplete *enrichment.IncompleteError
+	if err != nil && !errors.As(err, &incomplete) {
 		logging.GetLogger().Error("EnrichData ENRICH_ALL_ERROR", zap.Error(err))
 		return err
 	}
 
-	fmt.Println("Graph enrichment complete: evidence files, partitions, and indexed-file metadata upserted.")
+	console.Printf("Graph enrichment: %d evidence, %d partition(s), %d indexed file(s) written.\n", rep.Evidence, rep.Partitions, rep.Files)
+	if rep.Quarantined > 0 {
+		console.Printf("%d evidence with a quarantined index: only the evidence itself was written.\n", rep.Quarantined)
+	}
+	if incomplete != nil {
+		for _, p := range rep.Problems {
+			console.Errorf("unreadable: %s\n", termsafe.Line(p))
+		}
+		return &lifecycle.WarningError{Err: incomplete}
+	}
 	logging.GetLogger().Info("EnrichData COMPLETE", zap.Int64("duration_ms", time.Since(start).Milliseconds()))
 	return nil
 }

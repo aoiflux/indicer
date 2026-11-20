@@ -1,0 +1,176 @@
+package server
+
+import (
+	"context"
+	"encoding/binary"
+	"os"
+	"testing"
+
+	"indicer/internal/testutil/testdb"
+	"indicer/lib/blobcodec"
+	"indicer/lib/cnst"
+	"indicer/lib/dbio"
+	"indicer/lib/dbmeta"
+	"indicer/lib/fio"
+	"indicer/lib/structs"
+	"indicer/lib/util"
+
+	"github.com/dgraph-io/badger/v4"
+	"github.com/vmihailenco/msgpack/v5"
+)
+
+func setupBenchmarkChunkMapDataset(tb testing.TB, chunks int) (structs.FileMeta, *badger.DB) {
+	tb.Helper()
+
+	// An encrypted database, opened and registered as dbopen would, so it
+	// encodes its chunks with its own codec.
+	db := testdb.Open(tb, testdb.Encrypted).DB
+
+	if err := os.MkdirAll(util.BlobPath(db.Opts().Dir), cnst.DirPerm); err != nil {
+		tb.Fatalf("create blob dir failed: %v", err)
+	}
+	chunkSize := dbmeta.ChunkSize(db)
+
+	eviHash := make([]byte, 32)
+	for i := range eviHash {
+		eviHash[i] = byte(0xA0 + (i % 16))
+	}
+
+	chunkData := make([]byte, chunkSize)
+	for i := range chunkData {
+		chunkData[i] = byte(i % 251)
+	}
+
+	for i := 0; i < chunks; i++ {
+		restoreIndex := int64(i) * chunkSize
+
+		hashSeed := make([]byte, 16)
+		binary.BigEndian.PutUint64(hashSeed[:8], uint64(i+1))
+		binary.BigEndian.PutUint64(hashSeed[8:], uint64(i+7))
+		chash, err := util.GetChonkHash(hashSeed, dbmeta.ChunkHasher(db)())
+		if err != nil {
+			tb.Fatalf("hash generation failed: %v", err)
+		}
+
+		relKey := util.AppendToBytesSlice(cnst.RelationNamespace, eviHash, cnst.DataSeperator, restoreIndex)
+		if err := dbio.SetNode(relKey, chash, db); err != nil {
+			tb.Fatalf("set relation failed: %v", err)
+		}
+
+		ckey := util.AppendToBytesSlice(cnst.ChonkNamespace, chash)
+		// Store the chunk encoded, as ingest does; a raw payload in an encrypted
+		// database fails to decrypt on read (HYG-2).
+		stored, err := blobcodec.For(db).Encode(ckey, chunkData)
+		if err != nil {
+			tb.Fatalf("encode chunk failed: %v", err)
+		}
+		path, err := fio.WriteChonk(db.Opts().Dir, stored, ckey, dbmeta.ChunkHasher(db))
+		if err != nil {
+			tb.Fatalf("write chunk failed: %v", err)
+		}
+		stat, err := os.Stat(string(path))
+		if err != nil {
+			tb.Fatalf("stat chunk failed: %v", err)
+		}
+		meta := structs.ChonkMetadata{
+			Path:         string(path),
+			Offset:       0,
+			OriginalSize: int64(len(chunkData)),
+			StoredSize:   stat.Size(),
+			EncodedSize:  stat.Size(),
+			Container:    false,
+		}
+		encodedMeta, err := msgpack.Marshal(meta)
+		if err != nil {
+			tb.Fatalf("marshal chunk metadata failed: %v", err)
+		}
+		if err := dbio.SetNode(ckey, encodedMeta, db); err != nil {
+			tb.Fatalf("set chunk metadata failed: %v", err)
+		}
+	}
+
+	ef := structs.NewEvidenceFile("benchmark", 0, int64(chunks)*chunkSize, nil, "dd", "")
+	ef.Completed = true
+	if err := dbio.SetFile(util.AppendToBytesSlice(cnst.EviFileNamespace, eviHash), ef, db); err != nil {
+		tb.Fatalf("set evidence failed: %v", err)
+	}
+
+	meta := structs.FileMeta{
+		EviHash: eviHash,
+		Start:   0,
+		Size:    int64(chunks) * chunkSize,
+	}
+	return meta, db
+}
+
+func BenchmarkGetChonkMap(b *testing.B) {
+	for _, chunks := range []int{16, 64, 256} {
+		chunks := chunks
+
+		b.Run("start_zero/chunks_"+itoa(chunks), func(b *testing.B) {
+			meta, db := setupBenchmarkChunkMapDataset(b, chunks)
+			benchChonkMapCase(b, meta, db, chunks)
+		})
+
+		b.Run("start_mid_chunk/chunks_"+itoa(chunks), func(b *testing.B) {
+			meta, db := setupBenchmarkChunkMapDataset(b, chunks)
+			chunkSize := dbmeta.ChunkSize(db)
+			meta.Start = chunkSize / 2
+			meta.Size = int64(chunks)*chunkSize - meta.Start
+			benchChonkMapCase(b, meta, db, chunks)
+		})
+	}
+}
+
+func benchChonkMapCase(b *testing.B, meta structs.FileMeta, db *badger.DB, expectedChunks int) {
+	b.Helper()
+	key := util.AppendToBytesSlice(cnst.EviFileNamespace, meta.EviHash)
+	if meta.Start != 0 {
+		// A range of the evidence: a partition record.
+		key = util.AppendToBytesSlice(cnst.PartiFileNamespace, meta.EviHash)
+		var p structs.PartitionFile
+		p.Name = "benchmark_p0"
+		p.Start, p.Size = meta.Start, meta.Size
+		p.EvidenceID = meta.EviHash
+		if err := dbio.SetFile(key, p, db); err != nil {
+			b.Fatalf("set partition: %v", err)
+		}
+	}
+	b.ReportAllocs()
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		res, _, err := chunkMap(context.Background(), db, key, maxChunkEntries)
+		if err != nil {
+			b.Fatalf("chunk map: %v", err)
+		}
+		if len(res) != expectedChunks {
+			b.Fatalf("expected %d chunks, got %d", expectedChunks, len(res))
+		}
+	}
+}
+
+func itoa(v int) string {
+	if v == 0 {
+		return "0"
+	}
+
+	neg := v < 0
+	if neg {
+		v = -v
+	}
+
+	buf := [20]byte{}
+	i := len(buf)
+	for v > 0 {
+		i--
+		buf[i] = byte('0' + (v % 10))
+		v /= 10
+	}
+
+	if neg {
+		i--
+		buf[i] = '-'
+	}
+
+	return string(buf[i:])
+}

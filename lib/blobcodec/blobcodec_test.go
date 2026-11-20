@@ -1,0 +1,257 @@
+package blobcodec
+
+import (
+	"bytes"
+	"crypto/rand"
+	"crypto/sha3"
+	"errors"
+	"runtime"
+	"testing"
+
+	"indicer/lib/cnst"
+	"indicer/lib/zstdx"
+
+	"github.com/dgraph-io/badger/v4"
+	"github.com/zeebo/blake3"
+)
+
+// encoder acquires a zstd encoder for the test, released at its end. testdb
+// cannot be used: it imports dbio, which imports this package. The decoder
+// is the production one: FuzzDecode feeds it crafted frames, and without its
+// memory limit one input can take gigabytes.
+func encoder(t testing.TB) *zstdx.Encoder {
+	t.Helper()
+	e, err := zstdx.Acquire("default", runtime.GOMAXPROCS(0))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(e.Release)
+	return e
+}
+
+func ckeyFor(hash []byte) []byte { return append([]byte(cnst.ChonkNamespace), hash...) }
+
+func blakeKey(data []byte) []byte {
+	h := blake3.Sum256(data)
+	return ckeyFor(h[:])
+}
+
+func sha3Key(data []byte) []byte {
+	h := sha3.Sum512(data)
+	return ckeyFor(h[:])
+}
+
+var blobKey = bytes.Repeat([]byte{7}, 32)
+
+func codecs(t testing.TB) map[string]Codec {
+	t.Helper()
+	enc := encoder(t)
+	plain, err := NewV2(nil, enc)
+	if err != nil {
+		t.Fatal(err)
+	}
+	sealed, err := NewV2(blobKey, enc)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return map[string]Codec{
+		"legacy-sealed": NewLegacySealed(blobKey, enc),
+		"legacy-raw":    NewLegacyRaw(),
+		"v2":            plain,
+		"v2-sealed":     sealed,
+	}
+}
+
+func TestRoundTrip(t *testing.T) {
+	data := bytes.Repeat([]byte("evidence "), 1000)
+	for name, c := range codecs(t) {
+		for _, ckey := range [][]byte{blakeKey(data), sha3Key(data)} {
+			stored, err := c.Encode(ckey, data)
+			if err != nil {
+				t.Fatalf("%s: encode: %v", name, err)
+			}
+			got, err := c.Decode(ckey, stored)
+			if err != nil || !bytes.Equal(got, data) {
+				t.Fatalf("%s: decode = %d bytes, %v", name, len(got), err)
+			}
+		}
+	}
+}
+
+// TestV2RejectsMisplacedPayload is the STO-1 class: a payload read for the
+// wrong chunk must be an error, never another chunk's content.
+func TestV2RejectsMisplacedPayload(t *testing.T) {
+	a, b := []byte("chunk A contents"), []byte("chunk B contents")
+	for _, name := range []string{"v2", "v2-sealed"} {
+		c := codecs(t)[name]
+		storedA, err := c.Encode(blakeKey(a), a)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, err := c.Decode(blakeKey(b), storedA); !errors.Is(err, ErrCorrupt) {
+			t.Fatalf("%s: chunk A decoded as chunk B: %v", name, err)
+		}
+	}
+}
+
+func TestV2RejectsDamage(t *testing.T) {
+	data := bytes.Repeat([]byte{1, 2, 3, 4}, 4096)
+	for _, name := range []string{"v2", "v2-sealed"} {
+		c := codecs(t)[name]
+		ckey := blakeKey(data)
+		stored, err := c.Encode(ckey, data)
+		if err != nil {
+			t.Fatal(err)
+		}
+		cases := map[string][]byte{
+			"empty":       nil,
+			"truncated":   stored[:len(stored)/2],
+			"bad version": append([]byte{9}, stored[1:]...),
+			"bad flags":   append([]byte{stored[0], 0x80}, stored[2:]...),
+		}
+		flipped := append([]byte(nil), stored...)
+		flipped[len(flipped)-3] ^= 0x40
+		cases["bit flip"] = flipped
+		for what, s := range cases {
+			if got, err := c.Decode(ckey, s); !errors.Is(err, ErrCorrupt) {
+				t.Errorf("%s %s: decode = %d bytes, %v; want ErrCorrupt", name, what, len(got), err)
+			}
+		}
+	}
+}
+
+// TestV2SealingMustMatch: an encrypted database refuses an unencrypted chunk
+// (a substituted blob) and an unencrypted one refuses an encrypted chunk.
+func TestV2SealingMustMatch(t *testing.T) {
+	cs := codecs(t)
+	data := []byte("some chunk")
+	ckey := blakeKey(data)
+	plainStored, _ := cs["v2"].Encode(ckey, data)
+	sealedStored, _ := cs["v2-sealed"].Encode(ckey, data)
+	if _, err := cs["v2-sealed"].Decode(ckey, plainStored); !errors.Is(err, ErrCorrupt) {
+		t.Errorf("sealed codec accepted an unsealed chunk: %v", err)
+	}
+	if _, err := cs["v2"].Decode(ckey, sealedStored); !errors.Is(err, ErrCorrupt) {
+		t.Errorf("unsealed codec accepted a sealed chunk: %v", err)
+	}
+	other, _ := NewV2(bytes.Repeat([]byte{8}, 32), nil)
+	if _, err := other.Decode(ckey, sealedStored); !errors.Is(err, ErrCorrupt) {
+		t.Errorf("chunk decrypted under another key: %v", err)
+	}
+}
+
+func TestV2SealedHidesContent(t *testing.T) {
+	data := bytes.Repeat([]byte("SECRET-EVIDENCE-"), 64)
+	stored, err := codecs(t)["v2-sealed"].Encode(blakeKey(data), data)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if bytes.Contains(stored, []byte("SECRET")) {
+		t.Fatal("sealed chunk contains plaintext")
+	}
+}
+
+func TestVerify(t *testing.T) {
+	t.Parallel()
+	data := []byte("x")
+	s256 := sha3.Sum256(data)
+	for _, ckey := range [][]byte{blakeKey(data), sha3Key(data), ckeyFor(s256[:]), ckeyFor([]byte("short"))} {
+		if err := Verify(ckey, data); err != nil {
+			t.Errorf("Verify(%x): %v", ckey, err)
+		}
+	}
+	if err := Verify(blakeKey([]byte("y")), data); !errors.Is(err, ErrCorrupt) {
+		t.Errorf("mismatch not reported: %v", err)
+	}
+}
+
+// TestForUnregistered: a database dbopen did not open reads its chunks with
+// the legacy sealed codec and badger's key, and writes none.
+func TestForUnregistered(t *testing.T) {
+	t.Parallel()
+	db, err := badger.Open(badger.DefaultOptions("").WithInMemory(true).WithLogger(nil).
+		WithEncryptionKey(blobKey).WithIndexCacheSize(1 << 20))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { db.Close() })
+	if got := For(db).Name(); got != LegacySealed {
+		t.Fatalf("unregistered DB uses %s, want %s", got, LegacySealed)
+	}
+	if _, err := For(db).Encode(blakeKey([]byte("x")), []byte("x")); !errors.Is(err, errNoEncoder) {
+		t.Fatalf("unregistered DB encoded a chunk: %v", err)
+	}
+	c, _ := NewV2(nil, nil)
+	Register(db, c)
+	if For(db).Name() != V2 {
+		t.Fatal("registered codec not returned")
+	}
+	Unregister(db)
+	if got := For(db).Name(); got != LegacySealed {
+		t.Fatalf("after Unregister the DB uses %s, want %s", got, LegacySealed)
+	}
+}
+
+// Sealed tells a database whose chunks are encrypted from one whose are
+// not, whatever codec it has.
+func TestSealed(t *testing.T) {
+	db, err := badger.Open(badger.DefaultOptions("").WithInMemory(true).WithLogger(nil))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { db.Close() })
+	cs := codecs(t)
+	for name, want := range map[string]bool{"v2": false, "v2-sealed": true, "legacy-sealed": true, "legacy-raw": false} {
+		Register(db, cs[name])
+		if got := Sealed(db); got != want {
+			t.Errorf("%s: Sealed = %v, want %v", name, got, want)
+		}
+	}
+	Unregister(db)
+	if Sealed(db) {
+		t.Error("an unregistered database without a key is sealed")
+	}
+}
+
+// TestEncodeWithoutEncoder: a codec built only to decode refuses to encode
+// rather than reach for another database's encoder, and still decodes.
+func TestEncodeWithoutEncoder(t *testing.T) {
+	data := bytes.Repeat([]byte("evidence "), 100)
+	ckey := blakeKey(data)
+	stored, err := codecs(t)["v2-sealed"].Encode(ckey, data)
+	if err != nil {
+		t.Fatal(err)
+	}
+	decodeOnly, err := NewV2(blobKey, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for name, c := range map[string]Codec{"v2": decodeOnly, "legacy-sealed": NewLegacySealed(blobKey, nil)} {
+		if _, err := c.Encode(ckey, data); !errors.Is(err, errNoEncoder) {
+			t.Errorf("%s without an encoder: Encode error %v, want errNoEncoder", name, err)
+		}
+	}
+	if got, err := decodeOnly.Decode(ckey, stored); err != nil || !bytes.Equal(got, data) {
+		t.Fatalf("decode-only codec: %v", err)
+	}
+}
+
+// TestMaxStoredSizeBoundsEveryEncoding encodes random bytes, which do not
+// compress, so each encoding stores its worst case.
+func TestMaxStoredSizeBoundsEveryEncoding(t *testing.T) {
+	for _, n := range []int{0, 1, 1000, 128<<10 - 1, 128 << 10, 256<<10 + 3} {
+		data := make([]byte, n)
+		if _, err := rand.Read(data); err != nil {
+			t.Fatal(err)
+		}
+		for name, c := range codecs(t) {
+			stored, err := c.Encode(blakeKey(data), data)
+			if err != nil {
+				t.Fatalf("%s: encode %d bytes: %v", name, n, err)
+			}
+			if limit := MaxStoredSize(int64(n)); int64(len(stored)) > limit {
+				t.Errorf("%s: %d bytes stored as %d, above MaxStoredSize %d", name, n, len(stored), limit)
+			}
+		}
+	}
+}

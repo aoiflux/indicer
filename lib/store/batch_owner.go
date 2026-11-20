@@ -7,12 +7,9 @@ package store
 //  2) Workers send prepared chunk tasks to one writer goroutine over a channel.
 //  3) The writer goroutine is the only owner of mutable ingest-write state.
 //
-// The writer exclusively owns:
-//  - *badger.WriteBatch
-//  - reverse-relation append buffer
+// The writer exclusively owns the *badger.WriteBatch.
 //
 // Why this is simpler and faster than the old shared-batch variant:
-//  - No revRelAppendBuffer lock contention: one writer updates and flushes it.
 //  - No WriteBatch multi-writer pressure: one goroutine performs all batch
 //    mutations.
 //
@@ -21,50 +18,101 @@ package store
 //  - Easier reasoning about ownership and race safety.
 //  - Deterministic write ordering for relation and reverse-relation updates.
 //
-// This is now the only ingest path; the shared-batch path is retired.
+// The shared-batch path is retired. The staged pipeline (staged_pipeline.go)
+// is the other way to run the chunk pass (--pipeline staged).
 
 import (
 	"context"
+	"encoding/binary"
 	"errors"
 	"fmt"
+	"hash"
 	"indicer/lib/cnst"
-	"indicer/lib/dbio"
+	"indicer/lib/engine"
 	"indicer/lib/fio"
-	"indicer/lib/structs"
 	"indicer/lib/util"
-	"os"
+	"sync"
+	"sync/atomic"
 
 	"github.com/dgraph-io/badger/v4"
-	"github.com/schollz/progressbar/v3"
 )
 
 // chunkTask carries per-chunk outputs from hash/materialize workers to the
 // single batch-owner goroutine. cmeta holds pre-materialized encoded chunk
-// metadata for batch DB persistence; cdata is only used by benchmark/helper
-// paths.
+// metadata for batch DB persistence, which the writer holds back until the
+// chunk bytes are durable.
 type chunkTask struct {
 	index int64
 	chash []byte
-	cdata []byte
 	cmeta []byte
+	size  int64 // bytes of evidence content in the chunk
 }
 
-type workerRes struct {
-	err error
+type writerResult struct {
+	root []byte
+	err  error
 }
 
-// storeEvidenceDataBatchOwner is the production evidence ingest path.
-func storeEvidenceDataBatchOwner(infile structs.InputFile) (err error) {
-	bar := progressbar.NewOptions64(
-		infile.GetSize(),
-		progressbar.OptionShowBytes(true),
-		progressbar.OptionSetWriter(os.Stderr),
-		progressbar.OptionSetTheme(cnst.CommonProgressBarTheme),
-	)
+// hochoAccumulator computes the hocho root, the hash over every chunk hash in
+// order (length-prefixed), from chunk hashes that arrive in any order.
+type hochoAccumulator struct {
+	hasher       hash.Hash
+	stride       int64
+	expectedIdx  int64
+	pendingChunk map[int64][]byte
+}
+
+func newHochoAccumulator(newHash func() hash.Hash, stride, startIndex int64) *hochoAccumulator {
+	return &hochoAccumulator{
+		hasher:       newHash(),
+		stride:       stride,
+		expectedIdx:  startIndex,
+		pendingChunk: make(map[int64][]byte),
+	}
+}
+
+func (h *hochoAccumulator) add(index int64, chash []byte) error {
+	h.pendingChunk[index] = append([]byte(nil), chash...)
+
+	for {
+		next, ok := h.pendingChunk[h.expectedIdx]
+		if !ok {
+			break
+		}
+
+		var lenPrefix [4]byte
+		binary.BigEndian.PutUint32(lenPrefix[:], uint32(len(next)))
+		if _, err := h.hasher.Write(lenPrefix[:]); err != nil {
+			return err
+		}
+		if _, err := h.hasher.Write(next); err != nil {
+			return err
+		}
+
+		delete(h.pendingChunk, h.expectedIdx)
+		h.expectedIdx += h.stride
+	}
+
+	return nil
+}
+
+func (h *hochoAccumulator) finalize() ([]byte, error) {
+	if len(h.pendingChunk) != 0 {
+		return nil, fmt.Errorf("hocho accumulation incomplete: %d chunks pending", len(h.pendingChunk))
+	}
+	return h.hasher.Sum(nil), nil
+}
+
+// ingestChunksBatchOwner is the production chunk pass.
+func ingestChunksBatchOwner(parentCtx context.Context, p ChunkPass) (res ChunkResult, err error) {
+	shape := shapeFor(p)
+	meter := startPass(parentCtx, p)
+	// Registered first, so it runs last: after the simhash writer drained.
+	defer func() { meter.done(err) }()
 
 	var simhashWriter *simhashAsyncWriter
-	if cnst.ENABLESIMHASH {
-		simhashWriter = newSimhashAsyncWriter(infile.GetDB(), cnst.GetMaxThreadCount())
+	if p.Simhash {
+		simhashWriter = newSimhashAsyncWriter(p.DB, shape.tuning.MaxThreads())
 		defer func() {
 			simhashErr := simhashWriter.wait()
 			if err == nil && simhashErr != nil {
@@ -73,88 +121,66 @@ func storeEvidenceDataBatchOwner(infile structs.InputFile) (err error) {
 		}()
 	}
 
-	var containerMgr *fio.ContainerManager
-	var blockMgr *fio.BlockManager
+	writes := p.join()
+	defer writes.leave(&err)
 
-	if cnst.CONTAINERMODE {
-		containerMgr = fio.NewContainerManager(infile.GetDB().Opts().Dir)
-		defer closeContainerManager(&err, containerMgr)
-
-		if cnst.HIERARCHICALINDEX {
-			blockMgr = fio.NewBlockManager(infile.GetDB().Opts().Dir, containerMgr)
-			defer closeBlockManager(&err, blockMgr)
-		}
-	}
-
-	// ctx is cancelled when the writer goroutine exits with an error so that
-	// in-flight workers do not block indefinitely on taskCh.
-	ctx, cancel := context.WithCancel(context.Background())
+	// ctx is cancelled when the caller cancels or any stage fails, which
+	// stops the feed and lets every worker drain.
+	ctx, cancel := context.WithCancel(parentCtx)
 	defer cancel()
 
-	// Tune worker/queue shape by storage mode; container/hierarchical paths
-	// include serialized components and benefit from steadier queue pressure.
-	workerCount, taskQueueDepth := cnst.GetStorePipelineTuning(cnst.CONTAINERMODE, cnst.HIERARCHICALINDEX)
-	taskCh := make(chan chunkTask, taskQueueDepth)
-	writerErrCh := make(chan error, 1)
+	taskCh := make(chan chunkTask, shape.queueDepth)
+	writerResCh := make(chan writerResult, 1)
+	go runBatchOwnerWriter(p.ID, shape, p.DB, writes.containers(), taskCh, cancel, writerResCh)
 
-	go runBatchOwnerWriter(
-		infile.GetHash(),
-		infile.GetDB(),
-		taskCh,
-		cancel,
-		writerErrCh,
-	)
-
-	workerResCh := make(chan workerRes, workerCount+1)
+	tap := newDigestTap(shape.fileHash, p.SecondHash, p.Ranges, p.EWF)
+	feed := shape.feed(ctx, p, tap)
 	seenChunks := newShardedChunkSet()
-	active := 0
-	mappedFile := infile.GetMappedFile()
+
+	var mu sync.Mutex
 	var firstWorkerErr error
-	hasWorkerErr := false
-
-	for storeIndex := infile.GetStartIndex(); storeIndex < infile.GetSize() && !hasWorkerErr; storeIndex += cnst.ChonkSize {
-		var buffsize int64
-		if infile.GetSize()-storeIndex <= cnst.ChonkSize {
-			buffsize = infile.GetSize() - storeIndex
-		} else {
-			buffsize = cnst.ChonkSize
-		}
-		chonkEnd := storeIndex + buffsize
-		idx := storeIndex
-
-		go batchOwnerHashWorker(ctx, mappedFile, idx, chonkEnd, infile.GetDB(), containerMgr, blockMgr, seenChunks, taskCh, workerResCh, simhashWriter)
-		active++
-
-		if active > workerCount {
-			res := <-workerResCh
-			captureFirstWorkerErr(res.err, &firstWorkerErr, &hasWorkerErr)
-			active--
-			bar.Add64(buffsize)
-		}
+	var chunks atomic.Int64
+	var wg sync.WaitGroup
+	for range shape.workers {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			h := shape.chunkHash()
+			for c := range feed.chunks() {
+				n := int64(len(c.data))
+				isNew, written, werr := batchOwnerHashWorker(ctx, c.off, c.data, h, p.DB, writes, seenChunks, taskCh, simhashWriter)
+				c.release()
+				if werr != nil {
+					mu.Lock()
+					captureFirstWorkerErr(werr, &firstWorkerErr)
+					mu.Unlock()
+					cancel()
+					continue
+				}
+				chunks.Add(1)
+				meter.fed(n)
+				if isNew {
+					meter.stored(n, written)
+				}
+			}
+		}()
 	}
-
-	for active > 0 {
-		res := <-workerResCh
-		captureFirstWorkerErr(res.err, &firstWorkerErr, &hasWorkerErr)
-		active--
-		bar.Add64(cnst.ChonkSize)
-	}
+	wg.Wait()
+	feedErr := feed.wait()
 
 	close(taskCh)
-	writerErr := <-writerErrCh
+	writerRes := <-writerResCh
 
-	bar.Add64(cnst.ChonkSize)
-	bar.Finish()
-	fmt.Fprintln(os.Stderr)
-	barErr := bar.Close()
-
-	if firstWorkerErr != nil {
-		return firstWorkerErr
+	workerErr := firstWorkerErr
+	if writerRes.err != nil && (workerErr == nil || errors.Is(workerErr, context.Canceled)) {
+		// The writer failing cancelled the workers: its error explains
+		// theirs, and is the one to report.
+		workerErr = writerRes.err
 	}
-	if writerErr != nil {
-		return writerErr
+	if err := passErr(parentCtx, feedErr, workerErr); err != nil {
+		return ChunkResult{}, err
 	}
-	return barErr
+	return passResult(tap, writerRes.root, chunks.Load(), meter), nil
 }
 
 func mergeDeferredErr(target *error, incoming error) {
@@ -164,52 +190,41 @@ func mergeDeferredErr(target *error, incoming error) {
 	*target = incoming
 }
 
-func closeContainerManager(target *error, containerMgr *fio.ContainerManager) {
-	if containerMgr == nil {
-		return
-	}
-	mergeDeferredErr(target, containerMgr.Close())
-}
-
-func closeBlockManager(target *error, blockMgr *fio.BlockManager) {
-	if blockMgr == nil {
-		return
-	}
-	mergeDeferredErr(target, blockMgr.Close())
-}
-
 func runBatchOwnerWriter(
 	fhash []byte,
+	shape passShape,
 	db *badger.DB,
+	containerMgr *fio.ContainerManager,
 	taskCh <-chan chunkTask,
 	cancel context.CancelFunc,
-	writerErrCh chan<- error,
+	writerResCh chan<- writerResult,
 ) {
-	werr := batchOwnerWriteLoop(fhash, db, taskCh)
+	root, werr := batchOwnerWriteLoop(fhash, shape, db, containerMgr, taskCh)
 	if werr != nil {
 		cancel()
 	}
-	writerErrCh <- werr
+	writerResCh <- writerResult{root: root, err: werr}
 }
 
+// batchOwnerHashWorker hashes the chunk data at idx, stores it unless this
+// pass, another pass running beside it or the database already did, and
+// hands the result to the writer. h is the worker's own chunk hasher. isNew
+// is true when it stored the chunk, and written is then the bytes it wrote
+// for it.
 func batchOwnerHashWorker(
 	ctx context.Context,
-	mappedFile []byte,
-	idx, chonkEnd int64,
+	idx int64,
+	chunkBytes []byte,
+	h hash.Hash,
 	db *badger.DB,
-	containerMgr *fio.ContainerManager,
-	blockMgr *fio.BlockManager,
+	writes *passChunks,
 	seenChunks *shardedChunkSet,
 	taskCh chan<- chunkTask,
-	workerResCh chan<- workerRes,
 	simhashWriter *simhashAsyncWriter,
-) {
-	chunkBytes := mappedFile[idx:chonkEnd]
-	chash, herr := util.GetChonkHash(chunkBytes, cnst.GetHashAlgo())
-	if herr != nil {
-		workerResCh <- workerRes{herr}
-		return
-	}
+) (isNew bool, written int64, err error) {
+	h.Reset()
+	h.Write(chunkBytes)
+	chash := h.Sum(nil)
 
 	if simhashWriter != nil {
 		simhashWriter.enqueue(chunkBytes, chash)
@@ -218,131 +233,77 @@ func batchOwnerHashWorker(
 	var cmeta []byte
 	if !seenChunks.loadOrStore(chash) {
 		ckey := util.AppendToBytesSlice(cnst.ChonkNamespace, chash)
-		if containerMgr != nil {
-			// Container mode: WriteChunkToContainer cannot detect chunks from
-			// previous sessions, so we must probe the DB first.
-			err := dbio.PingNode(ckey, db)
-			if errors.Is(err, badger.ErrKeyNotFound) {
-				cmeta, err = dbio.MaterializeChonkNode(ckey, chunkBytes, db, containerMgr, blockMgr)
-				if err != nil {
-					workerResCh <- workerRes{err}
-					return
-				}
-			} else if err != nil {
-				workerResCh <- workerRes{err}
-				return
-			}
-		} else {
-			// File mode: WriteChonk is idempotent (os.Stat check); call
-			// MaterializeChonkNode directly without a prior DB probe.
-			var merr error
-			cmeta, merr = dbio.MaterializeChonkNode(ckey, chunkBytes, db, nil, blockMgr)
-			if merr != nil {
-				workerResCh <- workerRes{merr}
-				return
-			}
+		if cmeta, written, isNew, err = materializeChunkMeta(ckey, chunkBytes, db, writes); err != nil {
+			return false, 0, err
 		}
 	}
 
 	select {
-	case taskCh <- chunkTask{index: idx, chash: chash, cmeta: cmeta}:
-		workerResCh <- workerRes{}
+	case taskCh <- chunkTask{index: idx, chash: chash, cmeta: cmeta, size: int64(len(chunkBytes))}:
+		return isNew, written, nil
 	case <-ctx.Done():
-		workerResCh <- workerRes{context.Canceled}
+		return false, 0, context.Canceled
 	}
 }
 
-func captureFirstWorkerErr(err error, firstWorkerErr *error, hasWorkerErr *bool) {
-	if err == nil || *hasWorkerErr {
+func captureFirstWorkerErr(err error, firstWorkerErr *error) {
+	if err == nil || *firstWorkerErr != nil {
 		return
 	}
 	*firstWorkerErr = err
-	*hasWorkerErr = true
 }
 
-// batchOwnerWriteLoop is the single writer goroutine. It owns the WriteBatch
-// and revRelAppendBuffer exclusively — no synchronisation primitives are
-// needed for those structures here.
+// batchOwnerWriteLoop is the single writer goroutine. It owns the WriteBatch,
+// and the chunk-metadata barrier exclusively — no synchronisation primitives
+// are needed for those structures here. It returns the hocho root.
 func batchOwnerWriteLoop(
 	fhash []byte,
+	shape passShape,
 	db *badger.DB,
+	containerMgr *fio.ContainerManager,
 	taskCh <-chan chunkTask,
-) error {
-	batch, err := util.InitBatch(db)
-	if err != nil {
-		return err
+) ([]byte, error) {
+	batch := util.InitBatch(db, engine.For(db).MaxBatchCount())
+
+	barrier := newChunkMetaBarrier(db, containerMgr, batch)
+	hocho := newHochoAccumulator(shape.fileHash, shape.chunk, 0)
+
+	// On failure the writer returns at once; its caller cancels the pass,
+	// so workers blocked on taskCh give up.
+	fail := func(err error) ([]byte, error) {
+		batch.Cancel()
+		return nil, err
 	}
-
-	revRelBuffer := newRevRelAppendBuffer(256)
-
 	for task := range taskCh {
-		if len(task.cmeta) > 0 {
-			ckey := util.AppendToBytesSlice(cnst.ChonkNamespace, task.chash)
-			if err := dbio.SetBatchNode(ckey, task.cmeta, batch); err != nil {
-				batch.Cancel()
-				return err
-			}
+		if err := hocho.add(task.index, task.chash); err != nil {
+			return fail(err)
+		}
+		ckey := util.AppendToBytesSlice(cnst.ChonkNamespace, task.chash)
+		if err := barrier.record(ckey, task.cmeta, task.size); err != nil {
+			return fail(err)
 		}
 		if err := processRel(task.index, fhash, task.chash, db, batch); err != nil {
-			batch.Cancel()
-			return err
+			return fail(err)
 		}
-		if err := processRevRel(task.index, fhash, task.chash, batch, revRelBuffer); err != nil {
-			batch.Cancel()
-			return err
+		if err := processRevRel(shape.revrel, task.index, fhash, task.chash, db, batch); err != nil {
+			return fail(err)
 		}
 	}
 
-	if revRelBuffer != nil {
-		if err := revRelBuffer.flush(fhash, batch); err != nil {
-			batch.Cancel()
-			return err
-		}
+	if err := barrier.fire(); err != nil {
+		batch.Cancel()
+		return nil, err
 	}
 
-	return batch.Flush()
-}
-
-// batchOwnerProcessChonk mirrors processChonk but uses a plain map for
-// seenChunks since only the single writer goroutine calls it.
-// When cdata is nil or empty the function skips the existence probe and store;
-// this is used by benchmark helpers that only exercise the rel/revrel write path.
-func batchOwnerProcessChonk(
-	cdata, chash []byte,
-	db *badger.DB,
-	batch *badger.WriteBatch,
-	containerMgr *fio.ContainerManager,
-	blockMgr *fio.BlockManager,
-	seenChunks map[string]struct{},
-) error {
-	if len(cdata) == 0 {
-		return nil
-	}
-	hashKey := string(chash)
-	if _, alreadySeen := seenChunks[hashKey]; alreadySeen {
-		return nil
+	root, err := hocho.finalize()
+	if err != nil {
+		batch.Cancel()
+		return nil, err
 	}
 
-	ckey := util.AppendToBytesSlice(cnst.ChonkNamespace, chash)
-	if containerMgr != nil {
-		// Container mode: requires DB probe to avoid re-appending on resume.
-		err := dbio.PingNode(ckey, db)
-		if errors.Is(err, badger.ErrKeyNotFound) {
-			if setErr := dbio.SetBatchChonkNode(ckey, cdata, db, batch, containerMgr, blockMgr); setErr != nil {
-				return setErr
-			}
-			seenChunks[hashKey] = struct{}{}
-			return nil
-		}
-		if err == nil {
-			seenChunks[hashKey] = struct{}{}
-		}
-		return err
+	if err := batch.Flush(); err != nil {
+		return nil, err
 	}
-	// File mode: WriteChonk is idempotent, call unconditionally.
-	if setErr := dbio.SetBatchChonkNode(ckey, cdata, db, batch, nil, blockMgr); setErr != nil {
-		return setErr
-	}
-	seenChunks[hashKey] = struct{}{}
-	return nil
+
+	return root, nil
 }

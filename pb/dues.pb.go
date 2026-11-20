@@ -4,15 +4,20 @@
 // 	protoc        v6.32.0
 // source: dues.proto
 
+// Regenerate pb with the repository root as the working directory:
+//   protoc -I protos --go_out=. --go_opt=module=indicer \
+//     --go-grpc_out=. --go-grpc_opt=module=indicer \
+//     --connect-go_out=. --connect-go_opt=module=indicer protos/dues.proto
+// The protocol is described in docs/SERVER_API.md.
+
 package pb
 
 import (
+	protoreflect "google.golang.org/protobuf/reflect/protoreflect"
+	protoimpl "google.golang.org/protobuf/runtime/protoimpl"
 	reflect "reflect"
 	sync "sync"
 	unsafe "unsafe"
-
-	protoreflect "google.golang.org/protobuf/reflect/protoreflect"
-	protoimpl "google.golang.org/protobuf/runtime/protoimpl"
 )
 
 const (
@@ -23,13 +28,20 @@ const (
 )
 
 type BaseFile struct {
-	state         protoimpl.MessageState `protogen:"open.v1"`
-	FilePath      string                 `protobuf:"bytes,1,opt,name=file_path,json=filePath,proto3" json:"file_path,omitempty"`
-	FileId        string                 `protobuf:"bytes,2,opt,name=file_id,json=fileId,proto3" json:"file_id,omitempty"`
-	FileSize      int64                  `protobuf:"varint,3,opt,name=file_size,json=fileSize,proto3" json:"file_size,omitempty"`
-	ChunkMap      map[string]int64       `protobuf:"bytes,4,rep,name=chunk_map,json=chunkMap,proto3" json:"chunk_map,omitempty" protobuf_key:"bytes,1,opt,name=key" protobuf_val:"varint,2,opt,name=value"`
-	unknownFields protoimpl.UnknownFields
-	sizeCache     protoimpl.SizeCache
+	state    protoimpl.MessageState `protogen:"open.v1"`
+	FilePath string                 `protobuf:"bytes,1,opt,name=file_path,json=filePath,proto3" json:"file_path,omitempty"`
+	// file_id is the base64 of the object's record key; the listings take
+	// it as evi_file_id and parti_file_id.
+	FileId   string `protobuf:"bytes,2,opt,name=file_id,json=fileId,proto3" json:"file_id,omitempty"`
+	FileSize int64  `protobuf:"varint,3,opt,name=file_size,json=fileSize,proto3" json:"file_size,omitempty"`
+	// chunk_map maps the base64 hash of each stored chunk holding part of
+	// the object to that chunk's stored size.
+	ChunkMap map[string]int64 `protobuf:"bytes,4,rep,name=chunk_map,json=chunkMap,proto3" json:"chunk_map,omitempty" protobuf_key:"bytes,1,opt,name=key" protobuf_val:"varint,2,opt,name=value"`
+	// chunk_map_truncated: the object has more chunks than one response
+	// carries; chunk_map holds the first of them.
+	ChunkMapTruncated bool `protobuf:"varint,5,opt,name=chunk_map_truncated,json=chunkMapTruncated,proto3" json:"chunk_map_truncated,omitempty"`
+	unknownFields     protoimpl.UnknownFields
+	sizeCache         protoimpl.SizeCache
 }
 
 func (x *BaseFile) Reset() {
@@ -90,10 +102,21 @@ func (x *BaseFile) GetChunkMap() map[string]int64 {
 	return nil
 }
 
+func (x *BaseFile) GetChunkMapTruncated() bool {
+	if x != nil {
+		return x.ChunkMapTruncated
+	}
+	return false
+}
+
 type AppendIfExistsReq struct {
-	state         protoimpl.MessageState `protogen:"open.v1"`
-	FileHash      string                 `protobuf:"bytes,1,opt,name=file_hash,json=fileHash,proto3" json:"file_hash,omitempty"`
-	FilePath      string                 `protobuf:"bytes,2,opt,name=file_path,json=filePath,proto3" json:"file_path,omitempty"`
+	state protoimpl.MessageState `protogen:"open.v1"`
+	// file_hash is the base64 of the file's plain content hash, in the
+	// database's file hash algorithm (BLAKE3-256 unless it was created with
+	// SHA3).
+	FileHash string `protobuf:"bytes,1,opt,name=file_hash,json=fileHash,proto3" json:"file_hash,omitempty"`
+	// file_path is recorded as an alias of the evidence holding the content.
+	FilePath      string `protobuf:"bytes,2,opt,name=file_path,json=filePath,proto3" json:"file_path,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -211,10 +234,15 @@ func (x *AppendIfExistsRes) GetErr() string {
 }
 
 type StreamFileMeta struct {
-	state         protoimpl.MessageState `protogen:"open.v1"`
-	FilePath      string                 `protobuf:"bytes,1,opt,name=file_path,json=filePath,proto3" json:"file_path,omitempty"`
-	FileType      string                 `protobuf:"bytes,2,opt,name=file_type,json=fileType,proto3" json:"file_type,omitempty"` // evidence file type (windows_exfat, linux_ext4, something else)
-	FileHash      string                 `protobuf:"bytes,3,opt,name=file_hash,json=fileHash,proto3" json:"file_hash,omitempty"`
+	state    protoimpl.MessageState `protogen:"open.v1"`
+	FilePath string                 `protobuf:"bytes,1,opt,name=file_path,json=filePath,proto3" json:"file_path,omitempty"`
+	FileType string                 `protobuf:"bytes,2,opt,name=file_type,json=fileType,proto3" json:"file_type,omitempty"` // evidence file type (windows_exfat, linux_ext4, something else)
+	// file_hash is checked against the uploaded bytes, as in
+	// AppendIfExistsReq.
+	FileHash string `protobuf:"bytes,3,opt,name=file_hash,json=fileHash,proto3" json:"file_hash,omitempty"`
+	// size, when set, is the number of bytes the stream carries; more is
+	// refused, and less fails the upload.
+	Size          int64 `protobuf:"varint,4,opt,name=size,proto3" json:"size,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -268,6 +296,13 @@ func (x *StreamFileMeta) GetFileHash() string {
 		return x.FileHash
 	}
 	return ""
+}
+
+func (x *StreamFileMeta) GetSize() int64 {
+	if x != nil {
+		return x.Size
+	}
+	return 0
 }
 
 type StreamFileReq struct {
@@ -412,8 +447,14 @@ func (x *StreamFileRes) GetEviFile() *BaseFile {
 	return nil
 }
 
+// The listings are paged. A response holds at most page_size objects
+// (default 1000, at most 10000) and ends a page early rather than carry more
+// than 1M chunk-map entries. next_page_token, when set, is passed as
+// page_token to get the next page.
 type GetEviFilesReq struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
+	PageSize      int32                  `protobuf:"varint,1,opt,name=page_size,json=pageSize,proto3" json:"page_size,omitempty"`
+	PageToken     string                 `protobuf:"bytes,2,opt,name=page_token,json=pageToken,proto3" json:"page_token,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -448,11 +489,26 @@ func (*GetEviFilesReq) Descriptor() ([]byte, []int) {
 	return file_dues_proto_rawDescGZIP(), []int{6}
 }
 
+func (x *GetEviFilesReq) GetPageSize() int32 {
+	if x != nil {
+		return x.PageSize
+	}
+	return 0
+}
+
+func (x *GetEviFilesReq) GetPageToken() string {
+	if x != nil {
+		return x.PageToken
+	}
+	return ""
+}
+
 type GetEviFilesRes struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
 	Done          bool                   `protobuf:"varint,1,opt,name=done,proto3" json:"done,omitempty"`
 	Err           string                 `protobuf:"bytes,2,opt,name=err,proto3" json:"err,omitempty"`
 	EviFile       []*BaseFile            `protobuf:"bytes,3,rep,name=evi_file,json=eviFile,proto3" json:"evi_file,omitempty"`
+	NextPageToken string                 `protobuf:"bytes,4,opt,name=next_page_token,json=nextPageToken,proto3" json:"next_page_token,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -508,9 +564,18 @@ func (x *GetEviFilesRes) GetEviFile() []*BaseFile {
 	return nil
 }
 
+func (x *GetEviFilesRes) GetNextPageToken() string {
+	if x != nil {
+		return x.NextPageToken
+	}
+	return ""
+}
+
 type GetPartiFilesReq struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
 	EviFileId     string                 `protobuf:"bytes,1,opt,name=evi_file_id,json=eviFileId,proto3" json:"evi_file_id,omitempty"`
+	PageSize      int32                  `protobuf:"varint,2,opt,name=page_size,json=pageSize,proto3" json:"page_size,omitempty"`
+	PageToken     string                 `protobuf:"bytes,3,opt,name=page_token,json=pageToken,proto3" json:"page_token,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -552,11 +617,26 @@ func (x *GetPartiFilesReq) GetEviFileId() string {
 	return ""
 }
 
+func (x *GetPartiFilesReq) GetPageSize() int32 {
+	if x != nil {
+		return x.PageSize
+	}
+	return 0
+}
+
+func (x *GetPartiFilesReq) GetPageToken() string {
+	if x != nil {
+		return x.PageToken
+	}
+	return ""
+}
+
 type GetPartiFilesRes struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
 	Done          bool                   `protobuf:"varint,1,opt,name=done,proto3" json:"done,omitempty"`
 	Err           string                 `protobuf:"bytes,2,opt,name=err,proto3" json:"err,omitempty"`
 	PartitionFile []*BaseFile            `protobuf:"bytes,3,rep,name=partition_file,json=partitionFile,proto3" json:"partition_file,omitempty"`
+	NextPageToken string                 `protobuf:"bytes,4,opt,name=next_page_token,json=nextPageToken,proto3" json:"next_page_token,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -612,9 +692,18 @@ func (x *GetPartiFilesRes) GetPartitionFile() []*BaseFile {
 	return nil
 }
 
+func (x *GetPartiFilesRes) GetNextPageToken() string {
+	if x != nil {
+		return x.NextPageToken
+	}
+	return ""
+}
+
 type GetIdxFilesReq struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
 	PartiFileId   string                 `protobuf:"bytes,1,opt,name=parti_file_id,json=partiFileId,proto3" json:"parti_file_id,omitempty"`
+	PageSize      int32                  `protobuf:"varint,2,opt,name=page_size,json=pageSize,proto3" json:"page_size,omitempty"`
+	PageToken     string                 `protobuf:"bytes,3,opt,name=page_token,json=pageToken,proto3" json:"page_token,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -656,11 +745,26 @@ func (x *GetIdxFilesReq) GetPartiFileId() string {
 	return ""
 }
 
+func (x *GetIdxFilesReq) GetPageSize() int32 {
+	if x != nil {
+		return x.PageSize
+	}
+	return 0
+}
+
+func (x *GetIdxFilesReq) GetPageToken() string {
+	if x != nil {
+		return x.PageToken
+	}
+	return ""
+}
+
 type GetIdxFilesRes struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
 	Done          bool                   `protobuf:"varint,1,opt,name=done,proto3" json:"done,omitempty"`
 	Err           string                 `protobuf:"bytes,2,opt,name=err,proto3" json:"err,omitempty"`
 	IndexedFile   []*BaseFile            `protobuf:"bytes,3,rep,name=indexed_file,json=indexedFile,proto3" json:"indexed_file,omitempty"`
+	NextPageToken string                 `protobuf:"bytes,4,opt,name=next_page_token,json=nextPageToken,proto3" json:"next_page_token,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -716,9 +820,17 @@ func (x *GetIdxFilesRes) GetIndexedFile() []*BaseFile {
 	return nil
 }
 
+func (x *GetIdxFilesRes) GetNextPageToken() string {
+	if x != nil {
+		return x.NextPageToken
+	}
+	return ""
+}
+
 type SearchReq struct {
-	state         protoimpl.MessageState `protogen:"open.v1"`
-	Keyword       string                 `protobuf:"bytes,1,opt,name=keyword,proto3" json:"keyword,omitempty"`
+	state protoimpl.MessageState `protogen:"open.v1"`
+	// Keyword is matched case-insensitively against indexed content.
+	Keyword       string `protobuf:"bytes,1,opt,name=keyword,proto3" json:"keyword,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -761,12 +873,18 @@ func (x *SearchReq) GetKeyword() string {
 }
 
 type SearchRes struct {
-	state           protoimpl.MessageState `protogen:"open.v1"`
-	Err             string                 `protobuf:"bytes,1,opt,name=err,proto3" json:"err,omitempty"`
-	TotalCount      int64                  `protobuf:"varint,2,opt,name=total_count,json=totalCount,proto3" json:"total_count,omitempty"`
-	KeywordCountMap map[string]int64       `protobuf:"bytes,3,rep,name=keyword_count_map,json=keywordCountMap,proto3" json:"keyword_count_map,omitempty" protobuf_key:"bytes,1,opt,name=key" protobuf_val:"varint,2,opt,name=value"`
-	unknownFields   protoimpl.UnknownFields
-	sizeCache       protoimpl.SizeCache
+	state protoimpl.MessageState `protogen:"open.v1"`
+	Err   string                 `protobuf:"bytes,1,opt,name=err,proto3" json:"err,omitempty"`
+	// total_count is the occurrences in the stored evidence, counted once
+	// however many partitions and files they also fall in.
+	TotalCount int64 `protobuf:"varint,2,opt,name=total_count,json=totalCount,proto3" json:"total_count,omitempty"`
+	// Keys are the base64 record keys of the objects (evidence, partitions,
+	// indexed files) the keyword occurs in; values are its occurrences there.
+	KeywordCountMap map[string]int64 `protobuf:"bytes,3,rep,name=keyword_count_map,json=keywordCountMap,proto3" json:"keyword_count_map,omitempty" protobuf_key:"bytes,1,opt,name=key" protobuf_val:"varint,2,opt,name=value"`
+	// truncated: more objects matched than one response carries (100,000).
+	Truncated     bool `protobuf:"varint,4,opt,name=truncated,proto3" json:"truncated,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
 }
 
 func (x *SearchRes) Reset() {
@@ -820,17 +938,25 @@ func (x *SearchRes) GetKeywordCountMap() map[string]int64 {
 	return nil
 }
 
+func (x *SearchRes) GetTruncated() bool {
+	if x != nil {
+		return x.Truncated
+	}
+	return false
+}
+
 var File_dues_proto protoreflect.FileDescriptor
 
 const file_dues_proto_rawDesc = "" +
 	"\n" +
 	"\n" +
-	"dues.proto\x12\x04dues\"\xd5\x01\n" +
+	"dues.proto\x12\x04dues\"\x85\x02\n" +
 	"\bBaseFile\x12\x1b\n" +
 	"\tfile_path\x18\x01 \x01(\tR\bfilePath\x12\x17\n" +
 	"\afile_id\x18\x02 \x01(\tR\x06fileId\x12\x1b\n" +
 	"\tfile_size\x18\x03 \x01(\x03R\bfileSize\x129\n" +
-	"\tchunk_map\x18\x04 \x03(\v2\x1c.dues.BaseFile.ChunkMapEntryR\bchunkMap\x1a;\n" +
+	"\tchunk_map\x18\x04 \x03(\v2\x1c.dues.BaseFile.ChunkMapEntryR\bchunkMap\x12.\n" +
+	"\x13chunk_map_truncated\x18\x05 \x01(\bR\x11chunkMapTruncated\x1a;\n" +
 	"\rChunkMapEntry\x12\x10\n" +
 	"\x03key\x18\x01 \x01(\tR\x03key\x12\x14\n" +
 	"\x05value\x18\x02 \x01(\x03R\x05value:\x028\x01\"M\n" +
@@ -841,11 +967,12 @@ const file_dues_proto_rawDesc = "" +
 	"\x06exists\x18\x01 \x01(\bR\x06exists\x12\x1a\n" +
 	"\bappended\x18\x02 \x01(\bR\bappended\x12)\n" +
 	"\bevi_file\x18\x03 \x01(\v2\x0e.dues.BaseFileR\aeviFile\x12\x10\n" +
-	"\x03err\x18\x04 \x01(\tR\x03err\"g\n" +
+	"\x03err\x18\x04 \x01(\tR\x03err\"{\n" +
 	"\x0eStreamFileMeta\x12\x1b\n" +
 	"\tfile_path\x18\x01 \x01(\tR\bfilePath\x12\x1b\n" +
 	"\tfile_type\x18\x02 \x01(\tR\bfileType\x12\x1b\n" +
-	"\tfile_hash\x18\x03 \x01(\tR\bfileHash\"e\n" +
+	"\tfile_hash\x18\x03 \x01(\tR\bfileHash\x12\x12\n" +
+	"\x04size\x18\x04 \x01(\x03R\x04size\"e\n" +
 	"\rStreamFileReq\x12\x14\n" +
 	"\x04file\x18\x01 \x01(\fH\x00R\x04file\x123\n" +
 	"\tfile_meta\x18\x02 \x01(\v2\x14.dues.StreamFileMetaH\x00R\bfileMetaB\t\n" +
@@ -853,31 +980,44 @@ const file_dues_proto_rawDesc = "" +
 	"\rStreamFileRes\x12\x12\n" +
 	"\x04done\x18\x01 \x01(\bR\x04done\x12\x10\n" +
 	"\x03err\x18\x02 \x01(\tR\x03err\x12)\n" +
-	"\bevi_file\x18\x03 \x01(\v2\x0e.dues.BaseFileR\aeviFile\"\x10\n" +
-	"\x0eGetEviFilesReq\"a\n" +
+	"\bevi_file\x18\x03 \x01(\v2\x0e.dues.BaseFileR\aeviFile\"L\n" +
+	"\x0eGetEviFilesReq\x12\x1b\n" +
+	"\tpage_size\x18\x01 \x01(\x05R\bpageSize\x12\x1d\n" +
+	"\n" +
+	"page_token\x18\x02 \x01(\tR\tpageToken\"\x89\x01\n" +
 	"\x0eGetEviFilesRes\x12\x12\n" +
 	"\x04done\x18\x01 \x01(\bR\x04done\x12\x10\n" +
 	"\x03err\x18\x02 \x01(\tR\x03err\x12)\n" +
-	"\bevi_file\x18\x03 \x03(\v2\x0e.dues.BaseFileR\aeviFile\"2\n" +
+	"\bevi_file\x18\x03 \x03(\v2\x0e.dues.BaseFileR\aeviFile\x12&\n" +
+	"\x0fnext_page_token\x18\x04 \x01(\tR\rnextPageToken\"n\n" +
 	"\x10GetPartiFilesReq\x12\x1e\n" +
-	"\vevi_file_id\x18\x01 \x01(\tR\teviFileId\"o\n" +
+	"\vevi_file_id\x18\x01 \x01(\tR\teviFileId\x12\x1b\n" +
+	"\tpage_size\x18\x02 \x01(\x05R\bpageSize\x12\x1d\n" +
+	"\n" +
+	"page_token\x18\x03 \x01(\tR\tpageToken\"\x97\x01\n" +
 	"\x10GetPartiFilesRes\x12\x12\n" +
 	"\x04done\x18\x01 \x01(\bR\x04done\x12\x10\n" +
 	"\x03err\x18\x02 \x01(\tR\x03err\x125\n" +
-	"\x0epartition_file\x18\x03 \x03(\v2\x0e.dues.BaseFileR\rpartitionFile\"4\n" +
+	"\x0epartition_file\x18\x03 \x03(\v2\x0e.dues.BaseFileR\rpartitionFile\x12&\n" +
+	"\x0fnext_page_token\x18\x04 \x01(\tR\rnextPageToken\"p\n" +
 	"\x0eGetIdxFilesReq\x12\"\n" +
-	"\rparti_file_id\x18\x01 \x01(\tR\vpartiFileId\"i\n" +
+	"\rparti_file_id\x18\x01 \x01(\tR\vpartiFileId\x12\x1b\n" +
+	"\tpage_size\x18\x02 \x01(\x05R\bpageSize\x12\x1d\n" +
+	"\n" +
+	"page_token\x18\x03 \x01(\tR\tpageToken\"\x91\x01\n" +
 	"\x0eGetIdxFilesRes\x12\x12\n" +
 	"\x04done\x18\x01 \x01(\bR\x04done\x12\x10\n" +
 	"\x03err\x18\x02 \x01(\tR\x03err\x121\n" +
-	"\findexed_file\x18\x03 \x03(\v2\x0e.dues.BaseFileR\vindexedFile\"%\n" +
+	"\findexed_file\x18\x03 \x03(\v2\x0e.dues.BaseFileR\vindexedFile\x12&\n" +
+	"\x0fnext_page_token\x18\x04 \x01(\tR\rnextPageToken\"%\n" +
 	"\tSearchReq\x12\x18\n" +
-	"\akeyword\x18\x01 \x01(\tR\akeyword\"\xd4\x01\n" +
+	"\akeyword\x18\x01 \x01(\tR\akeyword\"\xf2\x01\n" +
 	"\tSearchRes\x12\x10\n" +
 	"\x03err\x18\x01 \x01(\tR\x03err\x12\x1f\n" +
 	"\vtotal_count\x18\x02 \x01(\x03R\n" +
 	"totalCount\x12P\n" +
-	"\x11keyword_count_map\x18\x03 \x03(\v2$.dues.SearchRes.KeywordCountMapEntryR\x0fkeywordCountMap\x1aB\n" +
+	"\x11keyword_count_map\x18\x03 \x03(\v2$.dues.SearchRes.KeywordCountMapEntryR\x0fkeywordCountMap\x12\x1c\n" +
+	"\ttruncated\x18\x04 \x01(\bR\ttruncated\x1aB\n" +
 	"\x14KeywordCountMapEntry\x12\x10\n" +
 	"\x03key\x18\x01 \x01(\tR\x03key\x12\x14\n" +
 	"\x05value\x18\x02 \x01(\x03R\x05value:\x028\x012\xee\x02\n" +

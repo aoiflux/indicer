@@ -1,8 +1,9 @@
 package microartefact
 
-import graphrepo "indicer/lib/microartefact/repository/graphene"
-
-const grapheneStoreDir = graphrepo.StoreDirName
+import (
+	duesgraph "indicer/lib/graph"
+	graphrepo "indicer/lib/microartefact/repository/graphene"
+)
 
 // Type aliases so callers don't need to import the inner package.
 type GrapheneRepository = graphrepo.Repository
@@ -14,6 +15,19 @@ type IndexedFileArtefactView = graphrepo.IndexedFileArtefactView
 
 func OpenGrapheneRepository(root string) (*GrapheneRepository, error) {
 	return graphrepo.Open(root)
+}
+
+// OpenGrapheneRepositoryReadOnly opens root's graph store for reading. A data
+// root without one is duesgraph.ErrNoGraph, and nothing is created.
+func OpenGrapheneRepositoryReadOnly(root string) (*GrapheneRepository, error) {
+	return graphrepo.OpenWith(root, duesgraph.OpenOptions{ReadOnly: true})
+}
+
+// OpenGrapheneRepositoryOn borrows a graph handle the caller already holds,
+// for code paths that run inside a command which has one open. Close on the
+// result is a no-op.
+func OpenGrapheneRepositoryOn(handle *duesgraph.Handle) *GrapheneRepository {
+	return graphrepo.OpenOn(handle)
 }
 
 func NewGrapheneService(root string) (*Service, error) {

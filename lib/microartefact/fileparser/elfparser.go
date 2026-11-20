@@ -2,8 +2,8 @@ package fileparser
 
 import (
 	"bytes"
+	"errors"
 	"fmt"
-	"os"
 	"strings"
 
 	"indicer/lib/microartefact/model"
@@ -11,34 +11,23 @@ import (
 	saferelf "github.com/saferwall/elf"
 )
 
-func parseELFContent(content []byte) ([]byte, *model.ELFMetadata, bool) {
+// parseELFContent parses an ELF image from memory, without the temporary
+// copy of the evidence bytes it used to write (GRA-15).
+func parseELFContent(content []byte) ([]byte, *model.ELFMetadata, error) {
 	if len(content) == 0 {
-		return nil, nil, false
+		return nil, nil, errors.New("elf: empty")
 	}
-
-	tmpFile, err := os.CreateTemp("", "indicer-elf-*.bin")
+	parsed, err := saferelf.NewBytes(content)
 	if err != nil {
-		return nil, nil, false
-	}
-	tmpPath := tmpFile.Name()
-	defer os.Remove(tmpPath)
-	defer tmpFile.Close()
-
-	if _, err := tmpFile.Write(content); err != nil {
-		return nil, nil, false
-	}
-
-	parsed, err := saferelf.New(tmpPath)
-	if err != nil {
-		return nil, nil, false
+		return nil, nil, fmt.Errorf("elf: %w", err)
 	}
 	defer parsed.CloseFile()
 	if err := parsed.Parse(); err != nil {
-		return nil, nil, false
+		return nil, nil, fmt.Errorf("elf: %w", err)
 	}
 
 	meta := extractELFMetadata(parsed)
-	return combineParsedPayload(extractPrintableText(content), buildELFMetadataText(parsed)), meta, true
+	return combineParsedPayload(extractPrintableText(content), buildELFMetadataText(parsed)), meta, nil
 }
 
 func extractELFMetadata(parsed *saferelf.Parser) *model.ELFMetadata {

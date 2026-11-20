@@ -1,0 +1,93 @@
+{
+ "format": "raw",
+ "generator": "gen_fixtures.sh unknown",
+ "image": "fat12.img",
+ "partitions": [
+  {
+   "deleted": [
+    {
+     "deleted": true,
+     "kind": "file",
+     "path": "/deleted.bin",
+     "recoverable": "full",
+     "sha256": "148d1998573cd5b05ae7e53dc3b2baa2c2938b49dfa6b89f227985c24cd33561",
+     "size": 3000
+    }
+   ],
+   "files": [
+    {
+     "extents": 1,
+     "kind": "file",
+     "path": "/Long File Name With Spaces.txt",
+     "sha256": "4a33a04a9bb7f04a5d0da4327590278547b8751acac7f25e1918594f985bc214",
+     "size": 300
+    },
+    {
+     "extents": 0,
+     "kind": "file",
+     "path": "/empty.txt",
+     "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+     "size": 0
+    },
+    {
+     "extents": 1,
+     "kind": "file",
+     "path": "/f1.bin",
+     "sha256": "b762aa3b2c3b9f4c4dc2f60934bb7e3839bd8f0560628c6c9f60fe7b91792d7b",
+     "size": 20000
+    },
+    {
+     "extents": 1,
+     "kind": "file",
+     "path": "/f2.bin",
+     "sha256": "7a4f697c21df5a79a89bbf9e37f53bdee6c7310fa2ffd18546348e07328fec54",
+     "size": 20000
+    },
+    {
+     "extents": 1,
+     "kind": "file",
+     "path": "/frag.bin",
+     "sha256": "629967a92a69cdcf4e9a35687dee494a543893e10ca89174d7fcc857f2c4f6f4",
+     "size": 30000
+    },
+    {
+     "extents": 1,
+     "kind": "file",
+     "path": "/hello.txt",
+     "sha256": "904ac5f381eac585b1fff97fdb25b7fe4513c0c3e80a952f87e73489d014d489",
+     "size": 11
+    },
+    {
+     "kind": "dir",
+     "path": "/sub"
+    },
+    {
+     "extents": 1,
+     "kind": "file",
+     "path": "/sub/a.bin",
+     "sha256": "0ff3b7458f733a358332c1f79d2eef1ab43c822112d7defa02340062edd34031",
+     "size": 5000
+    },
+    {
+     "kind": "dir",
+     "path": "/sub/deeper"
+    },
+    {
+     "extents": 1,
+     "kind": "file",
+     "path": "/sub/deeper/b.bin",
+     "sha256": "08d94154741084778a54809d7a0cd713ddaf372bfae3e53547bc268d5bfad6a4",
+     "size": 70000
+    }
+   ],
+   "fs": "fat",
+   "offset": 0
+  }
+ ],
+ "schema": 1,
+ "segments": [
+  "fat12.img"
+ ],
+ "sha256": "3070488d3b16ed6ca4ed9556e97e9414b245f2663515014a3f9f575c002934c0",
+ "size": 1048576
+}

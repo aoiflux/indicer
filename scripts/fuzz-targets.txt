@@ -1,0 +1,40 @@
+# Fuzz targets run by the verify gate for --fuzztime each (default 60s),
+# minimising inputs for at most 5s.
+# One per line: <package> <FuzzFunction>. Lines starting with # are ignored.
+./internal/faultinject FuzzParseSpec
+./internal/appconfig FuzzResolve
+./internal/termsafe FuzzString
+./internal/msgpackx FuzzCheck
+./lib/logging FuzzRedactJSON
+./lib/logging FuzzRedactArgs
+./lib/parser/fs/ntfs FuzzLZNT1
+./lib/parser/scan FuzzScanFAT
+./lib/parser/scan FuzzScanExFAT
+./lib/parser/scan FuzzScanNTFS
+./lib/parser/scan FuzzScanExt
+./lib/parser/scan FuzzScanHFS
+./lib/parser/core FuzzNormalizeExtents
+./lib/parser/fs/fsutil FuzzEscapeName
+./lib/parser/fs FuzzDetect
+./lib/search FuzzStreamCount
+./lib/parser/scan FuzzScanXFS
+./lib/parser/scan FuzzScanGPT
+./lib/parser/scan FuzzScanMBR
+./lib/parser/image FuzzOpenVHD
+./lib/parser/image FuzzOpenVHDX
+./lib/blobcodec FuzzDecode
+./lib/fio FuzzScanContainer
+./lib/fio FuzzLookupBlockIndex
+./lib/dbio FuzzDecodeRecord
+./lib/microartefact FuzzExtract
+./lib/microartefact FuzzTextDetectors
+./lib/server FuzzOriginCheck
+./lib/server FuzzUploadRequests
+./lib/server FuzzParseTokens
+./pkg/api FuzzDispatchJSON
+./internal/duesarc FuzzLocalName
+./internal/duesarc FuzzParseDatabaseManifest
+./internal/products/compression_product FuzzParseManifest
+./internal/configfile FuzzParse
+./lib/graph/signer FuzzParseKeyFile
+./lib/graph/signer FuzzKeyring

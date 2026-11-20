@@ -1,75 +1,196 @@
 package store
 
 import (
-	"bytes"
+	"context"
+	"errors"
 	"fmt"
+	"indicer/internal/progress"
+	"io/fs"
+	"os"
 
+	"indicer/lib/blobcodec"
 	"indicer/lib/cnst"
+	"indicer/lib/dbio"
+	"indicer/lib/fio"
 	"indicer/lib/structs"
 	"indicer/lib/util"
+	"indicer/lib/zstdx"
 
 	"github.com/dgraph-io/badger/v4"
 )
 
-// ValidateFlushedEvidenceMaterialized verifies that all logical relation and
-// chunk metadata dependencies required by a FLUSHED ingest are present.
-// This prevents auto-completing records that are marked flushed when required
-// relation/chunk links are missing.
-func ValidateFlushedEvidenceMaterialized(fileID []byte, evidenceFile structs.EvidenceFile, db *badger.DB) error {
+// ErrMaterialMissing reports evidence whose relations, chunk locations or
+// stored chunk bytes are not all present, so it cannot be restored and a
+// FLUSHED ingest of it cannot be completed. Any other validation error is a
+// failure to read, which says nothing about the evidence.
+var ErrMaterialMissing = errors.New("ingest material missing")
+
+// ErrMaterialCorrupt reports a stored chunk whose bytes do not decode to
+// content with its hash: damaged, or not at the recorded place.
+var ErrMaterialCorrupt = errors.New("stored chunk is corrupt")
+
+// ValidationLevel selects how much ValidateEvidence checks.
+type ValidationLevel int
+
+const (
+	// ValidateLocations checks that every chunk of the evidence has a
+	// relation and a stored location (C||| or a legacy block index).
+	ValidateLocations ValidationLevel = iota
+	// ValidateMaterial also checks, by size, that each blob or container
+	// holds the bytes its location records.
+	ValidateMaterial
+	// ValidateContent also reads each chunk, decodes it and checks it
+	// against its hash.
+	ValidateContent
+)
+
+// validateChunksPerTxn bounds how many chunks one validation transaction
+// checks, so memory stays flat however large the evidence is.
+const validateChunksPerTxn = 1024
+
+// validatedCacheSize bounds the chunks one validation remembers as checked,
+// so a chunk repeated across the evidence (zeros, mostly) is checked once
+// per run of this many distinct chunks rather than at every occurrence.
+const validatedCacheSize = 4096
+
+// validateFlushed is the validation recovery and repair run; tests replace it.
+var validateFlushed = ValidateFlushedEvidenceMaterialized
+
+// ValidateFlushedEvidenceMaterialized checks that a FLUSHED ingest has every
+// relation, chunk location and chunk byte it needs (ValidateMaterial), so
+// recovery completes only evidence that can be restored. Missing or short
+// material is ErrMaterialMissing (ING-10).
+func ValidateFlushedEvidenceMaterialized(ctx context.Context, fileID []byte, evidenceFile structs.EvidenceFile, db *badger.DB) error {
 	if evidenceFile.Completed {
 		return nil
 	}
 	if evidenceFile.IngestState != structs.IngestStateFlushed {
 		return fmt.Errorf("invalid state for flushed validation: %s", evidenceFile.IngestState)
 	}
+	return ValidateEvidence(ctx, db, fileID, evidenceFile, ValidateMaterial)
+}
+
+// ValidateEvidence checks the stored chunks of the evidence fileID at level,
+// streaming its relations validateChunksPerTxn at a time. It returns nil for
+// valid evidence, an error wrapping ErrMaterialMissing or ErrMaterialCorrupt
+// for the first problem found, and any other error when reading failed.
+//
+// It steps at the chunk size the evidence was stored with
+// (dbio.EvidenceChunkSize): a legacy database can hold evidence stored at
+// several.
+func ValidateEvidence(ctx context.Context, db *badger.DB, fileID []byte, evidenceFile structs.EvidenceFile, level ValidationLevel) error {
 	if evidenceFile.Size <= 0 {
 		return nil
 	}
-
-	ehash := bytes.TrimPrefix(fileID, []byte(cnst.EviFileNamespace))
-	if len(ehash) == len(fileID) {
-		return fmt.Errorf("invalid evidence id namespace")
-	}
-
 	end := evidenceFile.Start + evidenceFile.Size
-	dbstart := util.GetDBStartOffset(evidenceFile.Start)
-
-	// Pass 1: iterate the relation prefix in a single transaction, collecting
-	// chunk hashes in index order. This replaces one db.View call per chunk.
-	chunkCount := int((end - dbstart + cnst.ChonkSize - 1) / cnst.ChonkSize)
-	chashes := make([][]byte, 0, chunkCount)
-
-	if err := db.View(func(txn *badger.Txn) error {
-		opts := badger.DefaultIteratorOptions
-		opts.PrefetchSize = chunkCount
-		it := txn.NewIterator(opts)
-		defer it.Close()
-
-		for restoreIndex := dbstart; restoreIndex < end; restoreIndex += cnst.ChonkSize {
-			relKey := util.AppendToBytesSlice(cnst.RelationNamespace, ehash, cnst.DataSeperator, restoreIndex)
-			item, err := txn.Get(relKey)
-			if err != nil {
-				return fmt.Errorf("relation lookup failed at index %d: %w", restoreIndex, err)
-			}
-			chash, err := item.ValueCopy(nil)
-			if err != nil {
-				return fmt.Errorf("relation value copy failed at index %d: %w", restoreIndex, err)
-			}
-			chashes = append(chashes, chash)
-		}
-		return nil
-	}); err != nil {
+	cs, err := dbio.EvidenceChunkSize(db, fileID, end)
+	if err != nil {
 		return err
 	}
+	done := progress.CurrentIn(ctx, progress.Bytes)
+	checked := make(map[string]struct{}, validatedCacheSize)
+	type ref struct {
+		offset int64
+		ckey   []byte
+	}
+	refs := make([]ref, 0, validateChunksPerTxn)
 
-	// Pass 2: verify each chunk node exists in a single transaction.
-	return db.View(func(txn *badger.Txn) error {
-		for i, chash := range chashes {
-			chonkKey := util.AppendToBytesSlice(cnst.ChonkNamespace, chash)
-			if _, err := txn.Get(chonkKey); err != nil {
-				return fmt.Errorf("chunk lookup failed at chunk %d: %w", i, err)
-			}
+	for batchStart := (evidenceFile.Start / cs) * cs; batchStart < end; batchStart += validateChunksPerTxn * cs {
+		if err := ctx.Err(); err != nil {
+			return err
 		}
+		batchEnd := min(end, batchStart+validateChunksPerTxn*cs)
+		refs = refs[:0]
+		err := db.View(func(txn *badger.Txn) error {
+			for offset := batchStart; offset < batchEnd; offset += cs {
+				relKey := util.AppendToBytesSlice(cnst.RelationNamespace, fileID, cnst.DataSeperator, offset)
+				item, err := txn.Get(relKey)
+				if errors.Is(err, badger.ErrKeyNotFound) {
+					return fmt.Errorf("%w: no relation at offset %d", ErrMaterialMissing, offset)
+				}
+				if err != nil {
+					return fmt.Errorf("relation at offset %d: %w", offset, err)
+				}
+				chash, err := item.ValueCopy(nil)
+				if err != nil {
+					return fmt.Errorf("relation at offset %d: %w", offset, err)
+				}
+				// Relation values are zstd-compressed outside quick mode.
+				if decoded, err := zstdx.DecodeAll(chash, nil); err == nil {
+					chash = decoded
+				}
+				refs = append(refs, ref{offset, util.AppendToBytesSlice(cnst.ChonkNamespace, chash)})
+			}
+			return nil
+		})
+		if err != nil {
+			return err
+		}
+
+		for _, r := range refs {
+			if _, ok := checked[string(r.ckey)]; ok {
+				continue
+			}
+			if err := validateChunk(db, r.ckey, level); err != nil {
+				return fmt.Errorf("chunk %x at offset %d: %w", r.ckey[len(cnst.ChonkNamespace):], r.offset, err)
+			}
+			if len(checked) >= validatedCacheSize {
+				clear(checked)
+			}
+			checked[string(r.ckey)] = struct{}{}
+		}
+		done.Add(batchEnd - max(batchStart, evidenceFile.Start))
+	}
+	return nil
+}
+
+// validateChunk checks one chunk at level.
+func validateChunk(db *badger.DB, ckey []byte, level ValidationLevel) error {
+	loc, err := dbio.LocateChunk(ckey, db)
+	switch {
+	case errors.Is(err, dbio.ErrChunkNotFound):
+		return fmt.Errorf("%w: no stored location", ErrMaterialMissing)
+	case errors.Is(err, dbio.ErrChunkMetaInvalid):
+		return fmt.Errorf("%w: %v", ErrMaterialMissing, err)
+	case err != nil:
+		return fmt.Errorf("chunk location: %w", err)
+	}
+	if level == ValidateLocations {
 		return nil
-	})
+	}
+
+	path := dbio.ResolveBlobPath(dbio.KVDir(db), loc.Path)
+	if loc.Container {
+		// ContainerHolds also finds a legacy container compressed to
+		// <name>.blob.zst, which the metadata still names <name>.blob.
+		if !fio.ContainerHolds(path, loc.Offset, loc.EncodedSize) {
+			return fmt.Errorf("%w: %s is missing or ends before offset %d + %d", ErrMaterialMissing, path, loc.Offset, loc.EncodedSize)
+		}
+	} else {
+		fi, err := os.Stat(path)
+		if errors.Is(err, fs.ErrNotExist) {
+			return fmt.Errorf("%w: %s does not exist", ErrMaterialMissing, path)
+		}
+		if err != nil {
+			return err
+		}
+		if fi.Size() != loc.StoredSize {
+			return fmt.Errorf("%w: %s holds %d bytes, its metadata records %d", ErrMaterialMissing, path, fi.Size(), loc.StoredSize)
+		}
+	}
+	if level == ValidateMaterial {
+		return nil
+	}
+
+	plain, err := dbio.GetChonkNode(ckey, db)
+	if errors.Is(err, blobcodec.ErrCorrupt) {
+		return fmt.Errorf("%w: %v", ErrMaterialCorrupt, err)
+	}
+	if err != nil {
+		return err
+	}
+	if err := blobcodec.Verify(ckey, plain); err != nil {
+		return fmt.Errorf("%w: %v", ErrMaterialCorrupt, err)
+	}
+	return nil
 }

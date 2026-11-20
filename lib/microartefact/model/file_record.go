@@ -41,9 +41,12 @@ type FileRecord struct {
 	IndexedFileID    string
 }
 
-// BuildIndexedFileID returns a deterministic graph node ID for an indexed-file
-// node. It is path-scoped (partition + path) so aliases map to distinct nodes,
-// while still allowing fallback to a content-hash style ID.
+// BuildIndexedFileID derives an indexed-file ID from a partition and a path.
+//
+// Deprecated: the graph names an indexed file by the base64 of its record's
+// ID, which enrichment writes and extraction looks up. This derivation matched
+// no node enrichment wrote, so extraction found nothing (GRA-1); it remains
+// only for the test fixtures written with it.
 func BuildIndexedFileID(partitionID, path, fallback string) string {
 	if partitionID != "" && path != "" {
 		return hashText("path-node", partitionID, path)

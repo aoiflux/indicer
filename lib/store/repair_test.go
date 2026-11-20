@@ -9,14 +9,15 @@ import (
 )
 
 func TestInspectEvidenceRepairsDoesNotMutateWithoutFix(t *testing.T) {
+	t.Parallel()
 	db := openTestDB(t)
 	infile := newTestInputFile(db, "pending.dd", bytes.Repeat([]byte{4}, 32))
-	evidenceFile := structs.NewEvidenceFile(infile.GetName(), infile.GetStartIndex(), infile.GetSize(), infile.GetInternalObjects(), "dd")
+	evidenceFile := structs.NewEvidenceFile(infile.GetName(), infile.GetStartIndex(), infile.GetSize(), infile.GetInternalObjects(), "dd", "")
 	if err := dbio.SetFile(infile.GetID(), evidenceFile, db); err != nil {
 		t.Fatalf("seed evidence file: %v", err)
 	}
 
-	report, err := InspectEvidenceRepairs(db, false)
+	report, err := InspectEvidenceRepairs(t.Context(), db, false)
 	if err != nil {
 		t.Fatalf("InspectEvidenceRepairs: %v", err)
 	}
@@ -43,14 +44,15 @@ func TestInspectEvidenceRepairsDoesNotMutateWithoutFix(t *testing.T) {
 }
 
 func TestInspectEvidenceRepairsFixMarksPendingEvidenceFailed(t *testing.T) {
+	t.Parallel()
 	db := openTestDB(t)
 	infile := newTestInputFile(db, "repair.dd", bytes.Repeat([]byte{5}, 32))
-	evidenceFile := structs.NewEvidenceFile(infile.GetName(), infile.GetStartIndex(), infile.GetSize(), infile.GetInternalObjects(), "dd")
+	evidenceFile := structs.NewEvidenceFile(infile.GetName(), infile.GetStartIndex(), infile.GetSize(), infile.GetInternalObjects(), "dd", "")
 	if err := dbio.SetFile(infile.GetID(), evidenceFile, db); err != nil {
 		t.Fatalf("seed evidence file: %v", err)
 	}
 
-	report, err := InspectEvidenceRepairs(db, true)
+	report, err := InspectEvidenceRepairs(t.Context(), db, true)
 	if err != nil {
 		t.Fatalf("InspectEvidenceRepairs: %v", err)
 	}
@@ -77,10 +79,11 @@ func TestInspectEvidenceRepairsFixMarksPendingEvidenceFailed(t *testing.T) {
 }
 
 func TestInspectEvidenceRepairsFixAutoCompletesFlushed(t *testing.T) {
+	t.Parallel()
 	db := openTestDB(t)
 	infile := seedFlushedEvidenceWithChunk(t, db, "flushed-repair.dd", 0xAA)
 
-	report, err := InspectEvidenceRepairs(db, true)
+	report, err := InspectEvidenceRepairs(t.Context(), db, true)
 	if err != nil {
 		t.Fatalf("InspectEvidenceRepairs: %v", err)
 	}
@@ -110,15 +113,16 @@ func TestInspectEvidenceRepairsFixAutoCompletesFlushed(t *testing.T) {
 }
 
 func TestInspectEvidenceRepairsFixMarksInvalidFlushedFailed(t *testing.T) {
+	t.Parallel()
 	db := openTestDB(t)
 	infile := newTestInputFile(db, "flushed-invalid-repair.dd", bytes.Repeat([]byte{0xAB}, 32))
-	evidenceFile := structs.NewEvidenceFile(infile.GetName(), infile.GetStartIndex(), infile.GetSize(), infile.GetInternalObjects(), "dd")
+	evidenceFile := structs.NewEvidenceFile(infile.GetName(), infile.GetStartIndex(), infile.GetSize(), infile.GetInternalObjects(), "dd", "")
 	evidenceFile.IngestState = structs.IngestStateFlushed
 	if err := dbio.SetFile(infile.GetID(), evidenceFile, db); err != nil {
 		t.Fatalf("seed invalid flushed evidence: %v", err)
 	}
 
-	report, err := InspectEvidenceRepairs(db, true)
+	report, err := InspectEvidenceRepairs(t.Context(), db, true)
 	if err != nil {
 		t.Fatalf("InspectEvidenceRepairs: %v", err)
 	}

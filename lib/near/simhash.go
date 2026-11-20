@@ -33,27 +33,34 @@ func (a *fileSimHashAccumulator) write(data []byte) {
 	if len(data) == 0 {
 		return
 	}
-	combined := append(a.carry, data...) //nolint:gocritic // intentional: carry is always small (3 bytes)
-	for i := 0; i+fileSimHashWindow <= len(combined); i++ {
-		a.hasher.Reset()
-		_, _ = a.hasher.Write(combined[i : i+fileSimHashWindow])
-		h := a.hasher.Sum64()
-		for bit := 0; bit < 64; bit++ {
-			if h&(uint64(1)<<bit) != 0 {
-				a.weights[bit]++
-			} else {
-				a.weights[bit]--
-			}
-		}
+	// The windows that start in the carry need its bytes and the first of
+	// data; the rest are read from data itself, so data is never copied
+	// (SRC-4: a whole file used to be copied onto the heap).
+	head := append(append([]byte(nil), a.carry...), data[:min(len(data), fileSimHashWindow-1)]...)
+	for i := 0; i < len(a.carry) && i+fileSimHashWindow <= len(head); i++ {
+		a.add(head[i : i+fileSimHashWindow])
+	}
+	for i := 0; i+fileSimHashWindow <= len(data); i++ {
+		a.add(data[i : i+fileSimHashWindow])
 	}
 	// Keep the last (window-1) bytes so windows straddling the next call are not lost.
-	carryLen := fileSimHashWindow - 1
-	if len(combined) >= carryLen {
-		a.carry = make([]byte, carryLen)
-		copy(a.carry, combined[len(combined)-carryLen:])
-	} else {
-		a.carry = make([]byte, len(combined))
-		copy(a.carry, combined)
+	tail := head
+	if len(data) >= fileSimHashWindow-1 {
+		tail = data
+	}
+	a.carry = append(a.carry[:0], tail[max(0, len(tail)-(fileSimHashWindow-1)):]...)
+}
+
+func (a *fileSimHashAccumulator) add(window []byte) {
+	a.hasher.Reset()
+	_, _ = a.hasher.Write(window)
+	h := a.hasher.Sum64()
+	for bit := 0; bit < 64; bit++ {
+		if h&(uint64(1)<<bit) != 0 {
+			a.weights[bit]++
+		} else {
+			a.weights[bit]--
+		}
 	}
 }
 

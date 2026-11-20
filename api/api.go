@@ -1,239 +1,135 @@
+// Package api runs `dues server`: it opens the database and serves it with
+// lib/server.
 package api
 
 import (
 	"context"
 	"errors"
 	"fmt"
-	"indicer/cli"
-	"indicer/lib/cnst"
-	"indicer/lib/server"
-	"indicer/lib/util"
-	"indicer/pb/pbconnect"
-	"net/http"
-	"net/url"
-	"os"
-	"os/signal"
-	"path/filepath"
-	"syscall"
-	"time"
 
-	"github.com/fatih/color"
-	"golang.org/x/net/http2"
-	"golang.org/x/net/http2/h2c"
+	"indicer/internal/console"
+	"indicer/internal/lifecycle"
+	"indicer/internal/ui"
+	"indicer/lib/dbopen"
+	"indicer/lib/logging"
+	"indicer/lib/server"
 )
 
-const PORT = "50051"
+// Options are the server's command-line settings.
+type Options struct {
+	Listen      []string
+	Tokens      []server.Credential
+	CORSOrigins []string
+	// UploadJobs is how many uploads are stored at once; 0 keeps the
+	// server's default.
+	UploadJobs int
+	Exports    server.ExportConfig
+}
 
-func Server(chonkSize int, dbpath string, key []byte) error {
-	var err error
-
-	cnst.DB, dbpath, err = cli.Common(chonkSize, dbpath, key)
+// Server serves the database db names until ctx ends. It opens it writable,
+// and first finishes or fails the ingests a crash left incomplete. A
+// configuration problem is a usage error found before the database is
+// opened. Once it serves, the server owns the database: it closes it after a
+// clean stop, and a stop that leaves work running
+// (server.ErrUncleanShutdown) leaves it as it is, for recovery at its next
+// open.
+func Server(ctx context.Context, db dbopen.Request, so Options) error {
+	cfg := server.Config{Listen: so.Listen, Tokens: so.Tokens, CORSOrigins: so.CORSOrigins, Limits: server.DefaultLimits(), Exports: so.Exports}
+	if so.UploadJobs > 0 {
+		cfg.Limits.Upload.Jobs = so.UploadJobs
+	}
+	root, err := dbopen.ResolveRoot(db.Path)
+	if err != nil {
+		return lifecycle.Usagef("server: %v", err)
+	}
+	if err := server.CheckExportDir(root, so.Exports.Dir); err != nil {
+		return lifecycle.Usagef("server: %v", err)
+	}
+	if err := cfg.Validate(); err != nil {
+		return lifecycle.Usagef("server: %v", err)
+	}
+	db.Mode, db.Recover = dbopen.ReadWrite, true
+	h, err := dbopen.Open(ctx, db)
 	if err != nil {
 		printErr("Server startup failed", []string{fmt.Sprintf("Database connection failed: %v", err)})
 		return err
 	}
-	defer cnst.DB.Close()
-	dbpath, err = filepath.Abs(dbpath)
+	for _, n := range h.Notices {
+		ui.Notef("%s", n)
+	}
+	srv, err := server.New(cfg, server.Deps{Handle: h, Log: logging.GetLogger()})
 	if err != nil {
-		return err
+		return errors.Join(err, h.Close())
 	}
-
-	err = util.EnsureBlobPath(dbpath)
-	if err != nil {
-		printErr("Server startup failed", []string{fmt.Sprintf("Blob path check failed: %v", err)})
-		return err
+	if err := srv.Listen(); err != nil {
+		printErr("Server startup failed", []string{err.Error()})
+		return errors.Join(err, srv.Release(), h.Close())
 	}
-	uploadsDir := filepath.Join(dbpath, cnst.UploadsDir)
-
-	if err = ensureUploadDir(uploadsDir); err != nil {
-		printErr("Server startup failed", []string{fmt.Sprintf("Failed to prepare uploads dir: %v", err)})
-		return err
+	lines := []string{fmt.Sprintf("Database: %s", h.Root)}
+	for _, a := range srv.Addrs() {
+		lines = append(lines, fmt.Sprintf("Listening on %s", a))
 	}
-	printSuccess("Database ready", []string{
-		fmt.Sprintf("DB path: %s", dbpath),
-		fmt.Sprintf("Uploads dir: %s", uploadsDir),
-	})
-
-	printInfo("DUES Server", []string{
-		"Protocol: Connect + gRPC + gRPC-Web",
-		fmt.Sprintf("Port: %s", PORT),
-	})
-
-	// Create Connect handler (supports gRPC, gRPC-Web, and Connect protocols)
-	mux := http.NewServeMux()
-	path, handler := pbconnect.NewDuesServiceHandler(
-		server.NewConnectService(),
-	)
-	mux.Handle(path, handler)
-
-	// Unary web upload endpoints (browser-compatible alternative to client-streaming RPC).
-	mux.HandleFunc("/web/upload/start", server.HandleUploadStart)
-	mux.HandleFunc("/web/upload/chunk", server.HandleUploadChunk)
-	mux.HandleFunc("/web/upload/finalize", server.HandleUploadFinalize)
-
-	// Add a health check endpoint
-	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
-		w.WriteHeader(http.StatusOK)
-		w.Write([]byte("Connect server running - supports gRPC, gRPC-Web, and Connect protocols"))
-	})
-
-	// Wrap with CORS middleware for web clients
-	corsHandler := corsMiddleware(mux)
-
-	// HTTP server with h2c (HTTP/2 without TLS) for Connect
-	httpServer := &http.Server{
-		Addr:    ":" + PORT,
-		Handler: h2c.NewHandler(corsHandler, &http2.Server{}),
-	}
-
-	// Start Connect HTTP server in a goroutine
-	serveErr := make(chan error, 1)
-	go func() {
-		if err := httpServer.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
-			serveErr <- err
-			return
+	lines = append(lines, srv.Notes...)
+	lines = append(lines, tokenLines(so.Tokens)...)
+	lines = append(lines, "Service path: /dues.DuesService/*", "Health: GET /healthz, GET /readyz", "Press Ctrl+C to stop gracefully")
+	printSuccess("Server online", lines)
+	for _, a := range cfg.Listen {
+		if !server.IsLoopbackAddr(a) {
+			printWarn("Not encrypted", []string{"Traffic on non-loopback addresses is plain HTTP; put a TLS proxy or an SSH tunnel in front of it"})
+			break
 		}
-		serveErr <- nil
-	}()
-	printSuccess("Server online", []string{
-		fmt.Sprintf("Listening on 0.0.0.0:%s", PORT),
-		"Health endpoint: GET /",
-		"Service path: /dues.DuesService/*",
-		"Press Ctrl+C to stop gracefully",
-	})
-
-	// Set up signal handling for graceful shutdown
-	sigs := make(chan os.Signal, 1)
-	signal.Notify(sigs, os.Interrupt, syscall.SIGTERM)
-	defer signal.Stop(sigs)
-
-	var serveRuntimeErr error
-
-	select {
-	case sig := <-sigs:
-		printWarn("Shutdown requested", []string{fmt.Sprintf("Signal received: %v", sig)})
-	case serveRuntimeErr = <-serveErr:
-		if serveRuntimeErr != nil {
-			printErr("Server exited unexpectedly", []string{serveRuntimeErr.Error()})
-			return serveRuntimeErr
-		}
-		printWarn("Server exited", []string{"Server stopped without shutdown signal"})
-		return nil
 	}
 
-	// Graceful shutdown
-	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-	defer cancel()
-
-	// Shutdown Connect server
-	printInfo("Graceful shutdown", []string{"Stopping HTTP server"})
-	if err := httpServer.Shutdown(ctx); err != nil {
-		printErr("Server shutdown failed", []string{err.Error()})
+	err = srv.Serve(ctx)
+	switch {
+	case errors.Is(err, server.ErrUncleanShutdown):
+		printErr("Server stopped with work still running", []string{"The database was left open; it is recovered at its next open"})
+		return err
+	case err != nil:
+		printErr("Server stopped", []string{err.Error()})
 		return err
 	}
-
-	// Wait for server goroutine to finish
-	serveRuntimeErr = <-serveErr
-	if serveRuntimeErr != nil {
-		printErr("Server exited unexpectedly", []string{serveRuntimeErr.Error()})
-		return serveRuntimeErr
+	printSuccess("Server stopped", []string{"All listeners closed", "Database closed gracefully"})
+	// A server stopped by a signal exits with the signal's code.
+	var sig *lifecycle.SignalError
+	if errors.As(context.Cause(ctx), &sig) {
+		return sig
 	}
-
-	// Cleanup resources
-	err = cnst.ENCODER.Close()
-	if err != nil {
-		printErr("Cleanup failed", []string{fmt.Sprintf("Encoder close failed: %v", err)})
-		return err
-	}
-	cnst.DECODER.Close()
-	printSuccess("Server stopped", []string{"All listeners closed", "Database closed gracefully", "Encoder/decoder resources released"})
-
-	return err
-}
-
-const (
-	iconInfo    = "◆"
-	iconSuccess = "✓"
-	iconWarn    = "▲"
-	iconError   = "✗"
-)
-
-func printInfo(title string, lines []string) {
-	printSection(iconInfo, title, lines, color.New(color.FgCyan, color.Bold))
+	return nil
 }
 
 func printSuccess(title string, lines []string) {
-	printSection(iconSuccess, title, lines, color.New(color.FgGreen, color.Bold))
+	printSection(ui.Success, func(g ui.Glyphs) string { return g.OK }, title, lines)
 }
 
 func printWarn(title string, lines []string) {
-	printSection(iconWarn, title, lines, color.New(color.FgYellow, color.Bold))
+	printSection(ui.Warning, func(g ui.Glyphs) string { return g.Warn }, title, lines)
 }
 
 func printErr(title string, lines []string) {
-	printSection(iconError, title, lines, color.New(color.FgRed, color.Bold))
+	printSection(ui.Error, func(g ui.Glyphs) string { return g.Fail }, title, lines)
 }
 
-func printSection(icon, title string, lines []string, c *color.Color) {
-	c.Printf("  %s  %s\n", icon, title)
-	dim := color.New(color.FgHiBlack)
+func printSection(role ui.Role, mark func(ui.Glyphs) string, title string, lines []string) {
+	p := ui.For(console.Out())
+	g := p.Glyphs()
+	console.Printf("  %s  %s\n", p.Strong(role, mark(g)), p.Strong(role, title))
+	bullet := p.Paint(ui.Muted, "     "+g.Sep+" ")
 	for _, line := range lines {
-		dim.Print("     · ")
-		fmt.Println(line)
+		console.Println(bullet + line)
 	}
-	fmt.Println()
+	console.Println()
 }
 
-func isLocalhostOrigin(origin string) bool {
-	if origin == "" {
-		return false
+// tokenLines say what each token may do, by its label; the token itself is
+// never printed.
+func tokenLines(tokens []server.Credential) []string {
+	if len(tokens) == 0 {
+		return []string{fmt.Sprintf("No token: every request may %s; %s is off", server.DefaultScopes, server.ScopeExport)}
 	}
-	u, err := url.Parse(origin)
-	if err != nil {
-		return false
+	lines := []string{"Bearer token required on every request except /healthz and /readyz"}
+	for _, c := range tokens {
+		lines = append(lines, fmt.Sprintf("Token %s: %s", c.Label(), c.Scopes()))
 	}
-	host := u.Hostname()
-	return host == "localhost" || host == "127.0.0.1" || host == "::1"
-}
-
-func corsMiddleware(next http.Handler) http.Handler {
-	const allowMethods = "POST, OPTIONS"
-	const allowHeaders = "content-type,x-grpc-web,grpc-timeout,x-user-agent,connect-protocol-version,upload-id"
-	const exposeHeaders = "grpc-status,grpc-message,grpc-status-details-bin"
-
-	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		isPreflight := r.Method == http.MethodOptions
-		isGRPCWeb := r.Header.Get("X-Grpc-Web") != ""
-		origin := r.Header.Get("Origin")
-
-		// Only attach CORS headers for browser-originated traffic, preflight, or grpc-web.
-		if isPreflight || isGRPCWeb || isLocalhostOrigin(origin) {
-			allowedOrigin := origin
-			if allowedOrigin == "" {
-				allowedOrigin = "*"
-			}
-			w.Header().Set("Access-Control-Allow-Origin", allowedOrigin)
-			w.Header().Set("Access-Control-Allow-Methods", allowMethods)
-			w.Header().Set("Access-Control-Allow-Headers", allowHeaders)
-			w.Header().Set("Access-Control-Expose-Headers", exposeHeaders)
-			w.Header().Add("Vary", "Origin")
-			w.Header().Add("Vary", "Access-Control-Request-Method")
-			w.Header().Add("Vary", "Access-Control-Request-Headers")
-		}
-
-		if isPreflight {
-			w.WriteHeader(http.StatusNoContent)
-			return
-		}
-
-		next.ServeHTTP(w, r)
-	})
-}
-
-func ensureUploadDir(uploadsDir string) error {
-	_, err := os.Stat(uploadsDir)
-	if os.IsNotExist(err) {
-		return os.MkdirAll(uploadsDir, cnst.DirPerm)
-	}
-	return nil
+	return lines
 }

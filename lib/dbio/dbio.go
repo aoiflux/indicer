@@ -2,15 +2,21 @@ package dbio
 
 import (
 	"bytes"
+	"context"
 	"encoding/base64"
 	"encoding/binary"
+	"errors"
 	"fmt"
+	"indicer/internal/msgpackx"
+	"indicer/lib/blobcodec"
 	"indicer/lib/cnst"
+	"indicer/lib/dbmeta"
+	"indicer/lib/engine"
 	"indicer/lib/fio"
 	"indicer/lib/logging"
 	"indicer/lib/structs"
 	"indicer/lib/util"
-	"os"
+	"indicer/lib/zstdx"
 	"strconv"
 	"time"
 
@@ -20,16 +26,34 @@ import (
 	"go.uber.org/zap"
 )
 
-func ConnectDB(datadir string, key []byte) (*badger.DB, error) {
-	datadir = util.KVDBPath(datadir)
-	if err := os.MkdirAll(datadir, cnst.DirPerm); err != nil {
-		return nil, err
-	}
+// badgerLogger sends badger's own messages to the DUES log. Its default logger
+// writes to stderr, which corrupts the TUI and pollutes FFI hosts' output.
+type badgerLogger struct{}
 
-	cacheLimit, err := cnst.GetCacheLimit()
-	if err != nil {
-		cacheLimit = 256 * cnst.MB
-	}
+func (badgerLogger) Errorf(f string, a ...any)   { logging.GetSugar().Errorf("badger: "+f, a...) }
+func (badgerLogger) Warningf(f string, a ...any) { logging.GetSugar().Warnf("badger: "+f, a...) }
+func (badgerLogger) Infof(f string, a ...any)    { logging.GetSugar().Debugf("badger: "+f, a...) }
+func (badgerLogger) Debugf(f string, a ...any)   { logging.GetSugar().Debugf("badger: "+f, a...) }
+
+// BadgerZSTDLevel is the zstd level badger compresses table blocks with.
+//
+// badger builds one process-wide encoder from the level of the first table
+// it writes and keeps it for the life of the process, with one encoder state
+// per CPU. Level 10 and above select zstd's best-compression encoder, about
+// 50 MB a state, so level 15 held some 800 MB on a 16-CPU machine for as
+// long as a library host kept DUES loaded (FFI-4). Level 3 holds under 2 MB a
+// state. Table blocks are 4 KiB of keys and values DUES has mostly
+// compressed already: storing jean.e01 made 18.3 to 18.7 MB of tables at
+// either level, and level 3 stored it 4% faster. Decoding does not depend on
+// the level, so existing databases are unaffected.
+const BadgerZSTDLevel = 3
+
+// BadgerOptions builds the options a badger directory is opened with, for
+// tuning t. key is the encryption key (nil for none). Both key and table
+// compression are fixed when the database is created: badger decodes every
+// table with the compression it is opened with.
+func BadgerOptions(datadir string, key []byte, compression options.CompressionType, t cnst.Tuning) badger.Options {
+	cacheLimit := t.CacheLimit()
 
 	// Treat cacheLimit as the total cache budget and split it between
 	// block/index caches so larger-memory machines still get large caches
@@ -44,35 +68,49 @@ func ConnectDB(datadir string, key []byte) (*badger.DB, error) {
 	}
 
 	opts := badger.DefaultOptions(datadir)
-	opts = opts.WithLoggingLevel(badger.ERROR)
+	// WithLoggingLevel installs badger's stderr logger, so it must not follow
+	// WithLogger.
+	opts = opts.WithLogger(badgerLogger{})
 	opts.IndexCacheSize = indexCache
 	opts.SyncWrites = true
-	opts.NumGoroutines = cnst.GetMaxThreadCount()
-	if !cnst.QUICKOPT {
-		opts.Compression = options.ZSTD
-		opts.ZSTDCompressionLevel = 15
+	opts.NumGoroutines = t.MaxThreads()
+	opts.Compression = compression
+	if compression == options.ZSTD {
+		opts.ZSTDCompressionLevel = BadgerZSTDLevel
+	}
+	if len(key) > 0 {
 		opts.EncryptionKey = key
 		opts.EncryptionKeyRotationDuration = time.Hour * 168
 	}
 	opts.CompactL0OnClose = true
 	opts.LmaxCompaction = true
-	opts.NumCompactors = opts.NumGoroutines
+	// badger refuses fewer than two compactors, and low-resource mode runs a
+	// single worker thread (CFG-4). More than eight adds contention, not speed.
+	opts.NumCompactors = min(max(opts.NumGoroutines, 2), 8)
 	opts.BlockCacheSize = blockCache
 	opts.IndexCacheSize = indexCache
 	opts.ValueLogFileSize = 64 << 20
-	opts.ValueLogMaxEntries = uint32(opts.NumGoroutines)
+	// ValueLogMaxEntries keeps badger's default. Tying it to the worker count
+	// rotated value-log files after a few dozen entries (CFG-9).
 
-	return badger.Open(opts)
+	return opts
 }
 
 func SetFile[T structs.FileTypes](id []byte, filenode T, db *badger.DB) error {
 	logging.GetLogger().Debug("SetFile START", zap.Int("id_length", len(id)))
+	if _, ok := any(filenode).(structs.EvidenceFile); ok {
+		id = CanonicalEvidenceKey(id)
+	}
 	data, err := msgpack.Marshal(filenode)
 	if err != nil {
 		logging.GetLogger().Error("SetFile MARSHAL_ERROR", zap.Error(err))
 		return err
 	}
-	err = SetNode(id, data, db)
+	data = engine.For(db).EncodeValue(data)
+
+	err = db.Update(func(txn *badger.Txn) error {
+		return txn.Set(id, data)
+	})
 	if err != nil {
 		logging.GetLogger().Error("SetFile SET_NODE_ERROR", zap.Error(err), zap.Int("id_length", len(id)))
 		return err
@@ -80,16 +118,18 @@ func SetFile[T structs.FileTypes](id []byte, filenode T, db *badger.DB) error {
 	logging.GetLogger().Debug("SetFile COMPLETE", zap.Int("id_length", len(id)))
 	return nil
 }
-func SetIndexedFile(id []byte, filenode structs.IndexedFile, batch *badger.WriteBatch) error {
+func SetIndexedFile(db *badger.DB, id []byte, filenode structs.IndexedFile, batch *badger.WriteBatch) error {
+	id = CanonicalIndexedKey(id)
 	data, err := msgpack.Marshal(filenode)
 	if err != nil {
 		return err
 	}
-	return SetBatchNode(id, data, batch)
+	return SetBatchNode(db, id, data, batch)
 }
 
 func GetEvidenceFile(key []byte, db *badger.DB) (structs.EvidenceFile, error) {
 	var evidenceFile structs.EvidenceFile
+	key = CanonicalEvidenceKey(key)
 	logging.GetLogger().Debug("GetEvidenceFile START", zap.Int("key_length", len(key)))
 
 	data, err := GetNode(key, db)
@@ -98,7 +138,7 @@ func GetEvidenceFile(key []byte, db *badger.DB) (structs.EvidenceFile, error) {
 		return evidenceFile, err
 	}
 
-	err = msgpack.Unmarshal(data, &evidenceFile)
+	err = msgpackx.Unmarshal(data, &evidenceFile)
 	if err != nil {
 		logging.GetLogger().Error("GetEvidenceFile UNMARSHAL_ERROR", zap.Error(err), zap.Int("key_length", len(key)))
 		return evidenceFile, err
@@ -106,26 +146,56 @@ func GetEvidenceFile(key []byte, db *badger.DB) (structs.EvidenceFile, error) {
 	logging.GetLogger().Debug("GetEvidenceFile COMPLETE", zap.Int("key_length", len(key)))
 	return evidenceFile, err
 }
+
+func CanonicalEvidenceKey(key []byte) []byte {
+	if bytes.HasPrefix(key, []byte(cnst.EviFileNamespace)) {
+		return key
+	}
+	return util.AppendToBytesSlice(cnst.EviFileNamespace, key)
+}
+
+func EvidenceRawID(key []byte) []byte {
+	if bytes.HasPrefix(key, []byte(cnst.EviFileNamespace)) {
+		return key[len(cnst.EviFileNamespace):]
+	}
+	return key
+}
+
+func CanonicalPartitionKey(key []byte) []byte {
+	if bytes.HasPrefix(key, []byte(cnst.PartiFileNamespace)) {
+		return key
+	}
+	return util.AppendToBytesSlice(cnst.PartiFileNamespace, key)
+}
+
+func CanonicalIndexedKey(key []byte) []byte {
+	if bytes.HasPrefix(key, []byte(cnst.IdxFileNamespace)) {
+		return key
+	}
+	return util.AppendToBytesSlice(cnst.IdxFileNamespace, key)
+}
 func GetPartitionFile(key []byte, db *badger.DB) (structs.PartitionFile, error) {
 	var partitionFile structs.PartitionFile
+	key = CanonicalPartitionKey(key)
 
 	data, err := GetNode(key, db)
 	if err != nil {
 		return partitionFile, err
 	}
 
-	err = msgpack.Unmarshal(data, &partitionFile)
+	err = msgpackx.Unmarshal(data, &partitionFile)
 	return partitionFile, err
 }
 func GetIndexedFile(key []byte, db *badger.DB) (structs.IndexedFile, error) {
 	var indexedFile structs.IndexedFile
+	key = CanonicalIndexedKey(key)
 
 	data, err := GetNode(key, db)
 	if err != nil {
 		return indexedFile, err
 	}
 
-	err = msgpack.Unmarshal(data, &indexedFile)
+	err = msgpackx.Unmarshal(data, &indexedFile)
 	return indexedFile, err
 }
 
@@ -134,6 +204,8 @@ type ReverseRelationAppendMember struct {
 	Index int64
 }
 
+const reverseRelationAppendKeyVersionBinary byte = 1
+
 func reverseRelationAppendShard(fhash []byte) int {
 	if len(fhash) == 0 {
 		return 0
@@ -141,30 +213,30 @@ func reverseRelationAppendShard(fhash []byte) int {
 	return int(fhash[len(fhash)-1]) % cnst.ReverseRelationAppendShardCount
 }
 
-func buildReverseRelationAppendMemberKey(chash []byte, index int64, shard int, encodedFHash string) []byte {
-	key := make([]byte, 0, len(cnst.ReverseRelationAppendNamespace)+len(chash)+len(cnst.DataSeperator)*3+len(encodedFHash)+16)
+func buildReverseRelationAppendMemberKey(chash []byte, index int64, shard int, fhash []byte) []byte {
+	key := make([]byte, 0, len(cnst.ReverseRelationAppendNamespace)+len(chash)+len(cnst.DataSeperator)+1+8+1+len(fhash))
 	key = append(key, cnst.ReverseRelationAppendNamespace...)
 	key = append(key, chash...)
 	key = append(key, cnst.DataSeperator...)
-	key = strconv.AppendInt(key, index, 10)
-	key = append(key, cnst.DataSeperator...)
-	key = strconv.AppendInt(key, int64(shard), 10)
-	key = append(key, cnst.DataSeperator...)
-	key = append(key, encodedFHash...)
+	key = append(key, reverseRelationAppendKeyVersionBinary)
+	var idxBytes [8]byte
+	binary.BigEndian.PutUint64(idxBytes[:], uint64(index))
+	key = append(key, idxBytes[:]...)
+	key = append(key, byte(shard))
+	key = append(key, fhash...)
 	return key
 }
 
-func SetReverseRelationAppendMembers(fhash []byte, members []ReverseRelationAppendMember, batch *badger.WriteBatch) error {
+func SetReverseRelationAppendMembers(db *badger.DB, fhash []byte, members []ReverseRelationAppendMember, batch *badger.WriteBatch) error {
 	if len(members) == 0 {
 		return nil
 	}
 
-	encodedFHash := base64.RawURLEncoding.EncodeToString(fhash)
 	shard := reverseRelationAppendShard(fhash)
 
 	for _, member := range members {
-		memberKey := buildReverseRelationAppendMemberKey(member.Chash, member.Index, shard, encodedFHash)
-		if err := SetBatchNode(memberKey, fhash, batch); err != nil {
+		memberKey := buildReverseRelationAppendMemberKey(member.Chash, member.Index, shard, fhash)
+		if err := SetBatchNode(db, memberKey, fhash, batch); err != nil {
 			return err
 		}
 	}
@@ -172,9 +244,9 @@ func SetReverseRelationAppendMembers(fhash []byte, members []ReverseRelationAppe
 	return nil
 }
 
-func SetReverseRelationAppendMember(chash []byte, index int64, fhash []byte, batch *badger.WriteBatch) error {
+func SetReverseRelationAppendMember(db *badger.DB, chash []byte, index int64, fhash []byte, batch *badger.WriteBatch) error {
 	member := ReverseRelationAppendMember{Chash: chash, Index: index}
-	return SetReverseRelationAppendMembers(fhash, []ReverseRelationAppendMember{member}, batch)
+	return SetReverseRelationAppendMembers(db, fhash, []ReverseRelationAppendMember{member}, batch)
 }
 
 func GetReverseRelationNode(key []byte, db *badger.DB) (map[string]struct{}, error) {
@@ -188,95 +260,135 @@ func GetReverseRelationNode(key []byte, db *badger.DB) (map[string]struct{}, err
 	return appendRelations, nil
 }
 
-func GetReverseRelationAppendPrefixMembers(revPrefixKey []byte, db *badger.DB) (map[int64][]string, error) {
-	split := bytes.Split(revPrefixKey, []byte(cnst.DataSeperator))
-	chash := bytes.TrimPrefix(split[1], []byte(":"))
-	prefix := util.AppendToBytesSlice(cnst.ReverseRelationAppendNamespace, chash, cnst.DataSeperator)
-	similarMap := make(map[int64][]string)
-
-	err := db.View(func(txn *badger.Txn) error {
-		opts := badger.DefaultIteratorOptions
-		opts.PrefetchSize = 1000
-		it := txn.NewIterator(opts)
-		defer it.Close()
-
-		for it.Seek(prefix); it.ValidForPrefix(prefix); it.Next() {
-			item := it.Item()
-			memberKey := item.KeyCopy(nil)
-
-			value, err := item.ValueCopy(nil)
-			if err != nil {
-				return err
-			}
-
-			decoded, err := cnst.DECODER.DecodeAll(value, nil)
-			if err == nil {
-				value = decoded
-			}
-
-			split := bytes.Split(memberKey, []byte(cnst.DataSeperator))
-			if len(split) < 3 {
-				return fmt.Errorf("invalid reverse-relation append key: %q", string(memberKey))
-			}
-			idxstr := split[2]
-			idx, err := util.GetNumber(string(idxstr))
-			if err != nil {
-				return err
-			}
-
-			revlist := similarMap[idx]
-			revlist = append(revlist, string(value))
-			similarMap[idx] = revlist
-		}
-
-		return nil
-	})
-
-	return similarMap, err
-}
-
 func getReverseRelationAppendMembers(key []byte, db *badger.DB) (map[string]struct{}, error) {
 	reverseRelations := make(map[string]struct{})
-	prefix := reverseRelationAppendMemberPrefix(key)
+	binaryPrefix, err := reverseRelationAppendMemberPrefixBinary(key)
+	if err != nil {
+		return nil, err
+	}
+	legacyPrefix, err := reverseRelationAppendMemberPrefixLegacy(key)
+	if err != nil {
+		return nil, err
+	}
 
-	err := db.View(func(txn *badger.Txn) error {
+	err = db.View(func(txn *badger.Txn) error {
 		opts := badger.DefaultIteratorOptions
 		opts.PrefetchSize = 128
 		it := txn.NewIterator(opts)
 		defer it.Close()
 
-		for it.Seek(prefix); it.ValidForPrefix(prefix); it.Next() {
-			item := it.Item()
-			value, err := item.ValueCopy(nil)
-			if err != nil {
-				return err
-			}
+		for _, prefix := range [][]byte{binaryPrefix, legacyPrefix} {
+			for it.Seek(prefix); it.ValidForPrefix(prefix); it.Next() {
+				item := it.Item()
+				value, err := item.ValueCopy(nil)
+				if err != nil {
+					return err
+				}
 
-			decoded, err := cnst.DECODER.DecodeAll(value, nil)
-			if err == nil {
-				value = decoded
-			}
+				decoded, err := zstdx.DecodeAll(value, nil)
+				if err == nil {
+					value = decoded
+				}
 
-			reverseRelations[string(value)] = struct{}{}
+				reverseRelations[string(value)] = struct{}{}
+			}
 		}
 
 		return nil
 	})
+	if err != nil {
+		return nil, err
+	}
+
+	chash, index, err := reverseRelationLookupParts(key)
+	if err != nil {
+		return nil, err
+	}
+	segmentRelations, err := getReverseRelationSegmentMembersAtIndex(chash, index, db)
+	if err != nil {
+		return nil, err
+	}
+	for rel := range segmentRelations {
+		reverseRelations[rel] = struct{}{}
+	}
 
 	return reverseRelations, err
 }
 
-func reverseRelationAppendMemberPrefix(key []byte) []byte {
-	split := bytes.Split(key, []byte(cnst.DataSeperator))
-	chash := bytes.TrimPrefix(split[1], []byte(":"))
-	return util.AppendToBytesSlice(cnst.ReverseRelationAppendNamespace, chash, cnst.DataSeperator, split[2], cnst.DataSeperator)
+func reverseRelationAppendMemberPrefixLegacy(key []byte) ([]byte, error) {
+	chash, index, err := reverseRelationLookupParts(key)
+	if err != nil {
+		return nil, err
+	}
+	return util.AppendToBytesSlice(cnst.ReverseRelationAppendNamespace, chash, cnst.DataSeperator, index, cnst.DataSeperator), nil
 }
 
-func SetBatchChonkSignature(chash []byte, signature uint64, batch *badger.WriteBatch) error {
-	key := util.AppendToBytesSlice(cnst.ChonkSimhashNamespace, chash)
-	data := make([]byte, 8)
-	binary.BigEndian.PutUint64(data, signature)
-	return SetBatchNode(key, data, batch)
+func reverseRelationAppendMemberPrefixBinary(key []byte) ([]byte, error) {
+	chash, index, err := reverseRelationLookupParts(key)
+	if err != nil {
+		return nil, err
+	}
+	prefix := make([]byte, 0, len(cnst.ReverseRelationAppendNamespace)+len(chash)+len(cnst.DataSeperator)+1+8)
+	prefix = append(prefix, cnst.ReverseRelationAppendNamespace...)
+	prefix = append(prefix, chash...)
+	prefix = append(prefix, cnst.DataSeperator...)
+	prefix = append(prefix, reverseRelationAppendKeyVersionBinary)
+	var idxBytes [8]byte
+	binary.BigEndian.PutUint64(idxBytes[:], uint64(index))
+	prefix = append(prefix, idxBytes[:]...)
+	return prefix, nil
+}
+
+func reverseRelationLookupParts(key []byte) ([]byte, int64, error) {
+	if !bytes.HasPrefix(key, []byte(cnst.ReverseRelationNamespace)) {
+		return nil, 0, fmt.Errorf("invalid reverse relation lookup key: %q", string(key))
+	}
+	body := key[len(cnst.ReverseRelationNamespace):]
+	sep := []byte(cnst.DataSeperator)
+	sepIdx := bytes.LastIndex(body, sep)
+	if sepIdx < 0 {
+		return nil, 0, fmt.Errorf("invalid reverse relation lookup key: %q", string(key))
+	}
+	chash := body[:sepIdx]
+	idxBytes := bytes.TrimLeft(body[sepIdx+len(sep):], "|:")
+	if len(idxBytes) == 0 {
+		return nil, 0, fmt.Errorf("invalid reverse relation lookup key index: %q", string(key))
+	}
+	idx, err := strconv.ParseInt(string(idxBytes), 10, 64)
+	if err != nil {
+		return nil, 0, err
+	}
+	return chash, idx, nil
+}
+
+func reverseRelationAppendMemberIndex(chash, memberKey []byte) (int64, bool) {
+	prefixLen := len(cnst.ReverseRelationAppendNamespace) + len(chash) + len(cnst.DataSeperator)
+	if len(memberKey) <= prefixLen {
+		return 0, false
+	}
+
+	payload := memberKey[prefixLen:]
+	if payload[0] == reverseRelationAppendKeyVersionBinary {
+		if len(payload) < 1+8 {
+			return 0, false
+		}
+		return int64(binary.BigEndian.Uint64(payload[1 : 1+8])), true
+	}
+
+	sep := []byte(cnst.DataSeperator)
+	idxEnd := bytes.Index(payload, sep)
+	if idxEnd < 0 {
+		return 0, false
+	}
+	idxBytes := bytes.TrimLeft(payload[:idxEnd], "|:")
+	if len(idxBytes) == 0 {
+		return 0, false
+	}
+	idx, err := strconv.ParseInt(string(idxBytes), 10, 64)
+	if err != nil {
+		return 0, false
+	}
+	return idx, true
 }
 
 func SetChonkSignature(chash []byte, signature uint64, db *badger.DB) error {
@@ -322,43 +434,30 @@ func GetFileSimhash(fid []byte, db *badger.DB) (uint64, error) {
 	return binary.BigEndian.Uint64(data), nil
 }
 
-func SetBatchChonkNode(key, data []byte, db *badger.DB, batch *badger.WriteBatch, containerMgr *fio.ContainerManager, blockMgr *fio.BlockManager) error {
-	encodedMetadata, err := MaterializeChonkNode(key, data, db, containerMgr, blockMgr)
-	if err != nil {
-		return err
-	}
-	if len(encodedMetadata) == 0 {
-		return nil
-	}
-	return SetBatchNode(key, encodedMetadata, batch)
-}
-
 // MaterializeChonkNode performs the expensive chunk materialization work
-// (compression/encryption/container write or file write). It returns encoded
-// metadata for DB persistence when metadata is DB-backed, or nil when metadata
-// is written to hierarchical block index files.
-func MaterializeChonkNode(key, data []byte, db *badger.DB, containerMgr *fio.ContainerManager, blockMgr *fio.BlockManager) ([]byte, error) {
+// (compression/encryption/container write or file write). It returns the
+// encoded C||| metadata to persist for the chunk, and the bytes written for
+// it: its encoded size.
+func MaterializeChonkNode(key, data []byte, db *badger.DB, containerMgr *fio.ContainerManager) ([]byte, int64, error) {
 	originalSize := int64(len(data))
 
 	if containerMgr != nil {
-		return materializeContainerChonkNode(key, data, originalSize, db, containerMgr, blockMgr)
+		return materializeContainerChonkNode(key, data, originalSize, db, containerMgr)
 	}
 
 	return materializeFileChonkNode(key, data, originalSize, db)
 }
 
-func materializeContainerChonkNode(key, data []byte, originalSize int64, db *badger.DB, containerMgr *fio.ContainerManager, blockMgr *fio.BlockManager) ([]byte, error) {
-	containerPath, offset, size, err := containerMgr.WriteChunkToContainer(data, key, db.Opts().EncryptionKey)
+func materializeContainerChonkNode(key, data []byte, originalSize int64, db *badger.DB, containerMgr *fio.ContainerManager) ([]byte, int64, error) {
+	containerPath, offset, size, err := containerMgr.WriteChunkToContainer(key, func() ([]byte, error) {
+		return blobcodec.For(db).Encode(key, data)
+	})
 	if err != nil {
-		return nil, err
-	}
-
-	if blockMgr != nil {
-		return nil, blockMgr.AddChunkMetadata(key, containerPath, offset, size)
+		return nil, 0, err
 	}
 
 	metadata := structs.ChonkMetadata{
-		Path:         containerPath,
+		Path:         StoredBlobPath(KVDir(db), containerPath),
 		Offset:       offset,
 		OriginalSize: originalSize,
 		StoredSize:   size,
@@ -367,53 +466,46 @@ func materializeContainerChonkNode(key, data []byte, originalSize int64, db *bad
 	}
 	encodedMetadata, err := msgpack.Marshal(metadata)
 	if err != nil {
-		return nil, err
+		return nil, 0, err
 	}
-	return encodedMetadata, nil
+	return encodedMetadata, size, nil
 }
 
-func materializeFileChonkNode(key, data []byte, originalSize int64, db *badger.DB) ([]byte, error) {
-	cfpath, err := fio.WriteChonk(db.Opts().Dir, data, key, db.Opts().EncryptionKey)
+func materializeFileChonkNode(key, data []byte, originalSize int64, db *badger.DB) ([]byte, int64, error) {
+	data, err := blobcodec.For(db).Encode(key, data)
 	if err != nil {
-		return nil, err
+		return nil, 0, err
 	}
 
-	stat, err := os.Stat(string(cfpath))
+	cfpath, err := fio.WriteChonk(KVDir(db), data, key, dbmeta.ChunkHasher(db))
 	if err != nil {
-		return nil, err
+		return nil, 0, err
 	}
+	dataLen := int64(len(data))
 
 	metadata := structs.ChonkMetadata{
-		Path:         string(cfpath),
+		Path:         StoredBlobPath(KVDir(db), string(cfpath)),
 		Offset:       0,
 		OriginalSize: originalSize,
-		StoredSize:   stat.Size(),
-		EncodedSize:  stat.Size(),
+		StoredSize:   dataLen,
+		EncodedSize:  dataLen,
 		Container:    false,
 	}
 	encodedMetadata, err := msgpack.Marshal(metadata)
 	if err != nil {
-		return nil, err
+		return nil, 0, err
 	}
-	return encodedMetadata, nil
+	return encodedMetadata, dataLen, nil
 }
 
-func setBatchChonkMetadata(key []byte, metadata structs.ChonkMetadata, batch *badger.WriteBatch) error {
-	encodedMetadata, err := msgpack.Marshal(metadata)
-	if err != nil {
-		return err
-	}
-	return SetBatchNode(key, encodedMetadata, batch)
-}
-
-func SetBatchNode(key, data []byte, batch *badger.WriteBatch) error {
+// SetBatchNode adds key to batch, a write batch on db, with data encoded the
+// way db stores values.
+func SetBatchNode(db *badger.DB, key, data []byte, batch *badger.WriteBatch) error {
 	logging.GetLogger().Debug("SetBatchNode START",
 		zap.Int("key_length", len(key)),
 		zap.Int("data_length", len(data)),
 	)
-	if !cnst.QUICKOPT {
-		data = cnst.ENCODER.EncodeAll(data, make([]byte, 0, len(data)))
-	}
+	data = engine.For(db).EncodeValue(data)
 	err := batch.Set(key, data)
 	if err != nil {
 		logging.GetLogger().Error("SetBatchNode WRITE_ERROR", zap.Error(err), zap.Int("key_length", len(key)))
@@ -422,9 +514,7 @@ func SetBatchNode(key, data []byte, batch *badger.WriteBatch) error {
 	return nil
 }
 func SetNode(key, data []byte, db *badger.DB) error {
-	if !cnst.QUICKOPT {
-		data = cnst.ENCODER.EncodeAll(data, make([]byte, 0, len(data)))
-	}
+	data = engine.For(db).EncodeValue(data)
 	return db.Update(func(txn *badger.Txn) error {
 		return txn.Set(key, data)
 	})
@@ -435,190 +525,57 @@ func PingNode(key []byte, db *badger.DB) error {
 		return err
 	})
 }
-func GetChonkData(restoreIndex, start, size, dbstart, end int64, key []byte, db *badger.DB) ([]byte, error) {
-	data, err := GetChonkNode(key, db)
-	if err != nil {
-		return nil, err
-	}
 
-	return trimLogicalChunkData(data, restoreIndex, start, size, dbstart, end), nil
-}
-
-func GetChonkDataWithMetadata(restoreIndex, start, size, dbstart, end int64, metadata []byte, db *badger.DB) ([]byte, error) {
-	data, err := readChonkFromMetadata(metadata, db)
-	if err != nil {
-		return nil, err
-	}
-
-	return trimLogicalChunkData(data, restoreIndex, start, size, dbstart, end), nil
-}
-
-func trimLogicalChunkData(data []byte, restoreIndex, start, size, dbstart, end int64) []byte {
-	if restoreIndex == dbstart {
-		actualStart := start - restoreIndex
-		data = data[actualStart:]
-	}
-	if size < int64(len(data)) {
-		data = data[:size]
-	} else if (restoreIndex + cnst.ChonkSize) > end {
-		actualEnd := end - restoreIndex
-		data = data[:actualEnd]
-	}
-
-	return data
-}
-
-// GetStoredChonkSealedSize extracts the full-chunk sealed size persisted in
-// metadata. It returns (size, true) when available, otherwise (0, false).
-func GetStoredChonkSealedSize(metadata []byte) (int64, bool) {
-	parsed, err := parseChonkMetadata(metadata)
-	if err != nil || parsed.StoredSize < 0 {
-		return 0, false
-	}
-	return parsed.StoredSize, true
-}
-
-func GetChonkSizeWithMetadata(restoreIndex, start, size, dbstart, end int64, metadata []byte, db *badger.DB) (int64, error) {
-	data, err := GetChonkDataWithMetadata(restoreIndex, start, size, dbstart, end, metadata, db)
-	if err != nil {
-		return -1, err
-	}
-	return getSealedChunkSize(data, db)
-}
-
-func GetChonkSize(restoreIndex, start, size, dbstart, end int64, key []byte, db *badger.DB) (int64, error) {
-	data, err := GetChonkData(restoreIndex, start, size, dbstart, end, key, db)
-	if err != nil {
-		return -1, err
-	}
-	return getSealedChunkSize(data, db)
-}
-
-func getSealedChunkSize(data []byte, db *badger.DB) (int64, error) {
-	data = cnst.ENCODER.EncodeAll(data, make([]byte, 0, len(data)))
-	var err error
-	data, err = util.SealAES(db.Opts().EncryptionKey, data)
-	if err != nil {
-		return -1, err
-	}
-	return int64(len(data)), nil
-}
+// GetChonkNode returns the decoded content of the chunk whose key is key.
 func GetChonkNode(key []byte, db *badger.DB) ([]byte, error) {
-	// Try to get from database first (backward compatibility or non-hierarchical mode)
-	metadata, err := GetNode(key, db)
-	if err == nil {
-		return readChonkFromMetadata(metadata, db)
-	}
-
-	// Not found in DB, try hierarchical block index
-	blockMgr := fio.NewBlockManager(db.Opts().Dir, nil)
-	containerPath, offset, size, err := blockMgr.GetChunkMetadata(key)
-	if err != nil {
-		return nil, fmt.Errorf("chunk not found in DB or block index: %w", err)
-	}
-
-	return fio.ReadChunkFromContainer(containerPath, offset, size, db.Opts().EncryptionKey)
-}
-
-func readChonkFromMetadata(metadata []byte, db *badger.DB) ([]byte, error) {
-	parsed, err := parseChonkMetadata(metadata)
+	loc, err := LocateChunk(key, db)
 	if err != nil {
 		return nil, err
 	}
+	return readChonk(key, loc, db)
+}
 
+// readChonk reads and decodes the chunk key stored at parsed.
+func readChonk(key []byte, parsed structs.ChonkMetadata, db *badger.DB) ([]byte, error) {
+	var err error
+	var stored []byte
 	if parsed.Container {
-		return fio.ReadChunkFromContainer(parsed.Path, parsed.Offset, parsed.EncodedSize, db.Opts().EncryptionKey)
+		stored, err = fio.ReadChunkFromContainer(ResolveBlobPath(KVDir(db), parsed.Path), parsed.Offset, parsed.EncodedSize)
+	} else {
+		stored, err = fio.ReadChonk(ResolveBlobPath(KVDir(db), parsed.Path))
 	}
-
-	return fio.ReadChonk([]byte(parsed.Path), db.Opts().EncryptionKey)
+	if err != nil {
+		return nil, err
+	}
+	return blobcodec.For(db).Decode(key, stored)
 }
 
 func parseChonkMetadata(metadata []byte) (structs.ChonkMetadata, error) {
 	var parsed structs.ChonkMetadata
-	if err := msgpack.Unmarshal(metadata, &parsed); err != nil {
-		return parsed, fmt.Errorf("failed to decode chunk metadata: %w", err)
+	if err := msgpackx.Unmarshal(metadata, &parsed); err != nil {
+		return parsed, fmt.Errorf("%w: %v", ErrChunkMetaInvalid, err)
 	}
 	if parsed.Path == "" {
-		return parsed, fmt.Errorf("invalid chunk metadata: empty path")
+		return parsed, fmt.Errorf("%w: empty path", ErrChunkMetaInvalid)
 	}
 	if parsed.Container && parsed.EncodedSize <= 0 {
-		return parsed, fmt.Errorf("invalid chunk metadata: encoded size must be > 0 for container mode")
+		return parsed, fmt.Errorf("%w: encoded size must be > 0 for container mode", ErrChunkMetaInvalid)
 	}
 	if parsed.StoredSize < 0 || parsed.OriginalSize < 0 {
-		return parsed, fmt.Errorf("invalid chunk metadata: negative sizes")
+		return parsed, fmt.Errorf("%w: negative sizes", ErrChunkMetaInvalid)
 	}
 	return parsed, nil
 }
 
-// StreamLogicalFileBytes iterates over all chunks belonging to the logical file
-// identified by fid (IndexedFile, PartitionFile, or EvidenceFile), trims each chunk
-// to the file's actual byte range, and calls fn with the trimmed data in order.
-// This mirrors the restore loop but without writing to disk, enabling streaming
-// computation (e.g. full-file SimHash) without buffering the entire file in memory.
+// StreamLogicalFileBytes calls fn with the content of the object fid (an
+// evidence, partition or indexed file), in order, a chunk's part at a time,
+// each chunk checked against its hash. The bytes must not be modified.
 func StreamLogicalFileBytes(fid []byte, db *badger.DB, fn func([]byte) error) error {
-	start, size, ehash, err := getLogicalFileMeta(fid, db)
+	l, err := OpenLogical(db, fid, ReadOptions{})
 	if err != nil {
 		return err
 	}
-
-	var dbstart int64
-	if start > 0 {
-		dbstart = util.GetDBStartOffset(start)
-	}
-	end := start + size
-
-	for restoreIndex := dbstart; restoreIndex < end; restoreIndex += cnst.ChonkSize {
-		relKey := util.AppendToBytesSlice(cnst.RelationNamespace, ehash, cnst.DataSeperator, restoreIndex)
-		chash, err := GetNode(relKey, db)
-		if err != nil {
-			return err
-		}
-		ckey := util.AppendToBytesSlice(cnst.ChonkNamespace, chash)
-		data, err := GetChonkData(restoreIndex, start, size, dbstart, end, ckey, db)
-		if err != nil {
-			return err
-		}
-		if err := fn(data); err != nil {
-			return err
-		}
-	}
-	return nil
-}
-
-func getLogicalFileMeta(fid []byte, db *badger.DB) (start, size int64, ehash []byte, err error) {
-	switch {
-	case bytes.HasPrefix(fid, []byte(cnst.EviFileNamespace)):
-		efile, e := GetEvidenceFile(fid, db)
-		if e != nil {
-			return 0, 0, nil, e
-		}
-		ehash = fid[len(cnst.EviFileNamespace):]
-		return efile.Start, efile.Size, ehash, nil
-	case bytes.HasPrefix(fid, []byte(cnst.PartiFileNamespace)):
-		pfile, e := GetPartitionFile(fid, db)
-		if e != nil {
-			return 0, 0, nil, e
-		}
-		name := util.GetArbitratyMapKey(pfile.Names)
-		ehash, e = util.GetEvidenceFileHash(name)
-		if e != nil {
-			return 0, 0, nil, e
-		}
-		return pfile.Start, pfile.Size, ehash, nil
-	case bytes.HasPrefix(fid, []byte(cnst.IdxFileNamespace)):
-		ifile, e := GetIndexedFile(fid, db)
-		if e != nil {
-			return 0, 0, nil, e
-		}
-		name := util.GetArbitratyMapKey(ifile.Names)
-		ehash, e = util.GetEvidenceFileHash(name)
-		if e != nil {
-			return 0, 0, nil, e
-		}
-		return ifile.Start, ifile.Size, ehash, nil
-	default:
-		return 0, 0, nil, cnst.ErrUnknownFileType
-	}
+	return l.Stream(context.Background(), fn)
 }
 
 func GetNode(key []byte, db *badger.DB) ([]byte, error) {
@@ -629,77 +586,54 @@ func GetNode(key []byte, db *badger.DB) ([]byte, error) {
 		if err != nil {
 			return err
 		}
-
-		err = item.Value(func(val []byte) error {
-			data, err = item.ValueCopy(val)
-			return err
-		})
-
+		// A copy into a new buffer (STO-18): the value item.Value lends may be
+		// badger's mapping of its value log, read-only on a read-only open and
+		// unmapped when the database closes.
+		data, err = item.ValueCopy(nil)
 		return err
 	})
 	if err != nil {
 		return nil, err
 	}
 
-	decoded, err := cnst.DECODER.DecodeAll(data, nil)
+	decoded, err := zstdx.DecodeAll(data, nil)
 	if err == nil {
 		data = decoded
 	}
 	return data, nil
 }
 
-func GetNodesBatch(keys [][]byte, db *badger.DB) ([][]byte, []error) {
-	logging.GetLogger().Debug("GetNodesBatch START", zap.Int("batch_key_count", len(keys)))
-	values := make([][]byte, len(keys))
-	errs := make([]error, len(keys))
-
-	err := db.View(func(txn *badger.Txn) error {
-		for i, key := range keys {
-			item, e := txn.Get(key)
-			if e != nil {
-				errs[i] = e
-				continue
-			}
-
-			e = item.Value(func(val []byte) error {
-				copied, copyErr := item.ValueCopy(val)
-				if copyErr != nil {
-					return copyErr
-				}
-
-				decoded, decodeErr := cnst.DECODER.DecodeAll(copied, nil)
-				if decodeErr == nil {
-					values[i] = decoded
-				} else {
-					values[i] = copied
-				}
-				return nil
-			})
-			if e != nil {
-				errs[i] = e
-			}
-		}
-		return nil
-	})
-
+func GuessFileType(encodedHash string, db *badger.DB) ([]byte, error) {
+	fids, err := GuessFileTypes(encodedHash, db)
 	if err != nil {
-		for i := range errs {
-			if errs[i] == nil {
-				errs[i] = err
-			}
-		}
-		logging.GetLogger().Error("GetNodesBatch DB_VIEW_ERROR", zap.Error(err), zap.Int("batch_key_count", len(keys)))
-		return values, errs
+		return nil, err
 	}
-
-	logging.GetLogger().Debug("GetNodesBatch COMPLETE", zap.Int("batch_key_count", len(keys)))
-	return values, errs
+	if len(fids) == 0 {
+		return nil, badger.ErrKeyNotFound
+	}
+	return fids[len(fids)-1], nil
 }
 
-func GuessFileType(encodedHash string, db *badger.DB) ([]byte, error) {
+func GuessFileTypes(encodedHash string, db *badger.DB) ([][]byte, error) {
 	fhash, err := base64.StdEncoding.DecodeString(encodedHash)
 	if err != nil {
 		return nil, err
+	}
+
+	var matches [][]byte
+	seen := make(map[string]struct{})
+	appendUnique := func(ids ...[]byte) {
+		for _, id := range ids {
+			if len(id) == 0 {
+				continue
+			}
+			k := string(id)
+			if _, ok := seen[k]; ok {
+				continue
+			}
+			seen[k] = struct{}{}
+			matches = append(matches, id)
+		}
 	}
 
 	fid := util.AppendToBytesSlice(cnst.IdxFileNamespace, fhash)
@@ -708,7 +642,7 @@ func GuessFileType(encodedHash string, db *badger.DB) ([]byte, error) {
 		return nil, err
 	}
 	if err == nil {
-		return fid, nil
+		appendUnique(fid)
 	}
 
 	fid = util.AppendToBytesSlice(cnst.PartiFileNamespace, fhash)
@@ -717,10 +651,89 @@ func GuessFileType(encodedHash string, db *badger.DB) ([]byte, error) {
 		return nil, err
 	}
 	if err == nil {
-		return fid, nil
+		appendUnique(fid)
+	}
+
+	partitionLookupKey := util.AppendToBytesSlice(cnst.PartiFileHashLookupNamespace, encodedHash)
+	mappedPartitionIDs, err := GetHashLookupUUIDsByKey(partitionLookupKey, db)
+	if err == nil {
+		appendUnique(mappedPartitionIDs...)
+	} else if err != badger.ErrKeyNotFound {
+		return nil, err
+	}
+
+	indexedLookupKey := util.AppendToBytesSlice(cnst.IdxFileHashLookupNamespace, encodedHash)
+	mappedIndexedIDs, err := GetHashLookupUUIDsByKey(indexedLookupKey, db)
+	if err == nil {
+		appendUnique(mappedIndexedIDs...)
+	} else if err != badger.ErrKeyNotFound {
+		return nil, err
 	}
 
 	fid = util.AppendToBytesSlice(cnst.EviFileNamespace, fhash)
 	err = PingNode(fid, db)
-	return fid, err
+	if err == nil {
+		appendUnique(fid)
+	} else if err != badger.ErrKeyNotFound {
+		return nil, err
+	}
+
+	lookupKey := util.AppendToBytesSlice(cnst.EviFileHashLookupNamespace, encodedHash)
+	mappedIDs, err := GetHashLookupUUIDsByKey(lookupKey, db)
+	if err == nil {
+		appendUnique(mappedIDs...)
+	} else if err != badger.ErrKeyNotFound {
+		return nil, err
+	}
+
+	// An evidence is also known by its content root, which dues list shows;
+	// its file hash is the plain hash unless it was stored with hocho. Only
+	// a hash that names nothing else is taken as a root, so every hash that
+	// resolved before resolves as it did.
+	if len(matches) == 0 {
+		err = db.View(func(txn *badger.Txn) error {
+			item, err := txn.Get(RootLookupKey(encodedHash))
+			if err != nil {
+				return err
+			}
+			id, err := item.ValueCopy(nil)
+			appendUnique(CanonicalEvidenceKey(id))
+			return err
+		})
+		if err != nil && err != badger.ErrKeyNotFound {
+			return nil, err
+		}
+	}
+
+	if len(matches) == 0 {
+		return nil, badger.ErrKeyNotFound
+	}
+	return matches, nil
+}
+
+// valueLogGCBudget bounds how long CompactValueLog may run.
+const valueLogGCBudget = 30 * time.Second
+
+// CompactValueLog reclaims value-log space after a store or repair, rewriting
+// files that are at least half garbage until none is left or the time budget
+// is spent. Read-only databases are left alone. It returns the number of
+// files rewritten.
+func CompactValueLog(db *badger.DB) (int, error) {
+	if db.Opts().ReadOnly {
+		return 0, nil
+	}
+	deadline := time.Now().Add(valueLogGCBudget)
+	n := 0
+	for time.Now().Before(deadline) {
+		err := db.RunValueLogGC(0.5)
+		switch {
+		case err == nil:
+			n++
+		case errors.Is(err, badger.ErrNoRewrite), errors.Is(err, badger.ErrRejected):
+			return n, nil
+		default:
+			return n, err
+		}
+	}
+	return n, nil
 }

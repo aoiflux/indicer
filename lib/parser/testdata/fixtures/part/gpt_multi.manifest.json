@@ -1,0 +1,48 @@
+{
+ "format": "raw",
+ "generator": "gen_fixtures.sh unknown",
+ "image": "gpt_multi.img",
+ "partitions": [
+  {
+   "deleted": [],
+   "files": [
+    {
+     "extents": 1,
+     "kind": "file",
+     "path": "/hello.txt",
+     "sha256": "c50991f8eeb65db7d78f40a644102a60a253ab02f1066e625f3e67624921b67b",
+     "size": 14
+    },
+    {
+     "extents": 1,
+     "kind": "file",
+     "path": "/p1.bin",
+     "sha256": "0fb6e97c3058ac56f5e503d26690a21323a389ef52e689dc40cdf58517dc08d6",
+     "size": 5000
+    }
+   ],
+   "fs": "fat",
+   "offset": 1048576
+  },
+  {
+   "deleted": [],
+   "files": [
+    {
+     "extents": 1,
+     "kind": "file",
+     "path": "/p2.bin",
+     "sha256": "e7681c2e7b62145228cc4137f0e7f7b3a9849665dc8e06e2efe3fc993b22ae1a",
+     "size": 7000
+    }
+   ],
+   "fs": "exfat",
+   "offset": 9437184
+  }
+ ],
+ "schema": 1,
+ "segments": [
+  "gpt_multi.img"
+ ],
+ "sha256": "7c52bb250f1f07cf1dbdb9e7771976623e6f5e330196d090f48e53f21f6757d2",
+ "size": 25165824
+}

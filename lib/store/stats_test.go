@@ -1,0 +1,39 @@
+package store
+
+import (
+	"context"
+	"testing"
+
+	"indicer/internal/testutil"
+	"indicer/internal/testutil/testdb"
+	"indicer/lib/dbmeta"
+)
+
+// TestStatsWithReverseRelations (STO-24): statistics of a database stored
+// with reverse relations count the chunks two evidence share. They failed
+// with "invalid reverse-relation append key": the keys written since W3 have
+// three parts, not four.
+func TestStatsWithReverseRelations(t *testing.T) {
+	t.Parallel()
+	db := testdb.Open(t, testdb.Default, testdb.Options{ChunkKiB: 4})
+	cs := int(dbmeta.ChunkSize(db.DB))
+	a := testutil.RandomBytes(51, 6*cs)
+	b := append(append([]byte{}, a[:3*cs]...), testutil.RandomBytes(52, 3*cs)...)
+	for id, content := range map[string][]byte{"a": a, "b": b} {
+		runPass(t, ingestChunksBatchOwner, ChunkPass{DB: db.DB, ID: []byte(id), Source: byteReaderAt(content), Size: int64(len(content)), Quiet: true, RevRel: true})
+	}
+
+	s, err := GatherStats(t.Context(), db.DB)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if s.SharedChunks != 3 || s.UniqueChunks != 9 || s.TotalChunkRefs != 12 || s.ChunkSize != int64(cs) {
+		t.Fatalf("stats: shared %d (want 3), unique %d (want 9), references %d (want 12), chunk size %d", s.SharedChunks, s.UniqueChunks, s.TotalChunkRefs, s.ChunkSize)
+	}
+
+	ctx, cancel := context.WithCancel(t.Context())
+	cancel()
+	if _, err := GatherStats(ctx, db.DB); err == nil {
+		t.Fatal("cancelled statistics succeeded")
+	}
+}

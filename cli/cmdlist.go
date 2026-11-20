@@ -1,7 +1,12 @@
 package cli
 
 import (
+	"context"
+	"errors"
+	"indicer/internal/console"
+	"indicer/lib/dbopen"
 	"indicer/lib/enrichment"
+	duesgraph "indicer/lib/graph"
 	"indicer/lib/logging"
 	"indicer/lib/store"
 	"time"
@@ -9,27 +14,33 @@ import (
 	"go.uber.org/zap"
 )
 
-func ListData(chonkSize int, dbpath string, key []byte, statusFilter string) error {
+func ListData(ctx context.Context, opts DBOptions, statusFilter string) (err error) {
 	start := time.Now()
 	logging.GetLogger().Info("ListData START",
-		zap.Int("chonk_size", chonkSize),
-		zap.String("db_path", dbpath),
+		zap.String("db_path", opts.Path),
 		zap.String("status_filter", statusFilter),
 	)
 
-	db, _, err := Common(chonkSize, dbpath, key)
+	h, err := Common(ctx, opts, dbopen.ReadOnly, false)
 	if err != nil {
 		logging.GetLogger().Error("ListData DB_CONNECT_ERROR", zap.Error(err))
 		return err
 	}
-	defer db.Close()
+	defer closeDB(h, &err)
+	db := h.DB
+	encryptionNotice(h)
 
-	// Try to open enrichment graphdb for graphdb-first retrieval
+	// Open the enrichment graph, read-only, for the annotations it adds. It
+	// lives in the data root, not the working directory, and a listing never
+	// creates it (CFG-7).
 	logging.GetLogger().Debug("ListData OPEN_GRAPH_REPOSITORY")
-	enrichRepo, err := enrichment.OpenGrapheneRepository(dbpath)
+	enrichRepo, err := enrichment.OpenGrapheneRepositoryReadOnly(h.Root)
 	if err != nil {
-		// Graphdb not available, fall back to KVDB-only
+		// No graph, or one that cannot be read now: list from the database.
 		logging.GetLogger().Debug("ListData GRAPH_REPOSITORY_UNAVAILABLE", zap.Error(err))
+		if !errors.Is(err, duesgraph.ErrNoGraph) {
+			console.Errorf("warning: listing without graph enrichment: %v\n", err)
+		}
 		err = store.List(db, statusFilter)
 		if err != nil {
 			logging.GetLogger().Error("ListData LIST_ERROR", zap.Error(err), zap.String("mode", "kvdb_only"))
@@ -41,18 +52,34 @@ func ListData(chonkSize int, dbpath string, key []byte, statusFilter string) err
 		)
 		return nil
 	}
-	defer enrichRepo.Close()
+	defer func() {
+		if cerr := enrichRepo.Close(); err == nil {
+			err = cerr
+		}
+	}()
 
-	// Try graphdb-first listing
-	logging.GetLogger().Info("ListData LIST_EXECUTE", zap.String("mode", "graphdb_first"))
+	// List from the database; the graph only annotates indexed files.
+	logging.GetLogger().Info("ListData LIST_EXECUTE", zap.String("mode", "database_annotated"))
 	err = store.ListWithEnrichment(db, enrichRepo, statusFilter)
 	if err != nil {
-		logging.GetLogger().Error("ListData LIST_ERROR", zap.Error(err), zap.String("mode", "graphdb_first"))
-		return err
+		logging.GetLogger().Warn("ListData LIST_GRAPHDB_FAILED_FALLBACK_KV",
+			zap.Error(err),
+			zap.String("mode", "database_annotated"),
+		)
+		err = store.List(db, statusFilter)
+		if err != nil {
+			logging.GetLogger().Error("ListData LIST_ERROR", zap.Error(err), zap.String("mode", "kvdb_fallback"))
+			return err
+		}
+		logging.GetLogger().Info("ListData COMPLETE",
+			zap.Int64("duration_ms", time.Since(start).Milliseconds()),
+			zap.String("mode", "kvdb_fallback"),
+		)
+		return nil
 	}
 	logging.GetLogger().Info("ListData COMPLETE",
 		zap.Int64("duration_ms", time.Since(start).Milliseconds()),
-		zap.String("mode", "graphdb_first"),
+		zap.String("mode", "database_annotated"),
 	)
 	return nil
 }

@@ -7,6 +7,7 @@ import (
 	"strconv"
 	"strings"
 	"time"
+	"unicode/utf8"
 
 	"indicer/lib/microartefact/model"
 
@@ -42,6 +43,12 @@ const (
 type Detector interface {
 	Name() string
 	Detect(file model.FileRecord, content []byte) ([]model.Artefact, error)
+}
+
+// RawDetector is a detector that parses a file format itself, and so must be
+// given the file's own bytes rather than its text.
+type RawDetector interface {
+	WantsRaw() bool
 }
 
 func estimateEntropy(data []byte) float64 {
@@ -85,11 +92,24 @@ func registryValueString(valueData *regparser.ValueData) string {
 	if valueData.Error != nil {
 		return valueData.Error.Error()
 	}
-	if valueData.String != "" {
-		return valueData.String
+	// Windows stores a string with its terminating NUL, which is not part
+	// of the value.
+	if s := strings.TrimRight(valueData.String, "\x00"); s != "" {
+		return s
 	}
 	if len(valueData.MultiSz) > 0 {
-		return strings.Join(valueData.MultiSz, ";")
+		parts := make([]string, 0, len(valueData.MultiSz))
+		for _, p := range valueData.MultiSz {
+			if p = strings.TrimRight(p, "\x00"); p != "" {
+				parts = append(parts, p)
+			}
+		}
+		return strings.Join(parts, ";")
+	}
+	switch valueData.Type {
+	case regparser.REG_DWORD, regparser.REG_DWORD_BIG_ENDIAN, regparser.REG_QWORD:
+		// Zero is a value too.
+		return strconv.FormatUint(valueData.Uint64, 10)
 	}
 	if valueData.Uint64 != 0 {
 		return strconv.FormatUint(valueData.Uint64, 10)
@@ -100,11 +120,16 @@ func registryValueString(valueData *regparser.ValueData) string {
 	return ""
 }
 
+// filetimeUnixEpoch is 1970-01-01 as a Windows FILETIME.
+const filetimeUnixEpoch = 116444736000000000
+
 func windowsFiletimeToRFC3339(filetime uint64) string {
-	if filetime == 0 {
+	// A FILETIME before 1970 used to wrap around in the unsigned subtraction
+	// and print as a date tens of thousands of years ahead (GRA-18).
+	if filetime <= filetimeUnixEpoch {
 		return ""
 	}
-	unixSeconds := int64((filetime - 116444736000000000) / 10000000)
+	unixSeconds := int64((filetime - filetimeUnixEpoch) / 10000000)
 	if unixSeconds <= 0 {
 		return ""
 	}
@@ -122,9 +147,15 @@ func trimMatchPunctuation(value string) string {
 	return strings.TrimRight(value, ").,;]")
 }
 
+// truncate cuts value to at most limit bytes, at a rune boundary: cutting
+// inside a rune left invalid UTF-8 in artefact values (GRA-18).
 func truncate(value string, limit int) string {
 	if len(value) <= limit {
 		return value
 	}
-	return value[:limit]
+	cut := limit
+	for cut > 0 && !utf8.RuneStart(value[cut]) {
+		cut--
+	}
+	return value[:cut]
 }

@@ -2,73 +2,120 @@ package cli
 
 import (
 	"context"
+	"errors"
 	"fmt"
-	"indicer/lib/cnst"
-	"indicer/lib/logging"
-	"indicer/lib/search"
-	"os"
-	"os/signal"
-	"strings"
-	"syscall"
 	"time"
 
-	"github.com/fatih/color"
+	"indicer/internal/console"
+	"indicer/internal/lifecycle"
+	"indicer/internal/termsafe"
+	"indicer/internal/ui"
+	"indicer/lib/cnst"
+	"indicer/lib/dbopen"
+	"indicer/lib/logging"
+	"indicer/lib/search"
+
 	"go.uber.org/zap"
 )
 
-func SearchCmd(chonkSize int, query, dbpath string, key []byte, rankAlpha float64, fullText bool) error {
+// SearchOptions are the search command's options.
+type SearchOptions struct {
+	Query     string
+	RankAlpha float64
+	FullText  bool
+	Out       string
+	Force     bool
+}
+
+// SearchCmd searches the database and writes the report. An object that
+// could not be read is reported and the command exits 2.
+func SearchCmd(ctx context.Context, opts DBOptions, so SearchOptions) (err error) {
 	start := time.Now()
 	logging.GetLogger().Info("SearchCmd START",
-		zap.Int("chonk_size", chonkSize),
-		zap.String("db_path", dbpath),
-		zap.Int("query_length", len(query)),
-		zap.Bool("full_text", fullText),
+		zap.String("db_path", opts.Path),
+		zap.Int("query_length", len(so.Query)),
+		zap.Bool("full_text", so.FullText),
 	)
-
-	if len(query) < 2 {
-		err := cnst.ErrSmallQuery
-		logging.GetLogger().Error("SearchCmd VALIDATION_ERROR", zap.Error(err))
-		return cnst.ErrSmallQuery
+	if err := search.ValidateQuery(so.Query); err != nil {
+		return lifecycle.Usagef("%v", err)
 	}
-	if rankAlpha < 0 {
-		err := fmt.Errorf("rank-alpha must be >= 0")
-		logging.GetLogger().Error("SearchCmd VALIDATION_ERROR", zap.Error(err), zap.String("parameter", "rank_alpha"))
-		return err
+	if so.RankAlpha < 0 {
+		return lifecycle.Usagef("rank-alpha must be >= 0")
 	}
-	logging.GetLogger().Debug("SearchCmd DB_CONNECT")
-	db, _, err := Common(chonkSize, dbpath, key)
+	h, err := Common(ctx, opts, dbopen.ReadOnly, false)
 	if err != nil {
 		logging.GetLogger().Error("SearchCmd DB_CONNECT_ERROR", zap.Error(err))
 		return err
 	}
-	search.SetOccurrenceBoostAlpha(rankAlpha)
-	query = strings.ToLower(query)
-	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
-	defer stop()
-	if fullText {
-		logging.GetLogger().Info("SearchCmd SEARCH_EXECUTE", zap.String("mode", "hybrid_full_text_fallback"))
-		color.New(color.FgHiCyan, color.Bold).Fprintln(os.Stderr, "[search] Mode: hybrid full-text + scan ranking")
-		err = search.SearchWithContextFullTextFallback(ctx, query, db)
-		if err != nil {
-			logging.GetLogger().Error("SearchCmd SEARCH_ERROR", zap.Error(err))
-			return err
-		}
-		logging.GetLogger().Info("SearchCmd COMPLETE",
-			zap.Int64("duration_ms", time.Since(start).Milliseconds()),
-			zap.String("mode", "hybrid_full_text_fallback"),
-		)
-		return nil
+	defer closeDB(h, &err)
+
+	mode := "scan of every stored object"
+	if so.FullText {
+		mode = "full-text candidates, then scan"
 	}
-	logging.GetLogger().Info("SearchCmd SEARCH_EXECUTE", zap.String("mode", "scan_only"))
-	color.New(color.FgHiWhite, color.Bold).Fprintln(os.Stderr, "[search] Mode: scan ranking only (use --enable-fts to enable hybrid mode)")
-	err = search.SearchWithContext(ctx, query, db)
+	p := ui.For(console.Err())
+	fmt.Fprintf(console.Err(), "%s Mode: %s\n", p.Strong(ui.Info, "[search]"), mode)
+	o, err := search.SearchReport(ctx, h.DB, search.Request{
+		Query: so.Query, FullText: so.FullText, RankAlpha: so.RankAlpha,
+		Out: so.Out, Force: so.Force,
+	})
+	if errors.Is(err, search.ErrReportExists) || errors.Is(err, cnst.ErrSmallQuery) || errors.Is(err, search.ErrQueryTooLong) {
+		return lifecycle.Usagef("%v", err)
+	}
 	if err != nil {
 		logging.GetLogger().Error("SearchCmd SEARCH_ERROR", zap.Error(err))
 		return err
 	}
+	for _, n := range o.Notes {
+		fmt.Fprintf(console.Err(), "%s %s\n", p.Strong(ui.Info, "[search]"), n)
+	}
+	reportSearch(o)
+	console.Println("Done....", time.Since(start))
 	logging.GetLogger().Info("SearchCmd COMPLETE",
 		zap.Int64("duration_ms", time.Since(start).Milliseconds()),
-		zap.String("mode", "scan_only"),
+		zap.String("mode", o.Mode),
+		zap.Int("result_count", o.Ranked),
 	)
+	if w := searchIncomplete(o); w != "" {
+		return &lifecycle.WarningError{Err: errors.New(w)}
+	}
 	return nil
+}
+
+func reportSearch(o search.Outcome) {
+	lines, problems := searchSummary(o)
+	for _, l := range lines {
+		console.Println(l)
+	}
+	pt := ui.For(console.Err())
+	for _, p := range problems {
+		fmt.Fprintf(console.Err(), "%s %s %s\n", pt.Strong(ui.Warning, "[search]"), pt.Strong(ui.Warning, "not searched:"), termsafe.Line(p))
+	}
+}
+
+// searchSummary says what a search covered and found, and which objects it
+// could not read.
+func searchSummary(o search.Outcome) (lines, problems []string) {
+	c := o.Result.Coverage
+	lines = append(lines, fmt.Sprintf("%d objects hold a match. Report: %s", o.Ranked, o.ReportPath),
+		fmt.Sprintf("Searched %d evidence, %d partitions and %d indexed files (%d bytes).", c.Evidence, c.Partitions, c.Files, c.Bytes))
+	if c.NotStored > 0 {
+		lines = append(lines, fmt.Sprintf("%d evidence records are not stored (pending, failed or duplicate) and were not searched.", c.NotStored))
+	}
+	if c.Quarantined > 0 {
+		lines = append(lines, fmt.Sprintf("%d evidence have a quarantined index: their partitions and files were not searched.", c.Quarantined))
+	}
+	if c.Unavailable > 0 {
+		lines = append(lines, fmt.Sprintf("%d indexed files have no readable content (metadata only).", c.Unavailable))
+	}
+	return lines, c.Problems
+}
+
+// searchIncomplete is the warning for a search that could not read some
+// objects, or "".
+func searchIncomplete(o search.Outcome) string {
+	if c := o.Result.Coverage; c.Incomplete() {
+		return fmt.Sprintf("%d objects could not be read and were not searched; the report's coverage names them", c.Unreadable)
+	}
+	return ""
 }

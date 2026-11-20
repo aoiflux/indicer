@@ -1,268 +1,276 @@
 package tui
 
 import (
+	"context"
 	"fmt"
 	"io"
+	"path/filepath"
 	"strings"
+	"time"
 
 	"charm.land/bubbles/v2/list"
 	"charm.land/bubbles/v2/textinput"
 	tea "charm.land/bubbletea/v2"
 	"charm.land/lipgloss/v2"
-	"github.com/dgraph-io/badger/v4"
 )
 
-type NearModel struct {
-	modeList     list.Model // in/out
-	fileInput    textinput.Model
-	deepEnabled  bool
-	db           *badger.DB
-	nearInFn     func(hash string, deep bool) error
-	nearOutFn    func(filePath string) error
-	width        int
-	height       int
-	analyzing    bool
-	focusedField int
-	status       string
-	mode         string // "in" or "out"
+const (
+	nearIn  = "in"
+	nearOut = "out"
+)
+
+const (
+	nearFocusInput = iota
+	nearFocusDeep
+	nearFocusAdvanced
+	nearFocusAnalyze
+	nearFields
+)
+
+type nearItem struct {
+	title, desc, mode string
 }
 
-type nearCompletedMsg struct {
-	err error
-}
+func (i nearItem) FilterValue() string { return i.title }
 
-type NearItem struct {
-	title string
-	desc  string
-	mode  string
-}
+type nearDelegate struct{ env *env }
 
-func (i NearItem) FilterValue() string { return i.title }
-
-type nearDelegate struct{}
-
-func (d nearDelegate) Height() int                               { return 2 }
-func (d nearDelegate) Spacing() int                              { return 0 }
-func (d nearDelegate) Update(msg tea.Msg, m *list.Model) tea.Cmd { return nil }
+func (nearDelegate) Height() int                         { return 2 }
+func (nearDelegate) Spacing() int                        { return 0 }
+func (nearDelegate) Update(tea.Msg, *list.Model) tea.Cmd { return nil }
 func (d nearDelegate) Render(w io.Writer, m list.Model, index int, item list.Item) {
-	i := item.(NearItem)
-	str := fmt.Sprintf("  %s\n  %s", i.title, i.desc)
-	if index == m.Index() {
-		fmt.Fprint(w, SelectedItemStyle.Render(str))
+	i, ok := item.(nearItem)
+	if !ok {
+		return
+	}
+	fmt.Fprint(w, d.env.row(fmt.Sprintf("  %s\n  %s", i.title, i.desc), index == m.Index()))
+}
+
+type nearScreen struct {
+	env    *env
+	modes  list.Model
+	mode   string // "" while choosing
+	input  textinput.Model
+	opts   NearOptions
+	focus  int
+	run    running
+	asked  string
+	status status
+	out    Outcome
+}
+
+func newNearScreen(e *env) *nearScreen {
+	modes := e.newList([]list.Item{
+		nearItem{"A stored object", "Find what shares content with an object in the database", nearIn},
+		nearItem{"A file outside the database", "Find what shares content with a file on disk", nearOut},
+	}, nearDelegate{e}, "NeAR")
+	return &nearScreen{env: e, modes: modes, input: e.newInput("")}
+}
+
+func (s *nearScreen) restyle() {
+	s.modes.Styles = s.env.st.list
+	s.input.SetStyles(s.env.st.textinput)
+}
+
+func (s *nearScreen) init() tea.Cmd { return nil }
+func (s *nearScreen) job() int      { return s.run.id }
+func (s *nearScreen) typing() bool  { return s.mode != "" && s.focus == nearFocusInput }
+
+func (s *nearScreen) resize() {
+	s.modes.SetWidth(max(32, s.env.width-12))
+	s.modes.SetHeight(max(6, s.env.height-16))
+	s.input.SetWidth(max(24, s.env.width-14))
+}
+
+// escape goes back to choosing the mode, unless the analysis runs.
+func (s *nearScreen) escape() bool {
+	if s.mode == "" || s.run.active() {
+		return false
+	}
+	s.mode, s.out, s.status = "", Outcome{}, status{}
+	s.input.Blur()
+	return true
+}
+
+func (s *nearScreen) setFocus(f int) {
+	s.focus = f
+	if f == nearFocusInput {
+		s.input.Focus()
 	} else {
-		fmt.Fprint(w, NormalItemStyle.Render(str))
+		s.input.Blur()
 	}
 }
 
-func NewNearModel(db *badger.DB, nearInFn func(hash string, deep bool) error, nearOutFn func(filePath string) error) *NearModel {
-	items := []list.Item{
-		NearItem{
-			title: "📂 Find in Database",
-			desc:  "Analyze files already in DUES database",
-			mode:  "in",
-		},
-		NearItem{
-			title: "📁 Find from File",
-			desc:  "Analyze an external file against database",
-			mode:  "out",
-		},
+func (s *nearScreen) update(msg tea.Msg) tea.Cmd {
+	switch msg := msg.(type) {
+	case jobDoneMsg:
+		s.run = running{}
+		s.out, _ = msg.result.(Outcome)
+		switch {
+		case msg.err != nil:
+			s.status = errStatus(msg.err)
+		case s.out.Warning:
+			s.status = status{statusWarn, "Analysed, with warnings: see below"}
+		default:
+			s.status = status{statusOK, "Analysed"}
+		}
+		return nil
+	case tea.KeyPressMsg:
+		if s.mode == "" {
+			return s.modeKey(msg)
+		}
+		return s.key(msg)
 	}
-
-	modeList := list.New(items, nearDelegate{}, 60, 8)
-	modeList.Title = "NeAR Analysis Mode"
-	modeList.SetShowStatusBar(false)
-
-	fileInput := textinput.New()
-	fileInput.Placeholder = "Enter hash or file path..."
-	fileInput.Focus()
-
-	return &NearModel{
-		modeList:    modeList,
-		fileInput:   fileInput,
-		db:          db,
-		nearInFn:    nearInFn,
-		nearOutFn:   nearOutFn,
-		width:       80,
-		height:      24,
-		deepEnabled: false,
+	if s.mode != "" && s.focus == nearFocusInput {
+		var cmd tea.Cmd
+		s.input, cmd = s.input.Update(msg)
+		return cmd
 	}
-}
-
-func (m *NearModel) Resize(width int, height int) {
-	m.width = width
-	m.height = height
-
-	innerWidth := width - 12
-	if innerWidth < 32 {
-		innerWidth = 32
-	}
-	listHeight := height - 14
-	if listHeight < 6 {
-		listHeight = 6
-	}
-	m.modeList.SetWidth(innerWidth)
-	m.modeList.SetHeight(listHeight)
-
-	inputWidth := width - 18
-	if inputWidth < 24 {
-		inputWidth = 24
-	}
-	m.fileInput.SetWidth(inputWidth)
-}
-
-func (m NearModel) Init() tea.Cmd {
 	return nil
 }
 
-func (m NearModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
-	var cmd tea.Cmd
-
-	switch msg := msg.(type) {
-	case nearCompletedMsg:
-		m.analyzing = false
-		if msg.err != nil {
-			m.status = "Error: " + msg.err.Error()
+func (s *nearScreen) modeKey(msg tea.KeyPressMsg) tea.Cmd {
+	if msg.String() == "enter" {
+		// A checked assertion: an empty selection is not an item (TUI-4).
+		item, ok := s.modes.SelectedItem().(nearItem)
+		if !ok {
+			return nil
+		}
+		s.mode = item.mode
+		s.input.SetValue("")
+		if s.mode == nearIn {
+			s.input.Placeholder = "ID or hash of a stored object…"
 		} else {
-			m.status = "Analysis completed successfully"
+			s.input.Placeholder = "Path of a file…"
 		}
-		return m, nil
-	case tea.KeyMsg:
-		switch msg.String() {
-		case "ctrl+c", "esc":
-			return m, tea.Quit
-		case "tab":
-			if m.focusedField == 0 {
-				m.focusedField = 1
-				m.fileInput.Focus()
-			} else {
-				m.focusedField = 0
-				m.fileInput.Blur()
-			}
-		case "enter":
-			if m.focusedField == 0 {
-				item := m.modeList.SelectedItem().(NearItem)
-				m.mode = item.mode
-				m.focusedField = 1
-				m.fileInput.Focus()
-			} else if m.focusedField == 1 && !m.analyzing {
-				input := strings.TrimSpace(m.fileInput.Value())
-				if input == "" {
-					m.status = "Error: input is required"
-					return m, nil
-				}
+		s.setFocus(nearFocusInput)
+		return textinput.Blink
+	}
+	var cmd tea.Cmd
+	s.modes, cmd = s.modes.Update(msg)
+	return cmd
+}
 
-				var run tea.Cmd
-				switch m.mode {
-				case "in":
-					if m.nearInFn == nil {
-						m.status = "Error: near-in action not configured"
-						return m, nil
-					}
-					run = runNearInCmd(m.nearInFn, input, m.deepEnabled)
-				case "out":
-					if m.nearOutFn == nil {
-						m.status = "Error: near-out action not configured"
-						return m, nil
-					}
-					run = runNearOutCmd(m.nearOutFn, input)
-				default:
-					m.status = "Error: mode not selected"
-					return m, nil
-				}
-
-				m.analyzing = true
-				m.status = "Analyzing... this may take a moment"
-				return m, run
-			}
-		case "d":
-			if m.focusedField == 1 {
-				m.deepEnabled = !m.deepEnabled
-			}
+func (s *nearScreen) key(msg tea.KeyPressMsg) tea.Cmd {
+	switch msg.String() {
+	case "tab", "down":
+		s.setFocus((s.focus + 1) % nearFields)
+		return nil
+	case "shift+tab", "up":
+		s.setFocus((s.focus + nearFields - 1) % nearFields)
+		return nil
+	case "enter":
+		switch s.focus {
+		case nearFocusInput, nearFocusAnalyze:
+			return s.start()
+		default:
+			s.toggle()
+		}
+		return nil
+	case "space":
+		if s.toggle() {
+			return nil
 		}
 	}
-
-	switch m.focusedField {
-	case 0:
-		m.modeList, cmd = m.modeList.Update(msg)
-	case 1:
-		m.fileInput, cmd = m.fileInput.Update(msg)
+	if s.focus == nearFocusInput {
+		// Every key typed here is text, d included (TUI-4).
+		var cmd tea.Cmd
+		s.input, cmd = s.input.Update(msg)
+		return cmd
 	}
-
-	return m, cmd
+	return nil
 }
 
-func runNearInCmd(nearInFn func(hash string, deep bool) error, hash string, deep bool) tea.Cmd {
-	return func() tea.Msg {
-		return nearCompletedMsg{err: nearInFn(hash, deep)}
+// toggle flips the checkbox that has the focus, and reports whether one had.
+func (s *nearScreen) toggle() bool {
+	switch s.focus {
+	case nearFocusDeep:
+		s.opts.Deep = !s.opts.Deep
+	case nearFocusAdvanced:
+		s.opts.Advanced = !s.opts.Advanced
+	default:
+		return false
 	}
+	return true
 }
 
-func runNearOutCmd(nearOutFn func(filePath string) error, filePath string) tea.Cmd {
-	return func() tea.Msg {
-		return nearCompletedMsg{err: nearOutFn(filePath)}
+func (s *nearScreen) start() tea.Cmd {
+	if s.run.active() {
+		return nil
 	}
+	input := strings.TrimSpace(s.input.Value())
+	if input == "" {
+		s.status = status{statusError, "Error: enter what to analyse"}
+		return nil
+	}
+	var name string
+	var near func(context.Context, string, NearOptions) (Outcome, error)
+	switch s.mode {
+	case nearIn:
+		name, near = "near "+truncate(input, 12), s.env.actions.NearIn
+	case nearOut:
+		name, near = "near "+filepath.Base(input), s.env.actions.NearOut
+	default:
+		return nil
+	}
+	if near == nil {
+		s.status = status{statusError, "Error: NeAR is not available"}
+		return nil
+	}
+	opts := s.opts
+	fn := func(ctx context.Context) (any, error) { return near(ctx, input, opts) }
+	id, cmd, err := s.env.run(name, sharedJob, fn)
+	if err != nil {
+		s.status = errStatus(err)
+		return nil
+	}
+	s.run = running{id: id, since: time.Now()}
+	s.asked = input
+	s.out = Outcome{}
+	s.status = status{}
+	return cmd
 }
 
-func (m NearModel) View() tea.View {
-	title := TitleStyle.Render("NeAR - Find Similar Files")
-
-	var content string
-
-	if m.mode == "" {
-		// Select mode
-		content = lipgloss.JoinVertical(
-			lipgloss.Left,
+func (s *nearScreen) view() string {
+	e, st := s.env, s.env.st
+	title := st.title.Render("NeAR: find stored objects that share content")
+	if s.mode == "" {
+		return e.frame(joinLines(
 			title,
-			"",
-			m.modeList.View(),
-			"",
-			HelpStyle.Render("↑/↓: Select | Enter: Choose | esc: Back"),
-		)
-	} else {
-		// Input mode
-		inputLabel := "Input:"
-		if m.focusedField == 1 {
-			inputLabel = SelectedItemStyle.Render(inputLabel)
-		}
-
-		deepToggle := "☐ Deep Scan (slower, finds partial matches)"
-		if m.deepEnabled {
-			deepToggle = "☑ Deep Scan (slower, finds partial matches)"
-		}
-
-		analyzeBtn := ButtonStyle.Render("Analyze")
-		if m.focusedField == 1 {
-			analyzeBtn = ButtonSelectedStyle.Render("Analyze")
-		}
-
-		status := ""
-		if m.status != "" {
-			status = InfoStyle.Render(m.status)
-		}
-
-		content = lipgloss.JoinVertical(
-			lipgloss.Left,
-			title,
-			"",
-			InputStyle.Render(inputLabel+"\n"+m.fileInput.View()),
-			"",
-			deepToggle,
-			"",
-			analyzeBtn,
-			"",
-			status,
-			"",
-			HelpStyle.Render("d: Toggle Deep | Tab: Navigate | esc: Back"),
-		)
+			s.modes.View(),
+			st.help.Render("↑/↓: Choose | Enter: Select | esc: Back"),
+		))
 	}
-
-	frame := BorderStyle
-	if m.width > 0 {
-		frame = frame.Width(max(40, m.width-4))
+	label := "Stored object (ID or hash):"
+	if s.mode == nearOut {
+		label = "File:"
 	}
-	if m.height > 0 {
-		frame = frame.MaxHeight(max(12, m.height-2))
+	if s.focus == nearFocusInput {
+		label = st.selected.Render(label)
 	}
-
-	return tea.NewView(frame.Render(content))
+	option := func(f int, on bool, label string) string {
+		box := checkbox(on, label)
+		if s.focus == f {
+			box = st.selected.Render(box)
+		}
+		return box
+	}
+	parts := []string{
+		title,
+		st.input.Render(label + "\n" + s.input.View()),
+		option(nearFocusDeep, s.opts.Deep, "Deep: also match similar chunks (needs chunk signatures; slower)") + "\n" +
+			option(nearFocusAdvanced, s.opts.Advanced, "Advanced deep: re-rank the closest candidates by whole-file similarity (slower)"),
+	}
+	stat := s.status.render(st)
+	if s.run.active() {
+		stat = st.info.Render(fmt.Sprintf("Analysing %s… %s", clean(s.asked), since(s.run.since)))
+	}
+	parts = append(parts,
+		lipgloss.JoinHorizontal(lipgloss.Left, button(st, "Analyse", s.focus == nearFocusAnalyze)),
+		st.dim.Render("The report replaces near_report.json in the working directory."),
+		stat,
+		outcomeLines(s.out, e.width-8),
+		st.help.Render("Tab/↑/↓: Move | Enter: Select | Space: Toggle | esc: Choose again | ctrl+x: Cancel the analysis"),
+	)
+	return e.frame(joinLines(parts...))
 }

@@ -4,6 +4,8 @@ import (
 	"archive/zip"
 	"bytes"
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"io"
@@ -192,6 +194,30 @@ func unsigned(t *testing.T, data []byte) []byte {
 
 // rewrite copies the package at src to a new zip, through edit, which may
 // change an entry's data or drop it, then adds extra entries.
+// withListed copies the package src with a file of the database at rel,
+// holding data, added and listed in its manifest, which is left unsigned.
+func withListed(t *testing.T, src, rel, data string) string {
+	t.Helper()
+	sum := sha256.Sum256([]byte(data))
+	return rewrite(t, src, func(name string, b []byte) ([]byte, bool) {
+		if name != duesarc.ManifestName {
+			return b, true
+		}
+		m, err := duesarc.ParseDatabaseManifest(b)
+		if err != nil {
+			t.Fatal(err)
+		}
+		m.Files = append(m.Files, duesarc.File{Path: rel, Size: int64(len(data)), SHA256: hex.EncodeToString(sum[:])})
+		slices.SortFunc(m.Files, func(a, b duesarc.File) int { return strings.Compare(a.Path, b.Path) })
+		m.ContentSHA256, m.Signature = duesarc.ContentHash(m.Files), nil
+		out, err := json.Marshal(m)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return out, true
+	}, map[string]string{duesarc.DatabaseDir + "/" + rel: data})
+}
+
 func rewrite(t *testing.T, src string, edit func(name string, data []byte) ([]byte, bool), extra map[string]string) string {
 	t.Helper()
 	zr, err := zip.OpenReader(src)

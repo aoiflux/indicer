@@ -288,6 +288,40 @@ func TestMergeRefusesDamage(t *testing.T) {
 	}
 }
 
+// TestMergeRefusesListedEntries: a package listing a memtable log, which
+// only a database not closed cleanly has, or a private key under a name
+// that differs from the keystore's in case only, is damaged; merge refuses
+// it before the target is made, and import refuses the key too.
+func TestMergeRefusesListedEntries(t *testing.T) {
+	exp := export(t, ExportOptions{Path: newRoot(t, dbmeta.NoPassword())})
+	for _, c := range []struct {
+		rel     string
+		imports bool
+	}{
+		{cnst.KVDBDIR + "/000001" + memtableExt, false},
+		{strings.ToUpper(cnst.KEYSDIR) + "/actors/a" + strings.ToUpper(signer.KeyFileExt), true},
+	} {
+		pkg := withListed(t, exp.Output, c.rel, "listed")
+		entry := duesarc.DatabaseDir + "/" + c.rel
+		target := filepath.Join(t.TempDir(), "target")
+		if res, _, err := mergeInto(t, pkg, target, dbmeta.NoPassword(), dbopen.Requested{}, nil); !isDamaged(err, entry) || res.Merged != 0 {
+			t.Errorf("merge of a package listing %s: %+v, %v", c.rel, res, err)
+		}
+		if _, err := os.Stat(target); !errors.Is(err, os.ErrNotExist) {
+			t.Errorf("merge of a package listing %s made the target: %v", c.rel, err)
+		}
+		noMergeStage(t, target)
+		if !c.imports {
+			continue
+		}
+		imported := filepath.Join(t.TempDir(), "imported")
+		if _, err := Import(t.Context(), ImportOptions{Package: pkg, Path: imported}); !isDamaged(err, entry) {
+			t.Errorf("import of a package listing %s: %v", c.rel, err)
+		}
+		noStage(t, imported, false)
+	}
+}
+
 // TestMergeReportCountsOnce: an evidence stored or found present whose merge
 // then failed counts as failed only, and is kept for a rerun only when a
 // rerun may not fail it the same way; one that ended without a result says

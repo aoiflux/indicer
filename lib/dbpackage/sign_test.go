@@ -308,25 +308,7 @@ func TestPackageHoldsNoPrivateKey(t *testing.T) {
 	t.Parallel()
 	res := export(t, ExportOptions{Path: newRoot(t, dbmeta.NoPassword())})
 	key := cnst.KEYSDIR + "/actors/" + testKeyFile
-	data := "a private key"
-	sum := sha256.Sum256([]byte(data))
-	withKey := rewrite(t, res.Output, func(name string, b []byte) ([]byte, bool) {
-		if name != duesarc.ManifestName {
-			return b, true
-		}
-		m, err := duesarc.ParseDatabaseManifest(b)
-		if err != nil {
-			t.Fatal(err)
-		}
-		m.Files = append(m.Files, duesarc.File{Path: key, Size: int64(len(data)), SHA256: hex.EncodeToString(sum[:])})
-		slices.SortFunc(m.Files, func(a, b duesarc.File) int { return strings.Compare(a.Path, b.Path) })
-		m.ContentSHA256, m.Signature = duesarc.ContentHash(m.Files), nil
-		out, err := json.Marshal(m)
-		if err != nil {
-			t.Fatal(err)
-		}
-		return out, true
-	}, map[string]string{duesarc.DatabaseDir + "/" + key: data})
+	withKey := withListed(t, res.Output, key, "a private key")
 
 	entry := duesarc.DatabaseDir + "/" + key
 	if _, err := verify(t, withKey, VerifyOptions{}); !isDamaged(err, entry) {

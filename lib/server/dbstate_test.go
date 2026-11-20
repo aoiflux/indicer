@@ -69,10 +69,16 @@ func pauseIn(ls *liveServer, opts pauseOptions, use func(*dbopen.Suspended) erro
 // await waits for what ch sends.
 func await[T any](t *testing.T, what string, ch <-chan T) T {
 	t.Helper()
+	return awaitWithin(t, what, ch, queueWait)
+}
+
+// awaitWithin waits up to d for what ch sends.
+func awaitWithin[T any](t *testing.T, what string, ch <-chan T, d time.Duration) T {
+	t.Helper()
 	select {
 	case v := <-ch:
 		return v
-	case <-time.After(queueWait):
+	case <-time.After(d):
 		t.Fatalf("%s: never came", what)
 	}
 	var zero T
@@ -82,7 +88,13 @@ func await[T any](t *testing.T, what string, ch <-chan T) T {
 // until waits for ok to hold.
 func until(t *testing.T, what string, ok func() bool) {
 	t.Helper()
-	deadline := time.Now().Add(queueWait)
+	untilWithin(t, what, ok, queueWait)
+}
+
+// untilWithin waits up to d for ok to hold.
+func untilWithin(t *testing.T, what string, ok func() bool, d time.Duration) {
+	t.Helper()
+	deadline := time.Now().Add(d)
 	for !ok() {
 		if time.Now().After(deadline) {
 			t.Fatalf("%s: never", what)
@@ -1162,9 +1174,14 @@ func TestPauseResumeStress(t *testing.T) {
 	t.Parallel()
 	const readers, uploads, cycles = 4, 8, 10
 	lim := testLimits()
-	lim.IdleWait = queueWait
+	// A cut upload stores on to its last point before the commit, which
+	// under the race detector on a loaded machine took near ten seconds.
+	lim.IdleWait = 3 * queueWait
 	lim.Upload.Jobs = 2
 	lim.Upload.FinalizeWait = finalizeWait
+	// A pause may wait IdleWait for the uploads it cut and as long for the
+	// reads, then suspends and resumes.
+	pauseWait := 2*lim.IdleWait + lim.PauseLeaseWait + queueWait
 	ls, logs := pauseServer(t, lim, nil)
 	c := pbconnect.NewDuesServiceClient(testClient, ls.url)
 	ids := make([]string, uploads)
@@ -1204,7 +1221,7 @@ func TestPauseResumeStress(t *testing.T) {
 		})
 	}
 	for i := range cycles {
-		if err := await(t, "a pause", pauseIn(ls, pauseOptions{For: fmt.Sprintf("cycle %d", i), Drain: shortWait}, instant)); err != nil {
+		if err := awaitWithin(t, "a pause", pauseIn(ls, pauseOptions{For: fmt.Sprintf("cycle %d", i), Drain: shortWait}, instant), pauseWait); err != nil {
 			t.Errorf("cycle %d: %v", i, err)
 		}
 	}
@@ -1216,6 +1233,10 @@ func TestPauseResumeStress(t *testing.T) {
 	if served.Load() == 0 {
 		t.Error("no read was served")
 	}
+	untilWithin(t, "the uploads the pauses held back stored", func() bool {
+		running, waiting := ls.uploads.queue.counts()
+		return running+waiting == 0
+	}, time.Duration(uploads/lim.Upload.Jobs)*lim.IdleWait)
 	for _, id := range ids {
 		wantStored(t, ls, id)
 	}

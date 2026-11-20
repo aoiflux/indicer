@@ -398,10 +398,8 @@ func openMergeTarget(ctx context.Context, opts DBOptions) (dbpackage.MergeTarget
 	if err := util.EnsureBlobPath(h.Root); err != nil {
 		return dbpackage.MergeTarget{}, errors.Join(err, h.Close())
 	}
-	for _, n := range h.Notices {
-		ui.Notef("%s", n)
-	}
-	if h.Created {
+	if h.Created && h.Manifest.Encrypted() {
+		// Common has printed the notice of one made without encryption.
 		ui.Notef("created database %s", h.Root)
 	}
 	sess := ingest.NewSession(h.DB)

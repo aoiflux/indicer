@@ -27,7 +27,7 @@ func TestPackage(t *testing.T) {
 	if !strings.Contains(out, "Exported database "+db+" to "+filepath.Join(work, "case.duesarc")) || !strings.Contains(out, "content sha256 ") {
 		t.Fatalf("export:\n%s", out)
 	}
-	hash, _, _ := strings.Cut(out[strings.Index(out, "content sha256 ")+len("content sha256 "):], "\n")
+	hash := contentSHA(t, out)
 	if !strings.Contains(out, `signed by actor "database"`) {
 		t.Errorf("export is unsigned:\n%s", out)
 	}

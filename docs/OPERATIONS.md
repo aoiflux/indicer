@@ -752,7 +752,9 @@ use import to restore a database as it was.
   records inside a package are not trusted either: every merged evidence is
   checked against the hash its record holds before it is committed.
 - TARGET is then opened for writing, with recovery, and stays locked until
-  the merge ends: no server or store can use it meanwhile.
+  the merge ends: no server or store can use it meanwhile. A missing TARGET
+  is made here, so it stays, empty, when the copy then finds the package
+  damaged.
 - The package's files, except its full-text index and graph, are copied to
   `.<target>.dues-merge-<16 hex digits of its content hash>` beside TARGET
   (`--stage-dir DIR` puts it elsewhere, never inside TARGET), each checked

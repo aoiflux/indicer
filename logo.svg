@@ -1,112 +1,112 @@
-<svg width="700" height="240" viewBox="0 0 700 240" xmlns="http://www.w3.org/2000/svg">
-    <defs>
-        <linearGradient id="bgGradient" x1="0%" y1="0%" x2="100%" y2="100%">
-            <stop offset="0%" stop-color="#120f1f" />
-            <stop offset="42%" stop-color="#1d2a46" />
-            <stop offset="100%" stop-color="#1c6a5d" />
-        </linearGradient>
-        <radialGradient id="orbGradient" cx="18%" cy="12%" r="95%">
-            <stop offset="0%" stop-color="#f59e0b" stop-opacity="0.22" />
-            <stop offset="60%" stop-color="#22d3ee" stop-opacity="0.09" />
-            <stop offset="100%" stop-color="#000000" stop-opacity="0" />
-        </radialGradient>
-        <linearGradient id="cardGradient" x1="0%" y1="0%" x2="100%" y2="100%">
-            <stop offset="0%" stop-color="#161a2f" stop-opacity="0.88" />
-            <stop offset="100%" stop-color="#0a1224" stop-opacity="0.56" />
-        </linearGradient>
-        <linearGradient id="accentGradient" x1="0%" y1="0%" x2="100%" y2="0%">
-            <stop offset="0%" stop-color="#22d3ee" />
-            <stop offset="52%" stop-color="#34d399" />
-            <stop offset="100%" stop-color="#fbbf24" />
-        </linearGradient>
-        <linearGradient id="jackfruitSkin" x1="0%" y1="0%" x2="0%" y2="100%">
-            <stop offset="0%" stop-color="#fde68a" />
-            <stop offset="100%" stop-color="#f59e0b" />
-        </linearGradient>
-        <filter id="softGlow" x="-50%" y="-50%" width="200%" height="200%">
-            <feGaussianBlur stdDeviation="8" result="blur" />
-            <feMerge>
-                <feMergeNode in="blur" />
-                <feMergeNode in="SourceGraphic" />
-            </feMerge>
-        </filter>
-    </defs>
+<svg xmlns="http://www.w3.org/2000/svg" width="800" height="330" viewBox="0 0 800 330" role="img" aria-labelledby="dues-logo-title dues-logo-desc">
+  <title id="dues-logo-title">DUES v0.39.0 &lt;pineapple&gt; spacebar</title>
+  <desc id="dues-logo-desc">The DUES logo: an abstract composition of overlapping circles and lines, with a small pineapple resting on a spacebar among them, beside the DUES wordmark, the words Deduplicated Unified Evidence Store, the version v0.39.0, and the codename &lt;pineapple&gt; spacebar on a spacebar key.</desc>
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#0b1020"/>
+      <stop offset="0.55" stop-color="#101935"/>
+      <stop offset="1" stop-color="#0c2530"/>
+    </linearGradient>
+    <linearGradient id="accent" x1="0" y1="0" x2="1" y2="0">
+      <stop offset="0" stop-color="#22d3ee"/>
+      <stop offset="0.55" stop-color="#34d399"/>
+      <stop offset="1" stop-color="#fbbf24"/>
+    </linearGradient>
+    <linearGradient id="mark" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#f8fafc"/>
+      <stop offset="1" stop-color="#7dd3fc"/>
+    </linearGradient>
+    <radialGradient id="corona" cx="0.5" cy="0.5" r="0.5">
+      <stop offset="0.80" stop-color="#60a5fa" stop-opacity="0.30"/>
+      <stop offset="1" stop-color="#60a5fa" stop-opacity="0"/>
+    </radialGradient>
+    <radialGradient id="body" cx="0.42" cy="0.40" r="0.62">
+      <stop offset="0" stop-color="#1d4ed8" stop-opacity="0.85"/>
+      <stop offset="0.7" stop-color="#172554" stop-opacity="0.92"/>
+      <stop offset="1" stop-color="#0b1330"/>
+    </radialGradient>
+    <linearGradient id="core" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#fde68a"/>
+      <stop offset="0.6" stop-color="#fbbf24"/>
+      <stop offset="1" stop-color="#d97706"/>
+    </linearGradient>
+    <pattern id="skin" width="6" height="6" patternUnits="userSpaceOnUse" patternTransform="translate(206 150) rotate(45)">
+      <path d="M0 0 H6 M0 0 V6" stroke="#92400e" stroke-opacity="0.55" stroke-width="0.9"/>
+    </pattern>
+    <linearGradient id="keyface" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#2a3650"/>
+      <stop offset="1" stop-color="#1b2438"/>
+    </linearGradient>
+    <clipPath id="card">
+      <rect x="1" y="1" width="798" height="328" rx="28"/>
+    </clipPath>
+  </defs>
 
-    <rect width="700" height="240" rx="18" fill="url(#bgGradient)" />
-    <rect width="700" height="240" rx="18" fill="url(#orbGradient)" />
-    <circle cx="620" cy="32" r="74" fill="#22d3ee" opacity="0.08" />
-    <circle cx="56" cy="206" r="58" fill="#f59e0b" opacity="0.12" />
+  <g clip-path="url(#card)">
+    <rect width="800" height="330" fill="url(#bg)"/>
+    <rect x="0" y="0" width="800" height="4" fill="url(#accent)"/>
+  </g>
+  <rect x="1" y="1" width="798" height="328" rx="28" fill="none" stroke="#ffffff" stroke-opacity="0.09" stroke-width="2"/>
 
-    <g transform="translate(26, 26)">
-        <rect width="648" height="188" rx="16" fill="url(#cardGradient)" stroke="#67e8f9"
-            stroke-opacity="0.30" />
+  <g stroke="#e2e8f0" stroke-linecap="round" fill="none">
+    <line x1="34" y1="292" x2="292" y2="44" stroke-opacity="0.22" stroke-width="1.2"/>
+    <line x1="30" y1="148" x2="298" y2="196" stroke-opacity="0.12" stroke-width="0.8"/>
+    <line x1="226" y1="288" x2="286" y2="288" stroke-opacity="0.35" stroke-width="3"/>
+    <path d="M44 252 A40 40 0 0 1 116 300" stroke-opacity="0.18" stroke-width="1.2"/>
+  </g>
+  <circle cx="150" cy="166" r="112" fill="url(#corona)"/>
+  <circle cx="150" cy="166" r="98" fill="url(#body)"/>
+  <g style="mix-blend-mode:screen">
+    <circle cx="112" cy="124" r="46" fill="#22d3ee" fill-opacity="0.5"/>
+    <circle cx="200" cy="214" r="34" fill="#a78bfa" fill-opacity="0.5"/>
+    <circle cx="78" cy="220" r="24" fill="#34d399" fill-opacity="0.55"/>
+    <circle cx="232" cy="100" r="15" fill="#fb7185" fill-opacity="0.75"/>
+    <circle cx="160" cy="94" r="8" fill="#f8fafc" fill-opacity="0.85"/>
+    <circle cx="52" cy="92" r="6" fill="#7dd3fc" fill-opacity="0.7"/>
+    <circle cx="270" cy="262" r="5" fill="#22d3ee" fill-opacity="0.6"/>
+    <circle cx="118" cy="276" r="3.5" fill="#f8fafc" fill-opacity="0.5"/>
+    <circle cx="282" cy="150" r="3" fill="#fde68a" fill-opacity="0.55"/>
+  </g>
+  <g fill="none" stroke-width="1.2">
+    <circle cx="112" cy="124" r="53" stroke="#22d3ee" stroke-opacity="0.35"/>
+    <circle cx="200" cy="214" r="40" stroke="#a78bfa" stroke-opacity="0.35"/>
+    <circle cx="232" cy="100" r="20" stroke="#fb7185" stroke-opacity="0.45"/>
+    <circle cx="150" cy="166" r="98" stroke="#93c5fd" stroke-opacity="0.35"/>
+  </g>
+  <circle cx="122" cy="132" r="17" fill="#1e3a8a" fill-opacity="0.75"/>
+  <circle cx="128" cy="136" r="7" fill="#fb7185" fill-opacity="0.8"/>
+  <g fill="#22d3ee">
+    <rect x="242" y="226" width="7" height="7" fill-opacity="0.55"/>
+    <rect x="256" y="226" width="7" height="7" fill-opacity="0.25"/>
+    <rect x="249" y="233" width="7" height="7" fill-opacity="0.40"/>
+    <rect x="242" y="240" width="7" height="7" fill-opacity="0.20"/>
+    <rect x="256" y="240" width="7" height="7" fill-opacity="0.55"/>
+    <rect x="263" y="233" width="7" height="7" fill-opacity="0.15"/>
+  </g>
 
-        <g transform="translate(22, 30)">
-            <rect x="0" y="0" width="154" height="108" rx="16" fill="#111b33" stroke="#22d3ee"
-                stroke-opacity="0.42" />
-            <rect x="12" y="12" width="130" height="84" rx="12" fill="#0f172a" stroke="#1e293b" />
+  <!-- One of these is not a circle. -->
+  <rect x="186" y="173" width="40" height="4" rx="2" fill="#e2e8f0" fill-opacity="0.8"/>
+  <ellipse cx="206" cy="150" rx="13" ry="18" fill="url(#core)"/>
+  <ellipse cx="206" cy="150" rx="13" ry="18" fill="url(#skin)"/>
+  <path d="M205.0 137.3 Q200.8 134.5 198.1 129.8 Q203.3 131.3 207.0 134.7 Z" fill="#059669"/>
+  <path d="M205.0 134.7 Q208.7 131.3 213.9 129.8 Q211.2 134.5 207.0 137.3 Z" fill="#059669"/>
+  <path d="M204.2 136.9 Q201.0 131.2 200.3 124.3 Q205.3 129.1 207.8 135.1 Z" fill="#10b981"/>
+  <path d="M204.2 135.1 Q206.7 129.1 211.7 124.3 Q211.0 131.2 207.8 136.9 Z" fill="#10b981"/>
+  <path d="M203.8 136.0 Q203.4 128.0 206.0 120.0 Q208.6 128.0 208.2 136.0 Z" fill="#6ee7b7"/>
 
-            <g transform="translate(16, 18)" filter="url(#softGlow)">
-                <ellipse cx="52" cy="58" rx="45" ry="10" fill="#0f766e" opacity="0.40" />
-                <ellipse cx="52" cy="22" rx="42" ry="14" fill="url(#jackfruitSkin)" />
-                <rect x="10" y="22" width="84" height="30" rx="8" fill="#164e63" opacity="0.68" />
-                <circle cx="52" cy="22" r="6" fill="#fffbeb" opacity="0.92" />
-                <circle cx="22" cy="22" r="1.3" fill="#78350f" opacity="0.60" />
-                <circle cx="32" cy="16" r="1.2" fill="#78350f" opacity="0.60" />
-                <circle cx="43" cy="13" r="1.2" fill="#78350f" opacity="0.60" />
-                <circle cx="62" cy="12" r="1.2" fill="#78350f" opacity="0.60" />
-                <circle cx="72" cy="16" r="1.2" fill="#78350f" opacity="0.60" />
-                <circle cx="82" cy="22" r="1.3" fill="#78350f" opacity="0.60" />
-            </g>
+  <g transform="translate(30 0)" fill="none" stroke="url(#mark)" stroke-width="15" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M300 88 H354 Q380 88 380 114 V174 Q380 200 354 200 H300 Z"/>
+    <path d="M414 88 V174 Q414 200 440 200 H468 Q494 200 494 174 V88"/>
+    <path d="M598 88 H528 V200 H598 M528 144 H584"/>
+    <path d="M712 88 H658 Q632 88 632 114 V118 Q632 144 658 144 H686 Q712 144 712 170 V174 Q712 200 686 200 H632"/>
+  </g>
 
-            <g transform="translate(18, 74)">
-                <rect x="0" y="0" width="116" height="16" rx="8" fill="#101827" stroke="#34d399"
-                    stroke-opacity="0.62" />
-                <rect x="5" y="4" width="68" height="8" rx="4" fill="url(#accentGradient)"
-                    opacity="0.90" />
-                <rect x="82" y="4" width="30" height="8" rx="4" fill="#1f2937" />
-            </g>
-        </g>
+  <text x="330" y="240" textLength="412" lengthAdjust="spacing" fill="#94a3b8" font-family="-apple-system, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="14.5" font-weight="600">DEDUPLICATED UNIFIED EVIDENCE STORE</text>
 
-        <g transform="translate(206, 42)">
-            <text x="0" y="52" font-family="Segoe UI, Arial, sans-serif" font-size="56"
-                font-weight="800" letter-spacing="1.8" fill="#f8fafc">
-                DUES
-            </text>
-            <text x="0" y="82" font-family="Segoe UI, Arial, sans-serif" font-size="14"
-                fill="#bae6fd" opacity="0.95">
-                Deduplicated Unified Evidence Store
-            </text>
-        </g>
+  <rect x="330" y="262" width="96" height="32" rx="16" fill="#22d3ee" fill-opacity="0.12" stroke="#22d3ee" stroke-opacity="0.6" stroke-width="1.5"/>
+  <text x="378" y="283" text-anchor="middle" fill="#67e8f9" font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, 'Liberation Mono', monospace" font-size="14" font-weight="700">v0.39.0</text>
 
-        <g transform="translate(206, 132)">
-            <rect x="0" y="0" width="84" height="28" rx="14" fill="#059669" />
-            <text x="42" y="14" dominant-baseline="middle" font-family="Segoe UI, Arial, sans-serif"
-                font-size="14" font-weight="700" fill="#ecfeff" text-anchor="middle">
-                v0.38
-            </text>
-
-            <rect x="96" y="0" width="318" height="28" rx="14" fill="#0f172a" stroke="#22d3ee"
-                stroke-opacity="0.55" />
-            <text x="255" y="14" dominant-baseline="middle"
-                font-family="Consolas, Courier New, monospace" font-size="13" fill="#67e8f9"
-                text-anchor="middle">
-                &lt;jackfruit&gt; spacebar
-            </text>
-        </g>
-
-        <g transform="translate(568, 34)">
-            <rect x="0" y="0" width="56" height="56" rx="14" fill="#0b1528" stroke="#22d3ee"
-                stroke-opacity="0.55" />
-            <line x1="12" y1="18" x2="44" y2="18" stroke="#67e8f9" stroke-width="3"
-                stroke-linecap="round" />
-            <line x1="12" y1="28" x2="44" y2="28" stroke="#67e8f9" stroke-width="3"
-                stroke-linecap="round" />
-            <line x1="12" y1="38" x2="44" y2="38" stroke="#67e8f9" stroke-width="3"
-                stroke-linecap="round" />
-            <circle cx="46" cy="46" r="7" fill="#34d399" />
-            <path d="M 42 46 L 45 49 L 50 43" fill="none" stroke="#062b23" stroke-width="2"
-                stroke-linecap="round" stroke-linejoin="round" />
-        </g>
-    </g>
+  <rect x="440" y="266" width="302" height="30" rx="8" fill="#050914"/>
+  <rect x="440" y="262" width="302" height="30" rx="8" fill="url(#keyface)" stroke="#3b4a66" stroke-width="1.5"/>
+  <text x="591" y="282" text-anchor="middle" font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, 'Liberation Mono', monospace" font-size="14" font-weight="600"><tspan fill="#fde68a">&lt;pineapple&gt;</tspan><tspan fill="#cbd5e1"> spacebar</tspan></text>
 </svg>

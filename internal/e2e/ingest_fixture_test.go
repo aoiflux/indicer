@@ -16,6 +16,9 @@ import (
 func TestMain(m *testing.M) {
 	code := leakcheck.Run(m)
 	fsfixture.Cleanup()
+	if err := testutil.RemoveBuilds(); err != nil {
+		fmt.Fprintln(os.Stderr, "remove the test builds:", err)
+	}
 	os.Exit(code)
 }
 

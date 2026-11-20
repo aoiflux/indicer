@@ -2,6 +2,7 @@ package testutil
 
 import (
 	"bytes"
+	"errors"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -47,23 +48,43 @@ func BuildBinary(tb testing.TB, pkg string, tags ...string) string {
 		builds[key] = b
 	}
 	buildMu.Unlock()
-	b.once.Do(func() { b.path, b.err = buildBinary(pkg, tags) })
+	b.once.Do(func() {
+		temp, err := osdirs.Temp()
+		if err != nil {
+			b.err = err.Error()
+			return
+		}
+		b.path, b.err = buildBinary(temp, pkg, tags)
+	})
 	if b.err != "" {
 		tb.Fatal(b.err)
 	}
 	return b.path
 }
 
-func buildBinary(pkg string, tags []string) (string, string) {
+// RemoveBuilds removes the binaries BuildDues and BuildBinary built in this
+// test process, tens of megabytes each. Call it from TestMain after the
+// tests ran.
+func RemoveBuilds() error {
+	buildMu.Lock()
+	defer buildMu.Unlock()
+	var errs []error
+	for key, b := range builds {
+		b.once.Do(func() {}) // waits out a build still running
+		if b.path != "" {
+			errs = append(errs, os.RemoveAll(filepath.Dir(b.path)))
+		}
+		delete(builds, key)
+	}
+	return errors.Join(errs...)
+}
+
+func buildBinary(temp, pkg string, tags []string) (string, string) {
 	gomod, err := exec.Command("go", "env", "GOMOD").Output()
 	if err != nil {
 		return "", "go env GOMOD: " + err.Error()
 	}
 	root := filepath.Dir(strings.TrimSpace(string(gomod)))
-	temp, err := osdirs.Temp()
-	if err != nil {
-		return "", err.Error()
-	}
 	dir, err := os.MkdirTemp(temp, "dues-bin-")
 	if err != nil {
 		return "", err.Error()
@@ -83,7 +104,11 @@ func buildBinary(pkg string, tags []string) (string, string) {
 	cmd := exec.Command("go", append(args, pkg)...)
 	cmd.Dir = root
 	if out, err := cmd.CombinedOutput(); err != nil {
-		return "", "build dues: " + err.Error() + "\n" + string(out)
+		msg := "build dues: " + err.Error() + "\n" + string(out)
+		if err := os.RemoveAll(dir); err != nil {
+			msg += "\n" + err.Error()
+		}
+		return "", msg
 	}
 	return bin, ""
 }

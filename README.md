@@ -3,7 +3,7 @@
 </p>
 
 <p align="center">
-  <a href="https://github.com/aoiflux/indicer/releases"><img src="https://img.shields.io/badge/release-v0.39.0_pre--release-f59e0b" alt="Release v0.39.0 pre-release"/></a>
+  <a href="https://github.com/aoiflux/indicer/releases/latest"><img src="https://img.shields.io/badge/latest_release-v0.39.0-34d399" alt="Latest release v0.39.0"/></a>
   <a href="https://go.dev"><img src="https://img.shields.io/badge/Go-1.26.2%2B-00ADD8?logo=go&amp;logoColor=white" alt="Go 1.26.2 or later"/></a>
   <img src="https://img.shields.io/badge/platforms-Windows_%7C_Linux_%7C_macOS-334155" alt="Windows, Linux and macOS"/>
   <img src="https://img.shields.io/badge/arch-amd64_%7C_arm64-334155" alt="amd64 and arm64"/>

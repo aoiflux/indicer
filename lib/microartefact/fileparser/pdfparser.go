@@ -18,8 +18,9 @@ import (
 var disablePDFConfigDir sync.Once
 
 // parsePDFContent extracts the text of a PDF's pages. The streams are measured
-// against the inflation limits and their declared lengths against the file
-// first (GRA-14); the file is read and validated,
+// against the inflation limits, their declared lengths against the file and
+// the file's declared counts against the limits first (GRA-14); the file is
+// read and validated,
 // not optimised, which decoded every stream to deduplicate them; and the text
 // kept is capped.
 func parsePDFContent(content []byte) ([]byte, error) {
@@ -30,6 +31,9 @@ func parsePDFContent(content []byte) ([]byte, error) {
 		return nil, err
 	}
 	if err := checkPDFLengths(content); err != nil {
+		return nil, err
+	}
+	if err := checkPDFCounts(content); err != nil {
 		return nil, err
 	}
 

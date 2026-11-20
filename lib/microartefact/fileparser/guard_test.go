@@ -114,6 +114,49 @@ func TestPDFLengthsAreBounded(t *testing.T) {
 	}
 }
 
+// A PDF declaring counts that pdfcpu allocates for before it reads any data
+// is refused before pdfcpu sees it.
+func TestPDFCountsAreBounded(t *testing.T) {
+	t.Parallel()
+	const huge = "3000000000"
+	refused := map[string]string{
+		"xref stream size":         "%PDF-1.5\n1 0 obj << /Type /XRef /Size " + huge + " /W [1 2 1] >> stream\nx\nendstream endobj",
+		"escaped name":             "%PDF-1.5\n1 0 obj << /Type /XRef /Si#7Ae " + huge + " >> endobj",
+		"trailer size":             "%PDF-1.4\ntrailer << /Size 99999999 /Root 1 0 R >>",
+		"index":                    "%PDF-1.5\n<< /Index [0 10 5 " + huge + "] >>",
+		"index split across pairs": "%PDF-1.5\n<< /Index [0 3000000 7 3000000] >>",
+		"index after comments":     "%PDF-1.5\n<< /Index [ % c\n 0 % d\n 99999999999 ] >>",
+		"object stream first":      "%PDF-1.5\n5 0 obj << /Type /ObjStm /N 1 /First " + huge + " >> endobj",
+		"wide predictor row":       "%PDF-1.5\n<< /DecodeParms << /Predictor 12 /Columns " + huge + " >> >>",
+		"columns times colours":    "%PDF-1.5\n<< /DecodeParms << /Predictor 2 /Colors 4096 /Columns 4096 >> >>",
+		"negative parameters":      "%PDF-1.5\n<< /DecodeParms << /Predictor 2 /Colors -100000 /Columns -100000 >> >>",
+		"most negative columns":    "%PDF-1.5\n<< /DecodeParms << /Predictor 12 /Columns -9223372036854775808 >> >>",
+	}
+	for name, pdf := range refused {
+		if err := checkPDFCounts([]byte(pdf)); !errors.Is(err, ErrPDFCount) {
+			t.Errorf("%s: %v, want ErrPDFCount", name, err)
+		}
+	}
+	if _, err := parsePDFContent([]byte(refused["trailer size"])); !errors.Is(err, ErrPDFCount) {
+		t.Errorf("parsing a PDF of %s: %v, want ErrPDFCount", "trailer size", err)
+	}
+
+	allowed := map[string]string{
+		"ordinary":            string(pdfWithStream(t, []byte("BT (x) Tj ET"))),
+		"xref stream":         "%PDF-1.5\n1 0 obj << /Type /XRef /Size 250 /Index [0 100 200 50] /W [1 2 1] >> endobj",
+		"size by reference":   "%PDF-1.4\ntrailer << /Size 99999999 0 R >>",
+		"sampled function":    "%PDF-1.4\n<< /FunctionType 0 /Size [99999999] >>",
+		"outline first":       "%PDF-1.4\n<< /Type /Outlines /First 12 0 R >>",
+		"index ends early":    "%PDF-1.5\n<< /Index [0 1.5 0 " + huge + "] >>",
+		"realistic predictor": "%PDF-1.5\n<< /DecodeParms << /Predictor 15 /Colors 3 /Columns 10000 >> >>",
+	}
+	for name, pdf := range allowed {
+		if err := checkPDFCounts([]byte(pdf)); err != nil {
+			t.Errorf("%s: %v", name, err)
+		}
+	}
+}
+
 // A registry hive is recognised by its signature, whatever its record's type
 // says; a hive is typed "dat" from its extension, or not at all.
 func TestParseRecognisesRegistryHives(t *testing.T) {

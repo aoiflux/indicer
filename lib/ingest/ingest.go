@@ -275,10 +275,30 @@ func (s *Session) ingestPrepared(ctx context.Context, in input, req Request, res
 		return res, err
 	}
 	res.Attempt, res.Resumed = eid, resumed
+	if resumed {
+		if err := s.deleteEarlierIndex(ctx, eid); err != nil {
+			return res, fail(db, eid, err)
+		}
+	}
 	if err := faultinject.Hit(faultinject.IngestAfterPending); err != nil {
 		return res, fail(db, eid, err)
 	}
 	return s.run(ctx, in, eid, req, res)
+}
+
+// deleteEarlierIndex deletes the index the earlier runs of a resumed attempt
+// wrote. A resume matches only size and a sampled fingerprint, so the content
+// may differ, as may the parser; the index pass adds to the partitions an
+// evidence lists, so theirs would stay listed beside the new ones.
+func (s *Session) deleteEarlierIndex(ctx context.Context, eid []byte) error {
+	e, err := dbio.GetEvidenceFile(eid, s.db)
+	if err != nil {
+		return err
+	}
+	if len(e.InternalObjects) == 0 {
+		return nil
+	}
+	return s.deletePrevious(ctx, eid)
 }
 
 // planIngest lists the steps an ingest of in with the hash strategy

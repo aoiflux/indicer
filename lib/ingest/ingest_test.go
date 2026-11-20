@@ -3,6 +3,7 @@ package ingest
 import (
 	"bytes"
 	"context"
+	"encoding/base64"
 	"errors"
 	"fmt"
 	"os"
@@ -307,6 +308,63 @@ func TestBeforeFlushVeto(t *testing.T) {
 	}
 	if !e.Completed || e.Failed || e.LastError != "" {
 		t.Fatalf("resumed evidence: completed %v failed %v error %q", e.Completed, e.Failed, e.LastError)
+	}
+}
+
+// TestResumeDeletesEarlierIndex: a resumed attempt deletes the partitions its
+// earlier run linked, with their members, before it indexes again; the
+// content resumed need not be what that run indexed.
+func TestResumeDeletesEarlierIndex(t *testing.T) {
+	t.Parallel()
+	db := openDB(t)
+	path := fixture(t, "fat/fat16")
+	veto := errors.New("simulated veto")
+	r1, err := Run(t.Context(), db, Request{Path: path, Decode: true, Quiet: true, BeforeFlush: func() error { return veto }})
+	if !errors.Is(err, veto) {
+		t.Fatalf("vetoed ingest: %v", err)
+	}
+	stale := index.PartitionID(r1.Attempt, 99, 0)
+	staleB64 := base64.StdEncoding.EncodeToString(stale)
+	member := append(dbio.PartitionMemberPrefix(dbio.CanonicalPartitionKey(stale)), base64.StdEncoding.EncodeToString(index.PartitionID(stale, 0, 0))...)
+	if err := dbio.UpdateEvidence(db, r1.Attempt, func(_ *badger.Txn, e *structs.EvidenceFile) error {
+		if e.InternalObjects == nil {
+			e.InternalObjects = map[string]structs.InternalOffset{}
+		}
+		e.InternalObjects[staleB64] = structs.InternalOffset{End: 511}
+		return nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if err := db.Update(func(txn *badger.Txn) error { return txn.Set(member, nil) }); err != nil {
+		t.Fatal(err)
+	}
+
+	r2, err := Run(t.Context(), db, Request{Path: path, Decode: true, Quiet: true})
+	if err != nil || !r2.Resumed || !bytes.Equal(r2.Attempt, r1.Attempt) {
+		t.Fatalf("second ingest: %v, resumed %v", err, r2.Resumed)
+	}
+	e, err := dbio.GetEvidenceFile(r2.Attempt, db)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, kept := e.InternalObjects[staleB64]; kept || len(e.InternalObjects) == 0 {
+		t.Fatalf("resumed evidence lists partitions %v; want the earlier run's %s gone and the new ones there", e.InternalObjects, staleB64)
+	}
+	for pid := range e.InternalObjects {
+		raw, err := base64.StdEncoding.DecodeString(pid)
+		if err == nil {
+			_, err = dbio.GetPartitionFile(dbio.CanonicalPartitionKey(raw), db)
+		}
+		if err != nil {
+			t.Errorf("partition %s is listed without its record: %v", pid, err)
+		}
+	}
+	err = db.View(func(txn *badger.Txn) error {
+		_, err := txn.Get(member)
+		return err
+	})
+	if !errors.Is(err, badger.ErrKeyNotFound) {
+		t.Errorf("the earlier run's member: %v, want it deleted", err)
 	}
 }
 

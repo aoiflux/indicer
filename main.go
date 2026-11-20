@@ -31,14 +31,18 @@ import (
 
 const (
 	duesProduct  = "dues"
-	duesVersion  = "0.39.0"
 	duesCodename = "<pineapple> spacebar"
 )
 
-// buildCommit is the short commit the build came from, with "-dirty" for
-// uncommitted changes. The build scripts set it:
-// -ldflags "-X main.buildCommit=<commit>". Other builds leave it empty.
-var buildCommit string
+// The build scripts set both: -ldflags "-X main.duesVersion=<version>
+// -X main.buildCommit=<commit>". duesVersion is the release, without a
+// leading "v"; other builds keep the default. buildCommit is the short commit
+// the build came from, with "-dirty" for uncommitted changes; other builds
+// leave it empty.
+var (
+	duesVersion = "0.39.0"
+	buildCommit string
+)
 
 func buildInfo() ui.Build {
 	return ui.Build{Version: duesVersion, Codename: duesCodename, Commit: buildCommit}

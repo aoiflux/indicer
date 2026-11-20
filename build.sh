@@ -2,13 +2,15 @@
 # Builds dues for every supported platform. The binary is pure Go (no CGO, no
 # libtusk), so a single host cross-compiles the whole matrix with no C toolchain.
 #
-#   ./build.sh [--targets "OS/ARCH ..."] [--output-dir DIR] [--binary-name NAME] [--main-package PKG]
+#   ./build.sh --version VERSION [--targets "OS/ARCH ..."] [--output-dir DIR] [--binary-name NAME] [--main-package PKG]
 #
-# --targets builds a subset (space-separated), e.g.
-# ./build.sh --targets "linux/amd64 darwin/arm64"
+# --version is the release, such as 0.39.0 or 0.40.0-rc.1; a leading "v" is
+# dropped. --targets builds a subset (space-separated), e.g.
+# ./build.sh --version 0.39.0 --targets "linux/amd64 darwin/arm64"
 
 set -e
 
+VERSION=
 BINARY_NAME=dues
 MAIN_PACKAGE=.
 OUTPUT_DIR=dist
@@ -17,6 +19,7 @@ TARGETS="windows/amd64 windows/arm64 linux/amd64 linux/arm64 darwin/amd64 darwin
 need() { [ "$#" -ge 2 ] || { echo "ERROR: $1 needs a value" >&2; exit 2; }; }
 while [ "$#" -gt 0 ]; do
     case "$1" in
+        --version) need "$@"; VERSION="$2"; shift 2 ;;
         --targets) need "$@"; TARGETS="$2"; shift 2 ;;
         --output-dir) need "$@"; OUTPUT_DIR="$2"; shift 2 ;;
         --binary-name) need "$@"; BINARY_NAME="$2"; shift 2 ;;
@@ -24,6 +27,22 @@ while [ "$#" -gt 0 ]; do
         *) echo "ERROR: unknown argument '$1'" >&2; exit 2 ;;
     esac
 done
+
+# Semantic versioning without build metadata: the commit is appended as that.
+SEMVER_RE='^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)(-[0-9A-Za-z-]+(\.[0-9A-Za-z-]+)*)?$'
+if [ -z "$VERSION" ]; then
+    echo "ERROR: give the release version: --version 0.39.0 (pre-release: --version 0.40.0-rc.1)" >&2
+    exit 2
+fi
+VERSION="${VERSION#[vV]}"
+case "$VERSION" in
+    *[!0-9A-Za-z.-]*) VERSION_OK=0 ;;
+    *) if printf '%s\n' "$VERSION" | grep -Eq "$SEMVER_RE"; then VERSION_OK=1; else VERSION_OK=0; fi ;;
+esac
+if [ "$VERSION_OK" -ne 1 ]; then
+    echo "ERROR: version '$VERSION' is not MAJOR.MINOR.PATCH or MAJOR.MINOR.PATCH-PRERELEASE (example: 0.40.0-rc.1)" >&2
+    exit 2
+fi
 
 REPO_ROOT="$(cd "$(dirname "$0")" && pwd)"
 cd "$REPO_ROOT"
@@ -77,7 +96,7 @@ fi
 mkdir -p "$OUTPUT_DIR"
 OUTPUT_ABS="$(cd "$OUTPUT_DIR" && pwd)"
 
-LDFLAGS="-s -w -buildid="
+LDFLAGS="-s -w -buildid= -X main.duesVersion=$VERSION"
 # The commit the build comes from, shown by the banner and `dues --version`;
 # "-dirty" marks uncommitted changes. A tree without git builds without it.
 if COMMIT=$(git -C "$REPO_ROOT" rev-parse --short HEAD 2>/dev/null); then
@@ -104,6 +123,7 @@ for _t in $TARGETS; do
 done
 
 banner "DUES Release Build"
+label "Version" "$VERSION" "$C_GREEN"
 label "Repository" "$REPO_ROOT" "$C_CYAN"
 label "Output Dir" "$OUTPUT_ABS" "$C_CYAN"
 label "Targets" "$TARGETS" "$C_YELLOW"
@@ -127,7 +147,7 @@ for target in $TARGETS; do
         EXT=".exe"
     fi
 
-    OUTPUT_NAME="${BINARY_NAME}-${GOOS}-${GOARCH}${EXT}"
+    OUTPUT_NAME="${BINARY_NAME}-${VERSION}-${GOOS}-${GOARCH}${EXT}"
     OUTPUT_PATH="${OUTPUT_DIR}/${OUTPUT_NAME}"
 
     printf "\n${C_DARKGRAY}[%d/%d] ${C_RESET}${C_YELLOW}%s${C_RESET}  ${C_DARKCYAN}(CGO=0 pure Go, trimpath, stripped)${C_RESET}\n" \
@@ -161,7 +181,7 @@ BUILD_SECONDS=$((BUILD_END - BUILD_START))
 # file name, LF line endings. build.ps1 writes the same file.
 SUMS_FILE="$OUTPUT_DIR/SHA256SUMS"
 : > "$SUMS_FILE"
-for f in "$OUTPUT_DIR"/${BINARY_NAME}-*; do
+for f in "$OUTPUT_DIR/${BINARY_NAME}-${VERSION}"-*; do
     [ -f "$f" ] || continue
     # $SHA256_TOOL is unquoted on purpose: "shasum -a 256" is three words.
     _hash=$($SHA256_TOOL "$f" | cut -d ' ' -f 1)
@@ -174,13 +194,14 @@ done
 
 banner "Build Complete" "$C_GREEN"
 label "Duration" "${BUILD_SECONDS}s" "$C_GREEN"
+label "Version" "$VERSION" "$C_GREEN"
 label "Artifacts" "$TARGET_COUNT" "$C_GREEN"
 label "Checksums" "$OUTPUT_ABS/SHA256SUMS" "$C_GREEN"
-printf "\n${C_DARKGRAY}%-32s %s${C_RESET}\n" "Binary" "Size(MB)"
-for f in "$OUTPUT_DIR"/${BINARY_NAME}-*; do
+printf "\n${C_DARKGRAY}%-40s %s${C_RESET}\n" "Binary" "Size(MB)"
+for f in "$OUTPUT_DIR/${BINARY_NAME}-${VERSION}"-*; do
     [ -f "$f" ] || continue
     _sz=$(awk "BEGIN { printf \"%.2f\", $(wc -c < "$f") / 1048576 }")
-    printf "${C_WHITE}%-32s %s${C_RESET}\n" "$(basename "$f")" "$_sz"
+    printf "${C_WHITE}%-40s %s${C_RESET}\n" "$(basename "$f")" "$_sz"
 done
 printf "\n${C_DARKGRAY}SHA256SUMS${C_RESET}\n"
 cat "$SUMS_FILE"

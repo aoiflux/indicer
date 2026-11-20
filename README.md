@@ -224,21 +224,33 @@ go build -o dues.exe .
 ```
 
 `build.ps1` and `build.sh` build release binaries for all six targets into
-`dist/`, with a `SHA256SUMS` file to publish beside them. DUES is pure Go, so
-one machine cross-compiles them all. The builds are reproducible
-(`-trimpath`, `-buildid=`): the same Go toolchain and commit give the same
-sums.
+`dist/`, with a `SHA256SUMS` file of their sums to publish beside them. Both
+need the release version, which `dues --version` then shows and each file
+name carries, such as `dues-0.39.0-linux-amd64`:
+
+```powershell
+.\build.ps1 -Version 0.39.0
+```
+
+```sh
+./build.sh --version 0.39.0
+```
+
+The version is `MAJOR.MINOR.PATCH`, with an optional pre-release such as
+`0.40.0-rc.1`; a leading `v` is dropped. DUES is pure Go, so one machine
+cross-compiles every target. The builds are reproducible (`-trimpath`,
+`-buildid=`): the same Go toolchain, commit and version give the same sums.
 
 To check a download, run one of these in the folder that holds the binary and
 `SHA256SUMS`. Each prints `OK` for a match:
 
 ```sh
-grep ' dues-linux-amd64$' SHA256SUMS | sha256sum -c          # Linux
-grep ' dues-darwin-arm64$' SHA256SUMS | shasum -a 256 -c     # macOS
+grep ' dues-0.39.0-linux-amd64$' SHA256SUMS | sha256sum -c          # Linux
+grep ' dues-0.39.0-darwin-arm64$' SHA256SUMS | shasum -a 256 -c     # macOS
 ```
 
 ```powershell
-(Get-FileHash .\dues-windows-amd64.exe -Algorithm SHA256).Hash.ToLower()
+(Get-FileHash .\dues-0.39.0-windows-amd64.exe -Algorithm SHA256).Hash.ToLower()
 ```
 
 On Windows, compare the printed hash with the file's line in `SHA256SUMS`.

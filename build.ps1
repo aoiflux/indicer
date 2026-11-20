@@ -1,4 +1,6 @@
 param(
+    # The release, such as 0.39.0 or 0.40.0-rc.1; a leading "v" is dropped.
+    [string]$Version,
     [string]$BinaryName = "dues",
     [string]$MainPackage = ".",
     [string]$OutputDir = "dist",
@@ -47,6 +49,16 @@ if (-not (Get-Command go -ErrorAction SilentlyContinue)) {
     throw "Go compiler not found in PATH. Install Go and retry."
 }
 
+# Semantic versioning without build metadata: the commit is appended as that.
+$semverPattern = '\A(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)(-[0-9A-Za-z-]+(\.[0-9A-Za-z-]+)*)?\z'
+if ([string]::IsNullOrWhiteSpace($Version)) {
+    throw "Give the release version: -Version 0.39.0 (pre-release: -Version 0.40.0-rc.1)."
+}
+$Version = $Version.Trim() -replace '\A[vV]', ''
+if ($Version -cnotmatch $semverPattern) {
+    throw "Version '$Version' is not MAJOR.MINOR.PATCH or MAJOR.MINOR.PATCH-PRERELEASE (example: 0.40.0-rc.1)."
+}
+
 $repoRoot = Split-Path -Parent $PSCommandPath
 Set-Location $repoRoot
 
@@ -62,7 +74,7 @@ $prevCgo = $env:CGO_ENABLED
 $prevCC = $env:CC
 $prevGoamd64 = $env:GOAMD64
 
-$ldflags = "-s -w -buildid="
+$ldflags = "-s -w -buildid= -X main.duesVersion=$Version"
 # The commit the build comes from, shown by the banner and `dues --version`;
 # "-dirty" marks uncommitted changes. A tree without git builds without it.
 $commit = ""
@@ -91,6 +103,7 @@ $buildStart = Get-Date
 $targetCount = $Targets.Count
 
 Write-Banner -Title "DUES Release Build"
+Write-Label -Label "Version" -Value $Version -ValueColor Green
 Write-Label -Label "Repository" -Value $repoRoot -ValueColor Cyan
 Write-Label -Label "Output Dir" -Value (Resolve-Path $OutputDir).Path -ValueColor Cyan
 Write-Label -Label "Targets" -Value ($Targets -join ", ") -ValueColor Yellow
@@ -105,6 +118,7 @@ else {
     Write-Label -Label "PGO" -Value "Not found (building without -pgo)" -ValueColor DarkYellow
 }
 
+$built = @()
 try {
     for ($i = 0; $i -lt $targetCount; $i++) {
         $target = $Targets[$i]
@@ -139,7 +153,7 @@ try {
             $ext = ".exe"
         }
 
-        $outputName = "$BinaryName-$goos-$goarch$ext"
+        $outputName = "$BinaryName-$Version-$goos-$goarch$ext"
         $outputPath = Join-Path $OutputDir $outputName
 
         $percent = [int](($i / [double]$targetCount) * 100)
@@ -161,7 +175,9 @@ try {
         }
 
         $duration = ((Get-Date) - $stepStart).TotalSeconds
-        $sizeMb = [math]::Round(((Get-Item $outputPath).Length / 1MB), 2)
+        $artifact = Get-Item -LiteralPath $outputPath
+        $built += $artifact
+        $sizeMb = [math]::Round(($artifact.Length / 1MB), 2)
         Write-Host "  OK" -NoNewline -ForegroundColor Green
         Write-Host ("  " + $sizeMb + " MB") -NoNewline -ForegroundColor Cyan
         Write-Host ("  " + ([math]::Round($duration, 2)) + "s") -ForegroundColor DarkGray
@@ -193,17 +209,15 @@ finally {
 }
 
 $buildSeconds = [math]::Round(((Get-Date) - $buildStart).TotalSeconds, 2)
-$artifacts = Get-ChildItem $OutputDir -File | Where-Object { $_.Name -ilike "$BinaryName-*" }
-$count = 0;
-foreach ($artifact in $artifacts) {
-    $count++;
-}
+# Only this run's binaries: with -NoClean, the output folder may still hold
+# another version's.
+$artifacts = @($built | Sort-Object Name)
 
 # SHA-256 sums of the binaries, to publish with them. The format is the one
 # `sha256sum -c` and `shasum -a 256 -c` read: lowercase hex, two spaces, the
 # file name, LF line endings, no BOM. build.sh writes the same file.
 $sumsPath = Join-Path (Resolve-Path $OutputDir).Path "SHA256SUMS"
-$sumLines = foreach ($artifact in ($artifacts | Sort-Object Name)) {
+$sumLines = foreach ($artifact in $artifacts) {
     $hash = (Get-FileHash -Algorithm SHA256 -LiteralPath $artifact.FullName).Hash.ToLowerInvariant()
     $hash + "  " + $artifact.Name
 }
@@ -212,7 +226,8 @@ $sumText = ($sumLines -join "`n") + "`n"
 
 Write-Banner -Title "Build Complete" -Color Green
 Write-Label -Label "Duration" -Value ($buildSeconds.ToString() + "s") -ValueColor Green
-Write-Label -Label "Artifacts" -Value $count -ValueColor Green
+Write-Label -Label "Version" -Value $Version -ValueColor Green
+Write-Label -Label "Artifacts" -Value $artifacts.Count -ValueColor Green
 Write-Label -Label "Checksums" -Value $sumsPath -ValueColor Green
 Write-Host ""
 

@@ -265,7 +265,7 @@ file name carries it, as in `dues-0.39.0-linux-amd64`:
 > Copy the data root before the first command that writes to it.
 > - Once this release has written a database, an earlier release must not open
 >   it. Downgrading is not supported.
-> - DUES v0.39 and older refuse a graph store this release made, instead of
+> - DUES v0.38 and older refuse a graph store this release made, instead of
 >   misreading it.
 
 Databases written by earlier releases open without a migration step:

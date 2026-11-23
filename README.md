@@ -201,26 +201,25 @@ Release binaries are on the
 [releases page](https://github.com/aoiflux/indicer/releases), with a
 `SHA256SUMS` file beside them. Each binary is static and needs no C runtime.
 
-| Platform | amd64                           | arm64                           |
-| -------- | ------------------------------- | ------------------------------- |
-| Windows  | `dues-0.39.0-windows-amd64.exe` | `dues-0.39.0-windows-arm64.exe` |
-| Linux    | `dues-0.39.0-linux-amd64`       | `dues-0.39.0-linux-arm64`       |
-| macOS    | `dues-0.39.0-darwin-amd64`      | `dues-0.39.0-darwin-arm64`      |
+| Platform | amd64                          | arm64                          |
+| -------- | ------------------------------ | ------------------------------ |
+| Windows  | `dues-0.4.0-windows-amd64.exe` | `dues-0.4.0-windows-arm64.exe` |
+| Linux    | `dues-0.4.0-linux-amd64`       | `dues-0.4.0-linux-arm64`       |
+| macOS    | `dues-0.4.0-darwin-amd64`      | `dues-0.4.0-darwin-arm64`      |
 
 Releases were renumbered in November 2026 to start at v0.1.0: v0.36, v0.37,
-v0.38 and v0.39.0 are now v0.1.0, v0.2.0, v0.3.0 and v0.4.0. The v0.4.0 files
-were built before that, so their names and `dues --version` still say 0.39.0.
+v0.38 and v0.39.0 are now v0.1.0, v0.2.0, v0.3.0 and v0.4.0.
 
 To check a download, run one of these in the folder that holds the binary and
 `SHA256SUMS`. Each prints `OK` for a match:
 
 ```sh
-grep ' dues-0.39.0-linux-amd64$' SHA256SUMS | sha256sum -c          # Linux
-grep ' dues-0.39.0-darwin-arm64$' SHA256SUMS | shasum -a 256 -c     # macOS
+grep ' dues-0.4.0-linux-amd64$' SHA256SUMS | sha256sum -c          # Linux
+grep ' dues-0.4.0-darwin-arm64$' SHA256SUMS | shasum -a 256 -c     # macOS
 ```
 
 ```powershell
-(Get-FileHash .\dues-0.39.0-windows-amd64.exe -Algorithm SHA256).Hash.ToLower()
+(Get-FileHash .\dues-0.4.0-windows-amd64.exe -Algorithm SHA256).Hash.ToLower()
 ```
 
 On Windows, compare the printed hash with the file's line in `SHA256SUMS`.

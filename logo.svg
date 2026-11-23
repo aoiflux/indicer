@@ -1,6 +1,6 @@
 <svg xmlns="http://www.w3.org/2000/svg" width="800" height="330" viewBox="0 0 800 330" role="img" aria-labelledby="dues-logo-title dues-logo-desc">
-  <title id="dues-logo-title">DUES v0.39.0 &lt;pineapple&gt; spacebar</title>
-  <desc id="dues-logo-desc">The DUES logo: an abstract composition of overlapping circles and lines, with a small pineapple resting on a spacebar among them, beside the DUES wordmark, the words Deduplicated Unified Evidence Store, the version v0.39.0, and the codename &lt;pineapple&gt; spacebar on a spacebar key.</desc>
+  <title id="dues-logo-title">DUES v0.4.0 &lt;pineapple&gt; spacebar</title>
+  <desc id="dues-logo-desc">The DUES logo: an abstract composition of overlapping circles and lines, with a small pineapple resting on a spacebar among them, beside the DUES wordmark, the words Deduplicated Unified Evidence Store, the version v0.4.0, and the codename &lt;pineapple&gt; spacebar on a spacebar key.</desc>
   <defs>
     <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1">
       <stop offset="0" stop-color="#0b1020"/>
@@ -104,7 +104,7 @@
   <text x="330" y="240" textLength="412" lengthAdjust="spacing" fill="#94a3b8" font-family="-apple-system, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="14.5" font-weight="600">DEDUPLICATED UNIFIED EVIDENCE STORE</text>
 
   <rect x="330" y="262" width="96" height="32" rx="16" fill="#22d3ee" fill-opacity="0.12" stroke="#22d3ee" stroke-opacity="0.6" stroke-width="1.5"/>
-  <text x="378" y="283" text-anchor="middle" fill="#67e8f9" font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, 'Liberation Mono', monospace" font-size="14" font-weight="700">v0.39.0</text>
+  <text x="378" y="283" text-anchor="middle" fill="#67e8f9" font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, 'Liberation Mono', monospace" font-size="14" font-weight="700">v0.4.0</text>
 
   <rect x="440" y="266" width="302" height="30" rx="8" fill="#050914"/>
   <rect x="440" y="262" width="302" height="30" rx="8" fill="url(#keyface)" stroke="#3b4a66" stroke-width="1.5"/>

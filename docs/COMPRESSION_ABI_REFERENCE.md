@@ -685,7 +685,7 @@ The zip holds:
   "pipeline": "export",
   "created_at_utc": "2026-11-03T12:00:00Z",
   "db_path": "db",
-  "created_by": { "product": "dues", "version": "0.39.0", "commit": "3484a4d" },
+  "created_by": { "product": "dues", "version": "0.4.0", "commit": "3484a4d" },
   "database": {
     "format": "dues-db", "format_version": 1,
     "components": { "graph_schema": 3 },

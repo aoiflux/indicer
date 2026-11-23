@@ -1,9 +1,9 @@
 <p align="center">
-  <img src="logo.svg" alt="DUES v0.39.0, codename &lt;pineapple&gt; spacebar" width="640"/>
+  <img src="logo.svg" alt="DUES v0.4.0, codename &lt;pineapple&gt; spacebar" width="640"/>
 </p>
 
 <p align="center">
-  <a href="https://github.com/aoiflux/indicer/releases/latest"><img src="https://img.shields.io/badge/latest_release-v0.39.0-34d399" alt="Latest release v0.39.0"/></a>
+  <a href="https://github.com/aoiflux/indicer/releases/latest"><img src="https://img.shields.io/badge/latest_release-v0.4.0-34d399" alt="Latest release v0.4.0"/></a>
   <a href="https://go.dev"><img src="https://img.shields.io/badge/Go-1.26.2%2B-00ADD8?logo=go&amp;logoColor=white" alt="Go 1.26.2 or later"/></a>
   <img src="https://img.shields.io/badge/platforms-Windows_%7C_Linux_%7C_macOS-334155" alt="Windows, Linux and macOS"/>
   <img src="https://img.shields.io/badge/arch-amd64_%7C_arm64-334155" alt="amd64 and arm64"/>
@@ -26,7 +26,7 @@
   <a href="#docs">Docs</a>
 </p>
 
-**Version 0.39.0**, codename `<pineapple> spacebar`.
+**Version 0.4.0**, codename `<pineapple> spacebar`.
 
 DUES is a digital forensics data platform. It stores evidence once, however
 often it arrives. It decodes disk images at ingest and indexes every partition
@@ -36,7 +36,7 @@ chunks, and each restore is verified.
 Patent information: this software has led to two derivative inventions protected
 by patents 567877 and 556272 registered at the Indian Patent Office.
 
-## What's new in 0.39.0
+## What's new in 0.4.0
 
 - **Crash-safe storage:** chunk data is synced before it is recorded, and an
   interrupted ingest is recovered or resumed. Restore verifies every chunk and
@@ -59,7 +59,7 @@ by patents 567877 and 556272 registered at the Indian Patent Office.
 - **Flags and a config file only:** DUES reads no environment variable.
 
 Read [Upgrading from an earlier release](#upgrading-from-an-earlier-release)
-before you point 0.39.0 at an existing database.
+before you point 0.4.0 at an existing database.
 
 ## How it works
 
@@ -201,22 +201,25 @@ Release binaries are on the
 [releases page](https://github.com/aoiflux/indicer/releases), with a
 `SHA256SUMS` file beside them. Each binary is static and needs no C runtime.
 
-| Platform | amd64                           | arm64                           |
-| -------- | ------------------------------- | ------------------------------- |
-| Windows  | `dues-0.39.0-windows-amd64.exe` | `dues-0.39.0-windows-arm64.exe` |
-| Linux    | `dues-0.39.0-linux-amd64`       | `dues-0.39.0-linux-arm64`       |
-| macOS    | `dues-0.39.0-darwin-amd64`      | `dues-0.39.0-darwin-arm64`      |
+| Platform | amd64                          | arm64                          |
+| -------- | ------------------------------ | ------------------------------ |
+| Windows  | `dues-0.4.0-windows-amd64.exe` | `dues-0.4.0-windows-arm64.exe` |
+| Linux    | `dues-0.4.0-linux-amd64`       | `dues-0.4.0-linux-arm64`       |
+| macOS    | `dues-0.4.0-darwin-amd64`      | `dues-0.4.0-darwin-arm64`      |
+
+Releases were renumbered in November 2026 to start at v0.1.0: v0.36, v0.37,
+v0.38 and v0.39.0 are now v0.1.0, v0.2.0, v0.3.0 and v0.4.0.
 
 To check a download, run one of these in the folder that holds the binary and
 `SHA256SUMS`. Each prints `OK` for a match:
 
 ```sh
-grep ' dues-0.39.0-linux-amd64$' SHA256SUMS | sha256sum -c          # Linux
-grep ' dues-0.39.0-darwin-arm64$' SHA256SUMS | shasum -a 256 -c     # macOS
+grep ' dues-0.4.0-linux-amd64$' SHA256SUMS | sha256sum -c          # Linux
+grep ' dues-0.4.0-darwin-arm64$' SHA256SUMS | shasum -a 256 -c     # macOS
 ```
 
 ```powershell
-(Get-FileHash .\dues-0.39.0-windows-amd64.exe -Algorithm SHA256).Hash.ToLower()
+(Get-FileHash .\dues-0.4.0-windows-amd64.exe -Algorithm SHA256).Hash.ToLower()
 ```
 
 On Windows, compare the printed hash with the file's line in `SHA256SUMS`.
@@ -241,18 +244,18 @@ go build -o dues .        # Windows: go build -o dues.exe .
 `dist/`. They also write a `SHA256SUMS` file to publish beside them.
 
 Both scripts need the release version. `dues --version` then shows it, and each
-file name carries it, as in `dues-0.39.0-linux-amd64`:
+file name carries it, as in `dues-0.4.0-linux-amd64`:
 
 ```powershell
-.\build.ps1 -Version 0.39.0
+.\build.ps1 -Version 0.4.0
 ```
 
 ```sh
-./build.sh --version 0.39.0
+./build.sh --version 0.4.0
 ```
 
 - **Version format:** `MAJOR.MINOR.PATCH`, with an optional pre-release such as
-  `0.40.0-rc.1`. A leading `v` is dropped.
+  `0.5.0-rc.1`. A leading `v` is dropped.
 - **One machine for every target:** DUES is pure Go, so one machine
   cross-compiles them all.
 - **Reproducible:** the builds use `-trimpath` and `-buildid=`. The same Go
@@ -265,7 +268,7 @@ file name carries it, as in `dues-0.39.0-linux-amd64`:
 > Copy the data root before the first command that writes to it.
 > - Once this release has written a database, an earlier release must not open
 >   it. Downgrading is not supported.
-> - DUES v0.38 and older refuse a graph store this release made, instead of
+> - DUES v0.3.0 and older refuse a graph store this release made, instead of
 >   misreading it.
 
 Databases written by earlier releases open without a migration step:
@@ -627,7 +630,7 @@ terminal, DUES shows colour and a live progress display; on a pipe, it writes
 plain lines with no escape codes.
 
 `dues --version` (or `-v`) prints one line, for scripts and bug reports:
-`DUES 0.39.0+74431db (<pineapple> spacebar) - Deduplicated Unified Evidence Store`.
+`DUES 0.4.0+74431db (<pineapple> spacebar) - Deduplicated Unified Evidence Store`.
 
 | Flag        | What it does                                                                                                                         |
 | ----------- | ------------------------------------------------------------------------------------------------------------------------------------ |

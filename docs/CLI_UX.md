@@ -120,7 +120,7 @@ is a terminal:
 
 ```
 ●─●─●  ┌─╮ ╷ ╷ ┌─╴ ╭─╴  Deduplicated Unified Evidence Store
- ╲│╱   │ │ │ │ ├─  ╰─╮  v0.39.0 "<pineapple> spacebar"
+ ╲│╱   │ │ │ │ ├─  ╰─╮  v0.4.0 "<pineapple> spacebar"
   ●    └─╯ ╰─╯ └─╴ ╶─╯  74431db · windows/amd64 · go1.27.3
 ```
 
@@ -139,7 +139,7 @@ Where stdout is not a terminal there is no art. DUES names itself in one
 line, the identity line, with the commit as semver build metadata:
 
 ```
-DUES 0.39.0+74431db (<pineapple> spacebar) - Deduplicated Unified Evidence Store
+DUES 0.4.0+74431db (<pineapple> spacebar) - Deduplicated Unified Evidence Store
 ```
 
 Piped help opens with it, piped `dues version` prints it alone, and

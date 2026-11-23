@@ -19,7 +19,7 @@ type Build struct {
 const Product = "Deduplicated Unified Evidence Store"
 
 // Identity is DUES in one line, for output that is not a terminal:
-// "DUES 0.39.0+42e2ded (<pineapple> spacebar) - Deduplicated Unified
+// "DUES 0.4.0+42e2ded (<pineapple> spacebar) - Deduplicated Unified
 // Evidence Store". The commit is semver build metadata, left out when the
 // build did not record one.
 func Identity(b Build) string {

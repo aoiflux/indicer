@@ -699,7 +699,7 @@ func printGraphCompactHelp() {
 	fmt.Fprintln(helpOut, "refuses to start when the volume cannot take the new image beside the old one")
 	fmt.Fprintln(helpOut, "or the machine has too little free memory to build it. Ctrl-C while the image")
 	fmt.Fprintln(helpOut, "is built leaves the store as it was. Stop dues server first: it holds the")
-	fmt.Fprintln(helpOut, "database open. DUES v0.39 and older cannot open a store this release made.")
+	fmt.Fprintln(helpOut, "database open. DUES v0.3.0 and older cannot open a store this release made.")
 	fmt.Fprintln(helpOut)
 	fmt.Fprintln(helpOut, "  --require-signed  From now on, every open refuses an unsigned commit, a")
 	fmt.Fprintln(helpOut, "                    record outside any commit, and a commit no key of the")

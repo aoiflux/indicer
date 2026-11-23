@@ -547,7 +547,7 @@ came after the compaction, and replaying it alone would hand out node IDs
 again. The graph is derived from the database, so move `graph/` aside and run
 `dues enrich` or `dues micro extract` to build it again.
 
-Every new graph store gets an empty image when it is made. DUES v0.39 and
+Every new graph store gets an empty image when it is made. DUES v0.3.0 and
 older link a graphene that reads this release's log as an empty graph and
 appends to it; they refuse the image instead, so they fail loudly rather than
 misread the store.

@@ -26,7 +26,7 @@ type Header struct {
 
 // RunHeader writes h to w, normally stderr. On a terminal:
 //
-//	◆ DUES v0.39.0 · store · jean.e01 → O:\cases\c42
+//	◆ DUES v0.4.0 · store · jean.e01 → O:\cases\c42
 //	  performance · zstd best · revrel
 //
 // In plain output, two "dues: <command>:" lines with key=value settings.

@@ -40,7 +40,7 @@ const (
 // the build came from, with "-dirty" for uncommitted changes; other builds
 // leave it empty.
 var (
-	duesVersion = "0.39.0"
+	duesVersion = "0.4.0"
 	buildCommit string
 )
 

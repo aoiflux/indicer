@@ -11,13 +11,13 @@ import (
 	"github.com/charmbracelet/x/ansi"
 )
 
-var testBuild = Build{Version: "0.39.0", Codename: "<pineapple> spacebar", Commit: "42e2ded-dirty"}
+var testBuild = Build{Version: "0.4.0", Codename: "<pineapple> spacebar", Commit: "42e2ded-dirty"}
 
 // The banner stays within 6 rows and 60 columns, and within the terminal,
 // in every glyph set, for every build, at every width.
 func TestBannerSize(t *testing.T) {
-	builds := []Build{testBuild, {Version: "0.39.0", Codename: "<pineapple> spacebar", Commit: "74431db"}, {Version: "0.39.0"},
-		{Version: "0.39.0", Codename: strings.Repeat("long ", 20), Commit: strings.Repeat("c", 50)}}
+	builds := []Build{testBuild, {Version: "0.4.0", Codename: "<pineapple> spacebar", Commit: "74431db"}, {Version: "0.4.0"},
+		{Version: "0.4.0", Codename: strings.Repeat("long ", 20), Commit: strings.Repeat("c", 50)}}
 	for _, g := range []GlyphSet{GlyphsFull, GlyphsASCII} {
 		for _, b := range builds {
 			for _, width := range []int{120, 61, 60, 59, 50, 23, 16} {
@@ -47,7 +47,7 @@ func TestBanner(t *testing.T) {
 	got := ansi.Strip(out.String())
 	for _, want := range []string{
 		"●─●─●  ┌─╮ ╷ ╷ ┌─╴ ╭─╴  Deduplicated Unified Evidence Store",
-		" ╲│╱   │ │ │ │ ├─  ╰─╮  v0.39.0 \"<pineapple> spacebar\"",
+		" ╲│╱   │ │ │ │ ├─  ╰─╮  v0.4.0 \"<pineapple> spacebar\"",
 		"  ●    └─╯ ╰─╯ └─╴ ╶─╯  42e2ded-dirty · ",
 	} {
 		if !strings.Contains(got, want) {
@@ -94,8 +94,8 @@ func TestIdentity(t *testing.T) {
 		b    Build
 		want string
 	}{
-		{testBuild, "DUES 0.39.0+42e2ded-dirty (<pineapple> spacebar) - Deduplicated Unified Evidence Store"},
-		{Build{Version: "0.39.0", Codename: "<pineapple> spacebar"}, "DUES 0.39.0 (<pineapple> spacebar) - Deduplicated Unified Evidence Store"},
+		{testBuild, "DUES 0.4.0+42e2ded-dirty (<pineapple> spacebar) - Deduplicated Unified Evidence Store"},
+		{Build{Version: "0.4.0", Codename: "<pineapple> spacebar"}, "DUES 0.4.0 (<pineapple> spacebar) - Deduplicated Unified Evidence Store"},
 		{Build{Version: "1.0.0"}, "DUES 1.0.0 - Deduplicated Unified Evidence Store"},
 	} {
 		if got := Identity(c.b); got != c.want {

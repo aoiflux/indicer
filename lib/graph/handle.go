@@ -356,7 +356,7 @@ func openHandle(dir, key string, opts OpenOptions) (*Handle, error) {
 }
 
 // stubImage gives an empty store an empty image. graphene v0.1, which DUES
-// v0.39 and older link, reads this release's log as an empty graph and
+// v0.3.0 and older link, reads this release's log as an empty graph and
 // appends to it in its own format; it refuses any image but its own version,
 // so a store with this one fails loudly there instead of being misread.
 // A store that holds anything, or already has an image, is left alone: its

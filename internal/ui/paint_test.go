@@ -170,12 +170,12 @@ func TestMessagePlainMode(t *testing.T) {
 
 func TestRunHeader(t *testing.T) {
 	h := Header{
-		Version: "0.39.0", Command: "store", Subject: "evil\x1b]0;x\x07.dd", Target: `O:\cases\c42`,
+		Version: "0.4.0", Command: "store", Subject: "evil\x1b]0;x\x07.dd", Target: `O:\cases\c42`,
 		Settings: []Setting{{"mode", "performance", "performance"}, {"compress", "best", "zstd best"}},
 	}
 	var buf bytes.Buffer
 	RunHeader(&buf, h)
-	want := "dues: store: DUES 0.39.0, evil\\x1b]0;x\\x07.dd -> O:\\cases\\c42\n" +
+	want := "dues: store: DUES 0.4.0, evil\\x1b]0;x\\x07.dd -> O:\\cases\\c42\n" +
 		"dues: store: settings: mode=performance compress=best\n"
 	if buf.String() != want {
 		t.Fatalf("plain header:\n%q\nwant\n%q", buf.String(), want)
@@ -184,7 +184,7 @@ func TestRunHeader(t *testing.T) {
 	_, errb := terminal(t, ttyMode(colorprofile.TrueColor, ThemeDark, GlyphsFull))
 	RunHeader(console.Err(), h)
 	got := ansi.Strip(errb.String())
-	want = "◆ DUES v0.39.0 · store · evil\\x1b]0;x\\x07.dd → O:\\cases\\c42\n  performance · zstd best\n"
+	want = "◆ DUES v0.4.0 · store · evil\\x1b]0;x\\x07.dd → O:\\cases\\c42\n  performance · zstd best\n"
 	if got != want {
 		t.Fatalf("terminal header:\n%q\nwant\n%q", got, want)
 	}

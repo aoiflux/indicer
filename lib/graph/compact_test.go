@@ -111,7 +111,7 @@ func TestNewStoreHasImage(t *testing.T) {
 	}
 }
 
-// TestImageRefusedByV011: graphene v0.1, which DUES v0.39 links, reads an
+// TestImageRefusedByV011: graphene v0.1, which DUES v0.3.0 links, reads an
 // image only when it is GCSR version 2, and reads a log without one as an
 // empty graph it then appends to. The image every store now has is another
 // version, so that release refuses the store instead.

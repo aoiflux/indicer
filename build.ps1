@@ -1,5 +1,5 @@
 param(
-    # The release, such as 0.39.0 or 0.40.0-rc.1; a leading "v" is dropped.
+    # The release, such as 0.4.0 or 0.5.0-rc.1; a leading "v" is dropped.
     [string]$Version,
     [string]$BinaryName = "dues",
     [string]$MainPackage = ".",
@@ -52,11 +52,11 @@ if (-not (Get-Command go -ErrorAction SilentlyContinue)) {
 # Semantic versioning without build metadata: the commit is appended as that.
 $semverPattern = '\A(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)(-[0-9A-Za-z-]+(\.[0-9A-Za-z-]+)*)?\z'
 if ([string]::IsNullOrWhiteSpace($Version)) {
-    throw "Give the release version: -Version 0.39.0 (pre-release: -Version 0.40.0-rc.1)."
+    throw "Give the release version: -Version 0.4.0 (pre-release: -Version 0.5.0-rc.1)."
 }
 $Version = $Version.Trim() -replace '\A[vV]', ''
 if ($Version -cnotmatch $semverPattern) {
-    throw "Version '$Version' is not MAJOR.MINOR.PATCH or MAJOR.MINOR.PATCH-PRERELEASE (example: 0.40.0-rc.1)."
+    throw "Version '$Version' is not MAJOR.MINOR.PATCH or MAJOR.MINOR.PATCH-PRERELEASE (example: 0.5.0-rc.1)."
 }
 
 $repoRoot = Split-Path -Parent $PSCommandPath

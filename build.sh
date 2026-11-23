@@ -4,9 +4,9 @@
 #
 #   ./build.sh --version VERSION [--targets "OS/ARCH ..."] [--output-dir DIR] [--binary-name NAME] [--main-package PKG]
 #
-# --version is the release, such as 0.39.0 or 0.40.0-rc.1; a leading "v" is
+# --version is the release, such as 0.4.0 or 0.5.0-rc.1; a leading "v" is
 # dropped. --targets builds a subset (space-separated), e.g.
-# ./build.sh --version 0.39.0 --targets "linux/amd64 darwin/arm64"
+# ./build.sh --version 0.4.0 --targets "linux/amd64 darwin/arm64"
 
 set -e
 
@@ -31,7 +31,7 @@ done
 # Semantic versioning without build metadata: the commit is appended as that.
 SEMVER_RE='^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)(-[0-9A-Za-z-]+(\.[0-9A-Za-z-]+)*)?$'
 if [ -z "$VERSION" ]; then
-    echo "ERROR: give the release version: --version 0.39.0 (pre-release: --version 0.40.0-rc.1)" >&2
+    echo "ERROR: give the release version: --version 0.4.0 (pre-release: --version 0.5.0-rc.1)" >&2
     exit 2
 fi
 VERSION="${VERSION#[vV]}"
@@ -40,7 +40,7 @@ case "$VERSION" in
     *) if printf '%s\n' "$VERSION" | grep -Eq "$SEMVER_RE"; then VERSION_OK=1; else VERSION_OK=0; fi ;;
 esac
 if [ "$VERSION_OK" -ne 1 ]; then
-    echo "ERROR: version '$VERSION' is not MAJOR.MINOR.PATCH or MAJOR.MINOR.PATCH-PRERELEASE (example: 0.40.0-rc.1)" >&2
+    echo "ERROR: version '$VERSION' is not MAJOR.MINOR.PATCH or MAJOR.MINOR.PATCH-PRERELEASE (example: 0.5.0-rc.1)" >&2
     exit 2
 fi
 
